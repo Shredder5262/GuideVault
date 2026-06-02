@@ -1,4 +1,5 @@
 # Guidevault
+<img width="1686" height="892" alt="2026-06-02 11_53_06-C__Users_Andrew_Documents_Rainmeter_Skins_ASUSROG_Launcher with Icons 2_ASUSROG " src="https://github.com/user-attachments/assets/5ed83b6b-be5d-4458-b0df-e152558ffe10" />
 
 Guidevault is a self-hosted web reader and library manager for video game manuals, strategy guides, and gaming magazines.
 
