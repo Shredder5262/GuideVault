@@ -1,0 +1,1611 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Guidevault</title>
+  <link rel="stylesheet" href="/styles.css" />
+</head>
+<body class="right-collapsed auth-locked">
+  <section id="loginView" class="login-view" aria-labelledby="loginTitle">
+    <div class="login-card">
+      <div class="login-brand">
+        <img class="login-wordmark" src="/assets/guidevault-wordmark.png" alt="Guidevault" />
+        <p id="loginSubtitle" class="sub hidden">Create the local login profile for this Guidevault browser.</p>
+      </div>
+      <form id="loginForm" class="login-form" autocomplete="on">
+        <h1 id="loginTitle" class="hidden">Create Guidevault Login</h1>
+        <label for="loginUsername">Username</label>
+        <input id="loginUsername" name="username" type="text" autocomplete="username" placeholder="Username" required />
+        <label for="loginEmail">Email</label>
+        <input id="loginEmail" name="email" type="email" autocomplete="email" placeholder="you@example.com" required />
+        <label for="loginPassword">Password</label>
+        <input id="loginPassword" name="password" type="password" autocomplete="current-password" placeholder="Password" required />
+        <p id="loginStatus" class="login-status" aria-live="polite"></p>
+        <button id="loginAction" class="primary full" type="submit">Sign In</button>
+      </form>
+      <p id="loginHelp" class="login-help hidden"></p>
+    </div>
+  </section>
+
+  <div id="app" class="shell hidden">
+    <aside class="sidebar" aria-label="Library navigation">
+      <div class="brand wordmark-brand">
+        <button id="leftToggle" class="icon-button menu-button" title="Collapse menu">☰</button>
+        <img class="brand-wordmark" src="/assets/guidevault-wordmark.png" alt="Guidevault" />
+      </div>
+      <nav id="mainLibraryNav">
+        <button class="nav active" data-view="all" data-filter="All Content" title="Home"><span class="nav-icon homebar-icon"><img src="/assets/icons/homebar/home.png" alt="" loading="eager" draggable="false" /></span><span class="nav-label">Home</span><em id="countAll">0</em></button>
+        <button class="nav" data-view="manual-systems" data-filter="Manual" title="Manuals"><span class="nav-icon homebar-icon"><img src="/assets/icons/homebar/manuals.png" alt="" loading="eager" draggable="false" /></span><span class="nav-label">Manuals</span><em id="countManuals">0</em></button>
+        <button class="nav" data-view="guide-systems" data-filter="Strategy Guide" title="Strategy Guides"><span class="nav-icon homebar-icon"><img src="/assets/icons/homebar/strategy_guide.png" alt="" loading="eager" draggable="false" /></span><span class="nav-label">Strategy Guides</span><em id="countGuides">0</em></button>
+        <button class="nav" data-view="magazine-series" data-filter="Magazine" title="Magazines"><span class="nav-icon homebar-icon"><img src="/assets/icons/homebar/magazines.png" data-fallback-src="/assets/icons/homebar/magainzes.png" alt="" loading="eager" draggable="false" onerror="if(this.dataset.fallbackUsed!=='1'&&this.dataset.fallbackSrc){this.dataset.fallbackUsed='1';this.src=this.dataset.fallbackSrc}else{this.classList.add('homebar-icon-missing')}" /></span><span class="nav-label">Magazines</span><em id="countMags">0</em></button>
+        <button class="nav" data-view="favorites" data-filter="Favorites" title="Favorites"><span class="nav-icon">★</span><span class="nav-label">Favorites</span><em id="countFavs">0</em></button>
+      </nav>
+      <nav id="settingsSideNav" class="settings-side-nav hidden" aria-label="Settings navigation">
+        <button class="settings-side-back" id="settingsBackToLibrary" type="button">← Library</button>
+        <h3>Settings</h3>
+        <button class="settings-nav active" data-settings-tab="account">Account</button>
+        <div class="settings-submenu" aria-label="Account settings subsections">
+          <button id="settingsPreferencesNav" class="settings-subnav" data-settings-tab="preferences" type="button">Preferences</button>
+          <button id="settingsKeybindsNav" class="settings-subnav" data-settings-tab="keybinds" type="button">Key Binds</button>
+          <button id="settingsReadingProfilesNav" class="settings-subnav" data-settings-tab="reading-profiles" type="button">Reading Profiles</button>
+          <button id="settingsCustomizeNav" class="settings-subnav" data-settings-tab="customize" type="button">Customize</button>
+          <button id="settingsOpdsNav" class="settings-subnav" data-settings-tab="opds" type="button">OPDS / Auth Keys</button>
+          <button id="settingsDevicesNav" class="settings-subnav" data-settings-tab="devices" type="button">Devices</button>
+        </div>
+        <button class="settings-nav" data-settings-tab="insights">Insights</button>
+        <div class="settings-submenu" aria-label="Insights subsections">
+          <button id="settingsInsightDevicesNav" class="settings-subnav" data-settings-tab="insights-devices" type="button">Devices</button>
+          <button id="settingsStatisticsNav" class="settings-subnav" data-settings-tab="statistics" type="button">Statistics</button>
+        </div>
+        <button class="settings-nav" data-settings-tab="server">Server</button>
+        <div class="settings-submenu" aria-label="Server settings subsections">
+          <button id="settingsMetadataManagerNav" class="settings-subnav" data-settings-tab="metadata-manager" type="button">Metadata Manager</button>
+          <button id="settingsLibraryNav" class="settings-subnav" data-settings-tab="library" type="button">Library</button>
+        </div>
+        <button class="settings-nav" data-settings-tab="import">Import</button>
+        <button class="settings-nav" data-settings-tab="info">Info</button>
+        <div class="settings-submenu" aria-label="Info subsections">
+          <button id="settingsInfoSystemNav" class="settings-subnav" data-settings-tab="info" type="button">System</button>
+        </div>
+      </nav>
+      <section id="categorySideSection" class="side-section category-side-section">
+        <div class="category-side-heading">
+          <select id="categoryStructureSelect" class="category-structure-select" aria-label="Category browsing mode">
+            <option value="content-type">Categories: Content Type</option>
+            <option value="platform">Categories: Platform / Publication</option>
+            <option value="publisher">Categories: Publisher</option>
+            <option value="decade">Categories: Decade</option>
+          </select>
+        </div>
+        <div id="categories"></div>
+      </section>
+    </aside>
+
+    <main class="main">
+      <header class="topbar">
+        <div class="search">⌕ <input id="search" placeholder="Search guides, manuals, magazines, systems, publishers, tags..." /></div>
+        <button id="updateNotifyBtn" class="icon-button top-icon-button update-notify-button hidden" title="Stable update available" aria-label="Stable update available">↥<span id="updateNotifyBadge" class="update-notify-badge hidden">1</span></button>
+        <div class="task-monitor-wrap">
+          <button id="taskMonitorBtn" class="icon-button top-icon-button task-monitor-button" title="Tasks" aria-label="Tasks">☑<span id="taskMonitorBadge" class="task-monitor-badge hidden">0</span></button>
+          <div id="taskMonitorPanel" class="task-monitor-panel hidden" role="dialog" aria-label="Running tasks">
+            <div class="task-panel-title">Tasks</div>
+            <div id="taskMonitorList" class="task-monitor-list"><div class="task-empty">No running tasks.</div></div>
+          </div>
+        </div>
+        <button id="settingsBtn" class="icon-button top-icon-button" title="Settings" aria-label="Settings">⚙</button>
+        <div class="top-user-wrap">
+          <button id="userMenuBtn" class="top-user-button" type="button" aria-haspopup="menu" aria-expanded="false" title="Guidevault user menu">
+            <span id="topUserAvatar" class="top-user-avatar">GV</span>
+            <span id="topCurrentUser" class="top-user-name">User</span>
+            <span class="top-user-caret" aria-hidden="true">▾</span>
+          </button>
+          <div id="userMenuPanel" class="top-user-menu hidden" role="menu" aria-label="User menu">
+            <button id="userMenuProfile" type="button" role="menuitem">My Profile</button>
+            <button id="userMenuHelp" type="button" role="menuitem">Help</button>
+            <button id="userMenuLogout" type="button" role="menuitem">Log out</button>
+          </div>
+        </div>
+      </header>
+
+      <section id="libraryView" class="library-view">
+        <div id="libraryGridScroll" class="library-grid-scroll">
+        <div class="heading-row"><div><h1 id="pageTitle">Home</h1><span id="itemCount" class="pill">0 items</span></div><div class="library-heading-controls"><label class="cover-size-control" for="coverSizeSlider"><span>Cover size</span><input id="coverSizeSlider" type="range" min="75" max="140" step="5" value="100" /><em id="coverSizeValue">100%</em></label><select id="sort"><option value="recent">Recently Added</option><option value="title">Title A-Z</option><option value="kind">Content Type</option><option value="category">Category</option></select></div></div>
+        <div id="homeShelves" class="home-shelves"></div>
+        <h2 class="section-recent-title hidden">Recently Added</h2>
+        <div id="recentGrid" class="card-row hidden"></div>
+        <h2 class="section-browse-title">Browse by Content Type</h2>
+        <div class="collection-row">
+          <button class="collection blue" data-kind="Manual"><b>▤ Manuals</b><span>Instruction booklets and reference materials.</span><em id="manualSummary">0 items</em></button>
+          <button class="collection green" data-kind="Strategy Guide"><b>▥ Strategy Guides</b><span>Walkthroughs, maps, secrets, and complete solutions.</span><em id="guideSummary">0 items</em></button>
+          <button class="collection magenta" data-kind="Magazine"><b>▧ Magazines</b><span>Gaming magazines, previews, reviews, and retro journalism.</span><em id="magSummary">0 items</em></button>
+        </div>
+        <h2 id="gridTitle">All Content</h2>
+        <div class="library-grid-area">
+          <div class="library-grid-inner">
+            <div id="grid" class="grid"></div>
+          </div>
+        </div>
+        </div>
+        <div id="alphaRail" class="alpha-rail" aria-label="Jump to title letter"></div>
+      </section>
+
+      <section id="detailView" class="detail-view hidden">
+        <div class="detail-page-shell">
+          <div class="detail-page-top">
+            <button id="backToLibraryFromDetails" class="ghost" type="button">← Library</button>
+            <div class="detail-title-block">
+              <h1 id="detailTitle"></h1>
+              <div id="detailSub" class="sub"></div>
+            </div>
+            <div id="detailNavControls" class="detail-nav-controls" aria-label="Sequential item navigation">
+              <button id="detailPrevBtn" class="ghost detail-nav-button hidden" type="button">Previous</button>
+              <button id="detailNextBtn" class="ghost detail-nav-button hidden" type="button">Next</button>
+            </div>
+          </div>
+          <div id="detailsContent" class="detail-page-grid">
+            <aside class="detail-cover-column">
+              <img id="detailCover" class="detail-cover" alt="Selected cover" />
+              <div class="detail-action-stack">
+                <button id="readBtn" class="primary full" type="button">Open Reader</button>
+                <button id="downloadBtn" class="ghost full" type="button">Open / Download File</button>
+                <button id="deleteBtn" class="danger full" type="button">Remove from Library</button>
+              </div>
+            </aside>
+            <div class="detail-main-column">
+              <div class="tabs"><button class="tab active" data-tab="overview">Overview</button><button class="tab" data-tab="metadata">Metadata</button><button class="tab" data-tab="reading-profile">Reading Profile</button><button class="tab" data-tab="notes">Notes</button></div>
+              <section id="overviewPanel" class="tab-panel">
+                <p id="description"></p>
+                <div id="meta" class="detail-meta-list"></div>
+                <h3>Tags</h3>
+                <div id="tagList" class="tags"></div>
+                <img id="detailEsrbIcon" class="detail-esrb-icon hidden" alt="ESRB rating" />
+              </section>
+              <section id="metadataPanel" class="tab-panel hidden">
+                <div class="edit-grid">
+                  <label>Title<input id="editTitle" /></label>
+                  <label>Type<select id="editKind"><option>Manual</option><option>Strategy Guide</option><option>Magazine</option></select></label>
+                  <label>Preferred Platform<input id="editCategory" /></label>
+                  <label id="editEsrbRatingLabel" class="esrb-metadata-field hidden">ESRB Rating<select id="editEsrbRating">
+                    <option value="">Not Rated / Unspecified</option>
+                    <option value="E">Everyone</option>
+                    <option value="E10+">Everyone 10+</option>
+                    <option value="T">Teen</option>
+                    <option value="M">Mature 17+</option>
+                    <option value="AO">Adults Only 18+</option>
+                    <option value="RP">Rating Pending</option>
+                    <option value="EC">Early Childhood</option>
+                    <option value="KA">Kids to Adults</option>
+                    <option value="None">Not Rated</option>
+                  </select></label>
+                  <label id="editAssociatedPlatformsLabel">Associated Platforms<input id="editAssociatedPlatforms" placeholder="PlayStation 2, Nintendo GameCube" /></label>
+                  <label id="editPlatformMatchLabel">Strategy Guide Match<input id="editPlatformMatchTitle" placeholder="Detected game/title match" /></label>
+                  <label id="editGameTitleLabel" class="strategy-metadata-field manual-metadata-field hidden">Game Title<input id="editGameTitle" /></label>
+                  <label id="editManualTitleLabel" class="manual-metadata-field hidden">Manual Title<input id="editManualTitle" /></label>
+                  <label id="editManualTypeLabel" class="manual-metadata-field hidden">Manual Type<input id="editManualType" placeholder="Instruction Booklet, Reference Card, Operations Manual" /></label>
+                  <label id="editIsbnLabel" class="strategy-metadata-field hidden">ISBN<input id="editIsbn" placeholder="ISBN-10 or ISBN-13" /></label>
+                  <label id="editGuideTypeLabel" class="strategy-metadata-field hidden">Guide Type
+                    <div class="meta-multi-select" data-multi-select="editGuideType">
+                      <button class="meta-multi-button" type="button" aria-haspopup="listbox" aria-expanded="false"><span class="meta-multi-value">Select one or more</span><span class="meta-multi-caret">▾</span></button>
+                      <div class="meta-multi-panel" role="listbox" aria-label="Guide type options"></div>
+                    </div>
+                    <select id="editGuideType" multiple class="metadata-hidden-select" aria-hidden="true" tabindex="-1">
+                      <option>Strategy Guide</option>
+                      <option>Official Guide</option>
+                      <option>Unofficial Guide</option>
+                      <option>Full Walkthrough</option>
+                      <option>Hint Book</option>
+                      <option>Code Book</option>
+                      <option>Art Book</option>
+                      <option>Atlas / Map Guide</option>
+                      <option>Collector's Guide</option>
+                      <option>Tips & Tricks</option>
+                      <option>Companion Book</option>
+                    </select>
+                    <span class="field-help">Select one or more guide types when multiple descriptions apply.</span>
+                  </label>
+                  <label id="editEditionLabel" class="strategy-metadata-field hidden">Edition Type
+                    <div class="meta-multi-select" data-multi-select="editEditionType">
+                      <button class="meta-multi-button" type="button" aria-haspopup="listbox" aria-expanded="false"><span class="meta-multi-value">Standard / Unspecified</span><span class="meta-multi-caret">▾</span></button>
+                      <div class="meta-multi-panel" role="listbox" aria-label="Edition type options"></div>
+                    </div>
+                    <select id="editEditionType" multiple class="metadata-hidden-select" aria-hidden="true" tabindex="-1">
+                      <option>First Edition</option>
+                      <option>Revised Edition</option>
+                      <option>Second Edition</option>
+                      <option>Collector's Edition</option>
+                      <option>Limited Edition</option>
+                      <option>Digital Edition</option>
+                      <option>Retail Edition</option>
+                      <option>Year Edition</option>
+                      <option>Volume Edition</option>
+                    </select>
+                  </label>
+                  <label id="editEditionYearLabel" class="strategy-metadata-field edition-year-field hidden">Edition Year<input id="editEditionYear" inputmode="numeric" placeholder="2001" /></label>
+                  <label id="editEditionVolumeLabel" class="strategy-metadata-field edition-volume-field hidden">Volume Number<input id="editEditionVolume" inputmode="numeric" placeholder="1" /></label>
+                  <label id="editFranchiseLabel" class="strategy-metadata-field manual-metadata-field hidden">Franchise / Series<input id="editFranchise" /></label>
+                  <label>Series<input id="editSeries" /></label>
+                  <label id="editMagazineTitleLabel" class="magazine-metadata-field hidden">Magazine Title<input id="editMagazineTitle" /></label>
+                  <label id="editIssueLabel">Issue #<input id="editIssue" /></label>
+                  <label id="editVolumeLabel" class="magazine-metadata-field hidden">Volume<input id="editVolume" /></label>
+                  <label id="editCoverDateLabel" class="magazine-metadata-field hidden">Cover Date<input id="editCoverDate" placeholder="March 1998" /></label>
+                  <label id="editPublicationDateLabel" class="magazine-metadata-field hidden">Publication Date<input id="editPublicationDate" placeholder="March 1998" /></label>
+                  <label>Publisher<input id="editPublisher" /></label>
+                  <label id="editRegionLabel" class="magazine-metadata-field strategy-metadata-field manual-metadata-field hidden">Region<input id="editRegion" placeholder="US, UK, Japan, Europe" /></label>
+                  <label id="editLanguageLabel" class="magazine-metadata-field strategy-metadata-field manual-metadata-field hidden">Language<input id="editLanguageTag" placeholder="English, en-US, Japanese" /></label>
+                  <label id="editPlatformFocusLabel" class="magazine-metadata-field hidden">Platform Focus<input id="editPlatformFocus" placeholder="Nintendo, Sega, PlayStation, Multi-platform" /></label>
+                  <label id="editPrimarySystemLabel" class="magazine-metadata-field hidden">Primary System<input id="editPrimarySystem" placeholder="SNES, PlayStation, PC" /></label>
+                  <label id="editMagazineCategoryLabel" class="magazine-metadata-field hidden">Magazine Category<input id="editMagazineCategory" placeholder="Official, cheats/codes, PC gaming" /></label>
+                  <label id="editCoverSubjectLabel" class="magazine-metadata-field hidden">Cover Game / Subject<input id="editCoverSubject" /></label>
+                  <label>Year<input id="editYear" /></label>
+                  <label id="editPublicationDateGuideLabel" class="strategy-metadata-field manual-metadata-field hidden">Publication Date<input id="editPublicationDateGuide" placeholder="September 1997" /></label>
+                  <label>Writer / Author<input id="editWriter" /></label>
+                  <label id="editDeveloperLabel" class="strategy-metadata-field manual-metadata-field hidden">Developer<input id="editDeveloper" /></label>
+                  <label id="editGamePublisherLabel" class="strategy-metadata-field manual-metadata-field hidden">Game Publisher<input id="editGamePublisher" /></label>
+                  <label id="editGameReleaseYearLabel" class="strategy-metadata-field manual-metadata-field hidden">Game Release Year<input id="editGameReleaseYear" /></label>
+                  <label id="editGenreLabel" class="strategy-metadata-field manual-metadata-field hidden">Genre<input id="editGenre" placeholder="RPG, Fighting, Action Adventure" /></label>
+                </div>
+                <div id="metadataTechnicalInfo" class="metadata-technical-info hidden"></div>
+                <label>Summary<textarea id="editSummary" rows="5"></textarea></label>
+                <label id="editFeaturedGamesLabel" class="magazine-metadata-field hidden">Featured Games, comma-separated<input id="editFeaturedGames" /></label>
+                <label id="editFeaturedPlatformsLabel" class="magazine-metadata-field hidden">Featured Platforms, comma-separated<input id="editFeaturedPlatforms" /></label>
+                <label id="editSpecialFeaturesLabel" class="magazine-metadata-field hidden">Special Features, comma-separated<input id="editSpecialFeatures" /></label>
+                <label id="editIncludedExtrasLabel" class="magazine-metadata-field strategy-metadata-field manual-metadata-field hidden">Included Extras, comma-separated<input id="editIncludedExtras" /></label>
+                <label id="editIncludedSectionsLabel" class="manual-metadata-field hidden">Included Sections, comma-separated<input id="editIncludedSections" placeholder="Controls, Story, Items, Warranty" /></label>
+                <label id="editControlSchemeLabel" class="manual-metadata-field hidden">Controls / Control Scheme<input id="editControlScheme" placeholder="Controller, keyboard, light gun, etc." /></label>
+                <label id="editItemsCoveredLabel" class="manual-metadata-field hidden">Items / Mechanics Covered, comma-separated<input id="editItemsCovered" /></label>
+                <label id="editWarrantySupportLabel" class="manual-metadata-field hidden">Warranty / Support Info<input id="editWarrantySupport" /></label>
+                <label id="editCoveredGamesLabel" class="strategy-metadata-field hidden">Covered Games, comma-separated<input id="editCoveredGames" /></label>
+                <label id="editCoveredPlatformsLabel" class="strategy-metadata-field hidden">Covered Platforms, comma-separated<input id="editCoveredPlatforms" /></label>
+                <label id="editGuideTopicsLabel" class="strategy-metadata-field hidden">Guide Topics, comma-separated<input id="editGuideTopics" /></label>
+                <label id="editStrategySpecialFeaturesLabel" class="strategy-metadata-field hidden">Special Features, comma-separated<input id="editStrategySpecialFeatures" /></label>
+                <label id="editCharactersCoveredLabel" class="strategy-metadata-field manual-metadata-field hidden">Characters Covered, comma-separated<input id="editCharactersCovered" /></label>
+                <label id="editLocationsCoveredLabel" class="strategy-metadata-field hidden">Locations Covered, comma-separated<input id="editLocationsCovered" /></label>
+                <label>Tags, comma-separated<input id="editTags" /></label>
+                <button id="saveMetadataBtn" class="primary full" type="button">Save Metadata</button>
+              </section>
+              <section id="reading-profilePanel" class="tab-panel hidden">
+                <article class="detail-reading-profile-card effective">
+                  <div>
+                    <h3>Effective Reading Profile</h3>
+                    <p id="detailReadingProfileEffectiveSummary" class="sub">Open an entry to see which reading profile will be used.</p>
+                  </div>
+                  <button id="detailReadingProfileManagePresets" class="ghost" type="button">Manage Presets</button>
+                </article>
+                <div class="detail-reading-profile-grid">
+                  <article class="detail-reading-profile-card">
+                    <div class="reading-profile-card-header">
+                      <div>
+                        <h3>This Series / Category</h3>
+                        <p id="detailReadingProfileGroupLabel" class="sub">Category: —</p>
+                      </div>
+                    </div>
+                    <p class="sub">Assign a profile here when every item in this series or category should read the same way. This layer takes precedence over the individual entry.</p>
+                    <label for="detailGroupProfileSelect">Assigned profile</label>
+                    <select id="detailGroupProfileSelect"></select>
+                    <div class="settings-actions inline-actions">
+                      <button id="detailSaveGroupProfile" class="primary" type="button">Save Series / Category</button>
+                      <button id="detailClearGroupProfile" class="ghost" type="button">Reset to Default</button>
+                    </div>
+                  </article>
+                  <article class="detail-reading-profile-card">
+                    <div class="reading-profile-card-header">
+                      <div>
+                        <h3>This Entry</h3>
+                        <p class="sub">Assign a profile only for this one manual, guide, or magazine issue.</p>
+                      </div>
+                    </div>
+                    <p class="sub">The entry profile is used only when the series/category above does not have an assigned profile.</p>
+                    <label for="detailEntryProfileSelect">Assigned profile</label>
+                    <select id="detailEntryProfileSelect"></select>
+                    <div class="settings-actions inline-actions">
+                      <button id="detailSaveEntryProfile" class="primary" type="button">Save Entry</button>
+                      <button id="detailClearEntryProfile" class="ghost" type="button">Reset to Inherited</button>
+                    </div>
+                  </article>
+                </div>
+                <p id="detailReadingProfileStatus" class="sub account-status" aria-live="polite"></p>
+              </section>
+              <section id="notesPanel" class="tab-panel hidden">
+                <label>Notes<textarea id="notesText" rows="10" placeholder="Add your own reading notes, condition notes, scan quality notes, or collection notes..."></textarea></label>
+                <button id="saveNotesBtn" class="primary full" type="button">Save Notes</button>
+              </section>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section id="settingsView" class="settings-view hidden">
+        <div class="settings-content-panel settings-content-panel-main">
+          <section id="settingsAccountPanel" class="settings-section-panel">
+            <h1>Account</h1>
+            <p class="sub">Manage the local Guidevault login profile used by this browser.</p>
+            <div class="settings-card-grid account-settings-grid">
+              <article class="settings-card account-profile-card">
+                <div class="account-card-header">
+                  <div>
+                    <h3>Login Profile</h3>
+                    <p id="accountProfileSummary" class="sub">Signed in locally.</p>
+                  </div>
+                  <button id="accountEditLogin" class="ghost" type="button">Edit</button>
+                </div>
+                <div class="account-form-grid">
+                  <label for="accountUsername">Username<input id="accountUsername" type="text" autocomplete="username" disabled /></label>
+                  <label for="accountEmail">Email<input id="accountEmail" type="email" autocomplete="email" disabled /></label>
+                  <label for="accountPassword">Password<input id="accountPassword" type="password" autocomplete="new-password" disabled /></label>
+                </div>
+                <div class="settings-actions account-actions">
+                  <button id="accountSaveLogin" class="primary hidden" type="button">Save Login</button>
+                  <button id="accountCancelEdit" class="ghost hidden" type="button">Cancel</button>
+                  <button id="accountLogout" class="ghost" type="button">Logout</button>
+                </div>
+                <p id="accountStatus" class="sub account-status" aria-live="polite"></p>
+              </article>
+              <article class="settings-card">
+                <h3>Local App Mode</h3>
+                <p>Guidevault stores this login profile in local browser storage for now. It is intended as a local gate before the library UI loads, not a cloud account system yet.</p>
+              </article>
+            </div>
+          </section>
+          <section id="settingsPreferencesPanel" class="settings-section-panel hidden">
+            <div class="settings-title-row">
+              <div>
+                <h1>Preferences</h1>
+                <p class="sub">Configure global Guidevault behavior that should apply across the local app.</p>
+              </div>
+            </div>
+            <div class="settings-card-grid preferences-settings-grid">
+              <article class="settings-card preferences-card">
+                <div class="settings-card-kicker">Global Settings</div>
+                <div class="preference-toggle-row">
+                  <div>
+                    <h3>Use Colorscape</h3>
+                    <p class="sub">Global toggle to enable disable the dynamic gradient feature will override theme settings.</p>
+                  </div>
+                  <label class="gv-toggle" for="preferenceUseColorscape">
+                    <input id="preferenceUseColorscape" type="checkbox" />
+                    <span class="gv-toggle-track"><span class="gv-toggle-thumb"></span></span>
+                  </label>
+                </div>
+                <p class="sub colorscape-preview-note">When enabled, manual, strategy guide, and magazine detail pages sample the dominant cover color and blend it into the detail background and overview containers.</p>
+                <p id="preferencesStatus" class="sub account-status" aria-live="polite"></p>
+              </article>
+            </div>
+          </section>
+
+          <section id="settingsKeybindsPanel" class="settings-section-panel hidden keybinds-panel">
+            <div class="settings-title-row">
+              <div>
+                <div class="settings-page-kicker">ACCOUNT</div>
+                <h1>Key Binds</h1>
+                <p class="sub">View and customize reader shortcuts. Use the plus icon to add an alternate key and the reset icon to restore the default binding.</p>
+              </div>
+              <button id="keybindsResetAll" class="ghost" type="button">Reset All</button>
+            </div>
+            <article class="settings-card keybinds-card">
+              <div id="keybindsList" class="keybinds-list"></div>
+              <p id="keybindsStatus" class="sub account-status" aria-live="polite"></p>
+            </article>
+          </section>
+
+          <section id="settingsReadingProfilesPanel" class="settings-section-panel hidden">
+            <div class="settings-title-row">
+              <div>
+                <h1>Reading Profiles</h1>
+                <p class="sub">Manage reusable reader presets here. Assign them from an item's Reading Profile tab so the assignment stays close to the series/category or individual entry.</p>
+              </div>
+            </div>
+            <div class="settings-card-grid reading-profile-grid refined">
+              <article class="settings-card reading-profile-card reading-profile-manager-card">
+                <div class="reading-profile-card-header">
+                  <div>
+                    <h3>Profile Presets</h3>
+                    <p class="sub">Presets define how the reader opens: page display, transition, background, and zoom.</p>
+                  </div>
+                  <button id="readingProfileNewPreset" class="ghost" type="button">＋ New</button>
+                </div>
+                <label for="readingProfilePresetSelect">Preset</label>
+                <select id="readingProfilePresetSelect"></select>
+                <label for="readingProfilePresetName">Name</label>
+                <input id="readingProfilePresetName" type="text" placeholder="Manuals, Magazines, Manga, Strategy Guides" />
+                <div class="reading-profile-form-grid">
+                  <label for="readingProfilePresetDisplay">Page Type Display
+                    <select id="readingProfilePresetDisplay">
+                      <option value="1">1 Page</option>
+                      <option value="2">2 Pages</option>
+                      <option value="3">2 Pages Adaptive</option>
+                    </select>
+                  </label>
+                  <label for="readingProfilePresetTransition">Transition Type
+                    <select id="readingProfilePresetTransition">
+                      <option value="stable">Stable Swap</option>
+                      <option value="fade">Quick Fade</option>
+                      <option value="dissolve">Soft Dissolve</option>
+                      <option value="slide">Slide</option>
+                      <option value="push">Push</option>
+                      <option value="page">Page Turn Effect</option>
+                    </select>
+                  </label>
+                  <label for="readingProfilePresetBackground">Background Type
+                    <select id="readingProfilePresetBackground"><option value="">Default Gradient</option></select>
+                  </label>
+                  <label for="readingProfilePresetZoom">Zoom Level
+                    <div class="reading-profile-zoom-row">
+                      <input id="readingProfilePresetZoom" type="range" min="70" max="145" value="100" step="5" />
+                      <output id="readingProfilePresetZoomValue">100%</output>
+                    </div>
+                  </label>
+                </div>
+                <div class="settings-actions account-actions">
+                  <button id="readingProfileSavePreset" class="primary" type="button">Save Preset</button>
+                  <button id="readingProfileSetDefaultPreset" class="ghost" type="button">Set as Default</button>
+                  <button id="readingProfileDeletePreset" class="danger" type="button">Delete</button>
+                </div>
+                <p id="readingProfileStatus" class="sub account-status" aria-live="polite"></p>
+              </article>
+              <article class="settings-card reading-profile-card reading-profile-list-card">
+                <h3>Available Presets</h3>
+                <p class="sub">The default preset is used when an entry has no series/category or entry assignment.</p>
+                <div id="readingProfilePresetList" class="reading-profile-preset-list"></div>
+              </article>
+            </div>
+            <article class="settings-card reading-profile-effective-card">
+              <h3>Assignment Precedence</h3>
+              <p class="sub">Series/category assignment wins first. Entry assignment is used second. The global default preset is used last.</p>
+            </article>
+          </section>
+
+          <section id="settingsCustomizePanel" class="settings-section-panel hidden customize-panel">
+            <div class="settings-title-row">
+              <div>
+                <div class="settings-page-kicker">CUSTOMIZE</div>
+                <h1>Customize</h1>
+                <p class="sub">Customize Guidevault home shelves and navigation behavior. The old All Content landing page is now treated as Home.</p>
+              </div>
+            </div>
+            <div class="customize-tabs" role="tablist" aria-label="Customize sections">
+              <button class="customize-tab active" data-customize-tab="home" type="button">Home</button>
+              <button class="customize-tab" data-customize-tab="side-nav" type="button">Side Nav</button>
+              <button class="customize-tab" data-customize-tab="smart-filters" type="button">Smart Filters</button>
+              <button class="customize-tab" data-customize-tab="external-sources" type="button">External Sources</button>
+            </div>
+            <article id="customizeHomePanel" class="settings-card customize-tab-panel">
+              <div class="customize-home-header">
+                <div>
+                  <h2>Home Shelves</h2>
+                  <p class="sub">Choose which shelves appear above the main Home library grid. This replaces the single fixed Recently Added shelf.</p>
+                </div>
+                <div class="customize-add-shelf">
+                  <select id="customizeShelfSelect" aria-label="Shelf to add"></select>
+                  <button id="customizeAddShelf" class="primary" type="button">＋ Add Shelf</button>
+                </div>
+              </div>
+              <div id="customizeShelfList" class="customize-shelf-list"></div>
+              <p id="customizeStatus" class="sub account-status" aria-live="polite"></p>
+            </article>
+            <article id="customizeSideNavPanel" class="settings-card customize-tab-panel hidden">
+              <h2>Side Nav</h2>
+              <p class="sub">Side navigation customization is reserved for a later pass. Home shelf customization is active in this build.</p>
+            </article>
+            <article id="customizeSmartFiltersPanel" class="settings-card customize-tab-panel hidden">
+              <h2>Smart Filters</h2>
+              <p class="sub">Smart filters will eventually let you pin dynamic saved searches to Home or the side navigation.</p>
+            </article>
+            <article id="customizeExternalSourcesPanel" class="settings-card customize-tab-panel hidden">
+              <h2>External Sources</h2>
+              <p class="sub">External source bindings will be used later for metadata providers, scrapers, and connected services.</p>
+            </article>
+          </section>
+          <section id="settingsOpdsPanel" class="settings-section-panel hidden">
+            <div class="settings-title-row opds-title-row">
+              <div>
+                <h1>OPDS / Auth Keys</h1>
+                <p class="sub">Manage the local OPDS connection URL and authorization keys for third-party readers or future Guidevault clients.</p>
+              </div>
+            </div>
+
+            <article class="settings-card opds-auth-card">
+              <div class="opds-section-kicker">Auth Keys / OPDS</div>
+              <p class="sub opds-private-note">Third-party clients will use either the OPDS URL or an auth key. Treat them like passwords.</p>
+              <div class="opds-url-toolbar">
+                <label class="opds-url-label" for="opdsConnectionUrl">OPDS URL
+                  <input id="opdsConnectionUrl" type="password" readonly autocomplete="off" />
+                </label>
+                <button id="opdsCopyUrl" class="ghost opds-copy-button" type="button">Copy</button>
+                <select id="opdsUrlKeySelect" class="opds-url-key-select" aria-label="OPDS URL key selector"></select>
+              </div>
+              <div class="opds-url-actions">
+                <button id="opdsEditUrl" class="ghost" type="button">Edit URL</button>
+                <button id="opdsSaveUrl" class="primary hidden" type="button">Save URL</button>
+                <button id="opdsCancelUrl" class="ghost hidden" type="button">Cancel</button>
+                <button id="opdsRevealUrl" class="ghost" type="button">Reveal</button>
+                <span class="opds-help-text">Saved URL is masked after entry and used when copying client connection links.</span>
+              </div>
+            </article>
+
+            <article class="settings-card opds-key-card">
+              <div class="opds-key-header">
+                <div>
+                  <h2>Manage Authorization Keys</h2>
+                  <p class="sub">Generate named keys for OPDS clients. Rotating a key invalidates the previous value for that client.</p>
+                </div>
+                <button id="opdsGenerateKey" class="primary opds-new-key" type="button">＋ New</button>
+              </div>
+              <div class="opds-new-key-inline hidden" id="opdsNewKeyInline">
+                <label for="opdsNewKeyName">Key Name<input id="opdsNewKeyName" type="text" placeholder="OPDS, Images, LaunchBox Plugin" /></label>
+                <button id="opdsCreateKey" class="primary" type="button">Generate Key</button>
+                <button id="opdsCancelNewKey" class="ghost" type="button">Cancel</button>
+              </div>
+              <div class="opds-table-wrap">
+                <table class="opds-key-table">
+                  <thead>
+                    <tr>
+                      <th>Name</th>
+                      <th>Key</th>
+                      <th>Expiration</th>
+                      <th>Last Accessed</th>
+                      <th>Actions</th>
+                    </tr>
+                  </thead>
+                  <tbody id="opdsKeyTableBody"></tbody>
+                  <tfoot>
+                    <tr><td id="opdsKeyCount" colspan="5">0 total</td></tr>
+                  </tfoot>
+                </table>
+              </div>
+              <p id="opdsStatus" class="sub account-status" aria-live="polite"></p>
+            </article>
+          </section>
+          <section id="settingsDevicesPanel" class="settings-section-panel hidden">
+            <div class="settings-title-row device-title-row">
+              <div>
+                <div class="opds-section-kicker">Devices</div>
+                <h1>Email-based Devices</h1>
+                <p class="sub">Track send-to-email devices and connected Guidevault clients. Client history updates when the web app checks in or when OPDS clients use an auth key.</p>
+              </div>
+              <button id="deviceAddEmailTop" class="primary device-add-button" type="button">＋ Add</button>
+            </div>
+
+            <article class="settings-card device-email-card">
+              <div id="deviceEmailEditor" class="device-email-editor hidden">
+                <label for="deviceEmailName">Name<input id="deviceEmailName" type="text" placeholder="Kindle, Remarkable, Tablet" /></label>
+                <label for="deviceEmailAddress">Email<input id="deviceEmailAddress" type="email" placeholder="device@example.com" /></label>
+                <label for="deviceEmailPlatform">Platform<input id="deviceEmailPlatform" type="text" placeholder="Kindle, Email, Custom" /></label>
+                <button id="deviceSaveEmail" class="primary" type="button">Save</button>
+                <button id="deviceCancelEmail" class="ghost" type="button">Cancel</button>
+              </div>
+              <div class="device-table-wrap">
+                <table class="device-email-table">
+                  <thead>
+                    <tr>
+                      <th>Name</th>
+                      <th>Email</th>
+                      <th>Platform</th>
+                      <th>Actions</th>
+                    </tr>
+                  </thead>
+                  <tbody id="deviceEmailTableBody"></tbody>
+                  <tfoot>
+                    <tr><td id="deviceEmailCount" colspan="4">0 total</td></tr>
+                  </tfoot>
+                </table>
+              </div>
+            </article>
+
+            <div class="device-section-break"></div>
+
+            <div class="settings-title-row device-client-title-row">
+              <div>
+                <h1>Client Devices</h1>
+                <p class="sub">Recent browsers, web app sessions, and OPDS clients that have connected to this Guidevault server.</p>
+              </div>
+              <div class="settings-actions inline-actions device-actions">
+                <button id="deviceRefreshHistory" class="ghost" type="button">⟳ Refresh</button>
+                <button id="deviceClearStale" class="ghost" type="button">Clear 30+ Day History</button>
+              </div>
+            </div>
+            <div id="deviceClientGrid" class="device-client-grid"></div>
+            <p id="deviceStatus" class="sub account-status" aria-live="polite"></p>
+          </section>
+
+          <section id="settingsInsightsPanel" class="settings-section-panel hidden">
+            <h1>Insights</h1>
+            <p class="sub">Library totals, scan health, and collection insights will appear here.</p>
+            <div class="settings-card-grid">
+              <article class="settings-card"><h3>Library Size</h3><p><span id="settingsInsightTotal">0</span> indexed item(s).</p></article>
+              <article class="settings-card"><h3>Manuals</h3><p><span id="settingsInsightManuals">0</span> manual(s).</p></article>
+              <article class="settings-card"><h3>Guides</h3><p><span id="settingsInsightGuides">0</span> strategy guide(s).</p></article>
+              <article class="settings-card"><h3>Magazines</h3><p><span id="settingsInsightMags">0</span> magazine(s).</p></article>
+            </div>
+          </section>
+
+          <section id="settingsInsightDevicesPanel" class="settings-section-panel hidden">
+            <div class="settings-title-row insight-devices-title-row">
+              <div>
+                <div class="opds-section-kicker">Devices</div>
+                <h1>Connected Device Insights</h1>
+                <p class="sub">Monthly client activity for web app sessions, OPDS readers, and other clients that connect to this Guidevault server.</p>
+              </div>
+              <div class="settings-actions inline-actions device-actions">
+                <button id="insightDeviceRefresh" class="ghost" type="button">⟳ Refresh</button>
+              </div>
+            </div>
+
+            <div id="insightDeviceSummary" class="insight-device-summary-grid" aria-live="polite"></div>
+
+            <div class="insight-device-chart-grid">
+              <article class="settings-card insight-chart-card">
+                <div class="insight-chart-head">
+                  <h2>Client Devices this Month</h2>
+                  <p class="sub">Grouped by client type.</p>
+                </div>
+                <div id="insightClientTypeChart" class="insight-semi-chart"></div>
+              </article>
+              <article class="settings-card insight-chart-card">
+                <div class="insight-chart-head">
+                  <h2>Mobile vs PC this Month</h2>
+                  <p class="sub">Grouped by device class.</p>
+                </div>
+                <div id="insightDeviceClassChart" class="insight-semi-chart"></div>
+              </article>
+            </div>
+
+            <div class="device-section-break"></div>
+
+            <div class="settings-title-row device-client-title-row insight-client-title-row">
+              <div>
+                <h1>Client Devices</h1>
+                <p class="sub">Devices seen this month. Account → Devices remains the place to rename or delete saved device cards.</p>
+              </div>
+            </div>
+            <div id="insightDeviceClientGrid" class="device-client-grid insight-device-client-grid"></div>
+          </section>
+
+
+          <section id="settingsStatisticsPanel" class="settings-section-panel hidden statistics-panel">
+            <div class="settings-title-row statistics-title-row">
+              <div>
+                <div class="settings-page-kicker">STATISTICS</div>
+                <h1>Statistics</h1>
+                <p class="sub">Explore library totals, reading activity, popular metadata, and collection management trends.</p>
+              </div>
+              <button id="statisticsRefresh" class="ghost" type="button">⟳ Refresh</button>
+            </div>
+            <div class="statistics-tabs" role="tablist" aria-label="Statistics sections">
+              <button id="statisticsStatsTab" class="statistics-tab active" data-statistics-tab="stats" type="button">Stats</button>
+              <button id="statisticsManagementTab" class="statistics-tab" data-statistics-tab="management" type="button">Management</button>
+            </div>
+            <div id="statisticsStatsPanel" class="statistics-tab-panel">
+              <div id="statisticsSummary" class="statistics-summary-row"></div>
+              <div class="statistics-explore-row">
+                <h2>Explore <span>Guidevault</span></h2>
+                <select id="statisticsRange" aria-label="Statistics range">
+                  <option value="all">since the beginning</option>
+                  <option value="year">this year</option>
+                  <option value="month">this month</option>
+                </select>
+              </div>
+              <div class="statistics-grid featured">
+                <article class="settings-card statistics-popular-card">
+                  <h3>Popular Books and Manuals</h3>
+                  <div id="statisticsPopularBooks" class="statistics-popular-list"></div>
+                </article>
+                <article class="settings-card statistics-popular-card">
+                  <h3>Recent Books Viewed</h3>
+                  <div id="statisticsRecentViewed" class="statistics-popular-list"></div>
+                </article>
+              </div>
+              <div id="statisticsTopLists" class="statistics-top-grid"></div>
+              <h3 class="statistics-section-heading">Most Active Users</h3>
+              <div id="statisticsActiveUsers" class="statistics-user-grid"></div>
+              <h3 class="statistics-section-heading">Reading Activity</h3>
+              <article class="settings-card statistics-activity-card">
+                <div id="statisticsReadingLegend" class="statistics-legend"></div>
+                <div id="statisticsReadingActivity" class="statistics-line-chart"></div>
+              </article>
+            </div>
+            <div id="statisticsManagementPanel" class="statistics-tab-panel hidden">
+              <h3 class="statistics-section-heading">Files Added Over Time</h3>
+              <article class="settings-card statistics-management-card">
+                <div id="statisticsFilesTimelineLegend" class="statistics-legend statistics-management-legend"></div>
+                <div id="statisticsFilesTimeline" class="statistics-line-chart management"></div>
+                <p class="statistics-chart-note">Horizontal axis shows month added. Vertical axis shows how many files were added during that month.</p>
+              </article>
+              <h3 class="statistics-section-heading">Format</h3>
+              <article class="settings-card statistics-management-card">
+                <div id="statisticsFormatGraph" class="statistics-format-graph"></div>
+                <div class="statistics-format-table-wrap">
+                  <table class="statistics-format-table">
+                    <thead><tr><th>Extension</th><th>Format</th><th>Total Size</th><th>Total Files</th></tr></thead>
+                    <tbody id="statisticsFormatTableBody"></tbody>
+                  </table>
+                </div>
+              </article>
+            </div>
+          </section>
+          <section id="settingsMetadataManagerPanel" class="settings-section-panel hidden metadata-manager-panel">
+            <div class="settings-title-row metadata-manager-title-row">
+              <div>
+                <div class="settings-page-kicker">SERVER</div>
+                <h1>Metadata Manager</h1>
+                <p class="sub">View, normalize, and edit Manual, Strategy Guide, and Magazine metadata at scale without opening each details page.</p>
+              </div>
+              <div class="settings-actions inline-actions metadata-manager-actions">
+                <button id="metadataManagerRefresh" class="ghost" type="button">⟳ Refresh</button>
+                <button id="metadataManagerExportCsv" class="ghost" type="button">Export CSV</button>
+                <button id="metadataManagerImportJson" class="ghost" type="button">Import JSON</button>
+                <input id="metadataManagerImportFile" class="hidden" type="file" accept="application/json,.json" />
+              </div>
+            </div>
+
+            <div class="metadata-manager-summary" id="metadataManagerSummary" aria-live="polite"></div>
+
+            <article class="settings-card metadata-manager-toolbar">
+              <div class="metadata-manager-filter-grid">
+                <label for="metadataManagerSearch">Search
+                  <input id="metadataManagerSearch" type="search" placeholder="Title, system, publisher, topic, tag..." />
+                </label>
+                <label for="metadataManagerKind">Type
+                  <select id="metadataManagerKind">
+                    <option value="">Manuals, Guides, Magazines</option>
+                    <option value="Manual">Manuals</option>
+                    <option value="Strategy Guide">Strategy Guides</option>
+                    <option value="Magazine">Magazines</option>
+                  </select>
+                </label>
+                <label for="metadataManagerMissing">Focus
+                  <select id="metadataManagerMissing">
+                    <option value="">All metadata</option>
+                    <option value="missing-language">Missing language</option>
+                    <option value="missing-region">Missing region</option>
+                    <option value="missing-topics">Missing topics/tags</option>
+                    <option value="missing-publisher">Missing publisher</option>
+                    <option value="unsorted-strategy-guides">Unsorted strategy guides</option>
+                    <option value="multi-platform-strategy-guides">Multiple associated platforms</option>
+                  </select>
+                </label>
+                <label for="metadataManagerCategory">Preferred Platform / Series
+                  <select id="metadataManagerCategory"><option value="">All platforms and series</option></select>
+                </label>
+              </div>
+              <details class="metadata-manager-column-panel">
+                <summary>
+                  <span>Columns</span>
+                  <em id="metadataManagerColumnActiveCount">Default columns shown</em>
+                </summary>
+                <p class="sub">Add or remove grid columns for bulk cleanup. All known Guidevault metadata fields are listed here.</p>
+                <div id="metadataManagerColumnPicker" class="metadata-manager-column-picker"></div>
+                <div class="settings-actions inline-actions metadata-manager-column-actions">
+                  <button id="metadataManagerColumnsReset" class="ghost" type="button">Reset Default Columns</button>
+                  <button id="metadataManagerColumnsShowAll" class="ghost" type="button">Show All Columns</button>
+                </div>
+              </details>
+              <div class="metadata-manager-batch-grid">
+                <label for="metadataBatchLanguage">Language
+                  <input id="metadataBatchLanguage" type="text" placeholder="English" />
+                </label>
+                <label for="metadataBatchRegion">Region
+                  <input id="metadataBatchRegion" type="text" placeholder="US, JP, EU..." />
+                </label>
+                <label for="metadataBatchCategory">Preferred Platform
+                  <input id="metadataBatchCategory" type="text" placeholder="PlayStation 2" />
+                </label>
+                <label for="metadataBatchPublisher">Publisher
+                  <input id="metadataBatchPublisher" type="text" placeholder="Nintendo Power, Prima..." />
+                </label>
+                <label for="metadataBatchTagsMode">Tags / Topics Mode
+                  <select id="metadataBatchTagsMode">
+                    <option value="add">Add to existing</option>
+                    <option value="replace">Replace existing</option>
+                    <option value="remove">Remove from existing</option>
+                  </select>
+                </label>
+                <label for="metadataBatchTags">Tags / Topics
+                  <input id="metadataBatchTags" type="text" placeholder="Strategy, Maps, Secrets" />
+                </label>
+              </div>
+              <div class="settings-actions inline-actions metadata-manager-batch-actions">
+                <button id="metadataManagerSelectAll" class="ghost" type="button">Select Filtered</button>
+                <button id="metadataManagerClearSelection" class="ghost" type="button">Clear Selection</button>
+                <button id="metadataManagerApplyBatch" class="primary" type="button">Apply to Selected</button>
+                <button id="metadataManagerNormalizeSelected" class="ghost" type="button">Normalize Selected</button>
+                <button id="metadataManagerSaveDirty" class="primary" type="button">Save Edited Rows</button>
+                <button id="metadataManagerScrape" class="ghost" type="button">Scrape / Import Metadata</button>
+              </div>
+              <p id="metadataManagerStatus" class="sub account-status" aria-live="polite"></p>
+            </article>
+
+            <article class="settings-card metadata-manager-grid-card">
+              <div class="metadata-manager-table-wrap">
+                <table class="metadata-manager-table">
+                  <thead>
+                    <tr id="metadataManagerHeaderRow">
+                      <th><input id="metadataManagerHeaderCheck" type="checkbox" aria-label="Select visible rows" /></th>
+                      <th>Type</th>
+                      <th>Title / Name</th>
+                      <th>Preferred Platform</th>
+                      <th>Series / Publication</th>
+                      <th>Language</th>
+                      <th>Region</th>
+                      <th>Year</th>
+                      <th>Publisher</th>
+                      <th>Topics / Games</th>
+                      <th>Source</th>
+                    </tr>
+                  </thead>
+                  <tbody id="metadataManagerTableBody"></tbody>
+                </table>
+              </div>
+              <div class="metadata-manager-table-footer">
+                <span id="metadataManagerCount">0 entries</span>
+                <span id="metadataManagerDirtyCount">0 edited</span>
+              </div>
+            </article>
+          </section>
+          <section id="settingsServerPanel" class="settings-section-panel hidden">
+            <h1>Server</h1>
+            <p class="sub">Guidevault is running as a local ASP.NET Core web app, with the project structure prepared for Docker hosting later.</p>
+            <div class="settings-card-grid">
+              <article class="settings-card"><h3>Server Mode</h3><p>Local ASP.NET Core web server.</p></article>
+              <article class="settings-card"><h3>Storage Model</h3><p>Scan-in-place library index. Guidevault does not upload, copy, or move your source files.</p></article>
+              <article class="settings-card"><h3>Docker Preparation</h3><p>When hosted in Docker, mount your existing library folder and point Guidevault to that mounted path.</p></article>
+            </div>
+          </section>
+          <section id="settingsImportPanel" class="settings-section-panel hidden">
+            <div class="settings-title-row">
+              <div>
+                <h1 id="settingsImportTitle">Import</h1>
+                <p id="settingsImportSub" class="sub">Build multiple libraries by scanning existing folders in place. Source files stay where they already are.</p>
+              </div>
+              <div class="settings-actions inline-actions">
+                <button id="settingsRescanLibrary" class="ghost">⟳ Fast Rescan</button>
+                <button id="settingsEnrichMetadata" class="ghost">✦ Enrich Metadata</button>
+                <button id="settingsCleanupLibrary" class="ghost">🧹 Cleanup</button>
+                <button id="settingsAddLibrary" class="primary">＋ Add Library</button>
+              </div>
+            </div>
+            <div class="libraries-table-wrap">
+              <table class="libraries-table">
+                <thead><tr><th>Name</th><th>Type</th><th>Folder</th><th>Actions</th></tr></thead>
+                <tbody id="librariesTableBody"></tbody>
+              </table>
+            </div>
+            <p id="settingsLibraryStatus" class="sub"></p>
+            <div class="settings-library-card compact hidden" id="libraryEditor">
+              <h3 id="libraryEditorTitle">Add Library</h3>
+              <label for="libraryNameInput">Library name</label>
+              <input id="libraryNameInput" placeholder="Manuals" />
+              <label for="libraryTypeInput">Library type</label>
+              <select id="libraryTypeInput">
+                <option>Mixed</option>
+                <option>Manuals</option>
+                <option>Strategy Guides</option>
+                <option>Magazines</option>
+              </select>
+              <label for="libraryFolderInput">Folder path</label>
+              <div class="folder-input-row">
+                <input id="libraryFolderInput" placeholder="/app/data/library/manuals" />
+                <button id="libraryFolderBrowse" class="ghost" type="button">Path Help</button>
+              </div>
+              <p class="sub">Use one folder path per library entry. Guidevault scans this folder in place; it does not upload or copy files. Paste one full folder path for this library entry.</p>
+              <div class="settings-actions">
+                <button id="libraryEditorSave" class="primary">Save Library</button>
+                <button id="libraryEditorCancel" class="ghost">Cancel</button>
+              </div>
+            </div>
+          </section>
+          <section id="settingsInfoPanel" class="settings-section-panel hidden system-info-panel">
+            <div class="settings-page-kicker">SYSTEM</div>
+            <h1>About System</h1>
+            <div class="system-about-grid">
+              <div class="system-info-field">
+                <span>Version</span>
+                <strong id="systemVersion">—</strong>
+              </div>
+              <div class="system-info-field">
+                <span>Install ID</span>
+                <strong id="systemInstallId">—</strong>
+              </div>
+              <div class="system-info-field">
+                <span>First Install Version</span>
+                <strong id="systemFirstInstallVersion">—</strong>
+              </div>
+              <div class="system-info-field">
+                <span>First Install Date</span>
+                <strong id="systemFirstInstallDate">—</strong>
+              </div>
+            </div>
+
+            <hr class="system-info-divider" />
+
+            <h2>More Info</h2>
+            <div class="system-more-info-grid">
+              <span>App:</span><strong id="systemAppName">Guidevault</strong>
+              <span>Mode:</span><strong id="systemRuntimeMode">Local self-hosted web app</strong>
+              <span>Supported Files:</span><strong id="systemSupportedFiles">CBZ, CBR, PDF</strong>
+              <span>OPDS:</span><strong>/opds</strong>
+              <span>Configuration:</span><strong>data/config</strong>
+              <span>Cache:</span><strong>data/cache</strong>
+            </div>
+
+            <hr class="system-info-divider" />
+
+            <h2>Stable Updates</h2>
+            <div id="systemUpdateNotice" class="system-update-notice hidden" data-status="">
+              <div class="system-update-notice-main">
+                <strong id="systemUpdateStatus">Stable update notifications are not configured yet.</strong>
+                <span>Current: <b id="systemUpdateCurrent">—</b> • Latest: <b id="systemUpdateLatest">—</b></span>
+                <span>Image: <b id="systemUpdateImage">—</b></span>
+              </div>
+              <ul id="systemUpdateNotes" class="system-update-notes"><li>No release notes were provided by the stable feed.</li></ul>
+              <div class="system-diagnostic-actions">
+                <button id="systemCheckUpdates" class="ghost" type="button">Check for stable update</button>
+                <a id="systemUpdateLink" class="ghost hidden" href="#" target="_blank" rel="noreferrer">Open release</a>
+              </div>
+            </div>
+
+            <hr class="system-info-divider" />
+
+            <h2>Performance</h2>
+            <div class="system-more-info-grid system-performance-grid">
+              <span>Working Set:</span><strong id="systemWorkingSet">—</strong>
+              <span>Private Memory:</span><strong id="systemPrivateMemory">—</strong>
+              <span>.NET Managed Memory:</span><strong id="systemManagedMemory">—</strong>
+              <span>GC Mode:</span><strong id="systemGcMode">—</strong>
+              <span>Library Items:</span><strong id="systemCachedItems">—</strong>
+              <span>Tasks:</span><strong id="systemActiveTasks">—</strong>
+              <span>Last Scan:</span><strong id="systemLastScan">—</strong>
+              <span>Archive Entry Cache:</span><strong id="systemArchiveEntryCache">—</strong>
+              <span>Disk Cover Cache:</span><strong id="systemCoverDiskCache">—</strong>
+            </div>
+            <div class="system-diagnostic-actions">
+              <button id="systemTrimMemory" class="ghost" type="button">Trim memory caches</button>
+            </div>
+
+            <hr class="system-info-divider" />
+
+            <h2>Update History</h2>
+            <div class="system-update-list">
+              <details class="system-update-entry" open>
+                <summary>
+                  <span>Guidevault 0.9.30 - Library Scope Classification Fix</span>
+                  <em>Installed</em>
+                </summary>
+                <div class="system-update-body">
+                  <h3>Fixed <b>5</b></h3>
+                  <ul>
+                    <li>Fixed mixed Manual and Strategy Guide libraries fighting over the same indexed files when configured library folders overlap.</li>
+                    <li>Added deterministic one-owner-per-file discovery so the most-specific configured library folder wins during scans.</li>
+                    <li>Made explicit library types authoritative, while allowing Mixed libraries named Manuals, Strategy Guides, or Magazines to inherit the expected content type.</li>
+                    <li>Fast rescans now repair cached items whose content type no longer matches the owning library.</li>
+                    <li>Updated app version metadata for browser heartbeat and stable-image update checks.</li>
+                  </ul>
+                </div>
+              </details>
+              <details class="system-update-entry">
+                <summary>
+                  <span>Guidevault 0.9.29 - Platform Classification Expansion</span>
+                  <em>Installed</em>
+                </summary>
+                <div class="system-update-body">
+                  <h3>Fixed <b>5</b></h3>
+                  <ul>
+                    <li>Expanded fast-index platform detection for retro systems that were falling into Unsorted Manuals, including Atari, Amstrad, ColecoVision, Daphne/LaserDisc, Intellivision, Vectrex, Commodore, MSX, ZX Spectrum, Neo Geo, and Philips CD-i platforms.</li>
+                    <li>Kept the fast scan path lightweight while improving folder/file-name inference for platform libraries.</li>
+                    <li>Reduced manual misclassification caused by missing platform aliases rather than actual content-type errors.</li>
+                    <li>Fast rescans now repair already-cached Unsorted items when improved path inference can classify them without reopening the archive.</li>
+                    <li>Updated the app version metadata used by the browser heartbeat and stable-image update checks.</li>
+                  </ul>
+                </div>
+              </details>
+              <details class="system-update-entry">
+                <summary>
+                  <span>Guidevault 0.9.28 - Metadata Classification Hotfix</span>
+                  <em>Installed</em>
+                </summary>
+                <div class="system-update-body">
+                  <h3>Fixed <b>3</b></h3>
+                  <ul>
+                    <li>Fixed filename inference so titles like Primal Rage are no longer mistaken for Prima strategy guides.</li>
+                    <li>Changed guide, magazine, and publisher keyword detection to use whole-word matching instead of broad substring matching.</li>
+                    <li>Kept the fast indexing path intact while making manual/strategy-guide classification safer for mixed libraries.</li>
+                  </ul>
+                </div>
+              </details>
+              <details class="system-update-entry">
+                <summary>
+                  <span>Guidevault 0.9.27 - Fast Indexing and Metadata Enrichment</span>
+                  <em>Installed</em>
+                </summary>
+                <div class="system-update-body">
+                  <h3>Changed <b>5</b></h3>
+                  <ul>
+                    <li>Changed normal library rescans into a fast index pass that avoids opening every CBZ archive for ComicInfo metadata.</li>
+                    <li>Added a separate low-priority Metadata Enrichment action for deeper ComicInfo import after the library is already usable.</li>
+                    <li>Removed expensive last-modified sorting during file discovery so network-mounted libraries begin indexing sooner.</li>
+                    <li>Added scan timing and reuse/deferred metadata counters to Info → System → Performance.</li>
+                    <li>Updated task messages so scanning, cleanup, and enrichment show clearer progress and do not look stuck during large libraries.</li>
+                  </ul>
+                </div>
+              </details>
+              <details class="system-update-entry">
+                <summary>
+                  <span>Guidevault 0.9.26 - Performance Stabilization and Stable Image Updates</span>
+                  <em>Installed</em>
+                </summary>
+                <div class="system-update-body">
+                  <h3>Changed <b>5</b></h3>
+                  <ul>
+                    <li>Changed cover caching so large cover byte arrays are kept on disk instead of being pinned in memory after burst loads.</li>
+                    <li>Reduced aggressive offscreen cover preloading so the browser requests fewer covers before they are actually near the visible library area.</li>
+                    <li>Added Info → System performance diagnostics for working set, private memory, managed memory, cache counts, task counts, and disk cover cache size.</li>
+                    <li>Added a safe memory trim action for clearing in-memory archive/cover request caches without deleting persistent user data.</li>
+                    <li>Added stable container image update notifications driven by a configurable update feed for Docker/GHCR-style releases.</li>
+                  </ul>
+                </div>
+              </details>
+              <details class="system-update-entry">
+                <summary>
+                  <span>Guidevault 0.9.25 - Reader Hit-Zone Overlay Cleanup</span>
+                  <em>Installed</em>
+                </summary>
+                <div class="system-update-body">
+                  <h3>Fixed <b>3</b></h3>
+                  <ul>
+                    <li>Changed the invisible reader click zones from focusable buttons to non-focusable overlay regions.</li>
+                    <li>Added a stronger reader keyboard cleanup so fullscreen and page navigation keys do not leave vertical focus outlines over the scanned pages.</li>
+                    <li>Kept mouse/touch page navigation behavior intact while removing browser button focus artifacts from the reader surface.</li>
+                  </ul>
+                </div>
+              </details>
+              <details class="system-update-entry">
+                <summary>
+                  <span>Guidevault 0.9.24 - Login Cleanup and Reader Key Focus Polish</span>
+                  <em>Installed</em>
+                </summary>
+                <div class="system-update-body">
+                  <h3>Changed <b>3</b></h3>
+                  <ul>
+                    <li>Cleaned up the login screen so first-run setup guidance only appears while creating the first local profile.</li>
+                    <li>Removed the persistent login help text from the bottom of the login card.</li>
+                    <li>Suppressed reader hit-zone focus outlines so fullscreen and navigation keybinds do not draw vertical guide lines over the page.</li>
+                  </ul>
+                </div>
+              </details>
+              <details class="system-update-entry">
+                <summary>
+                  <span>Guidevault 0.9.23 - OPDS, Docker Path Help, and Reader Keybinds</span>
+                  <em>Installed</em>
+                </summary>
+                <div class="system-update-body">
+                  <h3>Changed <b>5</b></h3>
+                  <ul>
+                    <li>Removed the duplicate OPDS authorization key button from the Account OPDS screen.</li>
+                    <li>Changed library folder placeholders to Linux/Docker-style paths such as /app/data/library.</li>
+                    <li>Added a Docker-aware folder browser so Path Help can browse server/container folders and mounted volumes.</li>
+                    <li>Activated reader keybinds for fullscreen, bookmark, page navigation, go-to-page, overlay toggle, and first/last page commands.</li>
+                    <li>Kept Docker defaults aligned to port 5478 for generated container packages.</li>
+                  </ul>
+                </div>
+              </details>
+              <details class="system-update-entry">
+                <summary>
+                  <span>Guidevault 0.9.22 - Default Port Reassignment</span>
+                  <em>Installed</em>
+                </summary>
+                <div class="system-update-body">
+                  <h3>Changed <b>3</b></h3>
+                  <ul>
+                    <li>Changed the default Guidevault web port from 5000 to 5478 to avoid conflicts with Kavita.</li>
+                    <li>Added local development launch settings so dotnet run opens Guidevault on http://localhost:5478.</li>
+                    <li>Updated Kestrel defaults so portable builds listen on port 5478 unless overridden by command-line or environment settings.</li>
+                  </ul>
+                </div>
+              </details>
+              <details class="system-update-entry">
+                <summary>
+                  <span>Guidevault 0.9.21 - Release Packaging Automation</span>
+                  <em>Installed</em>
+                </summary>
+                <div class="system-update-body">
+                  <h3>Changed <b>5</b></h3>
+                  <ul>
+                    <li>Added a release script that publishes Guidevault as a self-contained portable Windows build.</li>
+                    <li>Added automatic portable ZIP creation under artifacts/releases.</li>
+                    <li>Added SHA256 checksum generation for validating release packages.</li>
+                    <li>Added release notes and starter latest.json manifest output for future update notifications.</li>
+                    <li>Added cleanup safeguards so user data, OPDS keys, device history, cache, and local configuration are stripped from release packages.</li>
+                  </ul>
+                </div>
+              </details>
+              <details class="system-update-entry">
+                <summary>
+                  <span>Guidevault 0.9.20 - Metadata Dropdown Control Cleanup</span>
+                  <em>Installed</em>
+                </summary>
+                <div class="system-update-body">
+                  <h3>Changed <b>4</b></h3>
+                  <ul>
+                    <li>Changed Guide Type from a listbox into a themed dropdown with multi-select checkboxes.</li>
+                    <li>Changed Edition Type into a themed multi-select dropdown while keeping Year Edition and Volume Edition detail fields working.</li>
+                    <li>Changed ESRB Rating into a dropdown with standard ESRB choices.</li>
+                    <li>Removed the visible container styling around the upper-right username control.</li>
+                  </ul>
+                </div>
+              </details>
+              <details class="system-update-entry">
+                <summary>
+                  <span>Guidevault 0.9.19 - Header User Menu and Guide Metadata Controls</span>
+                  <em>Installed</em>
+                </summary>
+                <div class="system-update-body">
+                  <h3>Changed <b>4</b></h3>
+                  <ul>
+                    <li>Moved the current-user control into the top-right header row with Tasks and Settings so it no longer wraps underneath the search bar.</li>
+                    <li>Changed Guide Type into a multi-select list with common guide classifications such as Official Guide, Hint Book, Code Book, Art Book, and Tips & Tricks.</li>
+                    <li>Changed Edition into an edition-type selector with dedicated Year Edition and Volume Edition inputs.</li>
+                    <li>Saved derived edition text while preserving year and volume metadata fields for future metadata manager use.</li>
+                  </ul>
+                </div>
+              </details>
+              <details class="system-update-entry">
+                <summary>
+                  <span>Guidevault 0.9.18 - Navigation Performance, Favorites, and User Menu</span>
+                  <em>Installed</em>
+                </summary>
+                <div class="system-update-body">
+                  <h3>Changed <b>5</b></h3>
+                  <ul>
+                    <li>Themed native dropdown options so the Categories mode selector no longer opens as a bright default browser menu.</li>
+                    <li>Activated the library card favorite star and wired the Favorites side-nav count/filter.</li>
+                    <li>Added the current user menu to the upper-right corner with My Profile, Help, and Log out actions.</li>
+                    <li>Added reader/navigation cleanup to release page images and reader overlays when switching between books or leaving the reader.</li>
+                    <li>Reduced repeated per-card click handlers so grid navigation relies on delegated events instead of accumulating listeners.</li>
+                  </ul>
+                </div>
+              </details>
+              <details class="system-update-entry">
+                <summary>
+                  <span>Guidevault 0.9.17 - Login Wallpaper, Category Modes, and Cover Sizing</span>
+                  <em>Installed</em>
+                </summary>
+                <div class="system-update-body">
+                  <h3>Changed <b>5</b></h3>
+                  <ul>
+                    <li>Set the login page to use assets/backgrounds/loginwallpaper.png as the wallpaper background with the normal Guidevault gradient as fallback.</li>
+                    <li>Changed the sidebar Categories heading into a browsing-mode dropdown.</li>
+                    <li>Added category browsing modes for content type, platform/publication, publisher, and decade.</li>
+                    <li>Made sidebar category groups collapsed by default on app start.</li>
+                    <li>Added a Cover size slider beside the sort dropdown so library/card cover containers can be scaled up or down.</li>
+                  </ul>
+                </div>
+              </details>
+              <details class="system-update-entry">
+                <summary>
+                  <span>Guidevault 0.9.16 - Library Hub Subtitle Spacing Cleanup</span>
+                  <em>Installed</em>
+                </summary>
+                <div class="system-update-body">
+                  <h3>Changed <b>3</b></h3>
+                  <ul>
+                    <li>Removed the duplicate subtitle from the main Manuals, Strategy Guides, and Magazines hub screens.</li>
+                    <li>Moved the library hub overview panel upward so the page uses the space left behind by the removed subtitle.</li>
+                    <li>Kept category/detail views unchanged while tightening only the top-level content-type hub layout.</li>
+                  </ul>
+                </div>
+              </details>
+              <details class="system-update-entry">
+                <summary>
+                  <span>Guidevault 0.9.15 - Library Menu Layout Refresh</span>
+                  <em>Installed</em>
+                </summary>
+                <div class="system-update-body">
+                  <h3>Changed <b>4</b></h3>
+                  <ul>
+                    <li>Reworked the main Manuals, Strategy Guides, and Magazines menu screens into cleaner library hub pages.</li>
+                    <li>Added a compact overview strip showing total entries, platform/publication groups, and total library size.</li>
+                    <li>Replaced the large single-cover category cards with wider tiles that show platform identity, useful counts, latest item context, and a small cover preview strip.</li>
+                    <li>Removed duplicate-looking category count presentation so each tile reads less cluttered.</li>
+                  </ul>
+                </div>
+              </details>
+              <details class="system-update-entry">
+                <summary>
+                  <span>Guidevault 0.9.14 - Home Bar Magazine Icon and Shelf Badge Cleanup</span>
+                  <em>Installed</em>
+                </summary>
+                <div class="system-update-body">
+                  <h3>Changed <b>3</b></h3>
+                  <ul>
+                    <li>Pointed the Magazines home-bar button at the standard magazines.png icon name first, with a fallback to the earlier magainzes.png filename.</li>
+                    <li>Made the home-bar icon fallback handler recover if the browser reports a missing image before the app script finishes loading.</li>
+                    <li>Removed the content-type filter badges above the Home shelves so the Recently Added shelf area is cleaner.</li>
+                  </ul>
+                </div>
+              </details>
+              <details class="system-update-entry">
+                <summary>
+                  <span>Guidevault 0.9.13 - Home Bar Icon Refresh</span>
+                  <em>Installed</em>
+                </summary>
+                <div class="system-update-body">
+                  <h3>Changed <b>2</b></h3>
+                  <ul>
+                    <li>Replaced the left Home bar text glyphs for Home, Manuals, Strategy Guides, and Magazines with the image icons from assets/icons/homebar.</li>
+                    <li>Added dedicated sidebar icon styling so the home bar artwork scales cleanly in expanded and collapsed navigation modes.</li>
+                  </ul>
+                </div>
+              </details>
+              <details class="system-update-entry">
+                <summary>
+                  <span>Guidevault 0.9.12 - Statistics and Shelf Motion Polish</span>
+                  <em>Installed</em>
+                </summary>
+                <div class="system-update-body">
+                  <h3>Changed <b>5</b></h3>
+                  <ul>
+                    <li>Updated Home shelf navigation so left/right shelf arrows slide the shelf content instead of jumping instantly.</li>
+                    <li>Removed the redundant Insights → Activity submenu and routed the Insights parent toward Statistics.</li>
+                    <li>Replaced the temporary Statistics summary glyphs with cleaner inline SVG icons for series, items, content types, size, file types, and read events.</li>
+                    <li>Changed Reading Activity to chart Manuals, Strategy Guides, and Magazines instead of file-format groups.</li>
+                    <li>Improved the Management files-added timeline with a legend, month labels, and labeled horizontal count lines.</li>
+                  </ul>
+                </div>
+              </details>
+              <details class="system-update-entry">
+                <summary>
+                  <span>Guidevault 0.9.11 - Home Shelf Carousel and Performance</span>
+                  <em>Installed</em>
+                </summary>
+                <div class="system-update-body">
+                  <h3>Changed <b>3</b></h3>
+                  <ul>
+                    <li>Home shelves now show the first six items instead of wrapping into extra rows.</li>
+                    <li>Added left/right shelf arrows so larger shelves can page through items in-place.</li>
+                    <li>Reduced cover-image work by lazy loading shelf/grid covers closer to the visible viewport.</li>
+                  </ul>
+                  <h3>Fixed <b>1</b></h3>
+                  <ul><li>Deferred hidden Statistics management rendering unless the Management tab is active to reduce settings-screen workload.</li></ul>
+                </div>
+              </details>
+              <details class="system-update-entry">
+                <summary>
+                  <span>Guidevault 0.9.10 - Keybinds, Home Customize, and Statistics</span>
+                  <em>Installed</em>
+                </summary>
+                <div class="system-update-body">
+                  <h3>Added <b>4</b></h3>
+                  <ul>
+                    <li>Added Account → Key Binds with blue-themed key chips, alternate key actions, and reset controls.</li>
+                    <li>Added Account → Customize with a Home shelf manager for replacing the fixed Recently Added shelf with selectable shelves.</li>
+                    <li>Added Insights → Statistics with library totals, popular/recent lists, active-user cards, and reading activity.</li>
+                    <li>Added a Statistics Management tab with files-added timeline and format totals by size and file count.</li>
+                  </ul>
+                  <h3>Changed <b>1</b></h3>
+                  <ul><li>Renamed the visible All Content landing label to Home while keeping the internal All Content filter behavior intact.</li></ul>
+                </div>
+              </details>
+              <details class="system-update-entry">
+                <summary>
+                  <span>Guidevault 0.9.9 - Platform Icon Container Cleanup</span>
+                  <em>Installed</em>
+                </summary>
+                <div class="system-update-body">
+                  <h3>Changed <b>2</b></h3>
+                  <ul>
+                    <li>Removed the visible chip/container styling around associated-platform icons on multi-platform strategy guide library cards.</li>
+                    <li>Kept the platform icons underneath the title while allowing them to sit directly on the card background.</li>
+                  </ul>
+                </div>
+              </details>
+              <details class="system-update-entry">
+                <summary>
+                  <span>Guidevault 0.9.8 - Multi-Platform Preferred Platform Rules</span>
+                  <em>Installed</em>
+                </summary>
+                <div class="system-update-body">
+                  <h3>Changed <b>4</b></h3>
+                  <ul>
+                    <li>Preferred Platform now becomes read-only and displays Multi-Platform when a strategy guide has multiple Associated Platforms.</li>
+                    <li>Library cards now show a row of associated platform icons under the title for multi-platform strategy guides.</li>
+                    <li>Multi-platform guide cards now show Multi-Platform as their system label while still appearing in each associated platform library.</li>
+                    <li>The details overview System field now shows the currently browsed platform when opening a guide from a platform library.</li>
+                  </ul>
+                </div>
+              </details>
+              <details class="system-update-entry">
+                <summary>
+                  <span>Guidevault 0.9.7 - Associated Platform Library Membership</span>
+                  <em>Installed</em>
+                </summary>
+                <div class="system-update-body">
+                  <h3>Changed <b>4</b></h3>
+                  <ul>
+                    <li>Strategy guides now appear in each platform library listed in their Associated Platforms field.</li>
+                    <li>Stopped treating multi-platform guides as a separate library bucket when associated platforms are available.</li>
+                    <li>Renamed the visible System / Category metadata field to Preferred Platform for clearer editing.</li>
+                    <li>Added Associated Platforms to the default Metadata Manager grid so multi-platform placement is easier to review and edit.</li>
+                  </ul>
+                </div>
+              </details>
+              <details class="system-update-entry">
+                <summary>
+                  <span>Guidevault 0.9.6 - Metadata Focus Filters</span>
+                  <em>Installed</em>
+                </summary>
+                <div class="system-update-body">
+                  <h3>Changed <b>3</b></h3>
+                  <ul>
+                    <li>Added Focus dropdown filters for Unsorted Strategy Guides and strategy guides with multiple associated platforms in Server → Metadata Manager.</li>
+                    <li>Updated Metadata Manager summary stats to expose unsorted and multi-platform strategy guide counts while filtering.</li>
+                    <li>Kept the filters aligned with existing Guidevault strategy guide grouping rules while preparing for associated-platform based placement.</li>
+                  </ul>
+                </div>
+              </details>
+              <details class="system-update-entry">
+                <summary>
+                  <span>Guidevault 0.9.5 - Metadata Cover Hold Preview</span>
+                </summary>
+                <div class="system-update-body">
+                  <h3>Added <b>2</b></h3>
+                  <ul>
+                    <li>Added click-and-hold cover previews to the Metadata Manager Type column.</li>
+                    <li>Preview cards show the selected entry cover, title, content type, year, and category/system without opening the details pane.</li>
+                  </ul>
+                </div>
+              </details>
+              <details class="system-update-entry">
+                <summary>
+                  <span>Guidevault 0.9.4 - Metadata Manager Normalize and Columns</span>
+                </summary>
+                <div class="system-update-body">
+                  <h3>Changed <b>4</b></h3>
+                  <ul>
+                    <li>Updated Normalize Selected so it visibly cleans title/name values instead of only filling invisible defaults.</li>
+                    <li>Changed language normalization to use the full word English, while keeping region normalization as US.</li>
+                    <li>Added a Metadata Manager column picker with all available metadata fields listed for show/hide control.</li>
+                    <li>Updated CSV export so it follows the currently visible metadata columns.</li>
+                  </ul>
+                </div>
+              </details>
+              <details class="system-update-entry">
+                <summary>
+                  <span>Guidevault 0.9.3 - Server Metadata Manager</span>
+                </summary>
+                <div class="system-update-body">
+                  <h3>Added <b>4</b></h3>
+                  <ul>
+                    <li>Added Server → Metadata Manager as a bulk metadata workspace for manuals, strategy guides, and magazines.</li>
+                    <li>Added a grid view for title, category/system, series/publication, language, region, year, publisher, topics, games, and metadata source.</li>
+                    <li>Added batch metadata tools for language, region, category/system, publisher, and tags/topics.</li>
+                    <li>Added export/import hooks so metadata can be reviewed outside Guidevault and brought back as JSON.</li>
+                  </ul>
+                </div>
+              </details>
+              <details class="system-update-entry">
+                <summary>
+                  <span>Guidevault 0.9.2 - System History Blue Theme Cleanup</span>
+                </summary>
+                <div class="system-update-body">
+                  <h3>Changed <b>2</b></h3>
+                  <ul>
+                    <li>Updated the Info → System update-history cards from the temporary purple accent to the default Guidevault blue theme.</li>
+                    <li>Aligned the More Info accent/link styling with the default blue interface color.</li>
+                  </ul>
+                </div>
+              </details>
+              <details class="system-update-entry">
+                <summary>
+                  <span>Guidevault 0.9.1 - System Info and Local App Polish</span>
+                </summary>
+                <div class="system-update-body">
+                  <h3>Added <b>3</b></h3>
+                  <ul>
+                    <li>Added the Info → System page with version, install identity, and first-install metadata.</li>
+                    <li>Added a stable Guidevault install ID generated as a local <code>GV-YYYYMMDD-XXXXXXXX</code> identifier.</li>
+                    <li>Added More Info and Update History sections to match the system-style settings layout.</li>
+                  </ul>
+                  <h3>Changed <b>1</b></h3>
+                  <ul>
+                    <li>Magazine detail overview cards no longer show the Issue Identity and Classification card headers.</li>
+                  </ul>
+                </div>
+              </details>
+            </div>
+            <p id="systemInfoStatus" class="sub account-status" aria-live="polite"></p>
+          </section>
+        </div>
+      </section>
+
+      <section id="readerView" class="reader-view hidden">
+        <div class="reader-toolbar compact-reader-toolbar">
+          <strong id="readerTitle">Reader</strong>
+        </div>
+        <div id="readerStage" class="reader-stage">
+          <div id="leftHit" class="page-hit left" aria-hidden="true"></div>
+          <div id="centerHit" class="page-hit center" aria-hidden="true"></div>
+          <div id="book" class="book">
+            <div id="pageShell" class="page-shell">
+              <div id="pageLeft" class="page-side left-page hidden"><img id="pageLeftImage" alt="Left page" /></div>
+              <div id="pageRight" class="page-side right-page"><img id="pageRightImage" alt="Right page" /></div>
+            </div>
+            <div id="previousSpread" class="previous-spread hidden" aria-hidden="true">
+              <div id="prevLeft" class="page-side prev-left"><img id="prevLeftImage" alt="Previous left page" /></div>
+              <div id="prevRight" class="page-side prev-right"><img id="prevRightImage" alt="Previous right page" /></div>
+            </div>
+            <div id="underPage" class="under-page hidden"><img id="underImage" alt="Revealed page" /></div>
+            <div id="turningPage" class="turning-page hidden">
+              <div class="turn-face turn-front"><img id="turningImage" alt="Turning page front" /></div>
+              <div class="turn-face turn-back"><img id="turningBackImage" alt="Turning page back" /></div>
+            </div>
+          </div>
+          <div id="readerHud" class="reader-hud hidden" role="dialog" aria-label="Reader controls">
+            <div class="reader-hud-grabber" aria-hidden="true"></div>
+            <div class="reader-hud-main-row reader-hud-main-row-controls">
+              <div class="reader-tray-actions reader-tray-left-actions">
+                <button id="prevPage" class="reader-tray-button primary-action" type="button">‹ Previous</button>
+                <button id="readerExitDetails" class="reader-tray-button" type="button">Details</button>
+                <button id="readerExitLibrary" class="reader-tray-button" type="button">Library</button>
+              </div>
+              <div class="reader-position-block">
+                <span class="reader-hud-kicker">Page Position</span>
+                <strong id="readerPagePosition">Page 1 of 1</strong>
+              </div>
+              <div class="reader-hud-controls">
+                <div class="reader-display-zoom-group">
+                  <label for="readerDisplayModeSelect">Display
+                    <select id="readerDisplayModeSelect">
+                      <option value="1">1 Page</option>
+                      <option value="2" selected>2 Pages</option>
+                      <option value="3">2 Pages Adaptive</option>
+                    </select>
+                  </label>
+                  <div class="reader-zoom-buttons" aria-label="Reader zoom controls">
+                    <button id="readerZoomOut" class="reader-tray-button reader-icon-button reader-zoom-button" type="button" aria-label="Zoom out" title="Zoom out">−</button>
+                    <button id="readerZoomIn" class="reader-tray-button reader-icon-button reader-zoom-button" type="button" aria-label="Zoom in" title="Zoom in">+</button>
+                    <div class="reader-magnifier-wrap">
+                      <button id="readerMagnifierToggle" class="reader-tray-button reader-icon-button reader-magnifier-button" type="button" aria-label="Toggle magnifier" aria-pressed="false" title="Toggle magnifier">
+                        <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><circle cx="10.5" cy="10.5" r="6.1"></circle><path d="M15.2 15.2 21 21"></path></svg>
+                      </button>
+                      <button id="readerMagnifierMenu" class="reader-tray-button reader-icon-button reader-magnifier-menu-button" type="button" aria-label="Magnifier settings" aria-expanded="false" title="Magnifier settings">▾</button>
+                      <div id="readerMagnifierPanel" class="reader-magnifier-panel hidden" role="group" aria-label="Magnifier settings">
+                        <div class="reader-panel-title">Magnifier</div>
+                        <label class="reader-magnifier-setting" for="readerMagnifierWidth"><span>Width</span><input id="readerMagnifierWidth" type="range" min="160" max="520" value="320" step="10" /></label>
+                        <label class="reader-magnifier-setting" for="readerMagnifierHeight"><span>Height</span><input id="readerMagnifierHeight" type="range" min="120" max="420" value="220" step="10" /></label>
+                        <label class="reader-magnifier-setting" for="readerMagnifierOpacity"><span>Opacity</span><input id="readerMagnifierOpacity" type="range" min="35" max="100" value="92" step="1" /></label>
+                        <label class="reader-magnifier-setting" for="readerMagnifierZoom"><span>Zoom</span><input id="readerMagnifierZoom" type="range" min="130" max="360" value="220" step="10" /></label>
+                        <label class="reader-magnifier-longpress" for="readerMagnifierLongClick"><input id="readerMagnifierLongClick" type="checkbox" checked /><span>Activate with long click</span></label>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+                <label for="readerTransitionSelect">Transition
+                  <select id="readerTransitionSelect">
+                    <option value="stable" selected>Stable Swap</option>
+                    <option value="fade">Quick Fade</option>
+                    <option value="dissolve">Soft Dissolve</option>
+                    <option value="slide">Slide</option>
+                    <option value="push">Push</option>
+                    <option value="page">Page Turn Effect</option>
+                  </select>
+                </label>
+              </div>
+              <div class="reader-tray-actions reader-tray-right-actions">
+                <button id="readerBookmarkPage" class="reader-tray-button reader-icon-button reader-bookmark-button" type="button" aria-label="Bookmark current page" aria-pressed="false" title="Bookmark current page">
+                  <svg class="reader-bookmark-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+                    <path d="M7 4.5c0-.83.67-1.5 1.5-1.5h7c.83 0 1.5.67 1.5 1.5v16.2l-5-3.15-5 3.15V4.5Z"></path>
+                  </svg>
+                </button>
+                <div class="reader-advanced-wrap">
+                  <button id="readerAdvancedSettings" class="reader-tray-button reader-icon-button reader-advanced-button" type="button" aria-label="Advanced reader settings" aria-expanded="false" title="Advanced reader settings">⚙</button>
+                  <div id="readerAdvancedPanel" class="reader-advanced-panel hidden" role="group" aria-label="Advanced reader settings">
+                    <div class="reader-background-controls" aria-label="Reader background controls">
+                      <div class="reader-panel-title">Background</div>
+                      <div class="reader-background-row">
+                        <div id="readerBackgroundPreview" class="reader-background-preview empty" aria-hidden="true"></div>
+                        <label class="reader-background-select-wrap" for="readerBackgroundSelect">
+                          <span>Reader Background</span>
+                          <select id="readerBackgroundSelect">
+                            <option value="">Default Gradient</option>
+                          </select>
+                          <em id="readerBackgroundName">Default Gradient</em>
+                        </label>
+                      </div>
+                      <label class="reader-background-brightness" for="readerBackgroundBrightness">
+                        <span>Background Brightness <em id="readerBackgroundBrightnessValue">72%</em></span>
+                        <input id="readerBackgroundBrightness" type="range" min="15" max="100" value="72" step="1" />
+                      </label>
+                    </div>
+                    <div class="reader-shading-controls" aria-label="Reader shading controls">
+                      <div class="reader-shade-group">
+                        <label class="reader-shade-toggle" for="readerBindingShadeEnabled">
+                          <input id="readerBindingShadeEnabled" type="checkbox" checked />
+                          <span>Binding Shading</span>
+                        </label>
+                        <label class="reader-shade-slider" for="readerBindingShadeSlider">
+                          <span>Depth</span>
+                          <input id="readerBindingShadeSlider" type="range" min="0" max="100" value="68" step="1" />
+                        </label>
+                      </div>
+                      <div class="reader-shade-group">
+                        <label class="reader-shade-toggle" for="readerOuterShadeEnabled">
+                          <input id="readerOuterShadeEnabled" type="checkbox" checked />
+                          <span>Outer Edge Shading</span>
+                        </label>
+                        <label class="reader-shade-slider" for="readerOuterShadeSlider">
+                          <span>Depth</span>
+                          <input id="readerOuterShadeSlider" type="range" min="0" max="100" value="62" step="1" />
+                        </label>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+                <button id="readerFullscreen" class="reader-tray-button" type="button">Fullscreen</button>
+                <button id="nextPage" class="reader-tray-button primary-action" type="button">Next ›</button>
+              </div>
+            </div>
+            <div class="reader-scrubber-wrap">
+              <div class="reader-scrubber-labels"><span>Page 1</span><span id="readerPageLastLabel">Page 1</span></div>
+              <input id="readerPageSlider" class="reader-page-slider" type="range" min="1" max="1" value="1" step="1" aria-label="Jump to page" />
+            </div>
+          </div>
+          <div id="readerMagnifier" class="reader-magnifier hidden" aria-hidden="true"><div id="readerMagnifierContent" class="reader-magnifier-content"></div></div>
+          <div id="rightHit" class="page-hit right" aria-hidden="true"></div>
+        </div>
+      </section>
+    </main>
+
+
+  <div id="appConfirmModal" class="app-modal hidden" role="dialog" aria-modal="true" aria-labelledby="appConfirmTitle">
+    <div class="app-modal-card confirm-modal-card">
+      <h2 id="appConfirmTitle">Confirm action</h2>
+      <p id="appConfirmMessage" class="sub">Are you sure?</p>
+      <div class="app-modal-actions">
+        <button id="appConfirmCancel" class="ghost" type="button">Cancel</button>
+        <button id="appConfirmOk" class="danger" type="button">Remove</button>
+      </div>
+    </div>
+  </div>
+
+  <dialog id="libraryDialog">
+    <form class="dialog-card wide">
+      <h2>Library Folder</h2>
+      <p class="sub">Add a library folder and Guidevault will scan/read files in place. It does not upload, copy, or move your manuals, guides, or magazines into the app.</p>
+      <label for="libraryPathInput">Library folder path</label>
+      <div class="folder-input-row">
+        <input id="libraryPathInput" placeholder="/app/data/library" />
+        <button id="libraryPathBrowse" class="ghost" type="button">Path Help</button>
+      </div>
+      <p id="libraryDialogStatus" class="sub"></p>
+      <menu><button type="button" class="ghost" onclick="libraryDialog.close()">Cancel</button><button id="saveLibraryPath" class="primary">Save & Scan Library</button></menu>
+    </form>
+  </dialog>
+
+
+  <dialog id="folderBrowseDialog" class="folder-browse-dialog">
+    <form class="dialog-card wide folder-browse-card" method="dialog">
+      <div class="folder-browse-title-row">
+        <div>
+          <h2>Docker Folder Browser</h2>
+          <p class="sub">Browse folders from inside the running Guidevault server/container. Mounted Docker volumes appear as normal Linux folders here.</p>
+        </div>
+        <button id="folderBrowseClose" class="ghost" type="button">Close</button>
+      </div>
+      <div class="folder-browse-current">
+        <span>Current folder</span>
+        <strong id="folderBrowseCurrent">/app/data/library</strong>
+      </div>
+      <div id="folderBrowseQuickRoots" class="folder-browse-quick-roots" aria-label="Common Docker folders"></div>
+      <div id="folderBrowseList" class="folder-browse-list" role="list"></div>
+      <p id="folderBrowseStatus" class="sub"></p>
+      <menu>
+        <button id="folderBrowseUse" class="primary" type="button">Use This Folder</button>
+        <button id="folderBrowseCancel" class="ghost" type="button">Cancel</button>
+      </menu>
+    </form>
+  </dialog>
+
+
+  <script src="/app.js"></script>
+</body>
+</html>

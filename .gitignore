@@ -1,0 +1,76 @@
+# Build output
+bin/
+obj/
+.vs/
+artifacts/
+publish/
+published/
+release/
+releases/
+dist/
+out/
+
+# Runtime/user data
+data/
+Data/
+cache/
+Cache/
+logs/
+Logs/
+covers/
+Covers/
+thumbnails/
+Thumbnails/
+uploads/
+Uploads/
+library/
+Library/
+libraries/
+Libraries/
+books/
+Books/
+manuals/
+Manuals/
+strategy-guides/
+Strategy Guides/
+magazines/
+Magazines/
+
+# Databases
+*.db
+*.db-shm
+*.db-wal
+*.sqlite
+*.sqlite3
+
+# Local config/secrets
+appsettings.Production.json
+appsettings.Local.json
+appsettings.Development.local.json
+.env
+.env.*
+
+# Local Docker compose files
+docker-compose.yml
+docker-compose.yaml
+docker-compose.override.yml
+compose.yaml
+compose.yml
+compose.override.yaml
+compose.local.yaml
+
+# Temporary patch/build files
+patch.py
+*.bak
+*.tmp
+*.temp
+*.log
+*.zip
+*.7z
+*.rar
+
+# IDE / OS junk
+*.user
+*.suo
+.DS_Store
+Thumbs.db
