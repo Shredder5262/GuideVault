@@ -7,17 +7,23 @@ using System.Xml.Linq;
 using System.Text.RegularExpressions;
 using System.Runtime.InteropServices;
 using System.Diagnostics;
+using System.Net;
+using System.Net.Mail;
 using SharpCompress.Readers;
 
 var builder = WebApplication.CreateBuilder(args);
-const string GuidevaultVersion = "0.9.30";
+const string GuidevaultVersion = GuidevaultBuildInfo.Version;
 var app = builder.Build();
 var metadataJsonOptions = new JsonSerializerOptions(JsonSerializerDefaults.Web) { PropertyNameCaseInsensitive = true };
-var options = app.Configuration.GetSection("PageQuest").Get<PageQuestOptions>() ?? new PageQuestOptions();
+var options = app.Configuration.GetSection("Guidevault").Get<GuidevaultOptions>() ?? new GuidevaultOptions();
 var contentRoot = app.Environment.ContentRootPath;
 var configPath = Path.Combine(contentRoot, "data", "config", "library.settings.json");
 var metadataPath = Path.Combine(contentRoot, "data", "config", "metadata.overrides.json");
 var opdsSettingsPath = Path.Combine(contentRoot, "data", "config", "opds.settings.json");
+var serverSettingsPath = Path.Combine(contentRoot, "data", "config", "server.settings.json");
+var emailSettingsPath = Path.Combine(contentRoot, "data", "config", "email.settings.json");
+var usersSettingsPath = Path.Combine(contentRoot, "data", "config", "users.settings.json");
+var taskSettingsPath = Path.Combine(contentRoot, "data", "config", "task.settings.json");
 var deviceHistoryPath = Path.Combine(contentRoot, "data", "config", "device.history.json");
 var systemInfoPath = Path.Combine(contentRoot, "data", "config", "system.info.json");
 var webRoot = app.Environment.WebRootPath ?? Path.Combine(contentRoot, "wwwroot");
@@ -40,6 +46,10 @@ LibrarySettingsStore.Save(configPath, loadedSettings);
 
 var metadataStore = new MetadataStore(metadataPath);
 var opdsStore = new OpdsSettingsStore(opdsSettingsPath);
+var serverSettingsStore = new GuidevaultServerSettingsStore(serverSettingsPath, contentRoot);
+var emailSettingsStore = new GuidevaultEmailSettingsStore(emailSettingsPath);
+var usersStore = new GuidevaultUsersStore(usersSettingsPath);
+var taskSettingsStore = new GuidevaultTaskSettingsStore(taskSettingsPath);
 var deviceStore = new DeviceHistoryStore(deviceHistoryPath);
 var systemInfoStore = new SystemInfoStore(systemInfoPath, GuidevaultVersion);
 var indexCachePath = Path.Combine(contentRoot, "data", "cache", "library-index.json");
@@ -119,6 +129,91 @@ app.MapPost("/api/system/performance/trim", () =>
 });
 
 app.MapGet("/api/system/update-check", async () => Results.Ok(await updateChecker.CheckAsync()));
+
+app.MapGet("/api/server/settings", () => Results.Ok(serverSettingsStore.GetSnapshot()));
+
+app.MapPut("/api/server/settings", (GuidevaultServerSettings payload) =>
+{
+    var saved = serverSettingsStore.Update(payload ?? new GuidevaultServerSettings());
+    return Results.Ok(saved);
+});
+
+app.MapPost("/api/server/backup", () =>
+{
+    try
+    {
+        var backup = serverSettingsStore.CreateLibraryBackup(new[]
+        {
+            configPath,
+            metadataPath,
+            opdsSettingsPath,
+            deviceHistoryPath,
+            systemInfoPath,
+            emailSettingsPath,
+            usersSettingsPath,
+            taskSettingsPath,
+            indexCachePath
+        });
+        return Results.Ok(backup);
+    }
+    catch (Exception ex)
+    {
+        return Results.BadRequest(new { error = $"Backup failed: {ex.Message}" });
+    }
+});
+
+app.MapGet("/api/email/settings", () => Results.Ok(emailSettingsStore.GetClientSettings()));
+
+app.MapPut("/api/email/settings", (GuidevaultEmailSettings payload) =>
+{
+    var saved = emailSettingsStore.Update(payload ?? new GuidevaultEmailSettings());
+    return Results.Ok(saved);
+});
+
+app.MapGet("/api/users", () => Results.Ok(new
+{
+    users = usersStore.GetUsers(),
+    libraries = cache.Libraries.Select(l => l.Name).Where(n => !string.IsNullOrWhiteSpace(n)).Distinct(StringComparer.OrdinalIgnoreCase).OrderBy(n => n).ToArray(),
+    permissions = GuidevaultUsersStore.DefaultPermissions
+}));
+
+app.MapPost("/api/users/invite", (HttpRequest request, GuidevaultUserInviteRequest payload) =>
+{
+    if (payload is null || string.IsNullOrWhiteSpace(payload.Email))
+        return Results.BadRequest(new { error = "Email is required." });
+
+    var result = usersStore.Invite(payload);
+    var email = emailSettingsStore.GetSettings();
+    var sent = false;
+    var emailMessage = string.Empty;
+    if (email.IsConfigured)
+    {
+        try
+        {
+            var inviteUrl = BuildAbsoluteUrl(request, "/");
+            emailSettingsStore.SendInvite(email, result.User, inviteUrl);
+            sent = true;
+        }
+        catch (Exception ex)
+        {
+            emailMessage = ex.Message;
+        }
+    }
+    else
+    {
+        emailMessage = "Email is not configured. The user was saved as a pending invite.";
+    }
+
+    return Results.Ok(new { result.User, users = usersStore.GetUsers(), emailSent = sent, emailMessage });
+});
+
+app.MapGet("/api/tasks/settings", () => Results.Ok(taskSettingsStore.GetSettings()));
+
+app.MapPut("/api/tasks/settings", (GuidevaultTaskScheduleSettings payload) =>
+{
+    var saved = taskSettingsStore.Update(payload ?? new GuidevaultTaskScheduleSettings());
+    return Results.Ok(saved);
+});
 
 app.MapPost("/api/devices/heartbeat", (HttpRequest request, ClientDeviceHeartbeat payload) =>
 {
@@ -651,13 +746,13 @@ app.MapGet("/api/opds/settings", (HttpRequest request) => Results.Ok(opdsStore.G
 
 app.MapPut("/api/opds/settings", (HttpRequest request, OpdsSettingsUpdate payload) =>
 {
-    var saved = opdsStore.UpdateSettings(payload.ConnectionUrl, payload.SelectedKeyId, DefaultOpdsConnectionUrl(request));
+    var saved = opdsStore.UpdateSettings(payload?.ConnectionUrl, payload?.SelectedKeyId, payload?.Enabled, DefaultOpdsConnectionUrl(request));
     return Results.Ok(saved);
 });
 
 app.MapPost("/api/opds/keys", (HttpRequest request, OpdsKeyCreateRequest payload) =>
 {
-    var saved = opdsStore.CreateKey(payload.Name, DefaultOpdsConnectionUrl(request));
+    var saved = opdsStore.CreateKey(payload?.Name, DefaultOpdsConnectionUrl(request));
     return Results.Ok(saved);
 });
 
@@ -673,12 +768,12 @@ app.MapDelete("/api/opds/keys/{id}", (HttpRequest request, string id) =>
     return saved is null ? Results.NotFound(new { error = "Authorization key not found." }) : Results.Ok(saved);
 });
 
-app.MapGet("/api/settings/odsp", (HttpRequest request) => Results.Ok(new
+app.MapGet("/api/settings/opds-status", (HttpRequest request) => Results.Ok(new
 {
-    status = "Available",
+    status = opdsStore.IsEnabled ? "Available" : "Disabled",
     mode = "opds-authenticated-feed",
     opdsUrl = opdsStore.GetClientSettings(DefaultOpdsConnectionUrl(request)).ConnectionUrl,
-    note = "OPDS feeds are now served by Guidevault. Generate an OPDS auth key under Account > OPDS / Auth Keys, then copy the masked OPDS URL into a third-party reader."
+    note = "OPDS feeds are now served by Guidevault. Generate an OPDS auth key under Server > OPDS / Auth Keys, then copy the masked OPDS URL into a third-party reader."
 }));
 
 app.MapGet("/opds", async (HttpRequest request) =>
@@ -845,6 +940,9 @@ static string AppendOpdsAuth(HttpRequest request, string path, string secret)
 
 static OpdsAuthResult AuthorizeOpdsRequest(HttpRequest request, OpdsSettingsStore store, DeviceHistoryStore deviceStore)
 {
+    if (!store.IsEnabled)
+        return new OpdsAuthResult(false, string.Empty, null, Results.StatusCode(StatusCodes.Status503ServiceUnavailable));
+
     var secret = ExtractOpdsSecret(request);
     if (string.IsNullOrWhiteSpace(secret))
     {
@@ -1109,7 +1207,7 @@ static IEnumerable<BrowseRoot> BrowseRoots(string contentRoot)
 
 static string ResolvePath(string contentRoot, string path)
 {
-    var envPath = Environment.GetEnvironmentVariable("PAGEQUEST_LIBRARY_PATH");
+    var envPath = Environment.GetEnvironmentVariable("GUIDEVAULT_LIBRARY_PATH");
     if (!string.IsNullOrWhiteSpace(envPath)) return Path.GetFullPath(envPath);
     if (Path.IsPathRooted(path)) return Path.GetFullPath(path);
     return Path.GetFullPath(Path.Combine(contentRoot, path));
@@ -1177,7 +1275,7 @@ public sealed class DeviceHistoryStore
             device.BrowserVersion = browserVersion;
             device.Platform = platform;
             device.Screen = screen;
-            device.AppVersion = Clean(payload.AppVersion) ?? "0.9.30";
+            device.AppVersion = Clean(payload.AppVersion) ?? GuidevaultBuildInfo.Version;
             device.UserAgent = ua;
             device.IpAddress = RequestIp(request);
             device.LastPath = Clean(payload.LastPath) ?? request.Path.Value ?? "/";
@@ -1778,10 +1876,458 @@ public sealed class StableUpdateResult
     public string Message { get; set; } = string.Empty;
 }
 
+
+public sealed class GuidevaultServerSettingsStore
+{
+    private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web) { WriteIndented = true };
+    private readonly object _gate = new();
+    private readonly string _path;
+    private readonly string _contentRoot;
+    private GuidevaultServerSettings _settings;
+
+    public GuidevaultServerSettingsStore(string path, string contentRoot)
+    {
+        _path = path;
+        _contentRoot = contentRoot;
+        Directory.CreateDirectory(Path.GetDirectoryName(_path)!);
+        _settings = Normalize(Load());
+        Save();
+    }
+
+    public GuidevaultServerSettings GetSnapshot()
+    {
+        lock (_gate) return CloneForClient(_settings);
+    }
+
+    public GuidevaultServerSettings Update(GuidevaultServerSettings payload)
+    {
+        lock (_gate)
+        {
+            _settings = Normalize(payload);
+            Save();
+            return CloneForClient(_settings);
+        }
+    }
+
+    public GuidevaultBackupResult CreateLibraryBackup(IEnumerable<string> sourceFiles)
+    {
+        lock (_gate)
+        {
+            _settings = Normalize(_settings);
+            var backupDir = ResolveSettingPath(_contentRoot, _settings.BackupDirectory);
+            Directory.CreateDirectory(backupDir);
+            var fileName = $"guidevault-library-backup-{DateTimeOffset.UtcNow:yyyyMMdd-HHmmss}.zip";
+            var fullPath = Path.Combine(backupDir, fileName);
+            using (var stream = File.Open(fullPath, FileMode.CreateNew, FileAccess.Write, FileShare.None))
+            using (var zip = new ZipArchive(stream, ZipArchiveMode.Create))
+            {
+                var manifest = JsonSerializer.Serialize(new
+                {
+                    app = "Guidevault",
+                    createdAt = DateTimeOffset.UtcNow,
+                    note = "Library configuration and index backup. Source media files are not copied."
+                }, JsonOptions);
+                var manifestEntry = zip.CreateEntry("manifest.json", CompressionLevel.Optimal);
+                using (var writer = new StreamWriter(manifestEntry.Open(), Encoding.UTF8)) writer.Write(manifest);
+
+                foreach (var file in sourceFiles.Where(File.Exists).Distinct(StringComparer.OrdinalIgnoreCase))
+                {
+                    var name = Path.GetFileName(file);
+                    var folder = Path.GetFileName(Path.GetDirectoryName(file) ?? string.Empty);
+                    var entryName = string.Equals(name, "library-index.json", StringComparison.OrdinalIgnoreCase)
+                        ? "cache/library-index.json"
+                        : $"config/{name}";
+                    if (string.Equals(folder, "cache", StringComparison.OrdinalIgnoreCase)) entryName = $"cache/{name}";
+                    zip.CreateEntryFromFile(file, entryName, CompressionLevel.Optimal);
+                }
+            }
+            var info = new FileInfo(fullPath);
+            return new GuidevaultBackupResult(fileName, info.FullName, info.Length, DateTimeOffset.UtcNow, _settings.BackupDirectory);
+        }
+    }
+
+    private GuidevaultServerSettings Load()
+    {
+        try
+        {
+            if (File.Exists(_path))
+                return JsonSerializer.Deserialize<GuidevaultServerSettings>(File.ReadAllText(_path), JsonOptions) ?? new GuidevaultServerSettings();
+        }
+        catch { }
+        return new GuidevaultServerSettings();
+    }
+
+    private void Save()
+    {
+        Directory.CreateDirectory(Path.GetDirectoryName(_path)!);
+        File.WriteAllText(_path, JsonSerializer.Serialize(_settings, JsonOptions));
+    }
+
+    private GuidevaultServerSettings Normalize(GuidevaultServerSettings value)
+    {
+        value ??= new GuidevaultServerSettings();
+        value.HostName = Clean(value.HostName, "http://localhost:5478");
+        value.BaseUrl = NormalizeBaseUrl(value.BaseUrl);
+        value.IpAddresses = Clean(value.IpAddresses, string.Empty);
+        value.Port = value.Port is >= 1 and <= 65535 ? value.Port : 5478;
+        value.LoggingLevel = NormalizeLogLevel(value.LoggingLevel);
+        value.BackupDirectory = NormalizePathValue(value.BackupDirectory, "data/backups");
+        value.BookmarksDirectory = NormalizePathValue(value.BookmarksDirectory, "data/bookmarks");
+        return value;
+    }
+
+    private static GuidevaultServerSettings CloneForClient(GuidevaultServerSettings value) => new()
+    {
+        HostName = value.HostName,
+        BaseUrl = value.BaseUrl,
+        IpAddresses = value.IpAddresses,
+        Port = value.Port,
+        LoggingLevel = value.LoggingLevel,
+        BackupDirectory = value.BackupDirectory,
+        BookmarksDirectory = value.BookmarksDirectory
+    };
+
+    private static string Clean(string? value, string fallback) => string.IsNullOrWhiteSpace(value) ? fallback : value.Trim();
+    private static string NormalizeBaseUrl(string? value)
+    {
+        var text = string.IsNullOrWhiteSpace(value) ? "/" : value.Trim();
+        if (!text.StartsWith('/')) text = "/" + text;
+        return text == "/" || text == "//" ? "/" : text.TrimEnd('/');
+    }
+    private static string NormalizeLogLevel(string? value)
+    {
+        var text = Clean(value, "Information");
+        var allowed = new[] { "Trace", "Debug", "Information", "Warning", "Error", "Critical", "None" };
+        return allowed.FirstOrDefault(x => string.Equals(x, text, StringComparison.OrdinalIgnoreCase)) ?? "Information";
+    }
+    private static string NormalizePathValue(string? value, string fallback) => string.IsNullOrWhiteSpace(value) ? fallback : value.Trim().Replace('\\', '/');
+    private static string ResolveSettingPath(string contentRoot, string value)
+    {
+        var path = string.IsNullOrWhiteSpace(value) ? "data/backups" : value.Trim();
+        return Path.IsPathRooted(path) || path.StartsWith(@"\\") || Regex.IsMatch(path, @"^[A-Za-z]:[\\/].*")
+            ? Path.GetFullPath(path)
+            : Path.GetFullPath(Path.Combine(contentRoot, path));
+    }
+}
+
+public sealed class GuidevaultServerSettings
+{
+    public string HostName { get; set; } = "http://localhost:5478";
+    public string BaseUrl { get; set; } = "/";
+    public string IpAddresses { get; set; } = string.Empty;
+    public int Port { get; set; } = 5478;
+    public string LoggingLevel { get; set; } = "Information";
+    public string BackupDirectory { get; set; } = "data/backups";
+    public string BookmarksDirectory { get; set; } = "data/bookmarks";
+}
+
+public sealed record GuidevaultBackupResult(string FileName, string Path, long SizeBytes, DateTimeOffset CreatedAt, string BackupDirectory);
+
+public sealed class GuidevaultEmailSettingsStore
+{
+    private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web) { WriteIndented = true };
+    private readonly object _gate = new();
+    private readonly string _path;
+    private GuidevaultEmailSettings _settings;
+
+    public GuidevaultEmailSettingsStore(string path)
+    {
+        _path = path;
+        Directory.CreateDirectory(Path.GetDirectoryName(_path)!);
+        _settings = Normalize(Load(), null);
+        Save();
+    }
+
+    public GuidevaultEmailSettings GetSettings()
+    {
+        lock (_gate) return Clone(_settings, includePassword: true);
+    }
+
+    public GuidevaultEmailSettings GetClientSettings()
+    {
+        lock (_gate) return Clone(_settings, includePassword: false);
+    }
+
+    public GuidevaultEmailSettings Update(GuidevaultEmailSettings payload)
+    {
+        lock (_gate)
+        {
+            _settings = Normalize(payload, _settings);
+            Save();
+            return Clone(_settings, includePassword: false);
+        }
+    }
+
+    public void SendInvite(GuidevaultEmailSettings settings, GuidevaultUserRecord user, string inviteUrl)
+    {
+        if (!settings.IsConfigured) throw new InvalidOperationException("Email settings are incomplete.");
+        using var message = new MailMessage();
+        message.From = new MailAddress(settings.SenderAddress, string.IsNullOrWhiteSpace(settings.DisplayName) ? "Guidevault" : settings.DisplayName);
+        message.To.Add(new MailAddress(user.Email, user.DisplayName));
+        message.Subject = "Guidevault invite";
+        message.Body = $"You have been invited to Guidevault.\n\nOpen: {inviteUrl}\n\nPermissions: {string.Join(", ", user.Permissions ?? Array.Empty<string>())}";
+        using var client = new SmtpClient(settings.Host, settings.Port)
+        {
+            EnableSsl = settings.UseSsl,
+            DeliveryMethod = SmtpDeliveryMethod.Network,
+            Credentials = new NetworkCredential(settings.Username, settings.Password)
+        };
+        client.Send(message);
+    }
+
+    private GuidevaultEmailSettings Load()
+    {
+        try
+        {
+            if (File.Exists(_path))
+                return JsonSerializer.Deserialize<GuidevaultEmailSettings>(File.ReadAllText(_path), JsonOptions) ?? new GuidevaultEmailSettings();
+        }
+        catch { }
+        return new GuidevaultEmailSettings();
+    }
+
+    private void Save() => File.WriteAllText(_path, JsonSerializer.Serialize(_settings, JsonOptions));
+
+    private static GuidevaultEmailSettings Normalize(GuidevaultEmailSettings value, GuidevaultEmailSettings? existing)
+    {
+        value ??= new GuidevaultEmailSettings();
+        value.HostName = Clean(value.HostName);
+        value.SenderAddress = Clean(value.SenderAddress);
+        value.DisplayName = Clean(value.DisplayName);
+        value.Host = Clean(value.Host);
+        value.Port = value.Port is >= 1 and <= 65535 ? value.Port : 587;
+        value.Username = Clean(value.Username);
+        var password = value.Password ?? string.Empty;
+        if ((string.IsNullOrWhiteSpace(password) || password.All(c => c == '*')) && existing is not null)
+            value.Password = existing.Password;
+        else
+            value.Password = password;
+        value.SizeLimitMb = value.SizeLimitMb is >= 1 and <= 2048 ? value.SizeLimitMb : 25;
+        return value;
+    }
+
+    private static GuidevaultEmailSettings Clone(GuidevaultEmailSettings value, bool includePassword) => new()
+    {
+        HostName = value.HostName,
+        SenderAddress = value.SenderAddress,
+        DisplayName = value.DisplayName,
+        Host = value.Host,
+        Port = value.Port,
+        UseSsl = value.UseSsl,
+        Username = value.Username,
+        Password = includePassword ? value.Password : (string.IsNullOrWhiteSpace(value.Password) ? string.Empty : "********"),
+        SizeLimitMb = value.SizeLimitMb,
+        CustomizedTemplates = value.CustomizedTemplates
+    };
+
+    private static string Clean(string? value) => string.IsNullOrWhiteSpace(value) ? string.Empty : value.Trim();
+}
+
+public sealed class GuidevaultEmailSettings
+{
+    public string HostName { get; set; } = string.Empty;
+    public string SenderAddress { get; set; } = string.Empty;
+    public string DisplayName { get; set; } = "Guidevault";
+    public string Host { get; set; } = string.Empty;
+    public int Port { get; set; } = 587;
+    public bool UseSsl { get; set; } = true;
+    public string Username { get; set; } = string.Empty;
+    public string Password { get; set; } = string.Empty;
+    public int SizeLimitMb { get; set; } = 25;
+    public bool CustomizedTemplates { get; set; }
+    public bool IsConfigured => !string.IsNullOrWhiteSpace(SenderAddress) && !string.IsNullOrWhiteSpace(Host) && Port > 0 && !string.IsNullOrWhiteSpace(Username) && !string.IsNullOrWhiteSpace(Password);
+}
+
+public sealed class GuidevaultUsersStore
+{
+    private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web) { WriteIndented = true };
+    public static readonly string[] DefaultPermissions = ["Login", "Bookmark", "Download", "Read Only", "Change Password", "Change Restriction", "Promote", "Admin"];
+    private readonly object _gate = new();
+    private readonly string _path;
+    private GuidevaultUsersSettings _settings;
+
+    public GuidevaultUsersStore(string path)
+    {
+        _path = path;
+        Directory.CreateDirectory(Path.GetDirectoryName(_path)!);
+        _settings = Load();
+        _settings.Users ??= new List<GuidevaultUserRecord>();
+        Save();
+    }
+
+    public IReadOnlyList<GuidevaultUserRecord> GetUsers()
+    {
+        lock (_gate) return _settings.Users.OrderBy(u => u.Email, StringComparer.OrdinalIgnoreCase).Select(Clone).ToArray();
+    }
+
+    public GuidevaultUserInviteResult Invite(GuidevaultUserInviteRequest payload)
+    {
+        lock (_gate)
+        {
+            var email = (payload.Email ?? string.Empty).Trim();
+            var user = _settings.Users.FirstOrDefault(u => string.Equals(u.Email, email, StringComparison.OrdinalIgnoreCase));
+            var now = DateTimeOffset.UtcNow;
+            if (user is null)
+            {
+                user = new GuidevaultUserRecord { Id = Guid.NewGuid().ToString("N")[..12], CreatedAt = now };
+                _settings.Users.Add(user);
+            }
+            user.Email = email;
+            user.DisplayName = string.IsNullOrWhiteSpace(payload.DisplayName) ? email.Split('@')[0] : payload.DisplayName.Trim();
+            user.Role = string.IsNullOrWhiteSpace(payload.Role) ? "Reader" : payload.Role.Trim();
+            user.Libraries = (payload.Libraries ?? Array.Empty<string>()).Where(x => !string.IsNullOrWhiteSpace(x)).Select(x => x.Trim()).Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
+            user.Permissions = NormalizePermissions(payload.Permissions);
+            user.AgeRatingRestriction = string.IsNullOrWhiteSpace(payload.AgeRatingRestriction) ? "No Restriction" : payload.AgeRatingRestriction.Trim();
+            user.IncludeUnknowns = payload.IncludeUnknowns;
+            user.Status = "Invited";
+            user.InvitedAt = now;
+            user.UpdatedAt = now;
+            Save();
+            return new GuidevaultUserInviteResult(Clone(user));
+        }
+    }
+
+    private GuidevaultUsersSettings Load()
+    {
+        try
+        {
+            if (File.Exists(_path))
+                return JsonSerializer.Deserialize<GuidevaultUsersSettings>(File.ReadAllText(_path), JsonOptions) ?? new GuidevaultUsersSettings();
+        }
+        catch { }
+        return new GuidevaultUsersSettings();
+    }
+
+    private void Save() => File.WriteAllText(_path, JsonSerializer.Serialize(_settings, JsonOptions));
+    private static string[] NormalizePermissions(IEnumerable<string>? values)
+    {
+        var selected = (values ?? Array.Empty<string>()).Where(x => !string.IsNullOrWhiteSpace(x)).Select(x => x.Trim()).Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
+        return selected.Length > 0 ? selected : ["Login", "Bookmark", "Read Only"];
+    }
+    private static GuidevaultUserRecord Clone(GuidevaultUserRecord user) => new()
+    {
+        Id = user.Id,
+        Email = user.Email,
+        DisplayName = user.DisplayName,
+        Role = user.Role,
+        Libraries = user.Libraries ?? Array.Empty<string>(),
+        Permissions = user.Permissions ?? Array.Empty<string>(),
+        AgeRatingRestriction = user.AgeRatingRestriction,
+        IncludeUnknowns = user.IncludeUnknowns,
+        Status = user.Status,
+        CreatedAt = user.CreatedAt,
+        InvitedAt = user.InvitedAt,
+        UpdatedAt = user.UpdatedAt
+    };
+}
+
+public sealed class GuidevaultUsersSettings
+{
+    public List<GuidevaultUserRecord> Users { get; set; } = new();
+}
+
+public sealed class GuidevaultUserRecord
+{
+    public string Id { get; set; } = string.Empty;
+    public string Email { get; set; } = string.Empty;
+    public string DisplayName { get; set; } = string.Empty;
+    public string Role { get; set; } = "Reader";
+    public string[] Libraries { get; set; } = Array.Empty<string>();
+    public string[] Permissions { get; set; } = Array.Empty<string>();
+    public string AgeRatingRestriction { get; set; } = "No Restriction";
+    public bool IncludeUnknowns { get; set; }
+    public string Status { get; set; } = "Invited";
+    public DateTimeOffset CreatedAt { get; set; } = DateTimeOffset.UtcNow;
+    public DateTimeOffset? InvitedAt { get; set; }
+    public DateTimeOffset? UpdatedAt { get; set; }
+}
+
+public sealed class GuidevaultUserInviteRequest
+{
+    public string? Email { get; set; }
+    public string? DisplayName { get; set; }
+    public string? Role { get; set; }
+    public string[] Libraries { get; set; } = Array.Empty<string>();
+    public string[] Permissions { get; set; } = Array.Empty<string>();
+    public string? AgeRatingRestriction { get; set; }
+    public bool IncludeUnknowns { get; set; }
+}
+
+public sealed record GuidevaultUserInviteResult(GuidevaultUserRecord User);
+
+public sealed class GuidevaultTaskSettingsStore
+{
+    private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web) { WriteIndented = true };
+    private readonly object _gate = new();
+    private readonly string _path;
+    private GuidevaultTaskScheduleSettings _settings;
+
+    public GuidevaultTaskSettingsStore(string path)
+    {
+        _path = path;
+        Directory.CreateDirectory(Path.GetDirectoryName(_path)!);
+        _settings = Normalize(Load());
+        Save();
+    }
+
+    public GuidevaultTaskScheduleSettings GetSettings()
+    {
+        lock (_gate) return Clone(_settings);
+    }
+
+    public GuidevaultTaskScheduleSettings Update(GuidevaultTaskScheduleSettings payload)
+    {
+        lock (_gate)
+        {
+            _settings = Normalize(payload);
+            Save();
+            return Clone(_settings);
+        }
+    }
+
+    private GuidevaultTaskScheduleSettings Load()
+    {
+        try
+        {
+            if (File.Exists(_path))
+                return JsonSerializer.Deserialize<GuidevaultTaskScheduleSettings>(File.ReadAllText(_path), JsonOptions) ?? new GuidevaultTaskScheduleSettings();
+        }
+        catch { }
+        return new GuidevaultTaskScheduleSettings();
+    }
+
+    private void Save() => File.WriteAllText(_path, JsonSerializer.Serialize(_settings, JsonOptions));
+    private static GuidevaultTaskScheduleSettings Normalize(GuidevaultTaskScheduleSettings value)
+    {
+        value ??= new GuidevaultTaskScheduleSettings();
+        value.LibraryScan = NormalizeSchedule(value.LibraryScan, "Daily");
+        value.GuidevaultBackup = NormalizeSchedule(value.GuidevaultBackup, "Daily");
+        value.Cleanup = NormalizeSchedule(value.Cleanup, "Daily");
+        value.ReadingListSync = NormalizeSchedule(value.ReadingListSync, "Custom (0 4 * * *)");
+        return value;
+    }
+    private static GuidevaultTaskScheduleSettings Clone(GuidevaultTaskScheduleSettings value) => new()
+    {
+        LibraryScan = value.LibraryScan,
+        GuidevaultBackup = value.GuidevaultBackup,
+        Cleanup = value.Cleanup,
+        ReadingListSync = value.ReadingListSync
+    };
+    private static string NormalizeSchedule(string? value, string fallback) => string.IsNullOrWhiteSpace(value) ? fallback : value.Trim();
+}
+
+public sealed class GuidevaultTaskScheduleSettings
+{
+    public string LibraryScan { get; set; } = "Daily";
+    public string GuidevaultBackup { get; set; } = "Daily";
+    public string Cleanup { get; set; } = "Daily";
+    public string ReadingListSync { get; set; } = "Custom (0 4 * * *)";
+}
+
 public sealed record OpdsAuthResult(bool Success, string Secret, OpdsAuthKey? Key, IResult? Response);
 public sealed record OpdsNavigationEntry(string Title, string Description, string Href, string Kind = "acquisition");
 public sealed record OpdsKeyCreateRequest(string? Name);
-public sealed record OpdsSettingsUpdate(string? ConnectionUrl, string? SelectedKeyId);
+public sealed record OpdsSettingsUpdate(string? ConnectionUrl, string? SelectedKeyId, bool? Enabled);
 
 public sealed class OpdsSettingsStore
 {
@@ -1807,13 +2353,17 @@ public sealed class OpdsSettingsStore
         }
     }
 
-    public OpdsClientSettings UpdateSettings(string? connectionUrl, string? selectedKeyId, string defaultConnectionUrl)
+    public bool IsEnabled => _settings.Enabled;
+
+    public OpdsClientSettings UpdateSettings(string? connectionUrl, string? selectedKeyId, bool? enabled, string defaultConnectionUrl)
     {
         lock (_gate)
         {
             EnsureDefaults(defaultConnectionUrl);
             if (!string.IsNullOrWhiteSpace(connectionUrl))
                 _settings.ConnectionUrl = StripAuthQuery(connectionUrl.Trim());
+            if (enabled is not null)
+                _settings.Enabled = enabled.Value;
 
             var selected = string.IsNullOrWhiteSpace(selectedKeyId) ? string.Empty : selectedKeyId.Trim();
             _settings.SelectedKeyId = _settings.Keys.Any(k => k.Id == selected) ? selected : _settings.Keys.FirstOrDefault()?.Id ?? string.Empty;
@@ -1923,6 +2473,7 @@ public sealed class OpdsSettingsStore
         EnsureDefaults(defaultConnectionUrl);
         return new OpdsClientSettings
         {
+            Enabled = _settings.Enabled,
             ConnectionUrl = string.IsNullOrWhiteSpace(_settings.ConnectionUrl) ? defaultConnectionUrl : _settings.ConnectionUrl!,
             SelectedKeyId = _settings.SelectedKeyId ?? string.Empty,
             Keys = _settings.Keys.Select(k => new OpdsClientKey
@@ -1972,6 +2523,7 @@ public sealed class OpdsSettingsStore
 
 public sealed class OpdsSettings
 {
+    public bool Enabled { get; set; } = true;
     public string? ConnectionUrl { get; set; }
     public string? SelectedKeyId { get; set; }
     public List<OpdsAuthKey> Keys { get; set; } = new();
@@ -1990,6 +2542,7 @@ public sealed class OpdsAuthKey
 
 public sealed class OpdsClientSettings
 {
+    public bool Enabled { get; set; } = true;
     public string ConnectionUrl { get; set; } = string.Empty;
     public string SelectedKeyId { get; set; } = string.Empty;
     public List<OpdsClientKey> Keys { get; set; } = new();
@@ -2006,12 +2559,12 @@ public sealed class OpdsClientKey
     public DateTimeOffset? LastAccessed { get; set; }
 }
 
-public sealed class PageQuestOptions
+public sealed class GuidevaultOptions
 {
     public string LibraryPath { get; set; } = "data/library";
     public string DatabasePath { get; set; } = "data/guidevault.json";
     public string BrandName { get; set; } = "Guidevault";
-    public bool EnableOdspPlaceholder { get; set; } = true;
+    public bool EnableOpdsPlaceholder { get; set; } = true;
     public UpdateOptions Updates { get; set; } = new();
 }
 
@@ -3108,7 +3661,7 @@ public sealed class LibraryCache
             // filesystem for every candidate and is especially expensive on network
             // shares, so sort only after FileInfo metadata is already collected.
             var files = SafeEnumerateFiles(root.Folder)
-                .Where(f => !f.Replace('\\', '/').Contains("/.pagequest_deleted/", StringComparison.OrdinalIgnoreCase))
+                .Where(f => !f.Replace('\\', '/').Contains("/.guidevault_deleted/", StringComparison.OrdinalIgnoreCase))
                 .Where(f => ArchiveReader.SupportedExtensions.Contains(Path.GetExtension(f).ToLowerInvariant()));
 
             foreach (var file in files)
@@ -3410,7 +3963,7 @@ public sealed class LibraryCache
             foreach (var dir in dirs)
             {
                 var normalized = dir.Replace('\\', '/');
-                if (normalized.Contains("/.pagequest_deleted", StringComparison.OrdinalIgnoreCase)) continue;
+                if (normalized.Contains("/.guidevault_deleted", StringComparison.OrdinalIgnoreCase)) continue;
                 pending.Push(dir);
             }
         }
@@ -4597,7 +5150,7 @@ public static class StrategyGuidePlatformResolver
     private static HttpClient CreateHttpClient()
     {
         var client = new HttpClient { Timeout = Timeout };
-        client.DefaultRequestHeaders.UserAgent.ParseAdd("Guidevault/0.9.30 (+local strategy guide platform resolver)");
+        client.DefaultRequestHeaders.UserAgent.ParseAdd($"Guidevault/{GuidevaultBuildInfo.Version} (+local strategy guide platform resolver)");
         return client;
     }
 
@@ -5222,4 +5775,10 @@ public static class ArchiveReader
     {
         return System.Text.RegularExpressions.Regex.Replace(value.ToLowerInvariant(), "\\d+", m => m.Value.PadLeft(12, '0'));
     }
+}
+
+
+static class GuidevaultBuildInfo
+{
+    public const string Version = "0.9.31";
 }

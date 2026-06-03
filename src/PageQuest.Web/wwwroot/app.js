@@ -1,5 +1,5 @@
 const state = {
-  items: [], filtered: [], selected: null, filter: 'All Content', categoryFilter: '', viewMode: 'all', activeTab: 'overview',
+  items: [], filtered: [], selected: null, filter: 'All Content', categoryFilter: '', viewMode: 'all', activeTab: 'overview', customFilter: null,
   reader: { item: null, pages: [], index: 0, animating: false, displayMode: 2, transitionMode: 'stable', overlayVisible: false, advancedVisible: false, magnifierSettingsVisible: false, scrubbing: false, shading: null, zoom: 100, magnifier: null, magnifierActive: false, longPressTimer: null, suppressHitClickUntil: 0, backgrounds: [], background: '', backgroundBrightness: 72 },
   libraryPath: '',
   libraries: [],
@@ -19,7 +19,11 @@ const state = {
   metadataManager: { selectedIds: [], dirty: {}, filterKind: '', search: '', missing: '', category: '', visibleColumns: [] },
   keybinds: { bindings: {}, awaitingId: '' },
   folderBrowser: { targetInputId: '', currentPath: '/app/data/library', roots: [] },
-  customize: { activeTab: 'home', homeShelves: [] },
+  customize: { activeTab: 'home', homeShelves: [], sideNav: { customItems: [] } },
+  serverSettings: null,
+  emailSettings: null,
+  usersSettings: { users: [], libraries: [], permissions: [] },
+  taskSettings: null,
   homeShelfOffsets: {},
   statistics: { activeTab: 'stats', range: 'all' },
   preferences: { useColorscape: false },
@@ -48,7 +52,7 @@ const GUIDEVAULT_READING_ACTIVITY_KEY = 'guidevault.readingActivity.v1';
 const GUIDEVAULT_CATEGORY_STRUCTURE_KEY = 'guidevault.categoryStructure.v1';
 const GUIDEVAULT_COVER_SIZE_KEY = 'guidevault.libraryCoverSize.v1';
 const GUIDEVAULT_FAVORITES_KEY = 'guidevault.favorites.v1';
-const GUIDEVAULT_APP_VERSION = '0.9.30';
+const GUIDEVAULT_APP_VERSION = '0.9.31';
 const GUIDEVAULT_DEVICE_HEARTBEAT_MS = 120000;
 const GUIDEVAULT_UPDATE_CHECK_MS = 30 * 60 * 1000;
 const fmtBytes = n => n > 1024 ** 3 ? `${(n / 1024 ** 3).toFixed(1)} GB` : `${(n / 1024 ** 2).toFixed(1)} MB`;
@@ -776,6 +780,7 @@ function normalizeLoginProfile(value = {}) {
     username: String(value.username || '').trim(),
     email: String(value.email || '').trim(),
     password: String(value.password || ''),
+    avatarDataUrl: String(value.avatarDataUrl || ''),
     createdAt: value.createdAt || new Date().toISOString(),
     updatedAt: value.updatedAt || new Date().toISOString()
   };
@@ -793,7 +798,9 @@ function readLoginProfile() {
 function saveLoginProfile(profile) {
   const existing = readLoginProfile();
   const normalized = normalizeLoginProfile({
+    ...(existing || {}),
     ...profile,
+    avatarDataUrl: profile.avatarDataUrl !== undefined ? profile.avatarDataUrl : (existing?.avatarDataUrl || ''),
     createdAt: existing?.createdAt || profile.createdAt || new Date().toISOString(),
     updatedAt: new Date().toISOString()
   });
@@ -805,7 +812,8 @@ function getProfileFormValues(prefix) {
   return {
     username: $(`${prefix}Username`)?.value?.trim() || '',
     email: $(`${prefix}Email`)?.value?.trim() || '',
-    password: $(`${prefix}Password`)?.value || ''
+    password: $(`${prefix}Password`)?.value || '',
+    avatarDataUrl: state.auth.profile?.avatarDataUrl || readLoginProfile()?.avatarDataUrl || ''
   };
 }
 function validateLoginProfile(profile) {
@@ -868,11 +876,19 @@ function userInitials(profile = state.auth.profile || readLoginProfile() || {}) 
   if (parts.length >= 2) return (parts[0][0] + parts[1][0]).toUpperCase();
   return value.slice(0, 2).toUpperCase();
 }
+function renderUserAvatarElement(el, profile = state.auth.profile || readLoginProfile() || {}) {
+  if (!el) return;
+  const avatar = String(profile.avatarDataUrl || '').trim();
+  el.textContent = avatar ? '' : userInitials(profile);
+  el.classList.toggle('has-image', !!avatar);
+  if (avatar) el.style.backgroundImage = `url("${avatar.replace(/"/g, '%22')}")`;
+  else el.style.removeProperty('background-image');
+}
 function syncTopUserMenu() {
   const profile = state.auth.profile || readLoginProfile() || {};
   const label = profile.username || profile.email || 'User';
   if ($('topCurrentUser')) $('topCurrentUser').textContent = label;
-  if ($('topUserAvatar')) $('topUserAvatar').textContent = userInitials(profile);
+  renderUserAvatarElement($('topUserAvatar'), profile);
   const btn = $('userMenuBtn');
   if (btn) btn.title = label ? `Guidevault user: ${label}` : 'Guidevault user menu';
 }
@@ -895,6 +911,7 @@ function renderAccountProfile() {
   if ($('accountEmail')) $('accountEmail').value = profile.email || '';
   if ($('accountPassword')) $('accountPassword').value = profile.password || '';
   if ($('accountProfileSummary')) $('accountProfileSummary').textContent = `${profile.username} • ${profile.email}`;
+  renderUserAvatarElement($('accountAvatarPreview'), profile);
   syncTopUserMenu();
   setAccountEditMode(false, false);
 }
@@ -952,6 +969,56 @@ function saveAccountLoginFromSettings() {
   renderAccountProfile();
   syncTopUserMenu();
   setAccountStatus('Login profile saved.', 'success');
+}
+
+function resizeProfilePicFile(file) {
+  return new Promise((resolve, reject) => {
+    if (!file || !/^image\//i.test(file.type || '')) { reject(new Error('Choose an image file.')); return; }
+    const reader = new FileReader();
+    reader.onerror = () => reject(new Error('Could not read the profile picture.'));
+    reader.onload = () => {
+      const img = new Image();
+      img.onload = () => {
+        const size = 256;
+        const canvas = document.createElement('canvas');
+        canvas.width = size;
+        canvas.height = size;
+        const ctx = canvas.getContext('2d');
+        if (!ctx) { reject(new Error('Could not prepare the profile picture.')); return; }
+        const scale = Math.max(size / img.width, size / img.height);
+        const width = img.width * scale;
+        const height = img.height * scale;
+        ctx.drawImage(img, (size - width) / 2, (size - height) / 2, width, height);
+        resolve(canvas.toDataURL('image/jpeg', 0.86));
+      };
+      img.onerror = () => reject(new Error('Could not load the profile picture.'));
+      img.src = String(reader.result || '');
+    };
+    reader.readAsDataURL(file);
+  });
+}
+
+async function handleAccountProfilePicFile(file) {
+  try {
+    const avatarDataUrl = await resizeProfilePicFile(file);
+    const profile = saveLoginProfile({ ...(state.auth.profile || readLoginProfile() || {}), avatarDataUrl });
+    renderAccountProfile();
+    renderUserAvatarElement($('accountAvatarPreview'), profile);
+    syncTopUserMenu();
+    setAccountStatus('Profile picture updated.', 'success');
+  } catch (err) {
+    setAccountStatus(err?.message || 'Profile picture could not be updated.', 'error');
+  } finally {
+    if ($('accountProfilePicInput')) $('accountProfilePicInput').value = '';
+  }
+}
+
+function removeAccountProfilePic() {
+  const profile = saveLoginProfile({ ...(state.auth.profile || readLoginProfile() || {}), avatarDataUrl: '' });
+  renderAccountProfile();
+  renderUserAvatarElement($('accountAvatarPreview'), profile);
+  syncTopUserMenu();
+  setAccountStatus('Profile picture removed.', 'info');
 }
 
 
@@ -1396,6 +1463,7 @@ function defaultOpdsConnectionUrl() {
 
 function emptyOpdsSettingsState() {
   return {
+    enabled: true,
     connectionUrl: defaultOpdsConnectionUrl(),
     selectedKeyId: '',
     keys: [],
@@ -1431,6 +1499,7 @@ function normalizeOpdsSettings(value = {}) {
     : (keys[0]?.id || '');
   return {
     ...defaults,
+    enabled: value.enabled === undefined ? defaults.enabled : value.enabled === true || String(value.enabled).toLowerCase() === 'true',
     connectionUrl: String(value.connectionUrl || defaults.connectionUrl).trim() || defaults.connectionUrl,
     selectedKeyId,
     keys
@@ -1451,6 +1520,7 @@ function saveOpdsSettings() {
   const normalized = normalizeOpdsSettings(state.opds || {});
   state.opds = { ...normalized, editingUrl: !!state.opds?.editingUrl, revealUrl: !!state.opds?.revealUrl, creatingKey: !!state.opds?.creatingKey };
   const persisted = {
+    enabled: normalized.enabled,
     connectionUrl: normalized.connectionUrl,
     selectedKeyId: normalized.selectedKeyId,
     keys: normalized.keys
@@ -1497,6 +1567,7 @@ async function syncOpdsSettingsFromServer(showStatus = false) {
 async function saveOpdsServerSettings(partial = {}) {
   const settings = state.opds || loadOpdsSettings();
   const payload = {
+    enabled: partial.enabled ?? settings.enabled ?? true,
     connectionUrl: partial.connectionUrl ?? settings.connectionUrl ?? defaultOpdsConnectionUrl(),
     selectedKeyId: partial.selectedKeyId ?? settings.selectedKeyId ?? ''
   };
@@ -1574,6 +1645,7 @@ function renderOpdsSettings() {
 
   const editing = !!settings.editingUrl;
   const reveal = !!settings.revealUrl || editing;
+  if ($('opdsEnabledToggle')) $('opdsEnabledToggle').checked = settings.enabled !== false;
   const connection = $('opdsConnectionUrl');
   if (connection) {
     connection.value = editing ? settings.connectionUrl : buildOpdsClientUrl();
@@ -1612,6 +1684,285 @@ function renderOpdsSettings() {
       : '<tr><td colspan="5" class="opds-empty-row">No authorization keys yet. Select + New to generate one.</td></tr>';
   }
   if ($('opdsKeyCount')) $('opdsKeyCount').textContent = `${settings.keys.length} total`;
+}
+
+
+function setServerSettingsStatus(message = '', tone = '') {
+  const el = $('serverSettingsStatus');
+  if (el) { el.textContent = message || ''; el.dataset.tone = tone || ''; }
+}
+function setMediaSettingsStatus(message = '', tone = '') {
+  const el = $('mediaSettingsStatus');
+  if (el) { el.textContent = message || ''; el.dataset.tone = tone || ''; }
+}
+function setEmailSettingsStatus(message = '', tone = '') {
+  const el = $('emailSettingsStatus');
+  if (el) { el.textContent = message || ''; el.dataset.tone = tone || ''; }
+}
+function setUsersStatus(message = '', tone = '') {
+  const el = $('usersStatus');
+  if (el) { el.textContent = message || ''; el.dataset.tone = tone || ''; }
+}
+function setTasksSettingsStatus(message = '', tone = '') {
+  const el = $('tasksSettingsStatus');
+  if (el) { el.textContent = message || ''; el.dataset.tone = tone || ''; }
+}
+function defaultServerSettings() {
+  return { hostName: window.location?.origin || 'http://localhost:5478', baseUrl: '/', ipAddresses: '', port: 5478, loggingLevel: 'Information', backupDirectory: 'data/backups', bookmarksDirectory: 'data/bookmarks' };
+}
+function normalizeServerSettings(value = {}) {
+  const defaults = defaultServerSettings();
+  return {
+    hostName: String(value.hostName || defaults.hostName).trim(),
+    baseUrl: String(value.baseUrl || defaults.baseUrl).trim() || '/',
+    ipAddresses: String(value.ipAddresses || '').trim(),
+    port: Number(value.port || defaults.port) || defaults.port,
+    loggingLevel: String(value.loggingLevel || defaults.loggingLevel).trim(),
+    backupDirectory: String(value.backupDirectory || defaults.backupDirectory).trim(),
+    bookmarksDirectory: String(value.bookmarksDirectory || defaults.bookmarksDirectory).trim()
+  };
+}
+async function loadServerSettings(showStatus = false) {
+  try {
+    const res = await fetch('/api/server/settings', { cache: 'no-store' });
+    if (!res.ok) throw new Error(`Server settings request failed: ${res.status}`);
+    state.serverSettings = normalizeServerSettings(await res.json());
+    renderServerSettings();
+    if (showStatus) setServerSettingsStatus('General server settings loaded.', 'success');
+  } catch (err) {
+    console.warn('Unable to load server settings', err);
+    state.serverSettings = state.serverSettings || defaultServerSettings();
+    renderServerSettings();
+    if (showStatus) setServerSettingsStatus('Unable to load server settings from the backend.', 'error');
+  }
+  return state.serverSettings;
+}
+function renderServerSettings() {
+  const settings = normalizeServerSettings(state.serverSettings || defaultServerSettings());
+  if ($('serverHostName')) $('serverHostName').value = settings.hostName;
+  if ($('serverBaseUrl')) $('serverBaseUrl').value = settings.baseUrl;
+  if ($('serverIpAddresses')) $('serverIpAddresses').value = settings.ipAddresses;
+  if ($('serverPort')) $('serverPort').value = settings.port;
+  if ($('serverBackupDirectory')) $('serverBackupDirectory').value = settings.backupDirectory;
+  if ($('serverLoggingLevel')) $('serverLoggingLevel').value = settings.loggingLevel;
+  if ($('mediaBookmarksDirectory')) $('mediaBookmarksDirectory').value = settings.bookmarksDirectory;
+}
+function collectServerSettings() {
+  const existing = normalizeServerSettings(state.serverSettings || defaultServerSettings());
+  return normalizeServerSettings({
+    ...existing,
+    hostName: $('serverHostName')?.value ?? existing.hostName,
+    baseUrl: $('serverBaseUrl')?.value ?? existing.baseUrl,
+    ipAddresses: $('serverIpAddresses')?.value ?? existing.ipAddresses,
+    port: $('serverPort')?.value ?? existing.port,
+    loggingLevel: $('serverLoggingLevel')?.value ?? existing.loggingLevel,
+    backupDirectory: $('serverBackupDirectory')?.value ?? existing.backupDirectory,
+    bookmarksDirectory: $('mediaBookmarksDirectory')?.value ?? existing.bookmarksDirectory
+  });
+}
+async function saveServerSettings(source = 'general') {
+  const payload = collectServerSettings();
+  try {
+    const res = await fetch('/api/server/settings', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+    if (!res.ok) throw new Error(`Save failed: ${res.status}`);
+    state.serverSettings = normalizeServerSettings(await res.json());
+    renderServerSettings();
+    const msg = source === 'media' ? 'Media settings saved.' : 'General server settings saved. Restart Guidevault if you changed listener values.';
+    source === 'media' ? setMediaSettingsStatus(msg, 'success') : setServerSettingsStatus(msg, 'success');
+  } catch (err) {
+    console.error('Unable to save server settings', err);
+    const msg = `Unable to save settings: ${err?.message || err}`;
+    source === 'media' ? setMediaSettingsStatus(msg, 'error') : setServerSettingsStatus(msg, 'error');
+  }
+}
+function resetServerDefaults() {
+  state.serverSettings = defaultServerSettings();
+  renderServerSettings();
+  setServerSettingsStatus('Defaults restored locally. Choose Save to write them.', 'info');
+}
+async function createServerBackup() {
+  try {
+    setServerSettingsStatus('Creating library backup...', 'info');
+    const res = await fetch('/api/server/backup', { method: 'POST', cache: 'no-store' });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data?.error || `Backup failed: ${res.status}`);
+    const message = `Backup created: ${data.fileName || 'library backup'} (${fmtBytes(Number(data.sizeBytes || 0))}).`;
+    setServerSettingsStatus(message, 'success');
+    setTasksSettingsStatus(message, 'success');
+  } catch (err) {
+    const message = `Backup failed: ${err?.message || err}`;
+    setServerSettingsStatus(message, 'error');
+    setTasksSettingsStatus(message, 'error');
+  }
+}
+function normalizeEmailSettings(value = {}) {
+  return {
+    hostName: String(value.hostName || '').trim(),
+    senderAddress: String(value.senderAddress || '').trim(),
+    displayName: String(value.displayName || 'Guidevault').trim(),
+    host: String(value.host || '').trim(),
+    port: Number(value.port || 587) || 587,
+    useSsl: value.useSsl !== false,
+    username: String(value.username || '').trim(),
+    password: String(value.password || '').trim(),
+    sizeLimitMb: Number(value.sizeLimitMb || 25) || 25,
+    customizedTemplates: value.customizedTemplates === true
+  };
+}
+async function loadEmailSettings(showStatus = false) {
+  try {
+    const res = await fetch('/api/email/settings', { cache: 'no-store' });
+    if (!res.ok) throw new Error(`Email settings request failed: ${res.status}`);
+    state.emailSettings = normalizeEmailSettings(await res.json());
+    renderEmailSettings();
+    if (showStatus) setEmailSettingsStatus('Email settings loaded.', 'success');
+  } catch (err) {
+    console.warn('Unable to load email settings', err);
+    state.emailSettings = state.emailSettings || normalizeEmailSettings();
+    renderEmailSettings();
+    if (showStatus) setEmailSettingsStatus('Unable to load email settings from the backend.', 'error');
+  }
+}
+function renderEmailSettings() {
+  const settings = normalizeEmailSettings(state.emailSettings || {});
+  if ($('emailHostName')) $('emailHostName').value = settings.hostName || (state.serverSettings?.hostName || '');
+  if ($('emailSenderAddress')) $('emailSenderAddress').value = settings.senderAddress;
+  if ($('emailDisplayName')) $('emailDisplayName').value = settings.displayName;
+  if ($('emailHost')) $('emailHost').value = settings.host;
+  if ($('emailPort')) $('emailPort').value = settings.port;
+  if ($('emailUseSsl')) $('emailUseSsl').checked = settings.useSsl;
+  if ($('emailUsername')) $('emailUsername').value = settings.username;
+  if ($('emailPassword')) $('emailPassword').value = settings.password;
+  if ($('emailSizeLimitMb')) $('emailSizeLimitMb').value = settings.sizeLimitMb;
+  if ($('emailCustomizedTemplates')) $('emailCustomizedTemplates').checked = settings.customizedTemplates;
+}
+function collectEmailSettings() {
+  return normalizeEmailSettings({
+    hostName: $('emailHostName')?.value,
+    senderAddress: $('emailSenderAddress')?.value,
+    displayName: $('emailDisplayName')?.value,
+    host: $('emailHost')?.value,
+    port: $('emailPort')?.value,
+    useSsl: !!$('emailUseSsl')?.checked,
+    username: $('emailUsername')?.value,
+    password: $('emailPassword')?.value,
+    sizeLimitMb: $('emailSizeLimitMb')?.value,
+    customizedTemplates: !!$('emailCustomizedTemplates')?.checked
+  });
+}
+async function saveEmailSettings() {
+  try {
+    const res = await fetch('/api/email/settings', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(collectEmailSettings()) });
+    if (!res.ok) throw new Error(`Email save failed: ${res.status}`);
+    state.emailSettings = normalizeEmailSettings(await res.json());
+    renderEmailSettings();
+    setEmailSettingsStatus('Email settings saved.', 'success');
+  } catch (err) {
+    console.error('Unable to save email settings', err);
+    setEmailSettingsStatus(`Unable to save email settings: ${err?.message || err}`, 'error');
+  }
+}
+async function loadUsersSettings(showStatus = false) {
+  try {
+    const res = await fetch('/api/users', { cache: 'no-store' });
+    if (!res.ok) throw new Error(`Users request failed: ${res.status}`);
+    const data = await res.json();
+    state.usersSettings = { users: Array.isArray(data.users) ? data.users : [], libraries: Array.isArray(data.libraries) ? data.libraries : [], permissions: Array.isArray(data.permissions) ? data.permissions : [] };
+    renderUsersSettings();
+    if (showStatus) setUsersStatus('Users refreshed.', 'success');
+  } catch (err) {
+    console.warn('Unable to load users', err);
+    renderUsersSettings();
+    if (showStatus) setUsersStatus('Unable to load users from the backend.', 'error');
+  }
+}
+function libraryNameForInvite(lib, index = 0) {
+  return String(lib?.name || lib?.Name || lib?.libraryPath || lib?.LibraryPath || lib?.path || lib?.Path || `Library ${index + 1}`).trim();
+}
+function renderUsersSettings() {
+  const data = state.usersSettings || { users: [], libraries: [], permissions: [] };
+  const libHost = $('inviteLibrariesList');
+  if (libHost) {
+    const libraries = data.libraries?.length ? data.libraries : (state.libraries || []);
+    libHost.innerHTML = libraries.map((lib, index) => {
+      const name = libraryNameForInvite(lib, index);
+      return `<label class="inline-check"><input type="checkbox" value="${escapeForAttribute(name)}" checked /> ${escapeHtml(name)}</label>`;
+    }).join('') || '<p class="sub">No libraries configured yet.</p>';
+  }
+  const permHost = $('invitePermissionsList');
+  if (permHost) {
+    const permissions = data.permissions?.length ? data.permissions : ['Login', 'Bookmark', 'Download', 'Read Only'];
+    permHost.innerHTML = permissions.map(name => `<label class="inline-check"><input type="checkbox" value="${escapeForAttribute(name)}" ${['Login','Bookmark','Read Only'].includes(name) ? 'checked' : ''} /> ${escapeHtml(name)}</label>`).join('');
+  }
+  const usersHost = $('usersList');
+  if (usersHost) {
+    usersHost.innerHTML = (data.users || []).map(user => `<article class="settings-card user-card"><div><h3>${escapeHtml(user.displayName || user.email || 'Invited user')}</h3><p class="sub">${escapeHtml(user.email || '')} • ${escapeHtml(user.role || 'Reader')} • ${escapeHtml(user.status || 'Invited')}</p></div><div class="user-chip-list"><span>${escapeHtml((user.libraries || []).join(', ') || 'No library access')}</span><span>${escapeHtml((user.permissions || []).join(', ') || 'No permissions')}</span><span>${escapeHtml(user.ageRatingRestriction || 'No Restriction')}</span></div></article>`).join('') || '<article class="settings-card"><p class="sub">No invited users yet.</p></article>';
+  }
+}
+async function inviteUser() {
+  const email = String($('inviteEmail')?.value || '').trim();
+  if (!email) { setUsersStatus('Enter an email address first.', 'error'); return; }
+  const checkedValues = host => [...(host?.querySelectorAll('input[type="checkbox"]:checked') || [])].map(x => x.value).filter(Boolean);
+  const payload = {
+    email,
+    displayName: $('inviteDisplayName')?.value || '',
+    role: $('inviteRole')?.value || 'Reader',
+    libraries: checkedValues($('inviteLibrariesList')),
+    permissions: checkedValues($('invitePermissionsList')),
+    ageRatingRestriction: $('inviteAgeRestriction')?.value || 'No Restriction',
+    includeUnknowns: !!$('inviteIncludeUnknowns')?.checked
+  };
+  try {
+    const res = await fetch('/api/users/invite', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data?.error || `Invite failed: ${res.status}`);
+    const sent = data.sent === true || data.emailSent === true;
+    setUsersStatus(sent ? 'Invite saved and email sent.' : (data.emailMessage || 'Invite saved. Email was not sent because SMTP is not fully configured or sending failed.'), sent ? 'success' : 'info');
+    ['inviteEmail','inviteDisplayName'].forEach(id => { if ($(id)) $(id).value = ''; });
+    await loadUsersSettings(false);
+  } catch (err) {
+    console.error('Unable to invite user', err);
+    setUsersStatus(`Invite failed: ${err?.message || err}`, 'error');
+  }
+}
+function normalizeTaskSettings(value = {}) {
+  return { libraryScan: String(value.libraryScan || 'Daily'), guidevaultBackup: String(value.guidevaultBackup || 'Daily'), cleanup: String(value.cleanup || 'Daily'), readingListSync: String(value.readingListSync || 'Custom (0 4 * * *)') };
+}
+async function loadTaskSettings(showStatus = false) {
+  try {
+    const res = await fetch('/api/tasks/settings', { cache: 'no-store' });
+    if (!res.ok) throw new Error(`Task settings request failed: ${res.status}`);
+    state.taskSettings = normalizeTaskSettings(await res.json());
+    renderTaskSettings();
+    if (showStatus) setTasksSettingsStatus('Task settings loaded.', 'success');
+  } catch (err) {
+    console.warn('Unable to load task settings', err);
+    state.taskSettings = state.taskSettings || normalizeTaskSettings();
+    renderTaskSettings();
+    if (showStatus) setTasksSettingsStatus('Unable to load task settings from the backend.', 'error');
+  }
+}
+function renderTaskSettings() {
+  const settings = normalizeTaskSettings(state.taskSettings || {});
+  if ($('taskLibraryScan')) $('taskLibraryScan').value = settings.libraryScan;
+  if ($('taskGuidevaultBackup')) $('taskGuidevaultBackup').value = settings.guidevaultBackup;
+  if ($('taskCleanup')) $('taskCleanup').value = settings.cleanup;
+  if ($('taskReadingListSync')) $('taskReadingListSync').value = settings.readingListSync;
+}
+function collectTaskSettings() {
+  return normalizeTaskSettings({ libraryScan: $('taskLibraryScan')?.value, guidevaultBackup: $('taskGuidevaultBackup')?.value, cleanup: $('taskCleanup')?.value, readingListSync: $('taskReadingListSync')?.value });
+}
+async function saveTaskSettings() {
+  try {
+    const res = await fetch('/api/tasks/settings', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(collectTaskSettings()) });
+    if (!res.ok) throw new Error(`Task save failed: ${res.status}`);
+    state.taskSettings = normalizeTaskSettings(await res.json());
+    renderTaskSettings();
+    setTasksSettingsStatus('Recurring task settings saved.', 'success');
+  } catch (err) {
+    console.error('Unable to save task settings', err);
+    setTasksSettingsStatus(`Unable to save task settings: ${err?.message || err}`, 'error');
+  }
 }
 
 function beginOpdsUrlEdit() {
@@ -3239,10 +3590,13 @@ function setupHomebarIconFallbacks() {
 
 function updateNavActive() {
   document.querySelectorAll('.nav').forEach(btn => {
-    const matchesCategoryKind = !!state.categoryFilter && btn.dataset.filter === state.filter;
-    const matchesView = !state.categoryFilter && btn.dataset.view === state.viewMode;
-    btn.classList.toggle('active', matchesCategoryKind || matchesView);
+    const isCustom = !!btn.dataset.customNavId;
+    const matchesCustom = isCustom && state.customFilter?.id === btn.dataset.customNavId;
+    const matchesCategoryKind = !state.customFilter && !!state.categoryFilter && btn.dataset.filter === state.filter;
+    const matchesView = !state.customFilter && !state.categoryFilter && btn.dataset.view === state.viewMode;
+    btn.classList.toggle('active', matchesCustom || matchesCategoryKind || matchesView);
   });
+  renderCustomSideNavItems();
 }
 function setupRightPanelResize() {
   const handle = $('rightResizeHandle');
@@ -3791,7 +4145,8 @@ function applyFilters() {
     const matchesFilter = state.filter === 'All Content' || (state.filter === 'Favorites' ? isFavoriteItem(item) : item.kind === state.filter);
     const matchesCategory = itemMatchesCategoryFilter(item);
     const haystack = [item.title, item.kind, item.system, categoryOf(item), item.publisher, item.year, item.series, item.writer, item.issueNumber, item.asin, item.isbn10, item.isbn13, item.languageTag, platformListText(item), item.platformMatchTitle, item.platformResolverSource, item.summary, item.notes, item.relativePath, item.manualTitle, item.manualType, item.controlScheme, item.warrantySupport, ...(item.includedSections || []), ...(item.itemsCovered || []), ...(item.tags || [])].join(' ').toLowerCase();
-    return matchesFilter && matchesCategory && (!q || haystack.includes(q));
+    const matchesCustom = !state.customFilter || customSideNavItemMatches(item, state.customFilter);
+    return matchesFilter && matchesCategory && matchesCustom && (!q || haystack.includes(q));
   });
 
   const sort = $('sort')?.value || 'recent';
@@ -4251,6 +4606,7 @@ function renderCategories() {
     const kind = btn.dataset.kind || 'Any';
     state.filter = ['Any', 'Publisher', 'Decade'].includes(kind) ? 'All Content' : kind;
     state.categoryFilter = `${kind}::${btn.dataset.category}`;
+    state.customFilter = null;
     state.viewMode = 'category';
     if ($('search')) $('search').value = '';
     updateNavActive();
@@ -4527,11 +4883,41 @@ async function handleReaderKeydown(e) {
   cleanupReaderHitZoneFocus();
 }
 
+function normalizeCustomSideNavItem(value = {}, index = 0) {
+  const type = ['series', 'kind', 'category', 'publisher', 'search'].includes(String(value.type || '').toLowerCase()) ? String(value.type).toLowerCase() : 'series';
+  const label = String(value.label || value.value || `Shortcut ${index + 1}`).trim();
+  const id = String(value.id || `custom-nav-${Date.now()}-${index}-${Math.random().toString(36).slice(2, 7)}`).trim();
+  return {
+    id,
+    label: label || `Shortcut ${index + 1}`,
+    type,
+    value: String(value.value || label || '').trim(),
+    icon: String(value.icon || '').trim().slice(0, 4)
+  };
+}
+function normalizeSideNavSettings(value = {}) {
+  const items = Array.isArray(value?.customItems) ? value.customItems : [];
+  const deduped = [];
+  const seen = new Set();
+  items.map((item, index) => normalizeCustomSideNavItem(item, index)).forEach(item => {
+    const key = `${item.type}::${item.label.toLowerCase()}::${item.value.toLowerCase()}`;
+    if (!item.label || !item.value || seen.has(key)) return;
+    seen.add(key);
+    deduped.push(item);
+  });
+  return { customItems: deduped };
+}
 function normalizeCustomize(value = {}) {
   const ids = new Set(HOME_SHELF_OPTIONS.map(s => s.id));
   const shelves = Array.isArray(value?.homeShelves) ? value.homeShelves : ['recently-added'];
   const clean = shelves.map(v => String(v || '').trim()).filter(id => ids.has(id));
-  return { activeTab: value?.activeTab || 'home', homeShelves: clean.length ? [...new Set(clean)] : ['recently-added'] };
+  const requestedTab = String(value?.activeTab || 'home');
+  const activeTab = requestedTab === 'side-nav' ? 'side-nav' : 'home';
+  return {
+    activeTab,
+    homeShelves: clean.length ? [...new Set(clean)] : ['recently-added'],
+    sideNav: normalizeSideNavSettings(value?.sideNav || {})
+  };
 }
 function loadCustomizeSettings() {
   let parsed = {};
@@ -4548,6 +4934,108 @@ function setCustomizeStatus(text, tone = '') {
   if (!el) return;
   el.textContent = text || '';
   el.dataset.tone = tone || '';
+}
+
+function setCustomSideNavStatus(text, tone = '') {
+  const el = $('customSideNavStatus');
+  if (!el) return;
+  el.textContent = text || '';
+  el.dataset.tone = tone || '';
+}
+function customSideNavTypeLabel(type) {
+  return ({ series: 'Series', kind: 'Content Type', category: 'Platform', publisher: 'Publisher', search: 'Search' })[type] || 'Shortcut';
+}
+function sideNavSearchHaystack(item) {
+  return [item.title, item.kind, item.system, categoryOf(item), item.publisher, item.year, item.series, item.writer, item.issueNumber, item.asin, item.isbn10, item.isbn13, item.languageTag, platformListText(item), item.platformMatchTitle, item.platformResolverSource, item.summary, item.notes, item.relativePath, item.manualTitle, item.manualType, item.controlScheme, item.warrantySupport, ...(item.includedSections || []), ...(item.itemsCovered || []), ...(item.tags || [])].join(' ').toLowerCase();
+}
+function customSideNavItemMatches(item, custom = state.customFilter) {
+  if (!custom) return true;
+  const value = String(custom.value || '').trim().toLowerCase();
+  if (!value) return true;
+  const includes = text => String(text || '').toLowerCase().includes(value);
+  switch (custom.type) {
+    case 'series': return includes(item.series) || includes(item.title) || includes(item.manualTitle) || includes(item.collectionTitle);
+    case 'kind': return includes(item.kind) || item.kind?.toLowerCase() === value;
+    case 'category': return includes(categoryOf(item)) || includes(item.system) || associatedPlatformsOf(item).some(includes);
+    case 'publisher': return includes(item.publisher);
+    case 'search': return sideNavSearchHaystack(item).includes(value);
+    default: return sideNavSearchHaystack(item).includes(value);
+  }
+}
+function renderCustomSideNavItems() {
+  const host = $('customSideNavItems');
+  if (!host) return;
+  const settings = state.customize || loadCustomizeSettings();
+  const items = settings.sideNav?.customItems || [];
+  host.innerHTML = items.map(item => `<button class="nav custom-side-nav-button" type="button" data-custom-nav-id="${escapeForAttribute(item.id)}"><span>${escapeHtml(item.icon || '◆')}</span>${escapeHtml(item.label)}</button>`).join('');
+  host.classList.toggle('hidden', !items.length);
+  host.querySelectorAll('[data-custom-nav-id]').forEach(btn => btn.classList.toggle('active', state.customFilter?.id === btn.dataset.customNavId));
+}
+function renderCustomSideNavList() {
+  const list = $('customSideNavList');
+  if (!list) return;
+  const settings = state.customize || loadCustomizeSettings();
+  const items = settings.sideNav?.customItems || [];
+  list.innerHTML = items.map(item => `<div class="custom-side-nav-row" data-custom-nav-id="${escapeForAttribute(item.id)}"><span class="custom-side-nav-icon">${escapeHtml(item.icon || '◆')}</span><div><strong>${escapeHtml(item.label)}</strong><p class="sub">${escapeHtml(customSideNavTypeLabel(item.type))}: ${escapeHtml(item.value)}</p></div><button class="danger" type="button" data-custom-side-nav-action="remove">Remove</button></div>`).join('') || '<p class="sub">No custom shortcuts yet. Add one for a favorite series, magazine run, publisher, platform, or saved search.</p>';
+}
+function addCustomSideNavItem() {
+  const raw = {
+    label: $('customSideNavLabel')?.value,
+    type: $('customSideNavType')?.value,
+    value: $('customSideNavValue')?.value,
+    icon: $('customSideNavIcon')?.value
+  };
+  const item = normalizeCustomSideNavItem(raw, (state.customize?.sideNav?.customItems || []).length);
+  if (!item.label || !item.value) { setCustomSideNavStatus('Add a label and match value first.', 'error'); return; }
+  const settings = state.customize || loadCustomizeSettings();
+  settings.sideNav = normalizeSideNavSettings(settings.sideNav || {});
+  settings.sideNav.customItems.push(item);
+  state.customize = settings;
+  saveCustomizeSettings();
+  ['customSideNavLabel','customSideNavValue','customSideNavIcon'].forEach(id => { if ($(id)) $(id).value = ''; });
+  renderCustomizeSettings();
+  setCustomSideNavStatus('Side nav shortcut added.', 'success');
+}
+function removeCustomSideNavItem(id) {
+  const settings = state.customize || loadCustomizeSettings();
+  settings.sideNav = normalizeSideNavSettings(settings.sideNav || {});
+  settings.sideNav.customItems = settings.sideNav.customItems.filter(item => item.id !== id);
+  if (state.customFilter?.id === id) state.customFilter = null;
+  saveCustomizeSettings();
+  renderCustomizeSettings();
+  updateNavActive();
+  applyFilters();
+}
+function resetCustomSideNavItems() {
+  const settings = state.customize || loadCustomizeSettings();
+  settings.sideNav = { customItems: [] };
+  state.customFilter = null;
+  saveCustomizeSettings();
+  renderCustomizeSettings();
+  updateNavActive();
+  applyFilters();
+  setCustomSideNavStatus('Custom side nav shortcuts reset.', 'info');
+}
+function applyCustomSideNavItem(id) {
+  const settings = state.customize || loadCustomizeSettings();
+  const item = (settings.sideNav?.customItems || []).find(x => x.id === id);
+  if (!item) return;
+  showLibraryScreen();
+  state.customFilter = item;
+  state.viewMode = 'custom';
+  state.filter = 'All Content';
+  state.categoryFilter = '';
+  if ($('search')) $('search').value = '';
+  document.querySelectorAll('.chip').forEach(c => c.classList.remove('active'));
+  updateNavActive();
+  scrollMainToTop();
+  applyFilters();
+}
+function handleCustomSideNavListAction(e) {
+  const btn = e.target.closest?.('[data-custom-side-nav-action]');
+  if (!btn) return;
+  const row = btn.closest('[data-custom-nav-id]');
+  if (btn.dataset.customSideNavAction === 'remove') removeCustomSideNavItem(row?.dataset.customNavId || '');
 }
 function renderCustomizeSettings() {
   const settings = state.customize || loadCustomizeSettings();
@@ -4571,8 +5059,10 @@ function renderCustomizeSettings() {
       </div>`;
     }).join('') || '<p class="sub">No Home shelves selected. Add a shelf to populate Home above the main grid.</p>';
   }
+  renderCustomSideNavItems();
+  renderCustomSideNavList();
   document.querySelectorAll('.customize-tab').forEach(btn => btn.classList.toggle('active', (btn.dataset.customizeTab || 'home') === (settings.activeTab || 'home')));
-  const tabIds = { home: 'customizeHomePanel', 'side-nav': 'customizeSideNavPanel', 'smart-filters': 'customizeSmartFiltersPanel', 'external-sources': 'customizeExternalSourcesPanel' };
+  const tabIds = { home: 'customizeHomePanel', 'side-nav': 'customizeSideNavPanel' };
   Object.entries(tabIds).forEach(([key, id]) => $(id)?.classList.toggle('hidden', (settings.activeTab || 'home') !== key));
 }
 function handleCustomizeTabClick(e) {
@@ -6635,7 +7125,8 @@ async function saveSelectedMetadata(extra = {}, options = {}) {
         const matchesFilter = state.filter === 'All Content' || (state.filter === 'Favorites' ? isFavoriteItem(item) : item.kind === state.filter);
         const matchesCategory = itemMatchesCategoryFilter(item);
         const haystack = [item.title, item.kind, item.system, categoryOf(item), item.publisher, item.year, item.series, item.writer, item.issueNumber, item.asin, item.isbn, item.isbn10, item.isbn13, item.languageTag, platformListText(item), item.platformMatchTitle, item.platformResolverSource, item.summary, item.notes, item.relativePath, item.manualTitle, item.manualType, item.controlScheme, item.warrantySupport, ...(item.includedSections || []), ...(item.itemsCovered || []), ...(item.tags || [])].join(' ').toLowerCase();
-        return matchesFilter && matchesCategory && (!q || haystack.includes(q));
+        const matchesCustom = !state.customFilter || customSideNavItemMatches(item, state.customFilter);
+    return matchesFilter && matchesCategory && matchesCustom && (!q || haystack.includes(q));
       });
     };
     updateFilteredListOnly();
@@ -9816,14 +10307,14 @@ function showSettingsScreen(tab = 'account') {
 }
 function activateSettingsTab(tab = 'account') {
   if (tab === 'insights') tab = 'statistics';
-  const allowed = new Set(['account', 'preferences', 'keybinds', 'reading-profiles', 'customize', 'opds', 'devices', 'insights-devices', 'statistics', 'server', 'metadata-manager', 'library', 'import', 'info']);
+  const allowed = new Set(['account', 'preferences', 'keybinds', 'reading-profiles', 'customize', 'opds', 'devices', 'insights-devices', 'statistics', 'server', 'metadata-manager', 'library', 'media', 'email', 'users', 'tasks', 'import', 'info']);
   const active = allowed.has(tab) ? tab : 'account';
   document.querySelectorAll('.settings-nav, .settings-subnav').forEach(btn => {
     const tab = btn.dataset.settingsTab || '';
     const isInsightsParent = btn.classList.contains('settings-nav') && tab === 'insights' && (active.startsWith('insights') || active === 'statistics');
-    const isAccountParent = btn.classList.contains('settings-nav') && tab === 'account' && ['account', 'preferences', 'keybinds', 'reading-profiles', 'customize', 'opds', 'devices'].includes(active);
+    const isAccountParent = btn.classList.contains('settings-nav') && tab === 'account' && ['account', 'preferences', 'keybinds', 'reading-profiles', 'customize', 'devices'].includes(active);
     const isInfoParent = btn.classList.contains('settings-nav') && tab === 'info' && active === 'info';
-    const isServerParent = btn.classList.contains('settings-nav') && tab === 'server' && ['server', 'metadata-manager', 'library'].includes(active);
+    const isServerParent = btn.classList.contains('settings-nav') && tab === 'server' && ['server', 'metadata-manager', 'library', 'opds', 'media', 'email', 'users', 'tasks'].includes(active);
     btn.classList.toggle('active', tab === active || isInsightsParent || isAccountParent || isInfoParent || isServerParent);
   });
   if ($('settingsAccountPanel')) $('settingsAccountPanel').classList.toggle('hidden', active !== 'account');
@@ -9837,12 +10328,21 @@ function activateSettingsTab(tab = 'account') {
   if ($('settingsOpdsPanel')) $('settingsOpdsPanel').classList.toggle('hidden', active !== 'opds');
   if ($('settingsDevicesPanel')) $('settingsDevicesPanel').classList.toggle('hidden', active !== 'devices');
   if ($('settingsServerPanel')) $('settingsServerPanel').classList.toggle('hidden', active !== 'server');
+  if ($('settingsMediaPanel')) $('settingsMediaPanel').classList.toggle('hidden', active !== 'media');
+  if ($('settingsEmailPanel')) $('settingsEmailPanel').classList.toggle('hidden', active !== 'email');
+  if ($('settingsUsersPanel')) $('settingsUsersPanel').classList.toggle('hidden', active !== 'users');
+  if ($('settingsTasksPanel')) $('settingsTasksPanel').classList.toggle('hidden', active !== 'tasks');
   if ($('settingsMetadataManagerPanel')) $('settingsMetadataManagerPanel').classList.toggle('hidden', active !== 'metadata-manager');
   if ($('settingsImportPanel')) $('settingsImportPanel').classList.toggle('hidden', active !== 'import' && active !== 'library');
   if ($('settingsInfoPanel')) $('settingsInfoPanel').classList.toggle('hidden', active !== 'info');
   if (active === 'preferences') renderPreferencesSettings();
   if (active === 'keybinds') renderKeybindsSettings();
   if (active === 'customize') renderCustomizeSettings();
+  if (active === 'server') loadServerSettings(false);
+  if (active === 'media') loadServerSettings(false);
+  if (active === 'email') { if (!state.serverSettings) loadServerSettings(false); loadEmailSettings(false); }
+  if (active === 'users') loadUsersSettings(false);
+  if (active === 'tasks') loadTaskSettings(false);
   if (active === 'statistics') renderStatistics();
   if (active === 'info') { loadSystemInfo(false); loadSystemPerformance(); checkStableUpdates(false); }
   if (active === 'reading-profiles') renderReadingProfileSettings();
@@ -9866,12 +10366,13 @@ if ($('rightToggle')) $('rightToggle').addEventListener('click', () => toggleRig
 if ($('search')) $('search').addEventListener('input', applyFilters);
 if ($('sort')) $('sort').addEventListener('change', applyFilters);
 if ($('coverSizeSlider')) $('coverSizeSlider').addEventListener('input', e => setLibraryCoverScale(e.currentTarget.value));
-if ($('categoryStructureSelect')) $('categoryStructureSelect').addEventListener('change', e => { saveCategoryStructure(e.currentTarget.value); state.categoryFilter = ''; state.filter = 'All Content'; state.viewMode = 'all'; updateNavActive(); applyFilters(); });
+if ($('categoryStructureSelect')) $('categoryStructureSelect').addEventListener('change', e => { saveCategoryStructure(e.currentTarget.value); state.categoryFilter = ''; state.customFilter = null; state.filter = 'All Content'; state.viewMode = 'all'; updateNavActive(); applyFilters(); });
 document.querySelectorAll('.nav').forEach(btn => btn.addEventListener('click', () => {
   showLibraryScreen();
   state.viewMode = btn.dataset.view || 'all';
   state.filter = btn.dataset.filter || 'All Content';
   state.categoryFilter = '';
+  state.customFilter = null;
   if ($('search')) $('search').value = '';
   document.querySelectorAll('.chip').forEach(c => c.classList.toggle('active', c.dataset.kind === state.filter || (state.filter === 'All Content' && c.dataset.kind === 'All Content')));
   updateNavActive();
@@ -9883,6 +10384,7 @@ document.querySelectorAll('.chip').forEach(btn => btn.addEventListener('click', 
   state.filter = btn.dataset.kind;
   state.viewMode = state.filter === 'All Content' ? 'all' : state.filter === 'Manual' ? 'manuals' : state.filter === 'Strategy Guide' ? 'strategy-guides' : 'magazines';
   state.categoryFilter = '';
+  state.customFilter = null;
   document.querySelectorAll('.chip').forEach(c => c.classList.toggle('active', c === btn));
   updateNavActive();
   scrollMainToTop();
@@ -9894,6 +10396,7 @@ document.querySelectorAll('.collection').forEach(btn => btn.addEventListener('cl
   state.filter = kind;
   state.viewMode = kind === 'Manual' ? 'manual-systems' : kind === 'Strategy Guide' ? 'guide-systems' : kind === 'Magazine' ? 'magazine-series' : 'all';
   state.categoryFilter = '';
+  state.customFilter = null;
   if ($('search')) $('search').value = '';
   document.querySelectorAll('.chip').forEach(c => c.classList.toggle('active', c.dataset.kind === kind));
   updateNavActive();
@@ -10220,6 +10723,38 @@ document.querySelectorAll('.settings-nav, .settings-subnav').forEach(btn => btn.
     loadLibrarySettings?.();
   }
 }));
+
+if ($('accountUploadProfilePic')) $('accountUploadProfilePic').addEventListener('click', e => { e.preventDefault(); $('accountProfilePicInput')?.click(); });
+if ($('accountProfilePicInput')) $('accountProfilePicInput').addEventListener('change', e => handleAccountProfilePicFile(e.currentTarget.files?.[0]));
+if ($('accountRemoveProfilePic')) $('accountRemoveProfilePic').addEventListener('click', e => { e.preventDefault(); removeAccountProfilePic(); });
+if ($('opdsEnabledToggle')) $('opdsEnabledToggle').addEventListener('change', async e => {
+  state.opds = state.opds || loadOpdsSettings();
+  state.opds.enabled = !!e.currentTarget.checked;
+  saveOpdsSettings();
+  try { await saveOpdsServerSettings({ enabled: state.opds.enabled }); setOpdsStatus(state.opds.enabled ? 'OPDS enabled.' : 'OPDS disabled.', 'success'); }
+  catch (err) { console.error(err); setOpdsStatus('Unable to update OPDS enabled state on the backend.', 'error'); renderOpdsSettings(); }
+});
+if ($('customSideNavAdd')) $('customSideNavAdd').addEventListener('click', e => { e.preventDefault(); addCustomSideNavItem(); });
+if ($('customSideNavReset')) $('customSideNavReset').addEventListener('click', e => { e.preventDefault(); resetCustomSideNavItems(); });
+if ($('customSideNavList')) $('customSideNavList').addEventListener('click', handleCustomSideNavListAction);
+if ($('customSideNavItems')) $('customSideNavItems').addEventListener('click', e => {
+  const btn = e.target.closest?.('[data-custom-nav-id]');
+  if (!btn) return;
+  applyCustomSideNavItem(btn.dataset.customNavId || '');
+});
+if ($('serverSaveSettings')) $('serverSaveSettings').addEventListener('click', e => { e.preventDefault(); saveServerSettings('general'); });
+if ($('serverResetDefaults')) $('serverResetDefaults').addEventListener('click', e => { e.preventDefault(); resetServerDefaults(); });
+if ($('serverCreateBackup')) $('serverCreateBackup').addEventListener('click', e => { e.preventDefault(); createServerBackup(); });
+if ($('mediaSaveSettings')) $('mediaSaveSettings').addEventListener('click', e => { e.preventDefault(); saveServerSettings('media'); });
+if ($('emailSaveSettings')) $('emailSaveSettings').addEventListener('click', e => { e.preventDefault(); saveEmailSettings(); });
+if ($('usersRefresh')) $('usersRefresh').addEventListener('click', e => { e.preventDefault(); loadUsersSettings(true); });
+if ($('usersInviteButton')) $('usersInviteButton').addEventListener('click', e => { e.preventDefault(); inviteUser(); });
+if ($('tasksSaveSettings')) $('tasksSaveSettings').addEventListener('click', e => { e.preventDefault(); saveTaskSettings(); });
+if ($('taskRunRescan')) $('taskRunRescan').addEventListener('click', async e => { e.preventDefault(); setTasksSettingsStatus('Fast rescan queued.', 'info'); await rescanLibrary(); });
+if ($('taskRunEnrich')) $('taskRunEnrich').addEventListener('click', async e => { e.preventDefault(); setTasksSettingsStatus('Metadata enrichment queued.', 'info'); await enrichLibraryMetadata(); });
+if ($('taskRunCleanup')) $('taskRunCleanup').addEventListener('click', async e => { e.preventDefault(); setTasksSettingsStatus('Cleanup queued.', 'info'); await cleanupLibrary(); });
+if ($('taskRunBackup')) $('taskRunBackup').addEventListener('click', e => { e.preventDefault(); createServerBackup(); });
+if ($('taskRunTrim')) $('taskRunTrim').addEventListener('click', e => { e.preventDefault(); trimGuidevaultMemory(); setTasksSettingsStatus('Reading cache clear requested.', 'info'); });
 
 if ($('metadataManagerSearch')) $('metadataManagerSearch').addEventListener('input', e => metadataManagerUpdateFilter('search', e.currentTarget.value));
 if ($('metadataManagerKind')) $('metadataManagerKind').addEventListener('change', e => metadataManagerUpdateFilter('filterKind', e.currentTarget.value));

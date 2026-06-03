@@ -1,131 +1,19 @@
+<<<<<<< HEAD
 # Guidevault
 <img width="1686" height="892" alt="2026-06-02 11_53_06-C__Users_Andrew_Documents_Rainmeter_Skins_ASUSROG_Launcher with Icons 2_ASUSROG " src="https://github.com/user-attachments/assets/5ed83b6b-be5d-4458-b0df-e152558ffe10" />
+=======
+# Guidevault v0.9.7
+>>>>>>> d76383b (Update Guidevault to 0.9.40)
 
-Guidevault is a self-hosted web reader and library manager for video game manuals, strategy guides, and gaming magazines.
+Guidevault is a first-version self-hosted web reader for video game manuals, strategy guides, and gaming magazines.
 
-It is designed for local/self-hosted collections where the source files stay in your own folders. Guidevault indexes and reads your files in place; it does not require uploading, copying, or moving your manuals into the app.
+## v0.7 reader update
 
-Current release: **v0.9.30**
-
-## What Guidevault does
-
-Guidevault provides a browser-based library and reader for:
-
-* Video game manuals
-* Strategy guides
-* Gaming magazines
-
-Supported source formats:
-
-* `.cbz`
-* `.cbr`
-* `.pdf`
-
-## Core features
-
-* Self-hosted web interface
-* Docker-ready deployment
-* Local file/folder library scanning
-* Separate library areas for Manuals, Strategy Guides, and Magazines
-* Reader with single-page, two-page, and adaptive page display modes
-* Open-book style reader presentation with spine/gutter shading
-* Page-turn/curl-style reader transitions
-* Metadata editing per item
-* Notes editing per item
-* Favorites
-* Search
-* OPDS support for compatible external readers
-* Local user profile/login support
-* Reading profiles and reader preferences
-* System/platform classification for retro gaming libraries
-* Strategy guide support across multiple associated platforms
-* Update history and system/performance diagnostics
-
-## Current behavior
-
-Guidevault scans files from configured library folders and builds an index.
-
-It does **not** upload, copy, move, or delete your source files.
-
-Removing an item from Guidevault removes it from the Guidevault library index only. It does not delete the original file from disk.
-
-## Library types
-
-Guidevault supports three main content types:
-
-### Manuals
-
-Manuals are organized primarily by detected/preferred platform.
-
-Examples:
-
-* Nintendo Entertainment System
-* Super Nintendo Entertainment System
-* Sega Genesis
-* Sony PlayStation
-
-### Strategy Guides
-
-Strategy guides can be associated with one or more platforms.
-
-If a strategy guide has multiple associated platforms, it can appear under each applicable platform library instead of being placed into a generic multi-platform bucket.
-
-### Magazines
-
-Magazines support issue-style metadata such as:
-
-* Magazine title
-* Issue number
-* Volume
-* Publication date
-* Publisher
-* Region
-* Featured games/platforms
-
-## Metadata
-
-Guidevault can use a mix of:
-
-* Folder path inference
-* Filename inference
-* Manual metadata edits
-* `ComicInfo.xml` metadata
-* Future Guidevault-native metadata
-
-### Fast Rescan
-
-Fast Rescan is the normal scan path. It prioritizes speed and uses folder/file information to quickly populate the library.
-
-### Enrich Metadata
-
-Enrich Metadata is a slower optional pass that opens supported archives and attempts to read embedded metadata such as `ComicInfo.xml`.
-
-Use this when you want Guidevault to pull deeper metadata from files after the library has already been indexed.
-
-## Suggested folder layout
-
-```text
-Guidevault Library/
-  Manuals/
-    Nintendo Entertainment System/
-    Super Nintendo Entertainment System/
-    Sega Genesis/
-
-  Strategy Guides/
-    Nintendo Entertainment System/
-    Super Nintendo Entertainment System/
-    Sony PlayStation/
-
-  Magazines/
-    Nintendo Power/
-    Electronic Gaming Monthly/
-```
-
-The exact folder layout is flexible, but using clear platform and content-type folders improves automatic classification.
+- Adds a stronger open-book spine/gutter shader between two-page spreads.
+- Fullscreen spreads now render as one joined book surface instead of two disconnected panels.
+- Page curl animation was softened and shaded to feel more like paper turning across the center.
 
 ## Run locally
-
-From the web project folder:
 
 ```powershell
 cd C:\Users\Andrew\Documents\VSCode\PageQuest\src\PageQuest.Web
@@ -133,128 +21,78 @@ dotnet restore
 dotnet run
 ```
 
-Then open the local URL shown by `dotnet run`.
+Open the localhost URL shown by `dotnet run`. The default local Guidevault port is `http://localhost:5478` so it does not conflict with Kavita on port 5000.
 
-The default Guidevault port is:
+## What v0.5 adds
 
-```text
-http://localhost:5478
-```
+- Library root path is no longer shown on the main library screen.
+- Library root is now managed from **Settings**.
+- Drill-in details page tabs now work:
+  - Overview
+  - Metadata
+  - Notes
+- Metadata can be edited and saved per item.
+- Notes can be edited and saved per item.
+- Items can be removed from the library index without touching, uploading, copying, or deleting the source files.
+- CBZ/CBR imports read `ComicInfo.xml` metadata:
+  - Title
+  - Series
+  - Number / issue number
+  - Writer
+  - Publisher
+  - Year
+  - Summary / Notes
+  - Genre
+  - Tags
+- Magazines use `ComicInfo.xml` issue numbers for category sorting when available.
+- Reader now treats page 1 as the cover, then switches to two-page book spreads for interior pages.
+- Reader page-turn animation is adjusted to behave more like a page curl across an open book.
 
-Guidevault uses port `5478` by default to avoid conflicting with other self-hosted apps such as Kavita on port `5000`.
-
-## Docker
-
-The project includes Docker support.
-
-Example:
-
-```powershell
-docker compose up -d --build
-```
-
-A safe example compose file is included as:
-
-```text
-compose.example.yaml
-```
-
-For real usage, mount your persistent Guidevault data folder and your read-only library folders as volumes.
-
-Example concept:
-
-```yaml
-services:
-  guidevault:
-    image: ghcr.io/YOUR-GITHUB-NAME/guidevault:latest
-    container_name: guidevault
-    restart: unless-stopped
-    ports:
-      - "5478:5478"
-    environment:
-      - ASPNETCORE_URLS=http://+:5478
-      - PAGEQUEST__DATA__ROOT=/data
-    volumes:
-      - ./data:/data
-      - /path/to/manuals:/books:ro
-```
-
-Do not bake user data, scanned libraries, databases, OPDS keys, covers, cache files, or local settings into the Docker image.
-
-## OPDS
-
-Guidevault includes OPDS support for compatible external readers.
-
-Use the OPDS settings screen inside Guidevault to generate or copy the OPDS URL and access key.
-
-When connecting from another device on your network, use the host machine’s LAN IP address, not `localhost`.
-
-Example:
+## Suggested folder layout
 
 ```text
-http://192.168.1.50:5478/opds/all
+Guidevault Library\
+  Manuals\
+    Super Nintendo (SNES)\
+    Sega Genesis\
+
+  Strategy Guides\
+    Super Nintendo (SNES)\
+    PlayStation (PS1)\
+
+  Magazines\
+    Nintendo Power\
+    Electronic Gaming Monthly\
 ```
 
-## Runtime data
+Supported files: `.pdf`, `.cbz`, `.cbr`.
 
-Guidevault runtime data should stay outside the source repo and outside the Docker image.
+## Docker preparation
 
-Do not commit:
+The project includes a `Dockerfile` and `docker-compose.yml`. The current local test path is still the recommended path while the reader/import UI is being shaped.
 
-* `data/`
-* database files
-* cover cache
-* thumbnail cache
-* logs
-* local app settings
-* OPDS keys
-* `.env` files
-* personal library files
-* manuals, magazines, strategy guides, PDFs, CBZs, or CBRs
 
-## Development status
+## v0.7.1
 
-Guidevault is an early self-hosted release. The current focus is:
+- Left sidebar now starts collapsed/icon-only by default. Use the hamburger button to expand it.
 
-* Stable Docker deployment
-* Faster library indexing
-* Better metadata classification
-* Lower idle memory usage
-* OPDS compatibility
-* Reader polish
-* Safer repo/release packaging
 
-## Recent release highlights
+## v0.7.3
 
-### v0.9.30
+- The old right-side details drawer has been removed. Clicking an item opens a dedicated details page.
+- Left sidebar remains open by default.
 
-* Improved library ownership/classification behavior when Manual and Strategy Guide libraries are both configured.
-* Added deterministic one-owner-per-file scan behavior.
-* Improved repair behavior for cached items whose type no longer matches the owning library.
+## v0.9.1
 
-### v0.9.29
+- Visible branding now uses Guidevault with a small GV cartridge-vault icon.
+- The details overview is content-focused: detected system, ESRB rating, optional web link, issue/publisher/year/writer/pages, summary, and tags.
+- ComicInfo.xml `Series` is treated as the detected system/category for scanned guide/manual items.
+- Cover rendering now uses contain-style sizing so rectangular/wide manuals are not cropped.
+- The visible ODSP placeholder card was removed from the settings UI.
 
-* Expanded retro platform classification aliases.
-* Improved classification for additional systems such as Atari, Amstrad, ColecoVision, Intellivision, Vectrex, Neo Geo, MSX, Commodore, and others.
-* Fast rescans can repair previously unsorted items when improved inference can classify them.
 
-### v0.9.28
+## v0.9.7
 
-* Fixed false-positive strategy guide classification caused by broad substring matching.
-* Improved whole-word metadata classification behavior.
-
-### v0.9.27
-
-* Added Fast Rescan behavior for quicker indexing.
-* Added optional Enrich Metadata flow for slower embedded metadata parsing.
-* Added indexing performance documentation.
-
-### v0.9.26
-
-* Reduced memory pressure from cover/image caching.
-* Added system performance diagnostics.
-* Added stable Docker image update notification support.
-
-## License
-
-License information has not been finalized yet.
+- Strategy guides now appear in every platform library listed in Associated Platforms.
+- The old multi-platform bucket is no longer used for library placement when associated platforms are available.
+- Visible System / Category labels were renamed to Preferred Platform.

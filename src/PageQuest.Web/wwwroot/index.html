@@ -40,6 +40,7 @@
         <button class="nav" data-view="guide-systems" data-filter="Strategy Guide" title="Strategy Guides"><span class="nav-icon homebar-icon"><img src="/assets/icons/homebar/strategy_guide.png" alt="" loading="eager" draggable="false" /></span><span class="nav-label">Strategy Guides</span><em id="countGuides">0</em></button>
         <button class="nav" data-view="magazine-series" data-filter="Magazine" title="Magazines"><span class="nav-icon homebar-icon"><img src="/assets/icons/homebar/magazines.png" data-fallback-src="/assets/icons/homebar/magainzes.png" alt="" loading="eager" draggable="false" onerror="if(this.dataset.fallbackUsed!=='1'&&this.dataset.fallbackSrc){this.dataset.fallbackUsed='1';this.src=this.dataset.fallbackSrc}else{this.classList.add('homebar-icon-missing')}" /></span><span class="nav-label">Magazines</span><em id="countMags">0</em></button>
         <button class="nav" data-view="favorites" data-filter="Favorites" title="Favorites"><span class="nav-icon">★</span><span class="nav-label">Favorites</span><em id="countFavs">0</em></button>
+        <div id="customSideNavItems" class="custom-side-nav-items" aria-label="Custom side navigation"></div>
       </nav>
       <nav id="settingsSideNav" class="settings-side-nav hidden" aria-label="Settings navigation">
         <button class="settings-side-back" id="settingsBackToLibrary" type="button">← Library</button>
@@ -50,7 +51,6 @@
           <button id="settingsKeybindsNav" class="settings-subnav" data-settings-tab="keybinds" type="button">Key Binds</button>
           <button id="settingsReadingProfilesNav" class="settings-subnav" data-settings-tab="reading-profiles" type="button">Reading Profiles</button>
           <button id="settingsCustomizeNav" class="settings-subnav" data-settings-tab="customize" type="button">Customize</button>
-          <button id="settingsOpdsNav" class="settings-subnav" data-settings-tab="opds" type="button">OPDS / Auth Keys</button>
           <button id="settingsDevicesNav" class="settings-subnav" data-settings-tab="devices" type="button">Devices</button>
         </div>
         <button class="settings-nav" data-settings-tab="insights">Insights</button>
@@ -60,8 +60,14 @@
         </div>
         <button class="settings-nav" data-settings-tab="server">Server</button>
         <div class="settings-submenu" aria-label="Server settings subsections">
-          <button id="settingsMetadataManagerNav" class="settings-subnav" data-settings-tab="metadata-manager" type="button">Metadata Manager</button>
+          <button id="settingsServerGeneralNav" class="settings-subnav" data-settings-tab="server" type="button">General</button>
           <button id="settingsLibraryNav" class="settings-subnav" data-settings-tab="library" type="button">Library</button>
+          <button id="settingsMediaNav" class="settings-subnav" data-settings-tab="media" type="button">Media</button>
+          <button id="settingsOpdsNav" class="settings-subnav" data-settings-tab="opds" type="button">OPDS / Auth Keys</button>
+          <button id="settingsEmailNav" class="settings-subnav" data-settings-tab="email" type="button">Email</button>
+          <button id="settingsUsersNav" class="settings-subnav" data-settings-tab="users" type="button">Users</button>
+          <button id="settingsTasksNav" class="settings-subnav" data-settings-tab="tasks" type="button">Tasks</button>
+          <button id="settingsMetadataManagerNav" class="settings-subnav" data-settings-tab="metadata-manager" type="button">Metadata Manager</button>
         </div>
         <button class="settings-nav" data-settings-tab="import">Import</button>
         <button class="settings-nav" data-settings-tab="info">Info</button>
@@ -329,6 +335,18 @@
                   </div>
                   <button id="accountEditLogin" class="ghost" type="button">Edit</button>
                 </div>
+                <div class="account-avatar-row">
+                  <span id="accountAvatarPreview" class="account-avatar-preview">GV</span>
+                  <div class="account-avatar-actions">
+                    <strong>Profile Picture</strong>
+                    <p class="sub">Upload a local avatar for this Guidevault profile. It is stored with the browser login profile.</p>
+                    <div class="settings-actions inline-actions">
+                      <button id="accountUploadProfilePic" class="ghost" type="button">Upload Picture</button>
+                      <button id="accountRemoveProfilePic" class="ghost" type="button">Remove</button>
+                    </div>
+                    <input id="accountProfilePicInput" type="file" accept="image/*" class="hidden" />
+                  </div>
+                </div>
                 <div class="account-form-grid">
                   <label for="accountUsername">Username<input id="accountUsername" type="text" autocomplete="username" disabled /></label>
                   <label for="accountEmail">Email<input id="accountEmail" type="email" autocomplete="email" disabled /></label>
@@ -466,8 +484,6 @@
             <div class="customize-tabs" role="tablist" aria-label="Customize sections">
               <button class="customize-tab active" data-customize-tab="home" type="button">Home</button>
               <button class="customize-tab" data-customize-tab="side-nav" type="button">Side Nav</button>
-              <button class="customize-tab" data-customize-tab="smart-filters" type="button">Smart Filters</button>
-              <button class="customize-tab" data-customize-tab="external-sources" type="button">External Sources</button>
             </div>
             <article id="customizeHomePanel" class="settings-card customize-tab-panel">
               <div class="customize-home-header">
@@ -483,17 +499,31 @@
               <div id="customizeShelfList" class="customize-shelf-list"></div>
               <p id="customizeStatus" class="sub account-status" aria-live="polite"></p>
             </article>
-            <article id="customizeSideNavPanel" class="settings-card customize-tab-panel hidden">
-              <h2>Side Nav</h2>
-              <p class="sub">Side navigation customization is reserved for a later pass. Home shelf customization is active in this build.</p>
-            </article>
-            <article id="customizeSmartFiltersPanel" class="settings-card customize-tab-panel hidden">
-              <h2>Smart Filters</h2>
-              <p class="sub">Smart filters will eventually let you pin dynamic saved searches to Home or the side navigation.</p>
-            </article>
-            <article id="customizeExternalSourcesPanel" class="settings-card customize-tab-panel hidden">
-              <h2>External Sources</h2>
-              <p class="sub">External source bindings will be used later for metadata providers, scrapers, and connected services.</p>
+            <article id="customizeSideNavPanel" class="settings-card customize-tab-panel hidden side-nav-customize-card">
+              <div class="customize-home-header">
+                <div>
+                  <h2>Side Nav</h2>
+                  <p class="sub">Create pinned navigation shortcuts for series, platforms, publishers, searches, or formal reading groups such as Strategy Guide runs and magazine lists.</p>
+                </div>
+              </div>
+              <div class="side-nav-builder-grid">
+                <label for="customSideNavLabel">Label<input id="customSideNavLabel" type="text" placeholder="Nintendo Power, Zelda Guides, Prima Books" /></label>
+                <label for="customSideNavType">Shortcut Type<select id="customSideNavType">
+                  <option value="series">Series / Publication</option>
+                  <option value="kind">Content Type</option>
+                  <option value="category">Platform / Category</option>
+                  <option value="publisher">Publisher</option>
+                  <option value="search">Saved Search</option>
+                </select></label>
+                <label for="customSideNavValue">Match Value<input id="customSideNavValue" type="text" placeholder="Nintendo Power, Strategy Guide, NES, Prima, Zelda" /></label>
+                <label for="customSideNavIcon">Icon<input id="customSideNavIcon" type="text" maxlength="4" placeholder="★" /></label>
+              </div>
+              <div class="settings-actions inline-actions">
+                <button id="customSideNavAdd" class="primary" type="button">＋ Add Side Nav Item</button>
+                <button id="customSideNavReset" class="ghost" type="button">Reset Custom Items</button>
+              </div>
+              <div id="customSideNavList" class="custom-side-nav-list"></div>
+              <p id="customSideNavStatus" class="sub account-status" aria-live="polite"></p>
             </article>
           </section>
           <section id="settingsOpdsPanel" class="settings-section-panel hidden">
@@ -503,6 +533,19 @@
                 <p class="sub">Manage the local OPDS connection URL and authorization keys for third-party readers or future Guidevault clients.</p>
               </div>
             </div>
+
+            <article class="settings-card opds-toggle-card">
+              <div class="preference-toggle-row">
+                <div>
+                  <h3>Enable OPDS</h3>
+                  <p class="sub">Turn the authenticated OPDS feed on or off without deleting saved auth keys.</p>
+                </div>
+                <label class="gv-toggle" for="opdsEnabledToggle">
+                  <input id="opdsEnabledToggle" type="checkbox" />
+                  <span class="gv-toggle-track"><span class="gv-toggle-thumb"></span></span>
+                </label>
+              </div>
+            </article>
 
             <article class="settings-card opds-auth-card">
               <div class="opds-section-kicker">Auth Keys / OPDS</div>
@@ -842,14 +885,144 @@
               </div>
             </article>
           </section>
-          <section id="settingsServerPanel" class="settings-section-panel hidden">
-            <h1>Server</h1>
-            <p class="sub">Guidevault is running as a local ASP.NET Core web app, with the project structure prepared for Docker hosting later.</p>
+          <section id="settingsServerPanel" class="settings-section-panel hidden server-general-panel">
+            <div class="settings-title-row">
+              <div>
+                <div class="settings-page-kicker">SERVER</div>
+                <h1>General</h1>
+                <p class="sub">Configure network identity, restart-sensitive listener values, backups, and logging.</p>
+              </div>
+              <button id="serverResetDefaults" class="ghost" type="button">Reset to Default</button>
+            </div>
+            <article class="settings-card notice-card">Notice: changing the hostname, base URL, IP addresses, or port may require a manual Guidevault restart to take effect.</article>
+            <article class="settings-card server-settings-card">
+              <div class="server-settings-grid">
+                <label for="serverHostName">Host Name<input id="serverHostName" type="text" placeholder="https://guidevault.example.com" /></label>
+                <label for="serverBaseUrl">Base URL<input id="serverBaseUrl" type="text" placeholder="/" /></label>
+                <label for="serverIpAddresses">IP Addresses<input id="serverIpAddresses" type="text" placeholder="0.0.0.0, 192.168.1.50" /></label>
+                <label for="serverPort">Port<input id="serverPort" type="number" min="1" max="65535" placeholder="5478" /></label>
+                <label for="serverBackupDirectory">Backup Directory<input id="serverBackupDirectory" type="text" placeholder="data/backups" /></label>
+                <label for="serverLoggingLevel">Logging Level<select id="serverLoggingLevel">
+                  <option>Trace</option><option>Debug</option><option>Information</option><option>Warning</option><option>Error</option><option>Critical</option><option>None</option>
+                </select></label>
+              </div>
+              <div class="settings-actions inline-actions">
+                <button id="serverSaveSettings" class="primary" type="button">Save General Settings</button>
+                <button id="serverCreateBackup" class="ghost" type="button">Create Library Backup</button>
+              </div>
+              <p id="serverSettingsStatus" class="sub account-status" aria-live="polite"></p>
+            </article>
             <div class="settings-card-grid">
               <article class="settings-card"><h3>Server Mode</h3><p>Local ASP.NET Core web server.</p></article>
               <article class="settings-card"><h3>Storage Model</h3><p>Scan-in-place library index. Guidevault does not upload, copy, or move your source files.</p></article>
               <article class="settings-card"><h3>Docker Preparation</h3><p>When hosted in Docker, mount your existing library folder and point Guidevault to that mounted path.</p></article>
             </div>
+          </section>
+
+          <section id="settingsMediaPanel" class="settings-section-panel hidden">
+            <div class="settings-title-row">
+              <div>
+                <div class="settings-page-kicker">SERVER</div>
+                <h1>Media</h1>
+                <p class="sub">Configure server-side media support folders used by Guidevault.</p>
+              </div>
+            </div>
+            <article class="settings-card server-settings-card">
+              <label for="mediaBookmarksDirectory">Bookmarks Directory<input id="mediaBookmarksDirectory" type="text" placeholder="data/bookmarks" /></label>
+              <p class="sub">This is where server-side bookmark exports and future shared bookmark files can be stored.</p>
+              <div class="settings-actions inline-actions">
+                <button id="mediaSaveSettings" class="primary" type="button">Save Media Settings</button>
+              </div>
+              <p id="mediaSettingsStatus" class="sub account-status" aria-live="polite"></p>
+            </article>
+          </section>
+
+          <section id="settingsEmailPanel" class="settings-section-panel hidden email-settings-panel">
+            <div class="settings-title-row">
+              <div>
+                <div class="settings-page-kicker">SERVER</div>
+                <h1>Email</h1>
+                <p class="sub">Configure SMTP settings used for user invites and future send-to-device workflows.</p>
+              </div>
+            </div>
+            <article class="settings-card notice-card">You must fill out both Host Name and SMTP settings before email-based functionality can send messages.</article>
+            <article class="settings-card email-settings-card">
+              <div class="server-settings-grid">
+                <label for="emailHostName">Host Name<input id="emailHostName" type="text" placeholder="https://guidevault.example.com" /></label>
+                <label for="emailSenderAddress">Sender Address<input id="emailSenderAddress" type="email" placeholder="guidevault@example.com" /></label>
+                <label for="emailDisplayName">Display Name<input id="emailDisplayName" type="text" placeholder="Guidevault" /></label>
+                <label for="emailHost">SMTP Host<input id="emailHost" type="text" placeholder="smtp-mail.outlook.com" /></label>
+                <label for="emailPort">SMTP Port<input id="emailPort" type="number" min="1" max="65535" placeholder="587" /></label>
+                <label for="emailUsername">Username<input id="emailUsername" type="text" autocomplete="username" /></label>
+                <label for="emailPassword">Password<input id="emailPassword" type="password" autocomplete="new-password" /></label>
+                <label for="emailSizeLimitMb">Size Limit MB<input id="emailSizeLimitMb" type="number" min="1" max="2048" placeholder="25" /></label>
+              </div>
+              <label class="inline-check email-checkbox" for="emailUseSsl"><input id="emailUseSsl" type="checkbox" /> Use SSL on Email Server</label>
+              <label class="inline-check email-checkbox" for="emailCustomizedTemplates"><input id="emailCustomizedTemplates" type="checkbox" /> Customized Templates</label>
+              <div class="settings-actions inline-actions">
+                <button id="emailSaveSettings" class="primary" type="button">Save Email Settings</button>
+              </div>
+              <p id="emailSettingsStatus" class="sub account-status" aria-live="polite"></p>
+            </article>
+          </section>
+
+          <section id="settingsUsersPanel" class="settings-section-panel hidden users-settings-panel">
+            <div class="settings-title-row">
+              <div>
+                <div class="settings-page-kicker">SERVER</div>
+                <h1>Users</h1>
+                <p class="sub">View invited users, create invites, and assign library access and permissions.</p>
+              </div>
+              <button id="usersRefresh" class="ghost" type="button">⟳ Refresh</button>
+            </div>
+            <article class="settings-card user-invite-card">
+              <h3>Invite User</h3>
+              <p class="sub">If email is configured, Guidevault will send the invite. Otherwise the user is saved as a pending invite.</p>
+              <div class="server-settings-grid">
+                <label for="inviteEmail">Email<input id="inviteEmail" type="email" placeholder="reader@example.com" /></label>
+                <label for="inviteDisplayName">Display Name<input id="inviteDisplayName" type="text" placeholder="Reader name" /></label>
+                <label for="inviteRole">Access Level<select id="inviteRole"><option>Reader</option><option>Contributor</option><option>Admin</option></select></label>
+                <label for="inviteAgeRestriction">Age Rating Restriction<select id="inviteAgeRestriction"><option>No Restriction</option><option>Everyone</option><option>Everyone 10+</option><option>Teen</option><option>Mature 17+</option><option>Adults Only 18+</option></select></label>
+              </div>
+              <div class="users-permission-grid">
+                <div><h4>Libraries</h4><div id="inviteLibrariesList" class="checkbox-list"></div></div>
+                <div><h4>Permissions</h4><div id="invitePermissionsList" class="checkbox-list"></div></div>
+              </div>
+              <label class="inline-check" for="inviteIncludeUnknowns"><input id="inviteIncludeUnknowns" type="checkbox" /> Include Unknowns</label>
+              <div class="settings-actions inline-actions"><button id="usersInviteButton" class="primary" type="button">Invite</button></div>
+              <p id="usersStatus" class="sub account-status" aria-live="polite"></p>
+            </article>
+            <div id="usersList" class="users-list"></div>
+          </section>
+
+          <section id="settingsTasksPanel" class="settings-section-panel hidden tasks-settings-panel">
+            <div class="settings-title-row">
+              <div>
+                <div class="settings-page-kicker">TASKS</div>
+                <h1>Recurring Tasks</h1>
+                <p class="sub">Set the desired maintenance cadence for Guidevault library and server jobs.</p>
+              </div>
+            </div>
+            <article class="settings-card tasks-schedule-card">
+              <div class="tasks-schedule-grid">
+                <label for="taskLibraryScan">Library Scan<select id="taskLibraryScan"><option>Disabled</option><option>Hourly</option><option>Daily</option><option>Weekly</option><option>Custom (0 4 * * *)</option></select></label>
+                <label for="taskGuidevaultBackup">Guidevault Backup<select id="taskGuidevaultBackup"><option>Disabled</option><option>Daily</option><option>Weekly</option><option>Monthly</option><option>Custom (0 3 * * *)</option></select></label>
+                <label for="taskCleanup">Cleanup<select id="taskCleanup"><option>Disabled</option><option>Daily</option><option>Weekly</option><option>Custom (0 2 * * *)</option></select></label>
+                <label for="taskReadingListSync">Reading List Sync<input id="taskReadingListSync" type="text" placeholder="Custom (0 4 * * *)" /></label>
+              </div>
+              <div class="settings-actions inline-actions"><button id="tasksSaveSettings" class="primary" type="button">Save Task Schedule</button></div>
+              <p id="tasksSettingsStatus" class="sub account-status" aria-live="polite"></p>
+            </article>
+            <article class="settings-card ad-hoc-task-card">
+              <h2>Ad-hoc Tasks</h2>
+              <div class="ad-hoc-task-list">
+                <button id="taskRunRescan" class="ghost" type="button">Fast Rescan</button><p>Scan and refresh metadata around library files.</p>
+                <button id="taskRunEnrich" class="ghost" type="button">Enrich Metadata</button><p>Run a deeper metadata import pass after the library is already usable.</p>
+                <button id="taskRunCleanup" class="ghost" type="button">General Cleanup</button><p>Remove stale indexed entries and refresh changed files.</p>
+                <button id="taskRunBackup" class="ghost" type="button">Backup Database</button><p>Create a library configuration and index backup.</p>
+                <button id="taskRunTrim" class="ghost" type="button">Clear Reading Cache</button><p>Trim in-memory archive and cover request caches.</p>
+              </div>
+            </article>
           </section>
           <section id="settingsImportPanel" class="settings-section-panel hidden">
             <div class="settings-title-row">
@@ -967,6 +1140,25 @@
             <h2>Update History</h2>
             <div class="system-update-list">
               <details class="system-update-entry" open>
+                <summary>
+                  <span>Guidevault 0.9.31 - Account, Server, Users, and Navigation Settings</span>
+                  <em>Installed</em>
+                </summary>
+                <div class="system-update-body">
+                  <h3>Changed <b>8</b></h3>
+                  <ul>
+                    <li>Added local profile picture upload support for the Account screen and top user avatar.</li>
+                    <li>Moved OPDS into the Server settings area and added an enable/disable toggle.</li>
+                    <li>Added Server → General settings for hostname, base URL, IP addresses, port, backups, and logging level.</li>
+                    <li>Added Server → Media settings with a configurable bookmarks directory.</li>
+                    <li>Added Server → Email settings for SMTP-based invites and future email workflows.</li>
+                    <li>Added Server → Users with invite, library access, permission, and age-restriction controls.</li>
+                    <li>Added Server → Tasks with recurring task settings and ad-hoc maintenance actions.</li>
+                    <li>Removed Smart Filters and External Sources from Customize and replaced the Side Nav placeholder with custom navigation shortcuts.</li>
+                  </ul>
+                </div>
+              </details>
+              <details class="system-update-entry">
                 <summary>
                   <span>Guidevault 0.9.30 - Library Scope Classification Fix</span>
                   <em>Installed</em>
@@ -1096,7 +1288,7 @@
                 <div class="system-update-body">
                   <h3>Changed <b>3</b></h3>
                   <ul>
-                    <li>Changed the default Guidevault web port from 5000 to 5478 to avoid conflicts with Kavita.</li>
+                    <li>Changed the default Guidevault web port from 5000 to 5478 to avoid conflicts with other self-hosted readers on port 5000.</li>
                     <li>Added local development launch settings so dotnet run opens Guidevault on http://localhost:5478.</li>
                     <li>Updated Kestrel defaults so portable builds listen on port 5478 unless overridden by command-line or environment settings.</li>
                   </ul>

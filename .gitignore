@@ -11,16 +11,13 @@ dist/
 out/
 
 # Runtime/user data
+guidevault-data/
 data/
 Data/
 cache/
 Cache/
 logs/
 Logs/
-covers/
-Covers/
-thumbnails/
-Thumbnails/
 uploads/
 Uploads/
 library/
@@ -35,6 +32,12 @@ strategy-guides/
 Strategy Guides/
 magazines/
 Magazines/
+src/*/data/
+src/*/Data/
+src/*/cache/
+src/*/Cache/
+src/*/logs/
+src/*/Logs/
 
 # Databases
 *.db
@@ -59,8 +62,13 @@ compose.yml
 compose.override.yaml
 compose.local.yaml
 
-# Temporary patch/build files
+# Temporary patch/build/package files
 patch.py
+Pasted code.ps1
+Pasted text.txt
+Sync-GuideVaultRepo*.ps1
+Update-GuideVaultRepo*.ps1
+Package-GuideVault*.ps1
 *.bak
 *.tmp
 *.temp
@@ -68,6 +76,9 @@ patch.py
 *.zip
 *.7z
 *.rar
+*.cbz
+*.cbr
+*.pdf
 
 # IDE / OS junk
 *.user

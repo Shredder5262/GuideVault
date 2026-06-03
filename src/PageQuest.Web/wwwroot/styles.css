@@ -12293,3 +12293,163 @@ select option:checked,
 .system-performance-grid strong{
   font-variant-numeric:tabular-nums;
 }
+
+/* v0.9.31 — account avatar, server settings, email/users/tasks, and custom side nav */
+.top-user-avatar.has-image,
+.account-avatar-preview.has-image{
+  background-position:center!important;
+  background-size:cover!important;
+  background-repeat:no-repeat!important;
+  color:transparent!important;
+  text-indent:-999px;
+  overflow:hidden;
+}
+.account-avatar-row{
+  display:flex;
+  align-items:center;
+  gap:16px;
+  padding:14px;
+  border:1px solid rgba(88,162,255,.18);
+  border-radius:16px;
+  background:linear-gradient(135deg,rgba(20,38,66,.62),rgba(12,24,42,.82));
+  margin:14px 0;
+}
+.account-avatar-preview{
+  width:74px;
+  height:74px;
+  flex:0 0 74px;
+  border-radius:999px;
+  display:grid;
+  place-items:center;
+  background:linear-gradient(135deg,#2f81ff,#9ad7ff);
+  color:#06111d;
+  font-weight:900;
+  font-size:22px;
+  letter-spacing:.05em;
+  box-shadow:0 0 0 1px rgba(255,255,255,.18),0 18px 34px rgba(0,0,0,.25);
+}
+.account-avatar-copy{display:grid;gap:5px;min-width:0;}
+.account-avatar-actions{display:flex;flex-wrap:wrap;gap:8px;margin-top:7px;}
+.custom-side-nav-items{
+  display:grid;
+  gap:6px;
+  padding:8px 0 0;
+  margin-top:8px;
+  border-top:1px solid rgba(125,170,219,.12);
+}
+.custom-side-nav-items.hidden{display:none!important;}
+.custom-side-nav-button span:first-child{opacity:.82;min-width:18px;text-align:center;}
+.side-nav-builder-grid,
+.server-settings-grid,
+.tasks-schedule-grid{
+  display:grid;
+  grid-template-columns:repeat(auto-fit,minmax(220px,1fr));
+  gap:14px;
+}
+.side-nav-builder-grid label,
+.server-settings-grid label,
+.tasks-schedule-grid label,
+.email-settings-card label,
+.server-settings-card label{
+  display:grid;
+  gap:7px;
+  color:#dfeaff;
+  font-weight:800;
+}
+.side-nav-builder-grid input,
+.side-nav-builder-grid select,
+.server-settings-grid input,
+.server-settings-grid select,
+.tasks-schedule-grid input,
+.tasks-schedule-grid select,
+#mediaBookmarksDirectory{
+  min-height:42px;
+  border:1px solid rgba(130,170,220,.32);
+  border-radius:10px;
+  background:#111d2d;
+  color:#eaf3ff;
+  padding:0 12px;
+}
+.custom-side-nav-list,
+.users-list{
+  display:grid;
+  gap:10px;
+  margin-top:14px;
+}
+.custom-side-nav-row{
+  display:grid;
+  grid-template-columns:34px minmax(0,1fr) auto;
+  align-items:center;
+  gap:12px;
+  padding:12px;
+  border:1px solid rgba(110,164,232,.18);
+  border-radius:14px;
+  background:rgba(11,22,39,.72);
+}
+.custom-side-nav-icon{
+  width:34px;
+  height:34px;
+  display:grid;
+  place-items:center;
+  border-radius:10px;
+  background:rgba(100,161,255,.14);
+  color:#b9dbff;
+}
+.notice-card{
+  border-color:rgba(255,194,91,.52)!important;
+  background:linear-gradient(135deg,rgba(85,56,14,.42),rgba(19,29,46,.9))!important;
+  color:#fff3c7!important;
+  font-weight:800;
+}
+.email-checkbox,
+.inline-check{
+  display:flex!important;
+  align-items:center;
+  gap:8px;
+  margin-top:10px;
+  color:#dfeaff;
+}
+.checkbox-list{
+  min-height:130px;
+  display:grid;
+  align-content:start;
+  gap:8px;
+  padding:12px;
+  border:1px solid rgba(91,141,201,.18);
+  border-radius:14px;
+  background:rgba(9,20,36,.72);
+}
+.users-permission-grid{
+  display:grid;
+  grid-template-columns:repeat(auto-fit,minmax(260px,1fr));
+  gap:18px;
+  margin-top:14px;
+}
+.user-card{
+  display:grid;
+  grid-template-columns:minmax(0,1fr) minmax(260px,.8fr);
+  gap:14px;
+  align-items:start;
+}
+.user-chip-list{display:flex;flex-wrap:wrap;gap:8px;justify-content:flex-end;}
+.user-chip-list span{
+  border:1px solid rgba(138,176,224,.18);
+  border-radius:999px;
+  padding:6px 10px;
+  background:rgba(24,43,68,.74);
+  color:#c8d8eb;
+  font-size:12px;
+  max-width:100%;
+}
+.ad-hoc-task-list{
+  display:grid;
+  grid-template-columns:minmax(190px,max-content) minmax(0,1fr);
+  gap:12px 18px;
+  align-items:center;
+}
+.ad-hoc-task-list p{margin:0;color:#93a5bb;}
+@media(max-width:800px){
+  .account-avatar-row,.user-card{grid-template-columns:1fr;display:grid;}
+  .account-avatar-actions,.user-chip-list{justify-content:flex-start;}
+  .custom-side-nav-row,.ad-hoc-task-list{grid-template-columns:1fr;}
+}
