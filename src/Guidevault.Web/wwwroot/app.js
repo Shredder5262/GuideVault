@@ -59,7 +59,7 @@ const GUIDEVAULT_READING_ACTIVITY_KEY = 'guidevault.readingActivity.v1';
 const GUIDEVAULT_CATEGORY_STRUCTURE_KEY = 'guidevault.categoryStructure.v1';
 const GUIDEVAULT_COVER_SIZE_KEY = 'guidevault.libraryCoverSize.v1';
 const GUIDEVAULT_FAVORITES_KEY = 'guidevault.favorites.v1';
-const GUIDEVAULT_APP_VERSION = '0.9.40';
+const GUIDEVAULT_APP_VERSION = '0.9.41';
 
 const EMAIL_TEMPLATE_PRESETS = [
   {
@@ -11454,4 +11454,5 @@ installLibraryCardDelegates();
 installGlobalDetailDelegate();
 syncEmailTemplatePreview();
 initializeGuidevaultAuthAndApp();
+
 
