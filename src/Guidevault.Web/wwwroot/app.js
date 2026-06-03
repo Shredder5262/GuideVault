@@ -278,8 +278,11 @@ function currentReaderSettingsAsProfile() {
 }
 
 function normalizeReaderTransitionMode(mode) {
-  const allowed = new Set(['stable', 'fade', 'dissolve', 'slide', 'push', 'page']);
-  return allowed.has(String(mode || '')) ? String(mode) : 'stable';
+  const value = String(mode || '');
+  if (value === 'dissolve') return 'fade';
+  if (value === 'push') return 'slide';
+  const allowed = new Set(['stable', 'fade', 'slide', 'page']);
+  return allowed.has(value) ? value : 'stable';
 }
 
 function normalizeReadingProfile(value = {}) {
@@ -1652,18 +1655,6 @@ async function trimGuidevaultMemory() {
 function renderUpdateNotification() {
   const update = state.updateCheck;
   const available = !!update?.updateAvailable;
-  const btn = $('updateNotifyBtn');
-  const badge = $('updateNotifyBadge');
-  if (btn) {
-    btn.classList.toggle('hidden', !available);
-    btn.title = available ? `Guidevault ${update.latestVersion || 'stable'} is available` : 'Guidevault is up to date';
-    btn.setAttribute('aria-label', btn.title);
-  }
-  if (badge) {
-    badge.textContent = available ? '1' : '0';
-    badge.classList.toggle('hidden', !available);
-  }
-
   const notice = $('systemUpdateNotice');
   if (notice) {
     notice.classList.remove('hidden');
@@ -1749,7 +1740,6 @@ function showStableUpdateToast(update) {
     </div>
     <div class="guidevault-update-toast-actions">
       ${releaseUrl ? '<button type="button" data-update-toast-action="open">Open release</button>' : ''}
-      <button type="button" data-update-toast-action="dismiss">Dismiss</button>
     </div>`;
   toast.classList.remove('hidden');
 
@@ -1757,12 +1747,9 @@ function showStableUpdateToast(update) {
     if (releaseUrl) window.open(releaseUrl, '_blank', 'noopener,noreferrer');
     toast.classList.add('hidden');
   });
-  toast.querySelector('[data-update-toast-action="dismiss"]')?.addEventListener('click', () => {
-    toast.classList.add('hidden');
-  });
 
   if (state.updateToastTimer) window.clearTimeout(state.updateToastTimer);
-  state.updateToastTimer = window.setTimeout(() => toast.classList.add('hidden'), 12000);
+  state.updateToastTimer = window.setTimeout(() => toast.classList.add('hidden'), 5500);
 }
 
 
@@ -4824,6 +4811,34 @@ async function enrichLibraryMetadata() {
   await pollTasks(true);
 }
 
+
+function itemRecentTimestamp(item) {
+  const raw = item?.added || item?.Added || item?.modified || item?.Modified || item?.updatedAt || item?.UpdatedAt || '';
+  const value = new Date(raw).getTime();
+  return Number.isFinite(value) ? value : 0;
+}
+
+function compareItemsForLibrarySort(a, b, sort = $('sort')?.value || 'recent') {
+  const pinned = compareItemsByPinnedCategory(a, b);
+  if (sort === 'title') return pinned || displayTitle(a).localeCompare(displayTitle(b));
+  if (sort === 'kind') return a.kind.localeCompare(b.kind) || compareCategoryNames(a.kind, categoryOf(a), categoryOf(b)) || itemSequenceThenTitle(a, b);
+  if (sort === 'category') return pinned || compareCategoryNames(a.kind, categoryOf(a), categoryOf(b)) || itemSequenceThenTitle(a, b);
+  return pinned || (itemRecentTimestamp(b) - itemRecentTimestamp(a)) || displayTitle(a).localeCompare(displayTitle(b));
+}
+
+function sortGroupNamesForCurrentSort(kind, groups, allItems) {
+  const sort = $('sort')?.value || 'recent';
+  const itemsForGroup = name => allItems.filter(i => libraryCategoryKeysForItem(i).some(c => c.localeCompare(name, undefined, { sensitivity: 'accent' }) === 0));
+  const latestForGroup = name => Math.max(0, ...itemsForGroup(name).map(itemRecentTimestamp));
+  const countForGroup = name => itemsForGroup(name).length;
+
+  return [...groups].sort((a, b) => {
+    if (sort === 'recent') return (latestForGroup(b) - latestForGroup(a)) || compareCategoryNames(kind, a, b);
+    if (sort === 'kind' || sort === 'category' || sort === 'title') return compareCategoryNames(kind, a, b);
+    return compareCategoryNames(kind, a, b) || (countForGroup(b) - countForGroup(a));
+  });
+}
+
 function applyFilters() {
   const q = ($('search')?.value || '').trim().toLowerCase();
   state.filtered = state.items.filter(item => {
@@ -4835,21 +4850,7 @@ function applyFilters() {
   });
 
   const sort = $('sort')?.value || 'recent';
-  state.filtered.sort((a, b) => {
-    const pinned = compareItemsByPinnedCategory(a, b);
-    // Manuals should behave like reference shelves, not magazine/comic runs.
-    // Keep them alphabetical by title unless the user is looking at a mixed/all-content page.
-    if (state.filter === 'Manual' || state.viewMode === 'manuals') return pinned || a.title.localeCompare(b.title);
-    if (sort === 'title') return pinned || a.title.localeCompare(b.title);
-    if (sort === 'kind') return a.kind.localeCompare(b.kind) || compareCategoryNames(a.kind, categoryOf(a), categoryOf(b)) || itemSequenceThenTitle(a, b);
-    if (sort === 'category') return pinned || itemSequenceThenTitle(a, b);
-    return pinned || (new Date(b.modified) - new Date(a.modified));
-  });
-
-  if (state.categoryFilter) {
-    if (state.filter === 'Manual') state.filtered.sort((a,b) => a.title.localeCompare(b.title));
-    if (state.filter === 'Magazine' || state.filter === 'Strategy Guide') state.filtered.sort(itemSequenceThenTitle);
-  }
+  state.filtered.sort((a, b) => compareItemsForLibrarySort(a, b, sort));
   if (state.customFilter?.sortMode && state.customFilter.sortMode !== 'default') {
     if (state.customFilter.sortMode === 'title') state.filtered.sort((a,b) => displayTitle(a).localeCompare(displayTitle(b)));
     if (state.customFilter.sortMode === 'sequence') state.filtered.sort(itemSequenceThenTitle);
@@ -5145,7 +5146,7 @@ function renderGroupGrid(id, viewMode) {
   const def = groupDefinition(viewMode);
   const axis = groupAxisLabelForKind(def.kind);
   const allKindItems = state.items.filter(i => i.kind === def.kind);
-  const groups = sortCategoriesForKind(def.kind, [...new Set(allKindItems.flatMap(libraryCategoryKeysForItem))]);
+  const groups = sortGroupNamesForCurrentSort(def.kind, sortCategoriesForKind(def.kind, [...new Set(allKindItems.flatMap(libraryCategoryKeysForItem))]), allKindItems);
   renderAlphaRail(groups);
   const totalSizeLabel = groupCardSizeLabel(allKindItems);
   const overview = groups.length ? `<section class="group-hub-panel">
@@ -6008,6 +6009,7 @@ function installLibraryCardDelegates() {
       const item = state.items.find(i => String(i.id) === String(card.dataset.id));
       if (item) {
         e.preventDefault();
+        setDetailNavigationContextFromCard(card, item);
         showDetailScreen(item);
       }
     });
@@ -6026,6 +6028,7 @@ function installGlobalDetailDelegate() {
     if (!item) return;
     e.preventDefault();
     e.stopPropagation();
+    setDetailNavigationContextFromCard(card, item);
     showDetailScreen(item);
   }, true);
 }
@@ -7594,38 +7597,71 @@ function compareDetailSequence(a, b) {
   return itemSequenceThenTitle(a, b);
 }
 
+function detailNavigationIdsFromContainer(card) {
+  const root = card?.closest?.('#grid, #recentGrid, .home-shelf, .home-shelf-row, .collection-row, #libraryView, .library-grid-scroll') || $('libraryView') || document;
+  const ids = [...root.querySelectorAll('article.card[data-id], .card[data-id]')]
+    .map(el => String(el.dataset.id || '').trim())
+    .filter(Boolean);
+
+  const seen = new Set();
+  return ids.filter(id => {
+    if (seen.has(id)) return false;
+    seen.add(id);
+    return true;
+  });
+}
+
+function setDetailNavigationContextFromCard(card, item = null) {
+  const id = String(card?.dataset?.id || itemIdOf(item) || '').trim();
+  if (!id) return;
+  const ids = detailNavigationIdsFromContainer(card);
+  if (ids.includes(id)) {
+    state.detailNavigationIds = ids;
+  }
+}
+
 function detailNavigationSource(item) {
   if (!item) return [];
   const currentId = itemIdOf(item);
   const currentKind = String(item.kind || '').trim();
+  const byId = new Map((state.items || []).map(i => [itemIdOf(i), i]));
 
-  // Prefer the current filtered/category/search result if the selected item
-  // came from that result set. This keeps Previous/Next aligned with the shelf
-  // the user was browsing.
+  // First choice: use the card order captured when the user opened Details.
+  // This avoids Previous/Next changing direction or breaking after the library
+  // grid is hidden, re-rendered, searched, or sorted.
+  const contextIds = Array.isArray(state.detailNavigationIds) ? state.detailNavigationIds : [];
+  if (contextIds.includes(currentId)) {
+    const contextItems = contextIds
+      .map(id => byId.get(id))
+      .filter(i => i && String(i.kind || '').trim() === currentKind);
+    if (contextItems.some(i => itemIdOf(i) === currentId)) return contextItems;
+  }
+
+  // Fallback: use the current filtered list order.
   let source = Array.isArray(state.filtered)
     ? state.filtered.filter(i => String(i.kind || '').trim() === currentKind)
     : [];
 
   if (!source.some(i => itemIdOf(i) === currentId)) {
     source = (Array.isArray(state.items) ? state.items : [])
-      .filter(i => String(i.kind || '').trim() === currentKind);
+      .filter(i => String(i.kind || '').trim() === currentKind)
+      .sort(compareDetailSequence);
   }
 
   const seen = new Set();
-  return source
-    .filter(i => {
-      const id = itemIdOf(i);
-      if (!id || seen.has(id)) return false;
-      seen.add(id);
-      return true;
-    })
-    .sort(compareDetailSequence);
+  return source.filter(i => {
+    const id = itemIdOf(i);
+    if (!id || seen.has(id)) return false;
+    seen.add(id);
+    return true;
+  });
 }
 
 function adjacentDetailItems(item) {
   const source = detailNavigationSource(item);
   const currentId = itemIdOf(item);
   const index = source.findIndex(i => itemIdOf(i) === currentId);
+
   return {
     previous: index > 0 ? source[index - 1] : null,
     next: index >= 0 && index < source.length - 1 ? source[index + 1] : null
@@ -8428,11 +8464,10 @@ function updateReaderPageStackEffect(spread = null) {
 }
 
 function transitionLabel(mode) {
-  if (mode === 'fade') return 'Quick Fade';
-  if (mode === 'dissolve') return 'Soft Dissolve';
-  if (mode === 'slide') return 'Slide';
-  if (mode === 'push') return 'Push';
-  if (mode === 'page') return 'Page Turn Effect';
+  const normalized = normalizeReaderTransitionMode(mode);
+  if (normalized === 'fade') return 'Quick Fade';
+  if (normalized === 'slide') return 'Slide';
+  if (normalized === 'page') return 'Page Turn Effect';
   return 'Stable Swap';
 }
 
@@ -11104,6 +11139,20 @@ function updateSettingsInsights() {
   if ($('settingsInsightMags')) $('settingsInsightMags').textContent = String(count('Magazine'));
 }
 
+
+function navigateGuidevaultHome() {
+  showLibraryScreen();
+  state.filter = 'All Content';
+  state.categoryFilter = '';
+  state.customFilter = null;
+  state.viewMode = 'all';
+  if ($('search')) $('search').value = '';
+  document.querySelectorAll('.chip').forEach(c => c.classList.remove('active'));
+  updateNavActive();
+  scrollMainToTop();
+  applyFilters();
+}
+
 function showLibraryScreen() {
   cleanupInactiveViewsForNavigation('library');
   clearColorscapeDetailTheme();
@@ -11492,6 +11541,10 @@ document.addEventListener('keydown', e => {
 if ($('editEditionType')) $('editEditionType').addEventListener('change', updateEditionControls);
 if ($('saveMetadataBtn')) $('saveMetadataBtn').addEventListener('click', async e => { e.preventDefault(); await saveSelectedMetadata({}, { tab: 'metadata', button: e.currentTarget }); });
 if ($('saveNotesBtn')) $('saveNotesBtn').addEventListener('click', async e => { e.preventDefault(); await saveSelectedMetadata({ notes: $('notesText').value }, { tab: 'notes', button: e.currentTarget }); });
+if (document.querySelector('.brand-wordmark')) document.querySelector('.brand-wordmark').addEventListener('click', e => { e.preventDefault(); navigateGuidevaultHome(); });
+document.querySelector('.brand-wordmark')?.addEventListener('keydown', e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); navigateGuidevaultHome(); } });
+document.querySelector('.brand-wordmark')?.addEventListener('click', e => { e.preventDefault(); navigateGuidevaultHome(); });
+document.querySelector('.brand-wordmark')?.addEventListener('keydown', e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); navigateGuidevaultHome(); } });
 if ($('detailPrevBtn')) $('detailPrevBtn').addEventListener('click', e => { e.preventDefault(); navigateDetailAdjacent('previous'); });
 if ($('detailNextBtn')) $('detailNextBtn').addEventListener('click', e => { e.preventDefault(); navigateDetailAdjacent('next'); });
 document.querySelectorAll('.tab').forEach(btn => btn.addEventListener('click', () => activateTab(btn.dataset.tab)));

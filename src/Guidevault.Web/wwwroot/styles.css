@@ -13661,3 +13661,19 @@ input[id*="Opds"][readonly]{
   min-width:46px!important;
   text-align:right!important;
 }
+
+
+/* 0.9.43 clickable Guidevault wordmark cursor */
+.brand-wordmark[role="button"],
+.brand-wordmark{
+  cursor:pointer!important;
+}
+.brand-wordmark[role="button"]:hover,
+.brand-wordmark:hover{
+  filter:drop-shadow(0 0 10px rgba(95,177,255,.28));
+}
+.brand-wordmark[role="button"]:focus-visible{
+  outline:2px solid rgba(72,152,255,.95);
+  outline-offset:4px;
+  border-radius:8px;
+}

@@ -1,10 +1,10 @@
-﻿<!doctype html>
+<!doctype html>
 <html lang="en">
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Guidevault</title>
-  <link rel="stylesheet" href="/styles.css?v=0.9.43-rp-blue2" />
+  <link rel="stylesheet" href="/styles.css?v=0.9.43-detailnav-toast-logo2" />
 </head>
 <body class="right-collapsed auth-locked">
   <section id="loginView" class="login-view" aria-labelledby="loginTitle">
@@ -32,7 +32,7 @@
     <aside class="sidebar" aria-label="Library navigation">
       <div class="brand wordmark-brand">
         <button id="leftToggle" class="icon-button menu-button" title="Collapse menu">&#x2630;</button>
-        <img class="brand-wordmark" src="/assets/guidevault-wordmark.png" alt="Guidevault" />
+        <img class="brand-wordmark" src="/assets/guidevault-wordmark.png" alt="Guidevault Home" role="button" tabindex="0" title="Go to Home" />
       </div>
       <nav id="mainLibraryNav">
         <button class="nav active" data-view="all" data-filter="All Content" title="Home"><span class="nav-icon homebar-icon"><img src="/assets/icons/homebar/home.png" alt="" loading="eager" draggable="false" /></span><span class="nav-label">Home</span><em id="countAll">0</em></button>
@@ -91,7 +91,6 @@
     <main class="main">
       <header class="topbar">
         <div class="search">&#x2315; <input id="search" placeholder="Search guides, manuals, magazines, systems, publishers, tags..." /></div>
-        <button id="updateNotifyBtn" class="icon-button top-icon-button update-notify-button hidden" title="Stable update available" aria-label="Stable update available">&#x21A5;<span id="updateNotifyBadge" class="update-notify-badge hidden">1</span></button>
         <div class="task-monitor-wrap">
           <button id="taskMonitorBtn" class="icon-button top-icon-button task-monitor-button" title="Tasks" aria-label="Tasks">&#x2611;<span id="taskMonitorBadge" class="task-monitor-badge hidden">0</span></button>
           <div id="taskMonitorPanel" class="task-monitor-panel hidden" role="dialog" aria-label="Running tasks">
@@ -493,9 +492,7 @@
                     <select id="readingProfilePresetTransition">
                       <option value="stable">Stable Swap</option>
                       <option value="fade">Quick Fade</option>
-                      <option value="dissolve">Soft Dissolve</option>
                       <option value="slide">Slide</option>
-                      <option value="push">Push</option>
                       <option value="page">Page Turn Effect</option>
                     </select>
                   </label>
@@ -1360,6 +1357,77 @@
             <div class="system-update-list">
               <details class="system-update-entry">
                 <summary>
+                  <span>Guidevault 0.9.43 - Detail Navigation Stabilization</span>
+                  <em>Installed</em>
+                </summary>
+                <div class="system-update-body">
+                  <h3>Fixed <b>3</b></h3>
+                  <ul>
+                    <li>Stabilized Details Previous/Next by capturing the visible card order when Details opens.</li>
+                    <li>Removed the stable update toolbar button while keeping the auto-dismissing toast.</li>
+                    <li>Made the Guidevault wordmark navigate Home from anywhere and show a pointer cursor.</li>
+                  </ul>
+                </div>
+              </details>
+
+              <details class="system-update-entry">
+                <summary>
+                  <span>Guidevault 0.9.43 - Sort and Reader Transition Cleanup</span>
+                  <em>Installed</em>
+                </summary>
+                <div class="system-update-body">
+                  <h3>Changed <b>3</b></h3>
+                  <ul>
+                    <li>Fixed the library sort dropdown so main menu/group/category views sort where applicable.</li>
+                    <li>Removed Soft Dissolve and Push from reader transition options because they duplicated Quick Fade and Slide.</li>
+                    <li>Kept existing saved Soft Dissolve and Push profiles compatible by mapping them to Quick Fade and Slide.</li>
+                  </ul>
+                </div>
+              </details>
+
+              <details class="system-update-entry">
+                <summary>
+                  <span>Guidevault 0.9.43 - Clickable Logo Cursor Polish</span>
+                  <em>Installed</em>
+                </summary>
+                <div class="system-update-body">
+                  <h3>Changed <b>1</b></h3>
+                  <ul>
+                    <li>Changed the Guidevault wordmark cursor to a pointer so it clearly behaves like a clickable Home link.</li>
+                  </ul>
+                </div>
+              </details>
+
+              <details class="system-update-entry">
+                <summary>
+                  <span>Guidevault 0.9.43 - Navigation and Update Toast Polish</span>
+                  <em>Installed</em>
+                </summary>
+                <div class="system-update-body">
+                  <h3>Changed <b>3</b></h3>
+                  <ul>
+                    <li>Removed the stable update button from the top toolbar while keeping the toast notification.</li>
+                    <li>Changed the update toast to auto-dismiss after a few seconds without requiring Dismiss.</li>
+                    <li>Made the Guidevault logo navigate back to Home and corrected Details Previous/Next navigation order.</li>
+                  </ul>
+                </div>
+              </details>
+
+              <details class="system-update-entry">
+                <summary>
+                  <span>Guidevault 0.9.43 - Detail Navigation Direction Fix</span>
+                  <em>Installed</em>
+                </summary>
+                <div class="system-update-body">
+                  <h3>Fixed <b>1</b></h3>
+                  <ul>
+                    <li>Corrected Details page Previous and Next navigation so the buttons move in the expected direction.</li>
+                  </ul>
+                </div>
+              </details>
+
+              <details class="system-update-entry">
+                <summary>
                   <span>Guidevault 0.9.42 - Reading Profile and OPDS Accent Reapply</span>
                   <em>Installed</em>
                 </summary>
@@ -2155,9 +2223,7 @@
                   <select id="readerTransitionSelect">
                     <option value="stable" selected>Stable Swap</option>
                     <option value="fade">Quick Fade</option>
-                    <option value="dissolve">Soft Dissolve</option>
                     <option value="slide">Slide</option>
-                    <option value="push">Push</option>
                     <option value="page">Page Turn Effect</option>
                   </select>
                 </label>
@@ -2278,7 +2344,6 @@
   </dialog>
 
 
-  <script src="/app.js?v=0.9.43-rp-blue2"></script>
+  <script src="/app.js?v=0.9.43-detailnav-toast-logo2"></script>
 </body>
 </html>
-
