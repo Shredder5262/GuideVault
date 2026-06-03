@@ -1781,9 +1781,9 @@ public sealed class SystemInfoRecord
 
 public sealed class StableUpdateChecker
 {
-    private const string DefaultStableFeedUrl = "https://api.github.com/repos/Shredder5262/GuideVault/releases/latest";
+    private const string DefaultStableFeedUrl = "https://api.github.com/repos/Shredder5262/GuideVault/tags";
     private const string DefaultTagFeedUrl = "https://api.github.com/repos/Shredder5262/GuideVault/tags";
-    private const string DefaultReleaseUrl = "https://github.com/Shredder5262/guidevault/releases/latest";
+    private const string DefaultReleaseUrl = "https://github.com/Shredder5262/GuideVault/releases";
     private const string DefaultPackageUrl = "https://github.com/Shredder5262/GuideVault/pkgs/container/guidevault";
     private static readonly HttpClient Http = CreateHttpClient();
     private readonly UpdateOptions _options;
@@ -1839,7 +1839,10 @@ public sealed class StableUpdateChecker
             }
             var latestVersion = ReadString(root, "version", "latestVersion", "stableVersion", "tag", "tag_name", "name");
             var image = ReadString(root, "image", "containerImage", "dockerImage") ?? currentImage;
-            var releaseUrl = FirstNonEmpty(ReadString(root, "url", "releaseUrl", "releasePath", "htmlUrl", "html_url"), releaseUrlFallback);
+            var releaseUrl = FirstNonEmpty(
+                ReadString(root, "url", "releaseUrl", "releasePath", "htmlUrl", "html_url"),
+                BuildReleaseUrlForVersion(latestVersion),
+                releaseUrlFallback);
             var publishedAt = ReadDate(root, "publishedAt", "published", "published_at", "date", "created_at");
             var notes = ReadStringArray(root, "notes", "releaseNotes", "changes", "body", "description");
             var feedChannel = ReadString(root, "channel") ?? channel;
@@ -1883,8 +1886,8 @@ public sealed class StableUpdateChecker
                 PackageUrl = packageUrl,
                 Forced = force,
                 CheckedAt = DateTimeOffset.UtcNow,
-                Status = "error",
-                Message = $"Stable update check failed, but the configured release path is available below: {ex.Message}"
+                Status = "unverified",
+                Message = $"Could not verify the latest stable version right now. Configured release and package paths are shown below. Details: {ex.Message}"
             };
         }
 
@@ -1929,6 +1932,7 @@ public sealed class StableUpdateChecker
     {
         var request = new HttpRequestMessage(HttpMethod.Get, url);
         request.Headers.CacheControl = new CacheControlHeaderValue { NoCache = force };
+        request.Headers.TryAddWithoutValidation("X-GitHub-Api-Version", "2022-11-28");
         return Http.SendAsync(request, HttpCompletionOption.ResponseHeadersRead);
     }
 
@@ -1984,6 +1988,13 @@ public sealed class StableUpdateChecker
             }
         }
         return [];
+    }
+
+    private static string BuildReleaseUrlForVersion(string? value)
+    {
+        var tag = (value ?? string.Empty).Trim();
+        if (string.IsNullOrWhiteSpace(tag)) return string.Empty;
+        return $"https://github.com/Shredder5262/GuideVault/releases/tag/{Uri.EscapeDataString(tag)}";
     }
 
     private static string NormalizeVersion(string? value)
@@ -2953,9 +2964,9 @@ public sealed class GuidevaultOptions
 
 public sealed class UpdateOptions
 {
-    public string StableFeedUrl { get; set; } = "https://api.github.com/repos/Shredder5262/guidevault/releases/latest";
-    public string ReleaseUrl { get; set; } = "https://github.com/Shredder5262/guidevault/releases/latest";
-    public string ReleasePath { get; set; } = "https://github.com/Shredder5262/guidevault/releases/latest";
+    public string StableFeedUrl { get; set; } = "https://api.github.com/repos/Shredder5262/GuideVault/tags";
+    public string ReleaseUrl { get; set; } = "https://github.com/Shredder5262/GuideVault/releases";
+    public string ReleasePath { get; set; } = "https://github.com/Shredder5262/GuideVault/releases";
     public string PackageUrl { get; set; } = "https://github.com/Shredder5262/GuideVault/pkgs/container/guidevault";
     public string Channel { get; set; } = "stable";
     public string CurrentImage { get; set; } = "ghcr.io/shredder5262/guidevault:latest";
