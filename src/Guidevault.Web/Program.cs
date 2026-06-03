@@ -13,7 +13,7 @@ using System.Net.Http.Headers;
 using SharpCompress.Readers;
 
 var builder = WebApplication.CreateBuilder(args);
-const string GuidevaultVersion = "0.9.57";
+const string GuidevaultVersion = "0.9.58";
 var app = builder.Build();
 var metadataJsonOptions = new JsonSerializerOptions(JsonSerializerDefaults.Web) { PropertyNameCaseInsensitive = true };
 var options = app.Configuration.GetSection("Guidevault").Get<GuidevaultOptions>() ?? new GuidevaultOptions();
@@ -4408,7 +4408,11 @@ public sealed class LibraryCache
             ? 1
             : cleanupActivity
                 ? Math.Max(1, Math.Min(Environment.ProcessorCount, 2))
-                : Math.Max(2, Math.Min(Environment.ProcessorCount, 4));
+                // Normal scans mostly perform directory/FileInfo checks. On Docker
+                // bind mounts and network shares, high concurrency can make this
+                // crawl by hammering the host filesystem. Keep it modest and leave
+                // archive metadata reads to explicit metadata enrichment.
+                : Math.Max(1, Math.Min(Environment.ProcessorCount, 2));
 
         await Parallel.ForEachAsync(candidates, new ParallelOptions { MaxDegreeOfParallelism = parallelism }, async (candidate, cancellationToken) =>
         {
@@ -4443,9 +4447,15 @@ public sealed class LibraryCache
                 Interlocked.Increment(ref parsed);
                 var inferred = MetadataInferer.FromFile(info, relativePath, candidate.Library.Type);
                 ItemMetadataUpdate? guidevaultMetadata = null;
-                var canReadGuidevaultMetadata = format != "PDF"
+                // Fast library scans should not open archive payloads. On Windows-hosted
+                // Docker bind mounts, opening even a handful of large CBZ/CBR files can
+                // stall the whole scan. Guidevault JSON still takes precedence during
+                // explicit metadata enrichment and for metadata written through the app,
+                // because the saved override/cache is already updated immediately.
+                var canReadGuidevaultMetadata = metadataActivity
+                    && format != "PDF"
                     && (ext.Equals(".cbz", StringComparison.OrdinalIgnoreCase)
-                        || (metadataActivity && ext.Equals(".cbr", StringComparison.OrdinalIgnoreCase)));
+                        || ext.Equals(".cbr", StringComparison.OrdinalIgnoreCase));
                 if (canReadGuidevaultMetadata)
                 {
                     try
@@ -4458,6 +4468,10 @@ public sealed class LibraryCache
                     {
                         guidevaultMetadata = null;
                     }
+                }
+                else if (!metadataActivity && format != "PDF" && ext.Equals(".cbz", StringComparison.OrdinalIgnoreCase) && !hasMatchingCache)
+                {
+                    Interlocked.Increment(ref metadataDeferred);
                 }
                 // Keep normal scans responsive. ComicInfo parsing is the slow path on
                 // network shares and malformed archives, so the normal rescan defers it.
@@ -4478,7 +4492,7 @@ public sealed class LibraryCache
                         comicInfo = null;
                     }
                 }
-                else if (canReadComicInfo && !hasMatchingCache)
+                else if (canReadComicInfo && !hasMatchingCache && metadataActivity)
                 {
                     Interlocked.Increment(ref metadataDeferred);
                 }
@@ -4613,7 +4627,7 @@ public sealed class LibraryCache
                             ? $"Enriching metadata... {done}/{total} ({reused} already current, {metadataEnriched} enriched, {parsed} checked)"
                             : cleanupActivity
                                 ? $"Validating changed magazines and indexing files... {done}/{total} ({reused} cached, {parsed} parsed, {skippedUnreadable} skipped)"
-                                : $"Fast-indexing library files... {done}/{total} ({reused} cached, {parsed} new/changed, {metadataDeferred} metadata deferred)";
+                                : $"Fast-indexing library files... {done}/{total} ({reused} cached, {parsed} new/changed, {metadataDeferred} archive metadata deferred)";
                     _taskMonitor.Update(taskId, progressMessage, pct);
                 }
             }
@@ -4627,7 +4641,7 @@ public sealed class LibraryCache
                         ? $"Finalizing metadata enrichment. Enriched {metadataEnriched} item(s), reused {reused} already-current item(s)..."
                         : cleanupActivity
                             ? $"Finalizing cleanup. Reused {reused} cached item(s), parsed {parsed} changed item(s), skipped {skippedUnreadable} unreadable/stale magazine file(s)..."
-                            : $"Finalizing fast library index. Reused {reused} cached item(s), indexed {parsed} new/changed item(s), deferred {metadataDeferred} metadata import(s)...",
+                            : $"Finalizing fast library index. Reused {reused} cached item(s), indexed {parsed} new/changed item(s), deferred {metadataDeferred} archive metadata import(s)...",
                 98);
 
         var result = bag
@@ -4650,7 +4664,7 @@ public sealed class LibraryCache
             ElapsedMs: scanTimer.ElapsedMilliseconds,
             Message: metadataActivity
                 ? $"Metadata enrichment checked {candidates.Count} file(s), enriched {metadataEnriched}, reused {reused}."
-                : $"Fast index checked {candidates.Count} file(s), reused {reused}, indexed {parsed}, deferred {metadataDeferred} metadata import(s)."
+                : $"Fast index checked {candidates.Count} file(s), reused {reused}, indexed {parsed}, deferred {metadataDeferred} archive metadata import(s)."
         );
 
         return result;
@@ -7390,6 +7404,6 @@ static class GuidevaultLibraryIoGate
 
 static class GuidevaultBuildInfo
 {
-    public const string Version = "0.9.57";
+    public const string Version = "0.9.58";
 }
 
