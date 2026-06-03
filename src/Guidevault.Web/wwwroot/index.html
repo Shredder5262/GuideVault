@@ -1,10 +1,10 @@
-<!doctype html>
+﻿<!doctype html>
 <html lang="en">
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Guidevault</title>
-  <link rel="stylesheet" href="/styles.css?v=0.9.42" />
+  <link rel="stylesheet" href="/styles.css?v=0.9.43-rp-blue2" />
 </head>
 <body class="right-collapsed auth-locked">
   <section id="loginView" class="login-view" aria-labelledby="loginTitle">
@@ -169,7 +169,7 @@
               </section>
               <section id="metadataPanel" class="tab-panel hidden">
                 <div class="edit-grid">
-                  <label>Title<input id="editTitle" /></label>
+                  <label id="editTitleLabel">Title<input id="editTitle" /></label>
                   <label>Type<select id="editKind"><option>Manual</option><option>Strategy Guide</option><option>Magazine</option></select></label>
                   <label>Preferred Platform<input id="editCategory" /></label>
                   <label id="editEsrbRatingLabel" class="esrb-metadata-field hidden">ESRB Rating<select id="editEsrbRating">
@@ -185,7 +185,7 @@
                     <option value="None">Not Rated</option>
                   </select></label>
                   <label id="editAssociatedPlatformsLabel">Associated Platforms<input id="editAssociatedPlatforms" placeholder="PlayStation 2, Nintendo GameCube" /></label>
-                  <label id="editPlatformMatchLabel">Strategy Guide Match<input id="editPlatformMatchTitle" placeholder="Detected game/title match" /></label>
+                  <label id="editPlatformMatchLabel" class="metadata-legacy-match-field hidden">Detected Match<input id="editPlatformMatchTitle" placeholder="Detected game/title match" /></label>
                   <label id="editGameTitleLabel" class="strategy-metadata-field manual-metadata-field hidden">Game Title<input id="editGameTitle" /></label>
                   <label id="editManualTitleLabel" class="manual-metadata-field hidden">Manual Title<input id="editManualTitle" /></label>
                   <label id="editManualTypeLabel" class="manual-metadata-field hidden">Manual Type<input id="editManualType" placeholder="Instruction Booklet, Reference Card, Operations Manual" /></label>
@@ -229,8 +229,8 @@
                   </label>
                   <label id="editEditionYearLabel" class="strategy-metadata-field edition-year-field hidden">Edition Year<input id="editEditionYear" inputmode="numeric" placeholder="2001" /></label>
                   <label id="editEditionVolumeLabel" class="strategy-metadata-field edition-volume-field hidden">Volume Number<input id="editEditionVolume" inputmode="numeric" placeholder="1" /></label>
-                  <label id="editFranchiseLabel" class="strategy-metadata-field manual-metadata-field hidden">Franchise / Series<input id="editFranchise" /></label>
-                  <label>Series<input id="editSeries" /></label>
+                  <label id="editFranchiseLabel" class="strategy-metadata-field manual-metadata-field hidden">Game Franchise / Series<input id="editFranchise" /></label>
+                  <label id="editSeriesLabel">Series<input id="editSeries" /></label>
                   <label id="editMagazineTitleLabel" class="magazine-metadata-field hidden">Magazine Title<input id="editMagazineTitle" /></label>
                   <label id="editIssueLabel">Issue #<input id="editIssue" /></label>
                   <label id="editVolumeLabel" class="magazine-metadata-field hidden">Volume<input id="editVolume" /></label>
@@ -246,7 +246,7 @@
                   <label>Year<input id="editYear" /></label>
                   <label id="editPublicationDateGuideLabel" class="strategy-metadata-field manual-metadata-field hidden">Publication Date<input id="editPublicationDateGuide" placeholder="September 1997" /></label>
                   <label>Writer / Author<input id="editWriter" /></label>
-                  <label id="editDeveloperLabel" class="strategy-metadata-field manual-metadata-field hidden">Developer<input id="editDeveloper" /></label>
+                  <label id="editDeveloperLabel" class="strategy-metadata-field manual-metadata-field hidden">Game Developer<input id="editDeveloper" /></label>
                   <label id="editGamePublisherLabel" class="strategy-metadata-field manual-metadata-field hidden">Game Publisher<input id="editGamePublisher" /></label>
                   <label id="editGameReleaseYearLabel" class="strategy-metadata-field manual-metadata-field hidden">Game Release Year<input id="editGameReleaseYear" /></label>
                   <label id="editGenreLabel" class="strategy-metadata-field manual-metadata-field hidden">Genre<input id="editGenre" placeholder="RPG, Fighting, Action Adventure" /></label>
@@ -256,7 +256,7 @@
                 <label id="editFeaturedGamesLabel" class="magazine-metadata-field hidden">Featured Games, comma-separated<input id="editFeaturedGames" /></label>
                 <label id="editFeaturedPlatformsLabel" class="magazine-metadata-field hidden">Featured Platforms, comma-separated<input id="editFeaturedPlatforms" /></label>
                 <label id="editSpecialFeaturesLabel" class="magazine-metadata-field hidden">Special Features, comma-separated<input id="editSpecialFeatures" /></label>
-                <label id="editIncludedExtrasLabel" class="magazine-metadata-field strategy-metadata-field manual-metadata-field hidden">Included Extras, comma-separated<input id="editIncludedExtras" /></label>
+                <label id="editIncludedExtrasLabel" class="magazine-metadata-field hidden">Physical Extras, comma-separated<input id="editIncludedExtras" /></label>
                 <label id="editIncludedSectionsLabel" class="manual-metadata-field hidden">Included Sections, comma-separated<input id="editIncludedSections" placeholder="Controls, Story, Items, Warranty" /></label>
                 <label id="editControlSchemeLabel" class="manual-metadata-field hidden">Controls / Control Scheme<input id="editControlScheme" placeholder="Controller, keyboard, light gun, etc." /></label>
                 <label id="editItemsCoveredLabel" class="manual-metadata-field hidden">Items / Mechanics Covered, comma-separated<input id="editItemsCovered" /></label>
@@ -507,6 +507,16 @@
                       <input id="readingProfilePresetZoom" type="range" min="70" max="145" value="100" step="5" />
                       <output id="readingProfilePresetZoomValue">100%</output>
                     </div>
+                  </label>
+                  <label for="readingProfilePresetBrightness">Background Brightness
+                    <div class="reading-profile-zoom-row">
+                      <input id="readingProfilePresetBrightness" type="range" min="15" max="100" value="72" step="5" />
+                      <output id="readingProfilePresetBrightnessValue">72%</output>
+                    </div>
+                  </label>
+                  <label class="reading-profile-check-row" for="readingProfilePresetFullscreen">
+                    <input id="readingProfilePresetFullscreen" type="checkbox" />
+                    <span>Open reader fullscreen by default</span>
                   </label>
                 </div>
                 <div class="settings-actions account-actions">
@@ -928,7 +938,12 @@
                   <button id="metadataManagerColumnsShowAll" class="ghost" type="button">Show All Columns</button>
                 </div>
               </details>
-              <div class="metadata-manager-batch-grid">
+              <details class="metadata-manager-batch-panel">
+                <summary>
+                  <span>Batch edit selected rows</span>
+                  <em>Language, region, platform, publisher, and tags</em>
+                </summary>
+                <div class="metadata-manager-batch-grid">
                 <label for="metadataBatchLanguage">Language
                   <input id="metadataBatchLanguage" type="text" placeholder="English" />
                 </label>
@@ -960,6 +975,7 @@
                 <button id="metadataManagerSaveDirty" class="primary" type="button">Save Edited Rows</button>
                 <button id="metadataManagerScrape" class="ghost" type="button">Scrape / Import Metadata</button>
               </div>
+                            </details>
               <p id="metadataManagerStatus" class="sub account-status" aria-live="polite"></p>
             </article>
 
@@ -1238,7 +1254,6 @@
               <input id="libraryNameInput" placeholder="Manuals" />
               <label for="libraryTypeInput">Library type</label>
               <select id="libraryTypeInput">
-                <option>Mixed</option>
                 <option>Manuals</option>
                 <option>Strategy Guides</option>
                 <option>Magazines</option>
@@ -1343,7 +1358,94 @@
 
             <h2>Update History</h2>
             <div class="system-update-list">
-              <details class="system-update-entry" open>
+              <details class="system-update-entry">
+                <summary>
+                  <span>Guidevault 0.9.42 - Reading Profile and OPDS Accent Reapply</span>
+                  <em>Installed</em>
+                </summary>
+                <div class="system-update-body">
+                  <h3>Fixed <b>2</b></h3>
+                  <ul>
+                    <li>Reapplied Reading Profile brightness and fullscreen defaults with cache-busted app assets.</li>
+                    <li>Added exact OPDS blue accent overrides for the OPDS URL field, toggle, and action buttons.</li>
+                  </ul>
+                </div>
+              </details>
+
+              <details class="system-update-entry">
+                <summary>
+                  <span>Guidevault 0.9.42 - Reading Profile Reader Defaults</span>
+                  <em>Installed</em>
+                </summary>
+                <div class="system-update-body">
+                  <h3>Added <b>2</b></h3>
+                  <ul>
+                    <li>Added Background Brightness to Reading Profile presets.</li>
+                    <li>Added an Open Fullscreen by Default option to Reading Profile presets.</li>
+                  </ul>
+                </div>
+              </details>
+
+              <details class="system-update-entry">
+                <summary>
+                  <span>Guidevault 0.9.42 - OPDS Blue Accent Polish</span>
+                  <em>Installed</em>
+                </summary>
+                <div class="system-update-body">
+                  <h3>Changed <b>2</b></h3>
+                  <ul>
+                    <li>Changed OPDS controls and focus accents from purple to the Guidevault blue theme.</li>
+                    <li>Changed Update History entries to start collapsed by default.</li>
+                  </ul>
+                </div>
+              </details>
+
+              <details class="system-update-entry">
+                <summary>
+                  <span>Guidevault 0.9.42 - Stable Update Force Check Hotfix</span>
+                  <em>Installed</em>
+                </summary>
+                <div class="system-update-body">
+                  <h3>Fixed <b>1</b></h3>
+                  <ul>
+                    <li>Fixed forced stable update checks by accepting force=true and force=1 query values without throwing a backend binding error.</li>
+                  </ul>
+                </div>
+              </details>
+
+              <details class="system-update-entry">
+                <summary>
+                  <span>Guidevault 0.9.42 - Follow-up UI Polish</span>
+                  <em>Installed</em>
+                </summary>
+                <div class="system-update-body">
+                  <h3>Changed <b>3</b></h3>
+                  <ul>
+                    <li>Changed remaining add-button focus rings from purple to blue.</li>
+                    <li>Compressed Metadata Manager summary cards so they fit on one row on wide screens.</li>
+                    <li>Softened stable update status text when GitHub tag fallback confirms the installed version is current.</li>
+                  </ul>
+                </div>
+              </details>
+
+              <details class="system-update-entry">
+                <summary>
+                  <span>Guidevault 0.9.42 - Settings, Metadata, and Update Check Polish</span>
+                  <em>Installed</em>
+                </summary>
+                <div class="system-update-body">
+                  <h3>Changed <b>5</b></h3>
+                  <ul>
+                    <li>Removed the Mixed option from the Add Library type selector.</li>
+                    <li>Changed the Web App device badge and top action rings to match the blue interface theme.</li>
+                    <li>Compacted the Metadata Manager toolbar and moved batch edit controls behind a collapsible section.</li>
+                    <li>Clarified Strategy Guide metadata labels and hid redundant match/series fields on strategy-guide records.</li>
+                    <li>Added a direct browser-side GitHub tags fallback for stable update checks.</li>
+                  </ul>
+                </div>
+              </details>
+
+              <details class="system-update-entry">
                 <summary>
                   <span>Guidevault 0.9.42 - Stable Update Check Fallback</span>
                   <em>Installed</em>
@@ -1356,7 +1458,7 @@
                 </div>
               </details>
 
-              <details class="system-update-entry" open>
+              <details class="system-update-entry">
                 <summary>
                   <span>Guidevault 0.9.42 - ESRB and Metadata Manager Stability</span>
                   <em>Installed</em>
@@ -1371,7 +1473,7 @@
                 </div>
               </details>
 
-              <details class="system-update-entry" open>
+              <details class="system-update-entry">
                 <summary>
                   <span>Guidevault 0.9.42 - Mojibake-safe UI Icon Encoding</span>
                   <em>Installed</em>
@@ -1386,7 +1488,7 @@
                 </div>
               </details>
 
-              <details class="system-update-entry" open>
+              <details class="system-update-entry">
                 <summary>
                   <span>Guidevault 0.9.40 - Source Cleanup and Asset Path Fixes</span>
                   <em>Installed</em>
@@ -1402,7 +1504,7 @@
                 </div>
               </details>
 
-              <details class="system-update-entry" open>
+              <details class="system-update-entry">
                 <summary>
                   <span>Guidevault 0.9.39 - View Recovery Hotfix</span>
                   <em>Installed</em>
@@ -1417,7 +1519,7 @@
                 </div>
               </details>
 
-              <details class="system-update-entry" open>
+              <details class="system-update-entry">
                 <summary>
                   <span>Guidevault 0.9.38 - Profile Navigation Hotfix</span>
                   <em>Installed</em>
@@ -2176,6 +2278,7 @@
   </dialog>
 
 
-  <script src="/app.js?v=0.9.42"></script>
+  <script src="/app.js?v=0.9.43-rp-blue2"></script>
 </body>
 </html>
+

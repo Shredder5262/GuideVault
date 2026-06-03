@@ -13224,3 +13224,440 @@ body.profile-page-mode .main{
   }
   .guidevault-update-toast-actions{width:100%;justify-content:flex-end;}
 }
+
+
+/* 0.9.42 polish: stable controls, device badges, compact Metadata Manager */
+.device-badge.web{
+  background:#2f81ff!important;
+  color:#ffffff;
+}
+.top-icon-button,
+.update-notify-button,
+.task-monitor-button,
+#settingsBtn{
+  border-color:rgba(72,152,255,.42)!important;
+}
+.top-icon-button:hover,
+.update-notify-button:hover,
+.task-monitor-button:hover,
+#settingsBtn:hover{
+  border-color:rgba(93,177,255,.88)!important;
+  box-shadow:0 0 0 3px rgba(47,129,255,.18);
+}
+.metadata-manager-toolbar{
+  padding:14px 16px!important;
+}
+.metadata-manager-filter-grid{
+  grid-template-columns:minmax(220px,1.4fr) minmax(130px,.72fr) minmax(150px,.82fr) minmax(190px,1fr)!important;
+  gap:8px!important;
+  align-items:end;
+  margin-bottom:8px!important;
+}
+.metadata-manager-filter-grid label{
+  gap:4px!important;
+  font-size:.74rem!important;
+  letter-spacing:.01em;
+}
+.metadata-manager-filter-grid input,
+.metadata-manager-filter-grid select{
+  min-height:32px!important;
+  padding:6px 8px!important;
+  border-radius:8px!important;
+  font-size:.82rem!important;
+}
+.metadata-manager-column-panel,
+.metadata-manager-batch-panel{
+  margin-top:8px;
+  border:1px solid rgba(99,155,220,.16);
+  border-radius:12px;
+  background:rgba(9,19,33,.38);
+  padding:0;
+}
+.metadata-manager-column-panel summary,
+.metadata-manager-batch-panel summary{
+  cursor:pointer;
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  gap:14px;
+  padding:8px 10px;
+  color:#ddecff;
+  font-size:.86rem;
+  font-weight:900;
+}
+.metadata-manager-column-panel summary em,
+.metadata-manager-batch-panel summary em{
+  color:#91a9c4;
+  font-size:.74rem;
+  font-style:normal;
+  font-weight:700;
+}
+.metadata-manager-column-panel[open],
+.metadata-manager-batch-panel[open]{
+  padding-bottom:10px;
+}
+.metadata-manager-batch-grid{
+  grid-template-columns:repeat(6,minmax(110px,1fr))!important;
+  gap:8px!important;
+  padding:10px 10px 0!important;
+  border-top:1px solid rgba(255,255,255,.06)!important;
+}
+.metadata-manager-batch-grid label{
+  gap:4px!important;
+  font-size:.72rem!important;
+}
+.metadata-manager-batch-grid input,
+.metadata-manager-batch-grid select{
+  min-height:30px!important;
+  padding:5px 7px!important;
+  border-radius:8px!important;
+  font-size:.8rem!important;
+}
+.metadata-manager-batch-actions{
+  padding:8px 10px 0;
+  gap:8px!important;
+}
+.metadata-legacy-match-field{
+  display:none!important;
+}
+@media(max-width:1200px){
+  .metadata-manager-filter-grid{
+    grid-template-columns:repeat(2,minmax(180px,1fr))!important;
+  }
+  .metadata-manager-batch-grid{
+    grid-template-columns:repeat(2,minmax(150px,1fr))!important;
+  }
+}
+
+
+/* 0.9.42 follow-up polish: blue rings, compact metadata summary, softer update status */
+button:focus-visible,
+.icon-button:focus-visible,
+.top-icon-button:focus-visible,
+button.ghost:focus-visible,
+button.primary:focus-visible,
+button.small-icon:focus-visible,
+.settings-actions button:focus-visible,
+.metadata-manager-actions button:focus-visible,
+#deviceAddEmailTop:focus-visible,
+#deviceAddClientTop:focus-visible,
+#deviceAddUser:focus-visible,
+#usersAdd:focus-visible,
+#permissionsAdd:focus-visible,
+button[id*="Add"]:focus-visible{
+  outline:2px solid rgba(72,152,255,.95)!important;
+  outline-offset:2px!important;
+  box-shadow:0 0 0 4px rgba(47,129,255,.18)!important;
+}
+button.ghost,
+.settings-actions button.ghost,
+button[id*="Add"].ghost,
+button[id*="Add"]{
+  border-color:rgba(72,152,255,.58)!important;
+}
+button.ghost:hover,
+.settings-actions button.ghost:hover,
+button[id*="Add"]:hover{
+  border-color:rgba(112,193,255,.92)!important;
+  box-shadow:0 0 0 3px rgba(47,129,255,.16)!important;
+}
+.device-badge.web{
+  background:#2f81ff!important;
+  color:#fff!important;
+}
+.metadata-manager-summary{
+  display:grid!important;
+  grid-template-columns:repeat(7,minmax(118px,1fr))!important;
+  gap:8px!important;
+  margin:12px 0 16px!important;
+}
+.metadata-manager-summary-card,
+.metadata-manager-stat,
+.metadata-manager-summary > *{
+  min-width:0!important;
+  padding:10px 12px!important;
+  min-height:62px!important;
+  border-radius:12px!important;
+}
+.metadata-manager-summary-card span,
+.metadata-manager-stat span,
+.metadata-manager-summary > * span{
+  font-size:.68rem!important;
+  letter-spacing:.12em!important;
+  line-height:1.1!important;
+}
+.metadata-manager-summary-card strong,
+.metadata-manager-stat strong,
+.metadata-manager-summary > * strong,
+.metadata-manager-summary-card b,
+.metadata-manager-stat b,
+.metadata-manager-summary > * b{
+  font-size:1.25rem!important;
+  line-height:1.1!important;
+}
+.metadata-manager-toolbar{
+  padding:12px 14px!important;
+}
+.metadata-manager-filter-grid{
+  grid-template-columns:minmax(220px,1.4fr) minmax(125px,.72fr) minmax(145px,.82fr) minmax(180px,1fr)!important;
+  gap:8px!important;
+  align-items:end!important;
+  margin-bottom:8px!important;
+}
+.metadata-manager-filter-grid label{
+  gap:4px!important;
+  font-size:.72rem!important;
+}
+.metadata-manager-filter-grid input,
+.metadata-manager-filter-grid select{
+  min-height:31px!important;
+  padding:5px 8px!important;
+  border-radius:8px!important;
+  font-size:.8rem!important;
+}
+.metadata-legacy-match-field{
+  display:none!important;
+}
+@media(max-width:1450px){
+  .metadata-manager-summary{
+    grid-template-columns:repeat(7,minmax(96px,1fr))!important;
+  }
+  .metadata-manager-summary-card,
+  .metadata-manager-stat,
+  .metadata-manager-summary > *{
+    padding:8px 10px!important;
+  }
+}
+@media(max-width:1180px){
+  .metadata-manager-summary{
+    grid-template-columns:repeat(4,minmax(110px,1fr))!important;
+  }
+}
+
+
+/* 0.9.42 OPDS blue accent polish */
+#opdsPanel,
+#opdsSettingsPanel,
+#opdsSettings,
+.settings-panel-opds,
+[data-settings-panel="opds"]{
+  --opds-accent:#2f81ff;
+  --opds-accent-strong:#5fb1ff;
+  --opds-accent-soft:rgba(47,129,255,.18);
+}
+
+#opdsPanel input,
+#opdsSettingsPanel input,
+#opdsSettings input,
+.settings-panel-opds input,
+[data-settings-panel="opds"] input,
+#opdsPanel select,
+#opdsSettingsPanel select,
+#opdsSettings select,
+.settings-panel-opds select,
+[data-settings-panel="opds"] select{
+  border-color:rgba(72,152,255,.42)!important;
+  background:rgba(7,18,31,.88)!important;
+  color:#f5fbff!important;
+}
+
+#opdsPanel input:focus,
+#opdsSettingsPanel input:focus,
+#opdsSettings input:focus,
+.settings-panel-opds input:focus,
+[data-settings-panel="opds"] input:focus,
+#opdsPanel select:focus,
+#opdsSettingsPanel select:focus,
+#opdsSettings select:focus,
+.settings-panel-opds select:focus,
+[data-settings-panel="opds"] select:focus{
+  border-color:rgba(95,177,255,.92)!important;
+  box-shadow:0 0 0 3px rgba(47,129,255,.2)!important;
+  outline:none!important;
+}
+
+#opdsPanel button,
+#opdsSettingsPanel button,
+#opdsSettings button,
+.settings-panel-opds button,
+[data-settings-panel="opds"] button{
+  border-color:rgba(72,152,255,.58)!important;
+}
+
+#opdsPanel button:hover,
+#opdsSettingsPanel button:hover,
+#opdsSettings button:hover,
+.settings-panel-opds button:hover,
+[data-settings-panel="opds"] button:hover{
+  border-color:rgba(112,193,255,.92)!important;
+  box-shadow:0 0 0 3px rgba(47,129,255,.16)!important;
+}
+
+#opdsPanel button:focus-visible,
+#opdsSettingsPanel button:focus-visible,
+#opdsSettings button:focus-visible,
+.settings-panel-opds button:focus-visible,
+[data-settings-panel="opds"] button:focus-visible{
+  outline:2px solid rgba(72,152,255,.95)!important;
+  outline-offset:2px!important;
+  box-shadow:0 0 0 4px rgba(47,129,255,.18)!important;
+}
+
+/* Broad switch override for the OPDS enable toggle and any remaining purple toggle state. */
+input[type="checkbox"]:checked + .toggle,
+.toggle input:checked + span,
+.toggle-switch input:checked + span,
+.switch input:checked + span,
+.opds-toggle input:checked + span{
+  background:linear-gradient(135deg,#2f81ff,#62bdff)!important;
+  box-shadow:0 10px 28px rgba(47,129,255,.28)!important;
+}
+
+#opdsPanel .toggle,
+#opdsSettingsPanel .toggle,
+#opdsSettings .toggle,
+.settings-panel-opds .toggle,
+[data-settings-panel="opds"] .toggle,
+#opdsPanel .toggle-switch,
+#opdsSettingsPanel .toggle-switch,
+#opdsSettings .toggle-switch,
+.settings-panel-opds .toggle-switch,
+[data-settings-panel="opds"] .toggle-switch{
+  border-color:rgba(72,152,255,.56)!important;
+}
+
+/* Some OPDS URL fields are read-only/masked. Keep them dark-blue instead of purple. */
+#opdsUrl,
+#opdsConnectionUrl,
+#opdsUrlInput,
+#opdsConnectionUrlInput,
+input[id*="opds"][readonly],
+input[id*="Opds"][readonly]{
+  background:linear-gradient(135deg,rgba(20,55,96,.92),rgba(10,25,44,.92))!important;
+  border-color:rgba(72,152,255,.65)!important;
+  color:#eaf5ff!important;
+}
+
+/* Make Update History collapsed state feel intentional. */
+.system-update-entry:not([open]) .system-update-body{
+  display:none!important;
+}
+.system-update-entry summary{
+  cursor:pointer;
+}
+
+
+/* 0.9.42 Reading Profile reader defaults */
+.reading-profile-check-row{
+  min-height:44px;
+  display:flex!important;
+  flex-direction:row!important;
+  align-items:center;
+  gap:10px!important;
+  padding:10px 12px;
+  border:1px solid rgba(72,152,255,.22);
+  border-radius:12px;
+  background:rgba(7,18,31,.45);
+  color:#dcecff!important;
+  font-weight:850;
+}
+.reading-profile-check-row input[type="checkbox"]{
+  width:18px;
+  height:18px;
+  accent-color:#2f81ff;
+  flex:0 0 auto;
+}
+.reading-profile-check-row span{
+  line-height:1.25;
+}
+.reading-profile-zoom-row output{
+  min-width:46px;
+  text-align:right;
+}
+
+
+/* 0.9.42 hard override: exact OPDS selectors + Reading Profile visibility */
+#settingsOpdsPanel{
+  --opds-blue:#2f81ff;
+  --opds-blue-strong:#62bdff;
+  --opds-blue-soft:rgba(47,129,255,.2);
+}
+#settingsOpdsPanel .gv-toggle input:checked + .gv-toggle-track{
+  border-color:rgba(72,152,255,.88)!important;
+  background:linear-gradient(135deg,#2f81ff,#62bdff)!important;
+  box-shadow:0 0 0 1px rgba(47,129,255,.32),0 16px 34px rgba(47,129,255,.24)!important;
+}
+#settingsOpdsPanel .gv-toggle:focus-within .gv-toggle-track{
+  outline:2px solid rgba(72,152,255,.78)!important;
+  outline-offset:3px!important;
+}
+#settingsOpdsPanel .opds-url-label input,
+#settingsOpdsPanel .opds-new-key-inline input,
+#settingsOpdsPanel .opds-url-key-select,
+#opdsConnectionUrl,
+#opdsUrlKeySelect,
+#opdsNewKeyName{
+  background:linear-gradient(135deg,rgba(21,68,118,.96),rgba(8,23,42,.96))!important;
+  border-color:rgba(72,152,255,.72)!important;
+  color:#eef8ff!important;
+}
+#settingsOpdsPanel .opds-url-label input:focus,
+#settingsOpdsPanel .opds-new-key-inline input:focus,
+#settingsOpdsPanel .opds-url-key-select:focus,
+#opdsConnectionUrl:focus,
+#opdsUrlKeySelect:focus,
+#opdsNewKeyName:focus{
+  border-color:rgba(98,189,255,.96)!important;
+  box-shadow:0 0 0 3px rgba(47,129,255,.22)!important;
+}
+#settingsOpdsPanel button,
+#settingsOpdsPanel .ghost,
+#settingsOpdsPanel .primary,
+#opdsCopyUrl,
+#opdsEditUrl,
+#opdsRevealUrl,
+#opdsGenerateKey,
+#opdsCreateKey{
+  border-color:rgba(72,152,255,.62)!important;
+}
+#settingsOpdsPanel button:hover,
+#settingsOpdsPanel .ghost:hover,
+#settingsOpdsPanel .primary:hover,
+#opdsCopyUrl:hover,
+#opdsEditUrl:hover,
+#opdsRevealUrl:hover,
+#opdsGenerateKey:hover,
+#opdsCreateKey:hover{
+  border-color:rgba(112,193,255,.96)!important;
+  box-shadow:0 0 0 3px rgba(47,129,255,.16)!important;
+}
+#settingsOpdsPanel .opds-copy-button,
+#settingsOpdsPanel .opds-new-key,
+#opdsCopyUrl,
+#opdsGenerateKey{
+  background:linear-gradient(135deg,rgba(47,129,255,.26),rgba(11,26,46,.86))!important;
+  color:#f4fbff!important;
+}
+.reading-profile-check-row{
+  min-height:44px;
+  display:flex!important;
+  flex-direction:row!important;
+  align-items:center!important;
+  gap:10px!important;
+  padding:10px 12px!important;
+  border:1px solid rgba(72,152,255,.22)!important;
+  border-radius:12px!important;
+  background:rgba(7,18,31,.45)!important;
+  color:#dcecff!important;
+  font-weight:850!important;
+}
+.reading-profile-check-row input[type="checkbox"]{
+  width:18px!important;
+  height:18px!important;
+  accent-color:#2f81ff!important;
+  flex:0 0 auto!important;
+}
+.reading-profile-zoom-row output{
+  min-width:46px!important;
+  text-align:right!important;
+}

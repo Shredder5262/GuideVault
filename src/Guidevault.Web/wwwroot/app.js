@@ -1,6 +1,6 @@
-const state = {
+﻿const state = {
   items: [], filtered: [], selected: null, filter: 'All Content', categoryFilter: '', viewMode: 'all', activeTab: 'overview', customFilter: null,
-  reader: { item: null, pages: [], index: 0, animating: false, displayMode: 2, transitionMode: 'stable', overlayVisible: false, advancedVisible: false, magnifierSettingsVisible: false, scrubbing: false, shading: null, zoom: 100, magnifier: null, magnifierActive: false, longPressTimer: null, suppressHitClickUntil: 0, backgrounds: [], background: '', backgroundBrightness: 72 },
+  reader: { item: null, pages: [], index: 0, animating: false, displayMode: 2, transitionMode: 'stable', overlayVisible: false, advancedVisible: false, magnifierSettingsVisible: false, scrubbing: false, shading: null, zoom: 100, fullscreenOnOpen: false, magnifier: null, magnifierActive: false, longPressTimer: null, suppressHitClickUntil: 0, backgrounds: [], background: '', backgroundBrightness: 72 },
   libraryPath: '',
   libraries: [],
   editingLibraryIndex: null,
@@ -61,7 +61,11 @@ const GUIDEVAULT_READING_ACTIVITY_KEY = 'guidevault.readingActivity.v1';
 const GUIDEVAULT_CATEGORY_STRUCTURE_KEY = 'guidevault.categoryStructure.v1';
 const GUIDEVAULT_COVER_SIZE_KEY = 'guidevault.libraryCoverSize.v1';
 const GUIDEVAULT_FAVORITES_KEY = 'guidevault.favorites.v1';
-const GUIDEVAULT_APP_VERSION = '0.9.42';
+const GUIDEVAULT_APP_VERSION = '0.9.43';
+const GUIDEVAULT_STABLE_TAG_FEED_URL = 'https://api.github.com/repos/Shredder5262/GuideVault/tags';
+const GUIDEVAULT_RELEASES_URL = 'https://github.com/Shredder5262/GuideVault/releases';
+const GUIDEVAULT_PACKAGE_URL = 'https://github.com/Shredder5262/GuideVault/pkgs/container/guidevault';
+const GUIDEVAULT_CURRENT_IMAGE = 'ghcr.io/shredder5262/guidevault:latest';
 
 const EMAIL_TEMPLATE_PRESETS = [
   {
@@ -237,7 +241,9 @@ function defaultReadingProfile() {
     displayMode: 2,
     transitionMode: 'stable',
     background: '',
-    zoom: 100
+    backgroundBrightness: 72,
+    zoom: 100,
+    fullscreenOnOpen: false
   };
 }
 
@@ -265,7 +271,9 @@ function currentReaderSettingsAsProfile() {
     displayMode: state.reader.displayMode,
     transitionMode: state.reader.transitionMode,
     background: state.reader.background,
-    zoom: state.reader.zoom
+    backgroundBrightness: state.reader.backgroundBrightness ?? loadReaderBackgroundBrightness(),
+    zoom: state.reader.zoom,
+    fullscreenOnOpen: !!state.reader.fullscreenOnOpen
   });
 }
 
@@ -280,7 +288,9 @@ function normalizeReadingProfile(value = {}) {
     displayMode: normalizeReaderDisplayMode(value.displayMode ?? value.pageTypeDisplay ?? defaults.displayMode),
     transitionMode: normalizeReaderTransitionMode(value.transitionMode ?? value.transitionType ?? defaults.transitionMode),
     background: String((value.background ?? value.backgroundType ?? defaults.background) || '').trim(),
+    backgroundBrightness: clampNumber(value.backgroundBrightness ?? value.brightness ?? value.readerBrightness ?? defaults.backgroundBrightness, 15, 100, defaults.backgroundBrightness),
     zoom: clampNumber(value.zoom ?? value.zoomLevel ?? defaults.zoom, 70, 145, defaults.zoom),
+    fullscreenOnOpen: !!(value.fullscreenOnOpen ?? value.openFullscreen ?? value.defaultFullscreen ?? defaults.fullscreenOnOpen),
     label: String(value.label || '').trim(),
     targetType: String(value.targetType || '').trim(),
     updatedAt: value.updatedAt || null
@@ -310,7 +320,9 @@ function normalizeReadingProfilePreset(value = {}, fallbackId = '') {
     displayMode: base.displayMode,
     transitionMode: base.transitionMode,
     background: base.background,
+    backgroundBrightness: base.backgroundBrightness,
     zoom: base.zoom,
+    fullscreenOnOpen: base.fullscreenOnOpen,
     builtIn: id === 'default' || !!value.builtIn,
     updatedAt: value.updatedAt || null
   };
@@ -460,7 +472,8 @@ function getReadingProfileEntryTargets() {
 function readingProfileLabel(profile) {
   const normalized = normalizeReadingProfile(profile || defaultReadingProfile());
   const background = normalized.background ? readerBackgroundDisplayName(normalized.background) : 'Default Gradient';
-  return `${displayModeLabel(normalized.displayMode)} \u2022 ${transitionLabel(normalized.transitionMode)} \u2022 ${background} \u2022 ${normalized.zoom}% zoom`;
+  const fullscreen = normalized.fullscreenOnOpen ? ' \u2022 fullscreen on open' : '';
+  return `${displayModeLabel(normalized.displayMode)} \u2022 ${transitionLabel(normalized.transitionMode)} \u2022 ${background} \u2022 ${normalized.backgroundBrightness}% brightness \u2022 ${normalized.zoom}% zoom${fullscreen}`;
 }
 
 function readingProfilePresetSummary(preset) {
@@ -536,8 +549,11 @@ function readingProfilePresetFormIds() {
     display: 'readingProfilePresetDisplay',
     transition: 'readingProfilePresetTransition',
     background: 'readingProfilePresetBackground',
+    brightness: 'readingProfilePresetBrightness',
+    brightnessValue: 'readingProfilePresetBrightnessValue',
     zoom: 'readingProfilePresetZoom',
     zoomValue: 'readingProfilePresetZoomValue',
+    fullscreen: 'readingProfilePresetFullscreen',
     selector: 'readingProfilePresetSelect'
   };
 }
@@ -549,8 +565,11 @@ function setReadingProfilePresetFormValues(preset = null) {
   if ($(ids.display)) $(ids.display).value = String(normalized.displayMode);
   if ($(ids.transition)) $(ids.transition).value = normalized.transitionMode;
   if ($(ids.background)) $(ids.background).value = normalized.background;
+  if ($(ids.brightness)) $(ids.brightness).value = String(normalized.backgroundBrightness);
+  if ($(ids.brightnessValue)) $(ids.brightnessValue).textContent = `${normalized.backgroundBrightness}%`;
   if ($(ids.zoom)) $(ids.zoom).value = String(normalized.zoom);
   if ($(ids.zoomValue)) $(ids.zoomValue).textContent = `${normalized.zoom}%`;
+  if ($(ids.fullscreen)) $(ids.fullscreen).checked = !!normalized.fullscreenOnOpen;
   if ($('readingProfileDeletePreset')) $('readingProfileDeletePreset').disabled = normalized.id === 'default';
 }
 
@@ -560,7 +579,9 @@ function getReadingProfilePresetFormValues() {
     displayMode: $(ids.display)?.value,
     transitionMode: $(ids.transition)?.value,
     background: $(ids.background)?.value,
-    zoom: $(ids.zoom)?.value
+    backgroundBrightness: $(ids.brightness)?.value,
+    zoom: $(ids.zoom)?.value,
+    fullscreenOnOpen: !!$(ids.fullscreen)?.checked
   });
 }
 
@@ -568,6 +589,12 @@ function refreshReadingProfilePresetZoomOutput() {
   const ids = readingProfilePresetFormIds();
   const zoom = clampNumber($(ids.zoom)?.value, 70, 145, 100);
   if ($(ids.zoomValue)) $(ids.zoomValue).textContent = `${zoom}%`;
+}
+
+function refreshReadingProfilePresetBrightnessOutput() {
+  const ids = readingProfilePresetFormIds();
+  const brightness = clampNumber($(ids.brightness)?.value, 15, 100, 72);
+  if ($(ids.brightnessValue)) $(ids.brightnessValue).textContent = `${brightness}%`;
 }
 
 function fillReadingProfilePresetSelector(preferredId = '') {
@@ -766,7 +793,22 @@ function applyReadingProfileToReader(item) {
   state.reader.displayMode = profile.displayMode;
   state.reader.transitionMode = profile.transitionMode;
   state.reader.background = profile.background;
+  state.reader.backgroundBrightness = profile.backgroundBrightness;
   state.reader.zoom = profile.zoom;
+  state.reader.fullscreenOnOpen = !!profile.fullscreenOnOpen;
+}
+
+async function requestReaderFullscreenFromProfile() {
+  if (!state.reader.fullscreenOnOpen || document.fullscreenElement) return;
+  const el = $('readerStage') || $('readerView');
+  if (!el?.requestFullscreen) return;
+  try {
+    await el.requestFullscreen();
+  } catch (err) {
+    console.info('Reading profile fullscreen-on-open could not start automatically. The browser may require a fresh user gesture.', err);
+  }
+  updateReaderFullscreenUi();
+  window.setTimeout(refreshReaderBookSize, 80);
 }
 
 
@@ -1628,7 +1670,14 @@ function renderUpdateNotification() {
     notice.dataset.status = update?.status || '';
   }
   const setText = (id, value) => { const el = $(id); if (el) el.textContent = value || '\u2014'; };
-  setText('systemUpdateStatus', update?.message || 'Stable update notifications are not configured yet.');
+  const hasUpdatePaths = !!(update?.feedUrl || update?.releaseUrl || update?.releasePath || update?.packageUrl);
+  const currentVersion = update?.currentVersion || GUIDEVAULT_APP_VERSION;
+  const latestVersion = update?.latestVersion || '';
+  const sameVersion = latestVersion && normalizeStableVersion(latestVersion) === normalizeStableVersion(currentVersion);
+  const friendlyUpdateMessage = (hasUpdatePaths && sameVersion && String(update?.message || '').toLowerCase().includes('failed'))
+    ? 'Guidevault is current. Release and package paths are available below.'
+    : (update?.message || 'Stable update notifications are not configured yet.');
+  setText('systemUpdateStatus', friendlyUpdateMessage);
   setText('systemUpdateCurrent', update?.currentVersion || GUIDEVAULT_APP_VERSION);
   setText('systemUpdateLatest', update?.latestVersion || '\u2014');
   setText('systemUpdateImage', update?.latestImage || update?.currentImage || '\u2014');
@@ -1717,13 +1766,64 @@ function showStableUpdateToast(update) {
 }
 
 
+
+function normalizeStableVersion(value = '') {
+  const match = String(value || '').match(/\d+(?:\.\d+){0,3}/);
+  return match ? match[0] : String(value || '').replace(/^v/i, '').trim();
+}
+
+function compareStableVersions(latest = '', current = '') {
+  const a = normalizeStableVersion(latest).split('.').map(n => Number(n) || 0);
+  const b = normalizeStableVersion(current).split('.').map(n => Number(n) || 0);
+  const len = Math.max(a.length, b.length, 3);
+  for (let i = 0; i < len; i++) {
+    const av = a[i] || 0;
+    const bv = b[i] || 0;
+    if (av > bv) return 1;
+    if (av < bv) return -1;
+  }
+  return 0;
+}
+
+async function fetchStableUpdateDirectly(force = false, previousError = null) {
+  const res = await fetch(GUIDEVAULT_STABLE_TAG_FEED_URL, { cache: 'no-store' });
+  if (!res.ok) throw new Error(`GitHub tag feed returned HTTP ${res.status}`);
+  const tags = await res.json();
+  const latest = Array.isArray(tags) && tags.length ? tags[0] : null;
+  const tagName = latest?.name || latest?.tag_name || '';
+  const latestVersion = normalizeStableVersion(tagName) || GUIDEVAULT_APP_VERSION;
+  const releaseUrl = tagName ? `${GUIDEVAULT_RELEASES_URL}/tag/${encodeURIComponent(tagName)}` : GUIDEVAULT_RELEASES_URL;
+  const updateAvailable = compareStableVersions(latestVersion, GUIDEVAULT_APP_VERSION) > 0;
+
+  return {
+    configured: true,
+    channel: 'stable',
+    currentVersion: GUIDEVAULT_APP_VERSION,
+    currentImage: GUIDEVAULT_CURRENT_IMAGE,
+    latestVersion,
+    latestImage: GUIDEVAULT_CURRENT_IMAGE,
+    feedUrl: GUIDEVAULT_STABLE_TAG_FEED_URL,
+    releaseUrl,
+    releasePath: releaseUrl,
+    packageUrl: GUIDEVAULT_PACKAGE_URL,
+    notes: [],
+    forced: force,
+    checkedAt: Date.now(),
+    updateAvailable,
+    status: updateAvailable ? 'available' : 'current',
+    message: updateAvailable
+      ? `Guidevault ${latestVersion} is available on the stable channel.`
+      : `Guidevault is current. Checked GitHub tags directly${previousError ? ' after the backend check failed' : ''}.`
+  };
+}
+
 async function checkStableUpdates(force = false) {
   if (!force && state.updateCheck?.checkedAt && Date.now() - state.updateCheck.checkedAt < GUIDEVAULT_UPDATE_CHECK_MS) {
     renderUpdateNotification();
     return state.updateCheck;
   }
   try {
-    const res = await fetch(`/api/system/update-check${force ? '?force=1' : ''}`, { cache: 'no-store' });
+    const res = await fetch(`/api/system/update-check${force ? '?force=true' : ''}`, { cache: 'no-store' });
     if (!res.ok) throw new Error(await res.text());
     state.updateCheck = await res.json();
     state.updateCheck.checkedAt = Date.now();
@@ -1731,9 +1831,31 @@ async function checkStableUpdates(force = false) {
     notifyStableUpdateAvailable(state.updateCheck);
     return state.updateCheck;
   } catch (err) {
-    console.warn('Stable update check failed', err);
-    state.updateCheck = { configured: true, status: 'error', message: 'Stable update check failed from the browser.', currentVersion: GUIDEVAULT_APP_VERSION, checkedAt: Date.now() };
+    console.warn('Stable update check failed through backend; trying direct GitHub tag feed.', err);
+    try {
+      state.updateCheck = await fetchStableUpdateDirectly(force, err);
+    } catch (fallbackErr) {
+      console.warn('Direct stable update check failed', fallbackErr);
+      state.updateCheck = {
+        configured: true,
+        channel: 'stable',
+        status: 'unverified',
+        message: `Could not verify stable updates right now. ${fallbackErr?.message || err?.message || ''}`.trim(),
+        currentVersion: GUIDEVAULT_APP_VERSION,
+        latestVersion: GUIDEVAULT_APP_VERSION,
+        currentImage: GUIDEVAULT_CURRENT_IMAGE,
+        latestImage: GUIDEVAULT_CURRENT_IMAGE,
+        feedUrl: GUIDEVAULT_STABLE_TAG_FEED_URL,
+        releaseUrl: GUIDEVAULT_RELEASES_URL,
+        releasePath: GUIDEVAULT_RELEASES_URL,
+        packageUrl: GUIDEVAULT_PACKAGE_URL,
+        notes: [],
+        updateAvailable: false,
+        checkedAt: Date.now()
+      };
+    }
     renderUpdateNotification();
+    notifyStableUpdateAvailable(state.updateCheck);
     return state.updateCheck;
   }
 }
@@ -4243,7 +4365,7 @@ async function loadSettings() {
   const data = await res.json();
   state.libraryPath = data.libraryPath || '';
   state.libraries = Array.isArray(data.libraries) ? data.libraries.map(normalizeLibraryForClient) : [];
-  if (!state.libraries.length && state.libraryPath) state.libraries = [{ name: 'Manuals', type: 'Mixed', folders: [state.libraryPath], lastScanned: null }];
+  if (!state.libraries.length && state.libraryPath) state.libraries = [{ name: 'Manuals', type: 'Manuals', folders: [state.libraryPath], lastScanned: null }];
   if ($('libraryRootText')) $('libraryRootText').textContent = state.libraryPath || 'Not set';
   if ($('libraryPathInput')) $('libraryPathInput').value = state.libraryPath || '';
   renderLibrariesSettings();
@@ -4336,7 +4458,7 @@ function showAppConfirm(options = {}) {
 function normalizeLibraryForClient(lib) {
   return {
     name: lib?.name || lib?.Name || 'Library',
-    type: lib?.type || lib?.Type || 'Mixed',
+    type: lib?.type || lib?.Type || 'Manuals',
     folders: Array.isArray(lib?.folders) ? lib.folders : (Array.isArray(lib?.Folders) ? lib.Folders : (lib?.folder || lib?.Folder ? [lib?.folder || lib?.Folder] : [])),
     lastScanned: lib?.lastScanned || lib?.LastScanned || null
   };
@@ -4369,7 +4491,7 @@ function renderLibrariesSettings() {
     const folder = (lib.folders || [])[0] || '';
     return `<tr>
       <td><strong>${escapeHtml(lib.name)}</strong></td>
-      <td>${escapeHtml(lib.type || 'Mixed')}</td>
+      <td>${escapeHtml(lib.type || 'Manuals')}</td>
       <td><div class="library-folder-path">${folder ? escapeHtml(folder) : '<span class="sub">No folder set</span>'}</div></td>
       <td class="library-actions">
         <button class="small-icon rescan-library" data-index="${index}" title="Rescan this library">\u27F3</button>
@@ -4419,12 +4541,12 @@ function renderLibrariesSettings() {
 
 function openLibraryEditor(index = null) {
   state.editingLibraryIndex = Number.isInteger(index) ? index : null;
-  const lib = state.editingLibraryIndex === null ? { name: '', type: 'Mixed', folders: [] } : state.libraries[state.editingLibraryIndex];
+  const lib = state.editingLibraryIndex === null ? { name: '', type: 'Manuals', folders: [] } : state.libraries[state.editingLibraryIndex];
   if (!$('libraryEditor')) return;
   $('libraryEditor').classList.remove('hidden');
   $('libraryEditorTitle').textContent = state.editingLibraryIndex === null ? 'Add Library' : 'Edit Library';
   $('libraryNameInput').value = lib?.name || '';
-  $('libraryTypeInput').value = lib?.type || 'Mixed';
+  $('libraryTypeInput').value = lib?.type || 'Manuals';
   $('libraryFolderInput').value = (lib?.folders || [])[0] || '';
   $('libraryNameInput').focus();
 }
@@ -4436,7 +4558,7 @@ function closeLibraryEditor() {
 
 async function saveLibraryEditor() {
   const name = $('libraryNameInput')?.value.trim() || 'Library';
-  const type = $('libraryTypeInput')?.value || 'Mixed';
+  const type = $('libraryTypeInput')?.value || 'Manuals';
   const folder = $('libraryFolderInput')?.value.trim() || '';
   if (!folder) { setStatus('Add one folder path for this library.'); return; }
   const lib = { name, type, folders: [folder], lastScanned: null };
@@ -4461,7 +4583,7 @@ async function saveLibraries(successMessage = 'Libraries saved.', options = {}) 
       const folder = String((lib?.folders || [])[0] || lib?.folder || '').trim();
       return {
         name: lib?.name || 'Library',
-        type: lib?.type || 'Mixed',
+        type: lib?.type || 'Manuals',
         folder,
         folders: folder ? [folder] : [],
         lastScanned: lib?.lastScanned || null
@@ -6108,6 +6230,13 @@ function updateTypedMetadataFieldVisibility(kind = $('editKind')?.value || '') {
   });
   if ($('editIssueLabel')) $('editIssueLabel').classList.toggle('hidden', !isMagazine);
   if ($('editEsrbRatingLabel')) $('editEsrbRatingLabel').classList.toggle('hidden', isMagazine);
+
+  const titleLabel = $('editTitleLabel');
+  if (titleLabel?.firstChild) {
+    titleLabel.firstChild.nodeValue = isStrategyGuide ? 'Strategy Guide Title' : (isMagazine ? 'Magazine Entry Title' : (isManual ? 'Manual Title' : 'Title'));
+  }
+  if ($('editPlatformMatchLabel')) $('editPlatformMatchLabel').classList.add('hidden');
+  if ($('editSeriesLabel')) $('editSeriesLabel').classList.toggle('hidden', isStrategyGuide || isManual);
   updateEditionControls();
 }
 
@@ -6217,12 +6346,12 @@ const METADATA_MANAGER_ALL_COLUMNS = [
   { key:'featuredGames', label:'Featured Games', description:'Magazine featured games.' },
   { key:'featuredPlatforms', label:'Featured Platforms', description:'Magazine featured platforms.' },
   { key:'specialFeatures', label:'Special Features', description:'Magazine special features.' },
-  { key:'includedExtras', label:'Included Extras', description:'Included extras such as posters/discs.' },
+  { key:'includedExtras', label:'Physical Extras', description:'Physical extras such as posters, inserts, discs, or maps.' },
   { key:'gameTitle', label:'Game Title', description:'Game title for manuals/guides.' },
   { key:'guideType', label:'Guide Type', description:'Strategy guide type.' },
   { key:'edition', label:'Edition', description:'Edition or print identifier.' },
-  { key:'franchise', label:'Franchise', description:'Franchise/series for manuals and guides.' },
-  { key:'developer', label:'Developer', description:'Game developer.' },
+  { key:'franchise', label:'Game Franchise / Series', description:'Game franchise or series for manuals and guides.' },
+  { key:'developer', label:'Game Developer', description:'Developer of the associated game.' },
   { key:'gamePublisher', label:'Game Publisher', description:'Game publisher.' },
   { key:'gameReleaseYear', label:'Game Release Year', description:'Game release year.' },
   { key:'genre', label:'Genre', description:'Game or book genre.' },
@@ -7186,7 +7315,7 @@ function magazineOverviewHtml(item) {
       ${magazineOverviewTagSection('Featured Games', item.featuredGames)}
       ${magazineOverviewTagSection('Featured Platforms', item.featuredPlatforms)}
       ${magazineOverviewTagSection('Special Features', item.specialFeatures)}
-      ${magazineOverviewTagSection('Included Extras', item.includedExtras)}
+      ${magazineOverviewTagSection('Physical Extras', item.includedExtras)}
     </div>`;
 }
 
@@ -7227,8 +7356,8 @@ function manualOverviewHtml(item) {
       <div class="manual-context-stack">
         <section class="overview-card manual-game-card">
           <div class="manual-field-grid">
-            ${magazineOverviewField('Franchise / Series', item.franchise || item.series)}
-            ${magazineOverviewField('Developer', item.developer)}
+            ${magazineOverviewField('Game Franchise / Series', item.franchise || item.series)}
+            ${magazineOverviewField('Game Developer', item.developer)}
             ${magazineOverviewField('Game Publisher', item.gamePublisher)}
             ${magazineOverviewField('Game Release Year', item.gameReleaseYear)}
           </div>
@@ -7242,7 +7371,7 @@ function manualOverviewHtml(item) {
         <h3>Manual Content</h3>
         <div class="manual-content-grid">
           ${magazineOverviewTagSection('Included Sections', item.includedSections)}
-          ${magazineOverviewTagSection('Included Extras', item.includedExtras)}
+          ${magazineOverviewTagSection('Physical Extras', item.includedExtras)}
           ${magazineOverviewTagSection('Characters Covered', item.charactersCovered)}
           ${magazineOverviewTagSection('Items / Mechanics', item.itemsCovered)}
           ${magazineOverviewField('Controls / Scheme', item.controlScheme, 'wide')}
@@ -7290,8 +7419,8 @@ function strategyOverviewHtml(item) {
       <div class="strategy-context-stack">
         <section class="overview-card strategy-game-card">
           <div class="strategy-context-list">
-            ${magazineOverviewField('Franchise / Series', item.franchise || item.series)}
-            ${magazineOverviewField('Developer', item.developer)}
+            ${magazineOverviewField('Game Franchise / Series', item.franchise || item.series)}
+            ${magazineOverviewField('Game Developer', item.developer)}
             ${magazineOverviewField('Game Publisher', item.gamePublisher)}
             ${magazineOverviewField('Game Release Year', item.gameReleaseYear)}
             ${magazineOverviewField('ISBN', combinedIsbnText(item), 'wide')}
@@ -7307,7 +7436,7 @@ function strategyOverviewHtml(item) {
         <div class="strategy-content-grid">
           ${magazineOverviewTagSection('Guide Topics', item.guideTopics)}
           ${magazineOverviewTagSection('Special Features', item.specialFeatures)}
-          ${magazineOverviewTagSection('Included Extras', item.includedExtras)}
+          ${magazineOverviewTagSection('Physical Extras', item.includedExtras)}
           ${magazineOverviewTagSection('Covered Games', item.coveredGames && item.coveredGames.length ? item.coveredGames : (gameTitle ? [gameTitle] : []))}
           ${magazineOverviewTagSection('Covered Platforms', item.coveredPlatforms && item.coveredPlatforms.length ? item.coveredPlatforms : item.associatedPlatforms)}
           ${magazineOverviewTagSection('Characters Covered', item.charactersCovered)}
@@ -8003,6 +8132,7 @@ async function openReader(item) {
   $('readerTitle').textContent = displayTitle(item) || item.title || '';
   await waitForReaderPaint();
   renderSpread(0, { preserveSize: false });
+  await requestReaderFullscreenFromProfile();
   updateReaderFullscreenUi();
   requestAnimationFrame(() => {
     document.body.classList.add('reader-page-mode');
@@ -11292,7 +11422,7 @@ if ($('folderBrowseUse')) $('folderBrowseUse').addEventListener('click', e => { 
 if ($('folderBrowseList')) $('folderBrowseList').addEventListener('click', e => { const btn = e.target.closest?.('[data-folder-path]'); if (btn) { e.preventDefault(); loadFolderBrowserPath(btn.dataset.folderPath || ''); } });
 if ($('folderBrowseQuickRoots')) $('folderBrowseQuickRoots').addEventListener('click', e => { const btn = e.target.closest?.('[data-folder-path]'); if (btn) { e.preventDefault(); loadFolderBrowserPath(btn.dataset.folderPath || ''); } });
 if ($('readingProfilePresetSelect')) $('readingProfilePresetSelect').addEventListener('change', () => loadSelectedReadingProfilePresetForm());
-if ($('readingProfilePresetZoom')) $('readingProfilePresetZoom').addEventListener('input', refreshReadingProfilePresetZoomOutput);
+if ($('readingProfilePresetZoom')) $('readingProfilePresetZoom').addEventListener('input', refreshReadingProfilePresetZoomOutput); if ($('readingProfilePresetBrightness')) $('readingProfilePresetBrightness').addEventListener('input', refreshReadingProfilePresetBrightnessOutput);
 if ($('readingProfileNewPreset')) $('readingProfileNewPreset').addEventListener('click', e => { e.preventDefault(); createReadingProfilePreset(); });
 if ($('readingProfileSavePreset')) $('readingProfileSavePreset').addEventListener('click', e => { e.preventDefault(); saveReadingProfilePreset(); });
 if ($('readingProfileDeletePreset')) $('readingProfileDeletePreset').addEventListener('click', e => { e.preventDefault(); deleteReadingProfilePreset(); });
@@ -11520,4 +11650,5 @@ installLibraryCardDelegates();
 installGlobalDetailDelegate();
 syncEmailTemplatePreview();
 initializeGuidevaultAuthAndApp();
+
 
