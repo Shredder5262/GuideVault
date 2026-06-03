@@ -13,7 +13,7 @@ using System.Net.Http.Headers;
 using SharpCompress.Readers;
 
 var builder = WebApplication.CreateBuilder(args);
-const string GuidevaultVersion = "0.9.55";
+const string GuidevaultVersion = "0.9.56";
 var app = builder.Build();
 var metadataJsonOptions = new JsonSerializerOptions(JsonSerializerDefaults.Web) { PropertyNameCaseInsensitive = true };
 var options = app.Configuration.GetSection("Guidevault").Get<GuidevaultOptions>() ?? new GuidevaultOptions();
@@ -6302,7 +6302,7 @@ public static class GuidevaultNativeMetadata
     private static string ToWindowsSafeFileNameBase(string baseName)
     {
         var value = baseName ?? string.Empty;
-        value = value.Replace('â€“', '-').Replace('â€”', '-');
+        value = value.Replace("\u2013", "-").Replace("\u2014", "-");
         value = Regex.Replace(value, "[\\/:*?\"<>|]+", " - ");
         value = Regex.Replace(value, "[\u0000-\u001F]+", " ");
         value = Regex.Replace(value, @"\s+", " ");
@@ -7315,6 +7315,6 @@ public static class ArchiveReader
 
 static class GuidevaultBuildInfo
 {
-    public const string Version = "0.9.55";
+    public const string Version = "0.9.56";
 }
 

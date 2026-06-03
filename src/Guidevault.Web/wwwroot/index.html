@@ -4,7 +4,7 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Guidevault</title>
-  <link rel="stylesheet" href="/styles.css?v=0.9.55-windows-safe-filename" />
+  <link rel="stylesheet" href="/styles.css?v=0.9.56-filename-build-fix" />
 </head>
 <body class="right-collapsed auth-locked">
   <section id="loginView" class="login-view" aria-labelledby="loginTitle">
@@ -1391,6 +1391,19 @@
             <div class="system-update-list">
               <details class="system-update-entry" open>
                 <summary>
+                  <span>Guidevault 0.9.55 - Filename Sanitizer Build Fix</span>
+                  <em>Installed</em>
+                </summary>
+                <div class="system-update-body">
+                  <h3>Fixed <b>2</b></h3>
+                  <ul>
+                    <li>Fixed a C# compile error in the Windows-safe filename sanitizer by replacing non-ASCII character literals with explicit Unicode string replacements.</li>
+                    <li>Preserved the Windows-safe colon and punctuation handling added for source-file renames.</li>
+                  </ul>
+                </div>
+              </details>
+              <details class="system-update-entry" open>
+                <summary>
                   <span>Guidevault 0.9.54 - Windows-Safe Filename Sanitizing</span>
                   <em>Installed</em>
                 </summary>
@@ -2589,7 +2602,7 @@
   </dialog>
 
 
-  <script src="/app.js?v=0.9.55-windows-safe-filename"></script>
+  <script src="/app.js?v=0.9.56-filename-build-fix"></script>
 </body>
 </html>
 
