@@ -13,7 +13,7 @@ using System.Net.Http.Headers;
 using SharpCompress.Readers;
 
 var builder = WebApplication.CreateBuilder(args);
-const string GuidevaultVersion = "0.9.58";
+const string GuidevaultVersion = "0.9.59";
 var app = builder.Build();
 var metadataJsonOptions = new JsonSerializerOptions(JsonSerializerDefaults.Web) { PropertyNameCaseInsensitive = true };
 var options = app.Configuration.GetSection("Guidevault").Get<GuidevaultOptions>() ?? new GuidevaultOptions();
@@ -475,18 +475,18 @@ app.MapPost("/api/library/cleanup", () =>
 
 app.MapPost("/api/library/enrich-metadata", () =>
 {
-    var task = taskMonitor.Start("library-enrichment", "Metadata enrichment", "Metadata enrichment queued.");
+    var task = taskMonitor.Start("library-enrichment", "Fast metadata enrichment", "Fast metadata enrichment queued.");
     _ = Task.Run(async () =>
     {
         try
         {
-            taskMonitor.Update(task.Id, "Starting low-priority metadata enrichment...", 2);
+            taskMonitor.Update(task.Id, "Starting fast Guidevault JSON metadata enrichment...", 2);
             var items = await cache.RescanAsync(task.Id, "metadata");
-            taskMonitor.Complete(task.Id, $"Metadata enrichment complete: {items.Count} item(s) reconciled.", 100);
+            taskMonitor.Complete(task.Id, $"Fast metadata enrichment complete: {items.Count} item(s) reconciled.", 100);
         }
         catch (Exception ex)
         {
-            taskMonitor.Fail(task.Id, $"Metadata enrichment failed: {ex.Message}");
+            taskMonitor.Fail(task.Id, $"Fast metadata enrichment failed: {ex.Message}");
         }
     });
     return Results.Ok(new
@@ -496,7 +496,36 @@ app.MapPost("/api/library/enrich-metadata", () =>
         kind = task.Kind,
         title = task.Title,
         status = task.Status,
-        message = "Metadata enrichment queued.",
+        message = "Fast metadata enrichment queued.",
+        progressPercent = task.ProgressPercent,
+        updatedAt = task.UpdatedAt
+    });
+});
+
+app.MapPost("/api/library/enrich-comicinfo", () =>
+{
+    var task = taskMonitor.Start("library-enrichment", "Legacy ComicInfo import", "Legacy ComicInfo import queued.");
+    _ = Task.Run(async () =>
+    {
+        try
+        {
+            taskMonitor.Update(task.Id, "Starting slower legacy ComicInfo metadata import...", 2);
+            var items = await cache.RescanAsync(task.Id, "comicinfo");
+            taskMonitor.Complete(task.Id, $"Legacy ComicInfo import complete: {items.Count} item(s) reconciled.", 100);
+        }
+        catch (Exception ex)
+        {
+            taskMonitor.Fail(task.Id, $"Legacy ComicInfo import failed: {ex.Message}");
+        }
+    });
+    return Results.Ok(new
+    {
+        taskId = task.Id,
+        id = task.Id,
+        kind = task.Kind,
+        title = task.Title,
+        status = task.Status,
+        message = "Legacy ComicInfo import queued.",
         progressPercent = task.ProgressPercent,
         updatedAt = task.UpdatedAt
     });
@@ -4274,9 +4303,10 @@ public sealed class LibraryCache
             || !string.IsNullOrWhiteSpace(cached.ValidationMessage);
     }
 
-    private static bool ShouldEnrichMetadata(LibraryItem cached)
+    private static bool ShouldEnrichMetadata(LibraryItem cached, bool includeComicInfoFallback)
     {
-        if (!cached.Format.Equals("CBZ", StringComparison.OrdinalIgnoreCase)) return false;
+        if (!cached.Format.Equals("CBZ", StringComparison.OrdinalIgnoreCase)
+            && !cached.Format.Equals("CBR", StringComparison.OrdinalIgnoreCase)) return false;
         var source = cached.MetadataSource ?? string.Empty;
         if (source.Contains("Guidevault JSON", StringComparison.OrdinalIgnoreCase)) return false;
         if (source.Contains("ComicInfo", StringComparison.OrdinalIgnoreCase)) return false;
@@ -4325,9 +4355,12 @@ public sealed class LibraryCache
     {
         var scanTimer = Stopwatch.StartNew();
         var scanStartedAt = DateTimeOffset.UtcNow;
-        var metadataActivity = activity.Equals("metadata", StringComparison.OrdinalIgnoreCase)
+        var guidevaultJsonMetadataActivity = activity.Equals("metadata", StringComparison.OrdinalIgnoreCase);
+        var legacyComicInfoActivity = activity.Equals("comicinfo", StringComparison.OrdinalIgnoreCase)
+            || activity.Equals("legacy-comicinfo", StringComparison.OrdinalIgnoreCase)
             || activity.Equals("enrichment", StringComparison.OrdinalIgnoreCase)
             || activity.Equals("enrich", StringComparison.OrdinalIgnoreCase);
+        var metadataActivity = guidevaultJsonMetadataActivity || legacyComicInfoActivity;
         var scanRoots = _libraries.SelectMany(l => l.Folders.Select(f => new { Library = l, Folder = f }))
             .Where(x => !string.IsNullOrWhiteSpace(x.Folder))
             .ToList();
@@ -4383,7 +4416,9 @@ public sealed class LibraryCache
                 removalActivity
                     ? $"Removing deleted library items and reconciling the remaining index ({candidates.Count} supported file(s) left)..."
                     : metadataActivity
-                        ? $"Enriching metadata for {candidates.Count} supported file(s) at low priority..."
+                        ? legacyComicInfoActivity
+                            ? $"Importing legacy ComicInfo metadata for {candidates.Count} supported file(s). This is the slower deep pass..."
+                            : $"Fast-enriching Guidevault JSON metadata for {candidates.Count} supported file(s)..."
                         : cleanupActivity
                             ? $"Reconciling {candidates.Count} supported file(s). Validating only new, changed, or previously failed magazine entries..."
                             : $"Fast-indexing {candidates.Count} supported file(s) against the cached index...",
@@ -4405,7 +4440,7 @@ public sealed class LibraryCache
         // archive. Metadata enrichment is explicit, slower, and intentionally lower
         // concurrency so it does not make the app feel stuck.
         var parallelism = metadataActivity
-            ? 1
+            ? Math.Max(1, Math.Min(Environment.ProcessorCount, legacyComicInfoActivity ? 2 : 3))
             : cleanupActivity
                 ? Math.Max(1, Math.Min(Environment.ProcessorCount, 2))
                 // Normal scans mostly perform directory/FileInfo checks. On Docker
@@ -4432,7 +4467,7 @@ public sealed class LibraryCache
                 {
                     var refreshed = RefreshCachedItemForLibrary(cached, info, relativePath, candidate.Library);
                     var needsValidation = cleanupActivity && ShouldDeepValidateCachedItem(refreshed, candidate.Library.Type);
-                    var needsMetadataEnrichment = metadataActivity && ShouldEnrichMetadata(refreshed);
+                    var needsMetadataEnrichment = metadataActivity && ShouldEnrichMetadata(refreshed, legacyComicInfoActivity);
                     // Platform detection improvements need a chance to repair already-cached
                     // Unsorted items even when the underlying CBZ/CBR file has not changed.
                     var needsPathInferenceRefresh = !metadataActivity && !cleanupActivity && ShouldRefreshPathInference(refreshed, candidate.Library.Type);
@@ -4478,7 +4513,7 @@ public sealed class LibraryCache
                 // Use the Metadata Enrichment action when deeper ComicInfo import is wanted.
                 ComicInfoMetadata? comicInfo = null;
                 var canReadComicInfo = format != "PDF" && ext.Equals(".cbz", StringComparison.OrdinalIgnoreCase);
-                var shouldReadComicInfo = canReadComicInfo && metadataActivity && guidevaultMetadata is null;
+                var shouldReadComicInfo = canReadComicInfo && legacyComicInfoActivity && guidevaultMetadata is null;
                 if (shouldReadComicInfo)
                 {
                     try
@@ -4624,7 +4659,9 @@ public sealed class LibraryCache
                     var progressMessage = removalActivity
                         ? $"Reconciling remaining library index... {done}/{total} ({reused} cached, {parsed} parsed)"
                         : metadataActivity
-                            ? $"Enriching metadata... {done}/{total} ({reused} already current, {metadataEnriched} enriched, {parsed} checked)"
+                            ? legacyComicInfoActivity
+                                ? $"Importing legacy ComicInfo metadata... {done}/{total} ({reused} already current, {metadataEnriched} enriched, {parsed} checked)"
+                                : $"Fast-enriching Guidevault JSON metadata... {done}/{total} ({reused} already current, {metadataEnriched} enriched, {parsed} checked)"
                             : cleanupActivity
                                 ? $"Validating changed magazines and indexing files... {done}/{total} ({reused} cached, {parsed} parsed, {skippedUnreadable} skipped)"
                                 : $"Fast-indexing library files... {done}/{total} ({reused} cached, {parsed} new/changed, {metadataDeferred} archive metadata deferred)";
@@ -4638,7 +4675,9 @@ public sealed class LibraryCache
                 removalActivity
                     ? $"Finalizing library removal. Reused {reused} cached item(s), parsed {parsed} changed item(s)..."
                     : metadataActivity
-                        ? $"Finalizing metadata enrichment. Enriched {metadataEnriched} item(s), reused {reused} already-current item(s)..."
+                        ? legacyComicInfoActivity
+                            ? $"Finalizing legacy ComicInfo import. Enriched {metadataEnriched} item(s), reused {reused} already-current item(s)..."
+                            : $"Finalizing fast metadata enrichment. Enriched {metadataEnriched} item(s), reused {reused} already-current item(s)..."
                         : cleanupActivity
                             ? $"Finalizing cleanup. Reused {reused} cached item(s), parsed {parsed} changed item(s), skipped {skippedUnreadable} unreadable/stale magazine file(s)..."
                             : $"Finalizing fast library index. Reused {reused} cached item(s), indexed {parsed} new/changed item(s), deferred {metadataDeferred} archive metadata import(s)...",
@@ -4654,7 +4693,7 @@ public sealed class LibraryCache
         _lastScanStats = new LibraryScanStats(
             StartedAt: scanStartedAt,
             CompletedAt: DateTimeOffset.UtcNow,
-            Activity: metadataActivity ? "metadata" : activity,
+            Activity: metadataActivity ? (legacyComicInfoActivity ? "comicinfo" : "metadata") : activity,
             TotalCandidates: candidates.Count,
             Reused: reused,
             Parsed: parsed,
@@ -4663,7 +4702,9 @@ public sealed class LibraryCache
             SkippedUnreadable: skippedUnreadable,
             ElapsedMs: scanTimer.ElapsedMilliseconds,
             Message: metadataActivity
-                ? $"Metadata enrichment checked {candidates.Count} file(s), enriched {metadataEnriched}, reused {reused}."
+                ? legacyComicInfoActivity
+                    ? $"Legacy ComicInfo import checked {candidates.Count} file(s), enriched {metadataEnriched}, reused {reused}."
+                    : $"Fast metadata enrichment checked {candidates.Count} file(s), enriched {metadataEnriched}, reused {reused}."
                 : $"Fast index checked {candidates.Count} file(s), reused {reused}, indexed {parsed}, deferred {metadataDeferred} archive metadata import(s)."
         );
 
@@ -6678,10 +6719,15 @@ public static class ArchiveReader
                     using var reader = new StreamReader(stream);
                     return await reader.ReadToEndAsync();
                 }
+
+                // Valid ZIP/CBZ with no matching metadata entry. Do not fall through
+                // to SharpCompress because that re-walks the same archive and makes
+                // metadata enrichment crawl on large libraries.
+                return null;
             }
             catch
             {
-                // Fall through to SharpCompress for mislabeled archives.
+                // Fall through to SharpCompress only for mislabeled/corrupt archives.
             }
         }
 
@@ -7004,6 +7050,10 @@ public static class ArchiveReader
                     using var reader = new StreamReader(stream);
                     return await reader.ReadToEndAsync();
                 }
+
+                // Valid ZIP/CBZ with no matching metadata entry. Avoid a second full
+                // SharpCompress walk of the same archive.
+                return null;
             }
             catch
             {
@@ -7404,6 +7454,6 @@ static class GuidevaultLibraryIoGate
 
 static class GuidevaultBuildInfo
 {
-    public const string Version = "0.9.58";
+    public const string Version = "0.9.59";
 }
 

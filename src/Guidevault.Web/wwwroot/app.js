@@ -61,7 +61,7 @@ const GUIDEVAULT_READING_ACTIVITY_KEY = 'guidevault.readingActivity.v1';
 const GUIDEVAULT_CATEGORY_STRUCTURE_KEY = 'guidevault.categoryStructure.v1';
 const GUIDEVAULT_COVER_SIZE_KEY = 'guidevault.libraryCoverSize.v1';
 const GUIDEVAULT_FAVORITES_KEY = 'guidevault.favorites.v1';
-const GUIDEVAULT_APP_VERSION = '0.9.58';
+const GUIDEVAULT_APP_VERSION = '0.9.59';
 const GUIDEVAULT_FILENAME_SCHEMA_KEY = 'guidevault.filenameRename.schema.v1';
 const GUIDEVAULT_DEFAULT_FILENAME_SCHEMA = '{title}';
 const GUIDEVAULT_STABLE_TAG_FEED_URL = 'https://api.github.com/repos/Shredder5262/GuideVault/tags';
@@ -4828,8 +4828,8 @@ async function cleanupLibrary() {
 
 async function enrichLibraryMetadata() {
   const localTaskId = upsertLibraryTask({
-    title: 'Metadata enrichment',
-    message: 'Requesting low-priority ComicInfo metadata import...',
+    title: 'Fast metadata enrichment',
+    message: 'Requesting fast Guidevault JSON metadata enrichment...',
     progress: 2,
     kind: 'library-enrichment'
   });
@@ -4837,8 +4837,8 @@ async function enrichLibraryMetadata() {
   let data = null;
   try { data = await res.json(); } catch {}
   if (!res.ok) {
-    const msg = data?.error || 'Metadata enrichment failed. Check the terminal output.';
-    updateLibraryTask(localTaskId, msg, 100, 'failed', 'Metadata enrichment');
+    const msg = data?.error || 'Fast metadata enrichment failed. Check the terminal output.';
+    updateLibraryTask(localTaskId, msg, 100, 'failed', 'Fast metadata enrichment');
     setStatus(msg);
     alert(msg);
     return;
@@ -4848,14 +4848,48 @@ async function enrichLibraryMetadata() {
     replaceLibraryTask(localTaskId, {
       id: taskId,
       kind: 'library-enrichment',
-      title: 'Metadata enrichment',
+      title: 'Fast metadata enrichment',
       status: 'running',
-      message: data?.message || 'Metadata enrichment queued.',
+      message: data?.message || 'Fast metadata enrichment queued.',
       progressPercent: 5,
       updatedAt: new Date().toISOString()
     });
   } else {
-    updateLibraryTask(localTaskId, 'Metadata enrichment queued.', 5, 'running', 'Metadata enrichment');
+    updateLibraryTask(localTaskId, 'Fast metadata enrichment queued.', 5, 'running', 'Fast metadata enrichment');
+  }
+  await pollTasks(true);
+}
+
+
+async function importLegacyComicInfoMetadata() {
+  const localTaskId = upsertLibraryTask({
+    title: 'Legacy ComicInfo import',
+    message: 'Requesting slower legacy ComicInfo metadata import...',
+    progress: 2,
+    kind: 'library-enrichment'
+  });
+  const res = await fetch('/api/library/enrich-comicinfo', { method: 'POST', cache: 'no-store' });
+  let data = null;
+  try { data = await res.json(); } catch {}
+  if (!res.ok) {
+    const msg = data?.error || 'Legacy ComicInfo import failed. Check the terminal output.';
+    updateLibraryTask(localTaskId, msg, 100, 'failed', 'Legacy ComicInfo import');
+    setStatus(msg);
+    return;
+  }
+  const taskId = data?.taskId || data?.TaskId || '';
+  if (taskId) {
+    replaceLibraryTask(localTaskId, {
+      id: taskId,
+      kind: 'library-enrichment',
+      title: 'Legacy ComicInfo import',
+      status: 'running',
+      message: data?.message || 'Legacy ComicInfo import queued.',
+      progressPercent: 5,
+      updatedAt: new Date().toISOString()
+    });
+  } else {
+    updateLibraryTask(localTaskId, 'Legacy ComicInfo import queued.', 5, 'running', 'Legacy ComicInfo import');
   }
   await pollTasks(true);
 }
@@ -12407,7 +12441,8 @@ if ($('usersRefresh')) $('usersRefresh').addEventListener('click', e => { e.prev
 if ($('usersInviteButton')) $('usersInviteButton').addEventListener('click', e => { e.preventDefault(); inviteUser(); });
 if ($('tasksSaveSettings')) $('tasksSaveSettings').addEventListener('click', e => { e.preventDefault(); saveTaskSettings(); });
 if ($('taskRunRescan')) $('taskRunRescan').addEventListener('click', async e => { e.preventDefault(); setTasksSettingsStatus('Fast rescan queued.', 'info'); await rescanLibrary(); });
-if ($('taskRunEnrich')) $('taskRunEnrich').addEventListener('click', async e => { e.preventDefault(); setTasksSettingsStatus('Metadata enrichment queued.', 'info'); await enrichLibraryMetadata(); });
+if ($('taskRunEnrich')) $('taskRunEnrich').addEventListener('click', async e => { e.preventDefault(); setTasksSettingsStatus('Fast metadata enrichment queued.', 'info'); await enrichLibraryMetadata(); });
+if ($('taskRunComicInfo')) $('taskRunComicInfo').addEventListener('click', async e => { e.preventDefault(); setTasksSettingsStatus('Legacy ComicInfo import queued.', 'info'); await importLegacyComicInfoMetadata(); });
 if ($('taskRunCleanup')) $('taskRunCleanup').addEventListener('click', async e => { e.preventDefault(); setTasksSettingsStatus('Cleanup queued.', 'info'); await cleanupLibrary(); });
 if ($('taskRunBackup')) $('taskRunBackup').addEventListener('click', e => { e.preventDefault(); createServerBackup(); });
 if ($('taskRunTrim')) $('taskRunTrim').addEventListener('click', e => { e.preventDefault(); trimGuidevaultMemory(); setTasksSettingsStatus('Reading cache clear requested.', 'info'); });

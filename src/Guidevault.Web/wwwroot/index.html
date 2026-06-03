@@ -4,7 +4,7 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Guidevault</title>
-  <link rel="stylesheet" href="/styles.css?v=0.9.58-fast-scan-guard" />
+  <link rel="stylesheet" href="/styles.css?v=0.9.59-fast-enrichment" />
 </head>
 <body class="right-collapsed auth-locked">
   <section id="loginView" class="login-view" aria-labelledby="loginTitle">
@@ -1252,7 +1252,8 @@
               <div class="settings-card-heading-row"><div><h2>Ad-hoc Tasks</h2><p class="sub">Run one-time maintenance without changing recurring schedules.</p></div></div>
               <div class="ad-hoc-task-tile-grid">
                 <button id="taskRunRescan" class="task-action-tile" type="button"><strong>Fast Rescan</strong><span>Scan changed files and refresh metadata.</span></button>
-                <button id="taskRunEnrich" class="task-action-tile" type="button"><strong>Enrich Metadata</strong><span>Run a deeper metadata pass after basic scanning.</span></button>
+                <button id="taskRunEnrich" class="task-action-tile" type="button"><strong>Fast Metadata Enrichment</strong><span>Import Guidevault JSON from packages without the slow legacy ComicInfo fallback.</span></button>
+                <button id="taskRunComicInfo" class="task-action-tile" type="button"><strong>Legacy ComicInfo Import</strong><span>Optional slower pass for older CBZ ComicInfo.xml metadata.</span></button>
                 <button id="taskRunCleanup" class="task-action-tile" type="button"><strong>General Cleanup</strong><span>Remove stale indexed entries and cache leftovers.</span></button>
                 <button id="taskRunBackup" class="task-action-tile" type="button"><strong>Backup Database</strong><span>Create a backup of config and index data.</span></button>
                 <button id="taskRunTrim" class="task-action-tile" type="button"><strong>Clear Reading Cache</strong><span>Trim archive and cover request caches.</span></button>
@@ -1389,6 +1390,20 @@
 
             <h2>Update History</h2>
             <div class="system-update-list">
+              <details class="system-update-entry" open>
+                <summary>
+                  <span>Guidevault 0.9.58 - Faster Metadata Enrichment</span>
+                  <em>Installed</em>
+                </summary>
+                <div class="system-update-body">
+                  <h3>Improved <b>3</b></h3>
+                  <ul>
+                    <li>Split Metadata Enrichment into a faster Guidevault JSON import pass and an optional slower Legacy ComicInfo import pass.</li>
+                    <li>Uses modest parallel archive reads during explicit metadata enrichment so large libraries can complete faster without hammering Docker bind mounts.</li>
+                    <li>Keeps legacy ComicInfo.xml parsing out of the default enrichment path unless specifically requested.</li>
+                  </ul>
+                </div>
+              </details>
               <details class="system-update-entry" open>
                 <summary>
                   <span>Guidevault 0.9.57 - Fast Scan Performance Guard</span>
@@ -2630,7 +2645,7 @@
   </dialog>
 
 
-  <script src="/app.js?v=0.9.58-fast-scan-guard"></script>
+  <script src="/app.js?v=0.9.59-fast-enrichment"></script>
 </body>
 </html>
 
