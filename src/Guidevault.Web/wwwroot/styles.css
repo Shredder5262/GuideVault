@@ -13895,3 +13895,18 @@ button.danger-soft:not(:disabled):hover{
     gap:4px!important;
   }
 }
+
+/* Guidevault 0.9.52 - Metadata export read-only handling */
+.metadata-export-status {
+  margin: 0.35rem 0 0;
+  min-height: 1.2rem;
+}
+.metadata-export-status.success {
+  color: var(--accent-strong, #8fd3ff);
+}
+.metadata-export-status.error {
+  color: var(--danger, #ff8f8f);
+  font-weight: 700;
+}
+
+/* Guidevault 0.9.53 - Filename rename preview target */

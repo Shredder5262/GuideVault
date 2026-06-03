@@ -13,7 +13,7 @@ using System.Net.Http.Headers;
 using SharpCompress.Readers;
 
 var builder = WebApplication.CreateBuilder(args);
-const string GuidevaultVersion = "0.9.52";
+const string GuidevaultVersion = "0.9.54";
 var app = builder.Build();
 var metadataJsonOptions = new JsonSerializerOptions(JsonSerializerDefaults.Web) { PropertyNameCaseInsensitive = true };
 var options = app.Configuration.GetSection("Guidevault").Get<GuidevaultOptions>() ?? new GuidevaultOptions();
@@ -767,6 +767,9 @@ app.MapPost("/api/items/{id}/file/rename-to-suggested", async (string id, JsonEl
     var safeFileName = GuidevaultNativeMetadata.SanitizeSuggestedFileName(suggestedFileName, updated.FileName);
     if (string.IsNullOrWhiteSpace(safeFileName))
         return Results.BadRequest(new { error = "Unable to generate a safe suggested filename from this metadata." });
+
+    if (GuidevaultNativeMetadata.IsLikelyDosShortFileName(safeFileName))
+        return Results.BadRequest(new { error = $"Refusing to rename the source file to {safeFileName} because it looks like a Windows 8.3 short-name alias. Save the metadata fields first, confirm the Filename tab preview shows a real title, then try again." });
 
     var sourcePath = Path.GetFullPath(updated.Path);
     var sourceDirectory = Path.GetDirectoryName(sourcePath);
@@ -6254,6 +6257,17 @@ public static class GuidevaultNativeMetadata
         return string.Empty;
     }
 
+    public static bool IsLikelyDosShortFileName(string fileName)
+    {
+        var leaf = Path.GetFileName(fileName ?? string.Empty);
+        if (string.IsNullOrWhiteSpace(leaf)) return false;
+        var baseName = Path.GetFileNameWithoutExtension(leaf);
+        var extension = Path.GetExtension(leaf).TrimStart('.');
+        return Regex.IsMatch(baseName, @"^[A-Z0-9]{1,6}~[0-9A-Z]{1,2}$", RegexOptions.IgnoreCase)
+            && extension.Length is >= 1 and <= 4
+            && Regex.IsMatch(extension, @"^[A-Z0-9]+$", RegexOptions.IgnoreCase);
+    }
+
     public static string SanitizeSuggestedFileName(string suggestedFileName, string fallbackFileName)
     {
         var currentExtension = Path.GetExtension(fallbackFileName ?? string.Empty);
@@ -6527,6 +6541,19 @@ public static class ArchiveReader
 
         var metadataFileName = GetGuidevaultMetadataEntryName(kind);
         var ext = Path.GetExtension(archivePath);
+        var targetPath = ext.Equals(".cbr", StringComparison.OrdinalIgnoreCase)
+            ? GuidevaultPackagePath(archivePath, ".cbz")
+            : ext.Equals(".pdf", StringComparison.OrdinalIgnoreCase)
+                ? GuidevaultPackagePath(archivePath, ".zip")
+                : archivePath;
+        var targetDirectory = Path.GetDirectoryName(targetPath) ?? Directory.GetCurrentDirectory();
+
+        if (!TryVerifyWritableDirectory(targetDirectory, out var writeError))
+            return new ArchiveMetadataWriteResult(false, BuildReadOnlyMetadataExportMessage(targetDirectory, writeError), metadataFileName, string.Empty, false, archivePath);
+
+        if (ext.Equals(".cbz", StringComparison.OrdinalIgnoreCase) && IsFileReadOnly(archivePath))
+            return new ArchiveMetadataWriteResult(false, $"Unable to write Guidevault metadata: the source CBZ is marked read-only. Clear the read-only file attribute or mount the library read/write, then try export again. Path: {archivePath}", metadataFileName, string.Empty, false, archivePath);
+
         try
         {
             if (ext.Equals(".cbz", StringComparison.OrdinalIgnoreCase))
@@ -6552,6 +6579,10 @@ public static class ArchiveReader
             }
 
             return new ArchiveMetadataWriteResult(false, $"Unsupported source format: {ext}", metadataFileName, string.Empty, false, archivePath);
+        }
+        catch (Exception ex) when (IsReadOnlyOrPermissionException(ex))
+        {
+            return new ArchiveMetadataWriteResult(false, BuildReadOnlyMetadataExportMessage(targetDirectory, ex.Message), metadataFileName, string.Empty, false, archivePath);
         }
         catch (Exception ex)
         {
@@ -6594,6 +6625,59 @@ public static class ArchiveReader
         }
 
         return null;
+    }
+
+    private static bool TryVerifyWritableDirectory(string directory, out string error)
+    {
+        error = string.Empty;
+        try
+        {
+            Directory.CreateDirectory(directory);
+            var probePath = Path.Combine(directory, $".guidevault-write-test-{Guid.NewGuid():N}.tmp");
+            using (new FileStream(probePath, FileMode.CreateNew, FileAccess.Write, FileShare.None, 1, FileOptions.DeleteOnClose))
+            {
+            }
+            return true;
+        }
+        catch (Exception ex)
+        {
+            error = ex.Message;
+            return false;
+        }
+    }
+
+    private static bool IsFileReadOnly(string path)
+    {
+        try
+        {
+            return (File.GetAttributes(path) & FileAttributes.ReadOnly) != 0;
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
+    private static bool IsReadOnlyOrPermissionException(Exception ex)
+    {
+        if (ex is UnauthorizedAccessException) return true;
+        if (ex is IOException && ContainsPermissionText(ex.Message)) return true;
+        return ex.InnerException is not null && IsReadOnlyOrPermissionException(ex.InnerException);
+    }
+
+    private static bool ContainsPermissionText(string? message)
+    {
+        if (string.IsNullOrWhiteSpace(message)) return false;
+        return message.Contains("Read-only file system", StringComparison.OrdinalIgnoreCase)
+            || message.Contains("Permission denied", StringComparison.OrdinalIgnoreCase)
+            || message.Contains("Access to the path", StringComparison.OrdinalIgnoreCase)
+            || message.Contains("UnauthorizedAccess", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static string BuildReadOnlyMetadataExportMessage(string directory, string? detail)
+    {
+        var suffix = string.IsNullOrWhiteSpace(detail) ? string.Empty : $" Details: {detail}";
+        return $"Unable to export Guidevault metadata because the library location is read-only: {directory}. Guidevault can scan read-only libraries, but metadata export and file rename need write access to the source folder. If this is Docker, remove ':ro' from the library volume mount, recreate the container, and try again.{suffix}";
     }
 
     private static async Task RewriteZipWithMetadataAsync(string sourcePath, string destinationPath, string metadataFileName, string json)
@@ -7205,6 +7289,6 @@ public static class ArchiveReader
 
 static class GuidevaultBuildInfo
 {
-    public const string Version = "0.9.52";
+    public const string Version = "0.9.54";
 }
 

@@ -61,7 +61,7 @@ const GUIDEVAULT_READING_ACTIVITY_KEY = 'guidevault.readingActivity.v1';
 const GUIDEVAULT_CATEGORY_STRUCTURE_KEY = 'guidevault.categoryStructure.v1';
 const GUIDEVAULT_COVER_SIZE_KEY = 'guidevault.libraryCoverSize.v1';
 const GUIDEVAULT_FAVORITES_KEY = 'guidevault.favorites.v1';
-const GUIDEVAULT_APP_VERSION = '0.9.52';
+const GUIDEVAULT_APP_VERSION = '0.9.54';
 const GUIDEVAULT_FILENAME_SCHEMA_KEY = 'guidevault.filenameRename.schema.v1';
 const GUIDEVAULT_DEFAULT_FILENAME_SCHEMA = '{title}';
 const GUIDEVAULT_STABLE_TAG_FEED_URL = 'https://api.github.com/repos/Shredder5262/GuideVault/tags';
@@ -6776,6 +6776,14 @@ function buildGuidevaultItemMetadataExport() {
   };
 }
 
+function setMetadataExportStatus(message = '', tone = '') {
+  const status = $('metadataExportStatus');
+  if (!status) return;
+  status.textContent = String(message || '');
+  status.classList.toggle('error', tone === 'error');
+  status.classList.toggle('success', tone === 'success');
+}
+
 async function exportSelectedGuidevaultMetadata() {
   if (!state.selected) return;
   const btn = $('exportGuideMetadataBtn');
@@ -6788,6 +6796,7 @@ async function exportSelectedGuidevaultMetadata() {
       btn.disabled = true;
       btn.textContent = 'Writing...';
     }
+    setMetadataExportStatus('Writing Guidevault metadata into the source package...', '');
 
     const metadata = buildCurrentMetadataPayloadFromForm({ metadataSource: 'Guidevault JSON' });
     const optimistic = mergeSavedMetadataClientSide(state.selected, {}, metadata);
@@ -6816,13 +6825,24 @@ async function exportSelectedGuidevaultMetadata() {
 
     const message = data?.message || `Wrote ${data?.metadataFileName || 'Guidevault metadata'} into the item package.`;
     setStatus(message);
+    setMetadataExportStatus(message, 'success');
     if (btn) {
       btn.textContent = 'Exported';
       window.setTimeout(() => { if (btn) btn.textContent = originalText || `Export ${metadataExportKindWord(metadata.kind)} Metadata`; }, 1200);
     }
   } catch (err) {
     console.error('Guidevault metadata export failed', err);
-    alert(`Unable to export Guidevault metadata: ${err?.message || err}`);
+    const message = `Unable to export Guidevault metadata: ${err?.message || err}`;
+    setStatus(message);
+    setMetadataExportStatus(message, 'error');
+    if (typeof showAppConfirm === 'function') {
+      await showAppConfirm({
+        title: 'Metadata export failed',
+        message,
+        okText: 'OK',
+        cancelText: 'Close'
+      });
+    }
     if (btn) btn.textContent = 'Export Failed';
   } finally {
     if (btn) {
@@ -6895,6 +6915,9 @@ async function renameSelectedFileToSuggestedName() {
   const currentFileName = metadataExportSourceFileName(state.selected);
   const suggestedFileName = metadataExportSuggestedFileName(metadata, state.selected, schema);
   if (!suggestedFileName) return;
+  // Send the exact filename shown in the preview so the backend does not re-resolve
+  // the schema differently or fall back to a filesystem short-name alias.
+  metadata.targetFileName = suggestedFileName;
 
   const confirmed = await showAppConfirm({
     title: 'Rename file?',

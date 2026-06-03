@@ -4,7 +4,7 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Guidevault</title>
-  <link rel="stylesheet" href="/styles.css?v=0.9.52-filename-token-aliases" />
+  <link rel="stylesheet" href="/styles.css?v=0.9.54-filename-preview-target" />
 </head>
 <body class="right-collapsed auth-locked">
   <section id="loginView" class="login-view" aria-labelledby="loginTitle">
@@ -274,6 +274,7 @@
                   <button id="saveMetadataBtn" class="primary" type="button">Save Metadata</button>
                   <button id="exportGuideMetadataBtn" class="ghost" type="button">Export Guide Metadata</button>
                 </div>
+                <p id="metadataExportStatus" class="sub metadata-export-status" aria-live="polite"></p>
               </section>
               <section id="file-namePanel" class="tab-panel hidden">
                 <article id="metadataFileMaintenance" class="metadata-file-maintenance filename-schema-panel" aria-live="polite">
@@ -1388,6 +1389,34 @@
 
             <h2>Update History</h2>
             <div class="system-update-list">
+              <details class="system-update-entry" open>
+                <summary>
+                  <span>Guidevault 0.9.53 - Filename Rename Preview Target</span>
+                  <em>Installed</em>
+                </summary>
+                <div class="system-update-body">
+                  <h3>Fixed <b>3</b></h3>
+                  <ul>
+                    <li>Changed Filename tab renames so the server receives the exact preview filename shown in the UI.</li>
+                    <li>Added a safety check that refuses Windows 8.3 short-name alias targets such as SQBRU6~B.CBZ.</li>
+                    <li>Clarified the safe workflow: save metadata first, verify the filename preview, then rename/export.</li>
+                  </ul>
+                </div>
+              </details>
+              <details class="system-update-entry" open>
+                <summary>
+                  <span>Guidevault 0.9.52 - Metadata Export Read-Only Handling</span>
+                  <em>Installed</em>
+                </summary>
+                <div class="system-update-body">
+                  <h3>Fixed <b>3</b></h3>
+                  <ul>
+                    <li>Added a preflight write check before native Guidevault metadata export tries to modify or package source files.</li>
+                    <li>Improved Docker/read-only library mount errors so they explain that metadata export and file rename require write access to the source folder.</li>
+                    <li>Moved metadata export failures into Guidevault's in-app status/modal messaging instead of browser alert popups.</li>
+                  </ul>
+                </div>
+              </details>
               <details class="system-update-entry" open>
                 <summary>
                   <span>Guidevault 0.9.51 - Filename Token Aliases</span>
@@ -2546,7 +2575,7 @@
   </dialog>
 
 
-  <script src="/app.js?v=0.9.52-filename-token-aliases"></script>
+  <script src="/app.js?v=0.9.54-filename-preview-target"></script>
 </body>
 </html>
 
