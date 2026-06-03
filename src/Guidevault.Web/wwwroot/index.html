@@ -1,10 +1,10 @@
-<!doctype html>
+﻿<!doctype html>
 <html lang="en">
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Guidevault</title>
-  <link rel="stylesheet" href="/styles.css?v=0.9.43-detailnav-toast-logo2" />
+  <link rel="stylesheet" href="/styles.css?v=0.9.52-filename-token-aliases" />
 </head>
 <body class="right-collapsed auth-locked">
   <section id="loginView" class="login-view" aria-labelledby="loginTitle">
@@ -15,9 +15,11 @@
       </div>
       <form id="loginForm" class="login-form" autocomplete="on">
         <h1 id="loginTitle" class="hidden">Create Guidevault Login</h1>
-        <label for="loginUsername">Username</label>
+        <label id="loginIdentityLabel" for="loginIdentity" class="hidden">Username / Email Address</label>
+        <input id="loginIdentity" name="identity" type="text" autocomplete="username" placeholder="Username or email address" class="hidden" />
+        <label id="loginUsernameLabel" for="loginUsername">Username</label>
         <input id="loginUsername" name="username" type="text" autocomplete="username" placeholder="Username" required />
-        <label for="loginEmail">Email</label>
+        <label id="loginEmailLabel" for="loginEmail">Email</label>
         <input id="loginEmail" name="email" type="email" autocomplete="email" placeholder="you@example.com" required />
         <label for="loginPassword">Password</label>
         <input id="loginPassword" name="password" type="password" autocomplete="current-password" placeholder="Password" required />
@@ -158,7 +160,7 @@
               </div>
             </aside>
             <div class="detail-main-column">
-              <div class="tabs"><button class="tab active" data-tab="overview">Overview</button><button class="tab" data-tab="metadata">Metadata</button><button class="tab" data-tab="reading-profile">Reading Profile</button><button class="tab" data-tab="notes">Notes</button></div>
+              <div class="tabs"><button class="tab active" data-tab="overview">Overview</button><button class="tab" data-tab="metadata">Metadata</button><button class="tab" data-tab="file-name">Filename</button><button class="tab" data-tab="reading-profile">Reading Profile</button><button class="tab" data-tab="notes">Notes</button></div>
               <section id="overviewPanel" class="tab-panel">
                 <p id="description"></p>
                 <div id="meta" class="detail-meta-list"></div>
@@ -243,6 +245,7 @@
                   <label id="editMagazineCategoryLabel" class="magazine-metadata-field hidden">Magazine Category<input id="editMagazineCategory" placeholder="Official, cheats/codes, PC gaming" /></label>
                   <label id="editCoverSubjectLabel" class="magazine-metadata-field hidden">Cover Game / Subject<input id="editCoverSubject" /></label>
                   <label>Year<input id="editYear" /></label>
+                  <label id="editPageCountLabel">Page Count<input id="editPageCount" type="number" min="0" step="1" inputmode="numeric" placeholder="Optional" /></label>
                   <label id="editPublicationDateGuideLabel" class="strategy-metadata-field manual-metadata-field hidden">Publication Date<input id="editPublicationDateGuide" placeholder="September 1997" /></label>
                   <label>Writer / Author<input id="editWriter" /></label>
                   <label id="editDeveloperLabel" class="strategy-metadata-field manual-metadata-field hidden">Game Developer<input id="editDeveloper" /></label>
@@ -267,7 +270,37 @@
                 <label id="editCharactersCoveredLabel" class="strategy-metadata-field manual-metadata-field hidden">Characters Covered, comma-separated<input id="editCharactersCovered" /></label>
                 <label id="editLocationsCoveredLabel" class="strategy-metadata-field hidden">Locations Covered, comma-separated<input id="editLocationsCovered" /></label>
                 <label>Tags, comma-separated<input id="editTags" /></label>
-                <button id="saveMetadataBtn" class="primary full" type="button">Save Metadata</button>
+                <div class="metadata-save-export-row">
+                  <button id="saveMetadataBtn" class="primary" type="button">Save Metadata</button>
+                  <button id="exportGuideMetadataBtn" class="ghost" type="button">Export Guide Metadata</button>
+                </div>
+              </section>
+              <section id="file-namePanel" class="tab-panel hidden">
+                <article id="metadataFileMaintenance" class="metadata-file-maintenance filename-schema-panel" aria-live="polite">
+                  <div class="metadata-file-maintenance-header">
+                    <div>
+                      <h3>Filename</h3>
+                      <p class="sub">Preview and rename the active source file using a configurable naming schema.</p>
+                    </div>
+                  </div>
+                  <dl class="metadata-file-maintenance-list">
+                    <div><dt>Current file</dt><dd id="metadataCurrentFileName">&#x2014;</dd></div>
+                    <div><dt>Preview filename</dt><dd id="metadataSuggestedFileName">&#x2014;</dd></div>
+                  </dl>
+                  <div class="filename-schema-token-area">
+                    <span class="field-help">Click a token button to insert it into the schema. Tokens are filtered for the current item type.</span>
+                    <div id="fileRenameTokenButtons" class="filename-token-buttons" aria-label="Filename naming tokens"></div>
+                  </div>
+                  <label class="filename-schema-label" for="fileRenameSchema">Naming Schema
+                    <input id="fileRenameSchema" type="text" value="{title}" placeholder="{title}" autocomplete="off" spellcheck="false" />
+                    <span class="field-help">Default: <code>{title}</code>. The file extension is preserved automatically.</span>
+                  </label>
+                  <div class="metadata-file-maintenance-actions single-action">
+                    <button id="resetFileRenameSchemaBtn" class="ghost" type="button">Reset naming schema</button>
+                    <button id="renameToSuggestedFileNameBtn" class="primary" type="button">Rename file</button>
+                  </div>
+                  <p id="fileRenameStatus" class="sub filename-rename-status">Guidevault will rename the source file, update the indexed database entry, and keep this same item identity.</p>
+                </article>
               </section>
               <section id="reading-profilePanel" class="tab-panel hidden">
                 <article class="detail-reading-profile-card effective">
@@ -1355,6 +1388,175 @@
 
             <h2>Update History</h2>
             <div class="system-update-list">
+              <details class="system-update-entry" open>
+                <summary>
+                  <span>Guidevault 0.9.51 - Filename Token Aliases</span>
+                  <em>Installed</em>
+                </summary>
+                <div class="system-update-body">
+                  <h3>Fixed <b>4</b></h3>
+                  <ul>
+                    <li>Fixed Filename tab renames when using Game Publisher and ISBN tokens in naming schemas.</li>
+                    <li>Added an ISBN token that uses ISBN-13 first and falls back to ISBN-10.</li>
+                    <li>Allowed human-readable token names such as {Game Publisher}, {ISBN}, {ISBN-10}, and {ISBN-13} in addition to camel-case tokens.</li>
+                    <li>Preserved intentional separator spacing around patterns like {title} - {isbn} while still cleaning up empty trailing separators.</li>
+                  </ul>
+                </div>
+              </details>
+              <details class="system-update-entry" open>
+                <summary>
+                  <span>Guidevault 0.9.50 - Contextual Filename Tokens</span>
+                  <em>Installed</em>
+                </summary>
+                <div class="system-update-body">
+                  <h3>Improved <b>4</b></h3>
+                  <ul>
+                    <li>Filtered Filename tab token buttons by item type so strategy guides no longer show manual-only or magazine-only tokens.</li>
+                    <li>Grouped filename tokens into Common, Game / release, Strategy guide, Manual, and Magazine sections.</li>
+                    <li>Added a few extra supported filename tokens such as Manual Type, Control Scheme, ISBN, Developer, Genre, Month, and Cover Story.</li>
+                    <li>Kept the working in-app Rename file flow unchanged while tightening the naming-schema helper UI.</li>
+                  </ul>
+                </div>
+              </details>
+
+              <details class="system-update-entry">
+                <summary>
+                  <span>Guidevault 0.9.49 - Filename Tab Polish</span>
+                  <em>Installed</em>
+                </summary>
+                <div class="system-update-body">
+                  <h3>Fixed <b>4</b></h3>
+                  <ul>
+                    <li>Fixed the Filename tab preview layout so Current file and Preview filename display as clean rows instead of wrapping into narrow columns.</li>
+                    <li>Changed the rename confirmation from a browser popup to the in-app Guidevault confirmation modal.</li>
+                    <li>Kept rename errors inside the Filename tab/status area instead of showing browser alert popups.</li>
+                    <li>Added another cache-busting version bump for the Filename tab JavaScript and CSS.</li>
+                  </ul>
+                </div>
+              </details>
+
+              <details class="system-update-entry">
+                <summary>
+                  <span>Guidevault 0.9.48 - Filename Tab Button Fixes</span>
+                  <em>Installed</em>
+                </summary>
+                <div class="system-update-body">
+                  <h3>Fixed <b>5</b></h3>
+                  <ul>
+                    <li>Fixed the Filename tab click handler by restoring the missing current-file-name helper used by the preview and rename flow.</li>
+                    <li>Simplified the action buttons to Rename file and Reset naming schema.</li>
+                    <li>Added human-readable token buttons above the naming schema input.</li>
+                    <li>Improved the current and preview filename labels so the workflow is clearer.</li>
+                    <li>Fixed the nullable warning in the naming-schema backend helper and cache-busted the browser assets.</li>
+                  </ul>
+                </div>
+              </details>
+
+              <details class="system-update-entry">
+                <summary>
+                  <span>Guidevault 0.9.47 - Filename Schema Rename Tab</span>
+                  <em>Installed</em>
+                </summary>
+                <div class="system-update-body">
+                  <h3>Changed <b>4</b></h3>
+                  <ul>
+                    <li>Moved source-file renaming into its own Filename tab instead of burying it in Metadata.</li>
+                    <li>Renamed the action to Rename File to Guide Title and removed the confusing copy-suggested-name action.</li>
+                    <li>Added a customizable naming schema preview with tokens while keeping the default schema as the Guide Title.</li>
+                    <li>Kept rename behavior tied to the same Guidevault item/database entry so the item does not need to be rediscovered.</li>
+                  </ul>
+                </div>
+              </details>
+
+              <details class="system-update-entry">
+                <summary>
+                  <span>Guidevault 0.9.46 - Suggested Filename Rename</span>
+                  <em>Installed</em>
+                </summary>
+                <div class="system-update-body">
+                  <h3>Added <b>4</b></h3>
+                  <ul>
+                    <li>Added a File Maintenance panel in the Metadata tab with current and suggested filenames.</li>
+                    <li>Added Copy Suggested Name and Rename File to Suggested Name actions for individual items.</li>
+                    <li>Renaming now updates the active Guidevault index/database entry instead of requiring a full rescan.</li>
+                    <li>Added a persistent file identity map so renamed paths keep the same item identity across future rescans.</li>
+                  </ul>
+                </div>
+              </details>
+
+              <details class="system-update-entry">
+                <summary>
+                  <span>Guidevault 0.9.45 - Login Identity Field Cleanup</span>
+                  <em>Installed</em>
+                </summary>
+                <div class="system-update-body">
+                  <h3>Changed <b>3</b></h3>
+                  <ul>
+                    <li>Changed normal sign-in to use one Username / Email Address field plus Password.</li>
+                    <li>Kept separate Username and Email fields for first-time local profile creation.</li>
+                    <li>Updated sign-in matching so either the saved username or saved email address can be used with the password.</li>
+                  </ul>
+                </div>
+              </details>
+
+              <details class="system-update-entry">
+                <summary>
+                  <span>Guidevault 0.9.44 - Native Metadata Archive Export</span>
+                  <em>Installed</em>
+                </summary>
+                <div class="system-update-body">
+                  <h3>Changed <b>4</b></h3>
+                  <ul>
+                    <li>Saved manually entered Page Count values through the server metadata override path.</li>
+                    <li>Changed individual metadata export names to guidevault-guide-metadata.json, guidevault-manual-metadata.json, and guidevault-magazine-metadata.json.</li>
+                    <li>Writes Guidevault JSON metadata into CBZ archives, creates CBZ metadata packages for CBR sources, and creates ZIP metadata packages for PDF sources.</li>
+                    <li>Reads Guidevault JSON metadata ahead of ComicInfo.xml so native Guidevault metadata takes precedence on future scans.</li>
+                  </ul>
+                </div>
+              </details>
+
+              <details class="system-update-entry">
+                <summary>
+                  <span>Guidevault 0.9.43 - Metadata Export Page Count</span>
+                  <em>Installed</em>
+                </summary>
+                <div class="system-update-body">
+                  <h3>Changed <b>3</b></h3>
+                  <ul>
+                    <li>Added a Page Count field to Details &gt; Metadata for manually entered page totals.</li>
+                    <li>Changed item metadata exports to use suggestedFileName instead of fileName.</li>
+                    <li>Exported pageCount only when a page count is entered.</li>
+                  </ul>
+                </div>
+              </details>
+
+              <details class="system-update-entry">
+                <summary>
+                  <span>Guidevault 0.9.43 - Metadata Export Filename Cleanup</span>
+                  <em>Installed</em>
+                </summary>
+                <div class="system-update-body">
+                  <h3>Changed <b>2</b></h3>
+                  <ul>
+                    <li>Changed item metadata exports to use a title-derived file name instead of the raw archive file name.</li>
+                    <li>Omitted empty content hashes and zero page counts from item metadata exports.</li>
+                  </ul>
+                </div>
+              </details>
+
+              <details class="system-update-entry">
+                <summary>
+                  <span>Guidevault 0.9.43 - Individual Metadata Export</span>
+                  <em>Installed</em>
+                </summary>
+                <div class="system-update-body">
+                  <h3>Added <b>1</b></h3>
+                  <ul>
+                    <li>Added item-level Guidevault JSON metadata export beside Save Metadata for guides, manuals, and magazines.</li>
+                  </ul>
+                </div>
+              </details>
+
               <details class="system-update-entry">
                 <summary>
                   <span>Guidevault 0.9.43 - Detail Navigation Stabilization</span>
@@ -2344,6 +2546,7 @@
   </dialog>
 
 
-  <script src="/app.js?v=0.9.43-detailnav-toast-logo2"></script>
+  <script src="/app.js?v=0.9.52-filename-token-aliases"></script>
 </body>
 </html>
+

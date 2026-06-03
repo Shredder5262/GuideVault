@@ -13677,3 +13677,221 @@ input[id*="Opds"][readonly]{
   outline-offset:4px;
   border-radius:8px;
 }
+
+
+/* 0.9.43 individual metadata export button */
+.metadata-save-export-row{
+  display:grid;
+  grid-template-columns:minmax(0,1fr) minmax(220px,.75fr);
+  gap:10px;
+  align-items:center;
+}
+.metadata-save-export-row button{
+  width:100%;
+}
+@media(max-width:760px){
+  .metadata-save-export-row{
+    grid-template-columns:1fr;
+  }
+}
+
+
+/* 0.9.45 login identity cleanup */
+.login-form label.hidden,
+.login-form input.hidden{
+  display:none!important;
+}
+
+
+/* 0.9.47 filename schema rename tab */
+.metadata-file-maintenance{
+  margin-top:14px;
+  padding:14px;
+  border:1px solid rgba(88,151,255,.24);
+  border-radius:18px;
+  background:linear-gradient(135deg,rgba(16,31,47,.82),rgba(8,15,24,.76));
+  box-shadow:0 14px 32px rgba(0,0,0,.18);
+}
+.metadata-file-maintenance-header{
+  display:flex;
+  align-items:flex-start;
+  justify-content:space-between;
+  gap:14px;
+  margin-bottom:10px;
+}
+.metadata-file-maintenance h3{
+  margin:0 0 3px;
+  color:#e7f1ff;
+  font-size:15px;
+}
+.metadata-file-maintenance .sub{
+  margin:0;
+  color:#8fa8bd;
+  font-size:12px;
+}
+.metadata-file-maintenance-list{
+  display:grid;
+  gap:8px;
+  margin:0 0 12px;
+}
+.metadata-file-maintenance-list > div{
+  display:grid;
+  grid-template-columns:130px minmax(0,1fr);
+  gap:10px;
+  align-items:start;
+}
+.metadata-file-maintenance-list dt{
+  color:#8fa8bd;
+  font-size:12px;
+  font-weight:800;
+  text-transform:uppercase;
+  letter-spacing:.05em;
+}
+.metadata-file-maintenance-list dd{
+  margin:0;
+  color:#dceaff;
+  font-size:13px;
+  overflow-wrap:anywhere;
+}
+.metadata-file-maintenance-actions{
+  display:grid;
+  grid-template-columns:minmax(0,1fr) minmax(240px,.8fr);
+  gap:10px;
+  margin-top:12px;
+}
+.metadata-file-maintenance-actions.single-action{
+  grid-template-columns:minmax(0,180px) minmax(240px,.75fr);
+  justify-content:end;
+}
+.metadata-file-maintenance-actions button{
+  width:100%;
+}
+.filename-schema-label{
+  margin-top:14px!important;
+}
+.filename-schema-label input{
+  font-family:ui-monospace,SFMono-Regular,Consolas,monospace;
+}
+.filename-schema-label code{
+  color:#b8d8ff;
+}
+.filename-rename-status{
+  margin:10px 0 0!important;
+  font-size:12px;
+}
+button.danger-soft{
+  border-color:rgba(255,176,72,.38)!important;
+  color:#ffe0ad!important;
+}
+button.danger-soft:not(:disabled):hover{
+  border-color:rgba(255,196,98,.72)!important;
+  background:rgba(255,176,72,.12)!important;
+}
+@media(max-width:760px){
+  .metadata-file-maintenance-list > div,
+  .metadata-file-maintenance-actions{
+    grid-template-columns:1fr;
+  }
+}
+
+/* 0.9.48 filename schema token buttons */
+.filename-token-buttons{
+  display:flex;
+  flex-wrap:wrap;
+  gap:8px;
+  margin:8px 0 10px;
+}
+.filename-token-button{
+  width:auto!important;
+  min-height:30px;
+  padding:6px 10px;
+  border:1px solid rgba(120,174,255,.32);
+  border-radius:999px;
+  background:rgba(24,47,72,.74);
+  color:#cfe4ff;
+  font-size:12px;
+  font-weight:800;
+  letter-spacing:.01em;
+  cursor:pointer;
+}
+.filename-token-button:hover,
+.filename-token-button:focus-visible{
+  border-color:rgba(162,204,255,.74);
+  background:rgba(42,79,118,.88);
+  color:#fff;
+}
+.filename-schema-label .field-help{
+  display:block;
+  margin:5px 0 0;
+}
+
+
+/* 0.9.49 filename tab polish */
+#file-namePanel .metadata-file-maintenance-list{
+  display:grid!important;
+  grid-template-columns:1fr!important;
+  gap:10px!important;
+  margin:0 0 14px!important;
+}
+#file-namePanel .metadata-file-maintenance-list > div{
+  display:grid!important;
+  grid-template-columns:minmax(132px,max-content) minmax(0,1fr)!important;
+  gap:14px!important;
+  align-items:start!important;
+  padding:9px 11px!important;
+  border:1px solid rgba(88,151,255,.14)!important;
+  border-radius:12px!important;
+  background:rgba(255,255,255,.025)!important;
+  min-width:0!important;
+}
+#file-namePanel .metadata-file-maintenance-list dt{
+  white-space:nowrap!important;
+  min-width:max-content!important;
+}
+#file-namePanel .metadata-file-maintenance-list dd{
+  min-width:0!important;
+  max-width:100%!important;
+  white-space:normal!important;
+  overflow-wrap:anywhere!important;
+  word-break:normal!important;
+}
+#file-namePanel .filename-schema-token-area{
+  margin-top:8px!important;
+}
+#file-namePanel .filename-token-buttons{
+  display:grid!important;
+  gap:12px!important;
+  margin:8px 0 12px!important;
+}
+#file-namePanel .filename-token-group{
+  border:1px solid rgba(88,151,255,.14)!important;
+  border-radius:14px!important;
+  background:rgba(255,255,255,.022)!important;
+  padding:10px 11px!important;
+}
+#file-namePanel .filename-token-group-title{
+  margin:0 0 8px!important;
+  color:#a9c9ef!important;
+  font-size:11px!important;
+  font-weight:900!important;
+  letter-spacing:.09em!important;
+  text-transform:uppercase!important;
+}
+#file-namePanel .filename-token-group-buttons{
+  display:flex!important;
+  flex-wrap:wrap!important;
+  gap:8px!important;
+}
+#file-namePanel .filename-rename-status.error{
+  color:#ffb8c5!important;
+}
+.confirm-modal-card #appConfirmMessage{
+  white-space:pre-line!important;
+  line-height:1.45!important;
+}
+@media(max-width:760px){
+  #file-namePanel .metadata-file-maintenance-list > div{
+    grid-template-columns:1fr!important;
+    gap:4px!important;
+  }
+}

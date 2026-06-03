@@ -13,13 +13,14 @@ using System.Net.Http.Headers;
 using SharpCompress.Readers;
 
 var builder = WebApplication.CreateBuilder(args);
-const string GuidevaultVersion = "0.9.43";
+const string GuidevaultVersion = "0.9.52";
 var app = builder.Build();
 var metadataJsonOptions = new JsonSerializerOptions(JsonSerializerDefaults.Web) { PropertyNameCaseInsensitive = true };
 var options = app.Configuration.GetSection("Guidevault").Get<GuidevaultOptions>() ?? new GuidevaultOptions();
 var contentRoot = app.Environment.ContentRootPath;
 var configPath = Path.Combine(contentRoot, "data", "config", "library.settings.json");
 var metadataPath = Path.Combine(contentRoot, "data", "config", "metadata.overrides.json");
+var fileIdentityPath = Path.Combine(contentRoot, "data", "config", "file.identity-map.json");
 var opdsSettingsPath = Path.Combine(contentRoot, "data", "config", "opds.settings.json");
 var serverSettingsPath = Path.Combine(contentRoot, "data", "config", "server.settings.json");
 var emailSettingsPath = Path.Combine(contentRoot, "data", "config", "email.settings.json");
@@ -47,6 +48,7 @@ loadedSettings = loadedSettings.Normalize(contentRoot, options.LibraryPath);
 LibrarySettingsStore.Save(configPath, loadedSettings);
 
 var metadataStore = new MetadataStore(metadataPath);
+var fileIdentityStore = new FileIdentityStore(fileIdentityPath);
 var opdsStore = new OpdsSettingsStore(opdsSettingsPath);
 var serverSettingsStore = new GuidevaultServerSettingsStore(serverSettingsPath, contentRoot);
 var emailSettingsStore = new GuidevaultEmailSettingsStore(emailSettingsPath);
@@ -59,7 +61,7 @@ var indexCachePath = Path.Combine(contentRoot, "data", "cache", "library-index.j
 var coverCachePath = Path.Combine(contentRoot, "data", "cache", "covers");
 ArchiveReader.ConfigureCoverCache(coverCachePath);
 var taskMonitor = new TaskMonitor();
-var cache = new LibraryCache(loadedSettings.Libraries, metadataStore, indexCachePath, taskMonitor);
+var cache = new LibraryCache(loadedSettings.Libraries, metadataStore, fileIdentityStore, indexCachePath, taskMonitor);
 var updateChecker = new StableUpdateChecker(options.Updates, GuidevaultVersion);
 // Do not create configured user library folders here. Guidevault scans existing folders in place.
 // Creating missing folders can hide typo/path mistakes and make libraries appear empty.
@@ -703,6 +705,135 @@ app.MapPut("/api/items/{id}/metadata", (string id, JsonElement payload) =>
     });
 });
 
+app.MapPost("/api/items/{id}/metadata/native-export", async (string id, JsonElement payload) =>
+{
+    if (string.IsNullOrWhiteSpace(id))
+        return Results.BadRequest(new { error = "Item id is required." });
+
+    var update = ItemMetadataJsonReader.Read(payload);
+    metadataStore.MergeOverride(id, update);
+
+    var cached = cache.TryGetCachedItem(id);
+    if (cached is null)
+        cached = (await cache.GetItemsAsync()).FirstOrDefault(i => i.Id == id);
+
+    if (cached is null)
+        return Results.NotFound(new { error = "Item not found." });
+
+    var updated = metadataStore.ApplyOverride(cached);
+    updated = MetadataStore.ApplyUpdateSnapshot(updated, update);
+    cache.ReplaceCachedItem(updated, persist: false);
+
+    var exportDocument = GuidevaultNativeMetadata.BuildExport(updated, update, payload);
+    var exportJson = JsonSerializer.Serialize(exportDocument, GuidevaultNativeMetadata.JsonOptions);
+    var writeResult = await ArchiveReader.WriteGuidevaultMetadataAsync(updated.Path, updated.Kind, exportJson);
+    if (!writeResult.Success)
+        return Results.BadRequest(new { error = writeResult.Message });
+
+    return Results.Ok(new
+    {
+        item = updated,
+        metadataFileName = writeResult.MetadataFileName,
+        writtenArchivePath = writeResult.WrittenArchivePath,
+        writtenArchiveFileName = Path.GetFileName(writeResult.WrittenArchivePath),
+        createdPackage = writeResult.CreatedPackage,
+        originalArchivePath = writeResult.OriginalArchivePath,
+        message = writeResult.Message
+    });
+});
+
+app.MapPost("/api/items/{id}/file/rename-to-suggested", async (string id, JsonElement payload) =>
+{
+    if (string.IsNullOrWhiteSpace(id))
+        return Results.BadRequest(new { error = "Item id is required." });
+
+    var update = ItemMetadataJsonReader.Read(payload);
+    metadataStore.MergeOverride(id, update);
+
+    var cached = cache.TryGetCachedItem(id);
+    if (cached is null)
+        cached = (await cache.GetItemsAsync()).FirstOrDefault(i => i.Id == id);
+
+    if (cached is null)
+        return Results.NotFound(new { error = "Item not found." });
+
+    if (string.IsNullOrWhiteSpace(cached.Path) || !File.Exists(cached.Path))
+        return Results.BadRequest(new { error = "The source file could not be found. Refresh the library before renaming." });
+
+    var updated = metadataStore.ApplyOverride(cached);
+    updated = MetadataStore.ApplyUpdateSnapshot(updated, update);
+
+    var suggestedFileName = GuidevaultNativeMetadata.BuildSuggestedFileName(updated, update, payload);
+    var safeFileName = GuidevaultNativeMetadata.SanitizeSuggestedFileName(suggestedFileName, updated.FileName);
+    if (string.IsNullOrWhiteSpace(safeFileName))
+        return Results.BadRequest(new { error = "Unable to generate a safe suggested filename from this metadata." });
+
+    var sourcePath = Path.GetFullPath(updated.Path);
+    var sourceDirectory = Path.GetDirectoryName(sourcePath);
+    if (string.IsNullOrWhiteSpace(sourceDirectory))
+        return Results.BadRequest(new { error = "Unable to resolve the source file directory." });
+
+    var destinationPath = Path.GetFullPath(Path.Combine(sourceDirectory, safeFileName));
+    if (!string.Equals(Path.GetDirectoryName(destinationPath), sourceDirectory, StringComparison.OrdinalIgnoreCase))
+        return Results.BadRequest(new { error = "Suggested filename must stay in the current source folder." });
+
+    var oldFileName = Path.GetFileName(sourcePath);
+    if (string.Equals(sourcePath, destinationPath, StringComparison.OrdinalIgnoreCase))
+    {
+        cache.ReplaceCachedItem(updated, persist: true);
+        fileIdentityStore.RememberRename(sourcePath, destinationPath, id);
+        return Results.Ok(new
+        {
+            item = updated,
+            oldFileName,
+            newFileName = oldFileName,
+            oldPath = sourcePath,
+            newPath = destinationPath,
+            renamed = false,
+            message = "The source file already matches the suggested filename."
+        });
+    }
+
+    if (File.Exists(destinationPath))
+        return Results.BadRequest(new { error = $"A file named {Path.GetFileName(destinationPath)} already exists in this folder." });
+
+    try
+    {
+        File.Move(sourcePath, destinationPath);
+        ArchiveReader.ClearCoverCacheForPath(sourcePath);
+        ArchiveReader.ClearCoverCacheForPath(destinationPath);
+
+        var info = new FileInfo(destinationPath);
+        var renamedItem = updated with
+        {
+            Path = destinationPath,
+            RelativePath = BuildRelativeLibraryPath(destinationPath, cache.LibraryPaths, updated.RelativePath),
+            FileName = info.Name,
+            SizeBytes = info.Length,
+            Added = info.CreationTimeUtc,
+            Modified = info.LastWriteTimeUtc
+        };
+
+        fileIdentityStore.RememberRename(sourcePath, destinationPath, id);
+        cache.ReplaceCachedItem(renamedItem, persist: true);
+
+        return Results.Ok(new
+        {
+            item = renamedItem,
+            oldFileName,
+            newFileName = info.Name,
+            oldPath = sourcePath,
+            newPath = destinationPath,
+            renamed = true,
+            message = $"Renamed source file to {info.Name} and updated the Guidevault index."
+        });
+    }
+    catch (Exception ex)
+    {
+        return Results.BadRequest(new { error = $"Unable to rename source file: {ex.Message}" });
+    }
+});
+
 app.MapPost("/api/items/{id}/strategy-platforms/resolve", async (string id) =>
 {
     var item = (await cache.GetItemsAsync()).FirstOrDefault(i => i.Id == id);
@@ -1295,6 +1426,27 @@ static string ResolvePath(string contentRoot, string path)
     if (!string.IsNullOrWhiteSpace(envPath)) return Path.GetFullPath(envPath);
     if (Path.IsPathRooted(path)) return Path.GetFullPath(path);
     return Path.GetFullPath(Path.Combine(contentRoot, path));
+}
+
+static string BuildRelativeLibraryPath(string fullPath, IEnumerable<string> libraryPaths, string fallbackRelativePath)
+{
+    try
+    {
+        var normalizedFull = Path.GetFullPath(fullPath);
+        foreach (var root in libraryPaths.Where(p => !string.IsNullOrWhiteSpace(p)))
+        {
+            var normalizedRoot = Path.GetFullPath(root);
+            var rootWithSep = normalizedRoot.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar) + Path.DirectorySeparatorChar;
+            if (normalizedFull.StartsWith(rootWithSep, StringComparison.OrdinalIgnoreCase))
+                return Path.GetRelativePath(normalizedRoot, normalizedFull).Replace('\\', '/');
+        }
+    }
+    catch { }
+
+    var folder = Path.GetDirectoryName((fallbackRelativePath ?? string.Empty).Replace('\\', '/'))?.Replace('\\', '/').Trim('/');
+    return string.IsNullOrWhiteSpace(folder)
+        ? Path.GetFileName(fullPath)
+        : $"{folder}/{Path.GetFileName(fullPath)}";
 }
 
 record BrowseRoot(string Label, string Path);
@@ -3267,6 +3419,7 @@ public sealed record ItemMetadataUpdate(
     string? ControlScheme = null,
     string[]? ItemsCovered = null,
     string? WarrantySupport = null,
+    int? PageCount = null,
     string? MetadataSource = null,
     string? Notes = null,
     bool? Removed = null);
@@ -3339,6 +3492,7 @@ public static class ItemMetadataJsonReader
             ControlScheme: GetString(payload, "controlScheme"),
             ItemsCovered: GetStringArray(payload, "itemsCovered"),
             WarrantySupport: GetString(payload, "warrantySupport"),
+            PageCount: FirstInt(GetInt(payload, "pageCount"), GetInt(payload, "metadataPageCount")),
             MetadataSource: GetString(payload, "metadataSource"),
             Notes: GetString(payload, "notes"),
             Removed: GetBool(payload, "removed"));
@@ -3378,6 +3532,17 @@ public static class ItemMetadataJsonReader
         }
         return Array.Empty<string>();
     }
+
+    private static int? GetInt(JsonElement json, string camelName)
+    {
+        if (!TryGetProperty(json, camelName, out var value)) return null;
+        if (value.ValueKind == JsonValueKind.Number && value.TryGetInt32(out var number)) return Math.Max(0, number);
+        if (value.ValueKind == JsonValueKind.String && int.TryParse(value.GetString(), out var parsed)) return Math.Max(0, parsed);
+        return null;
+    }
+
+    private static int? FirstInt(params int?[] values)
+        => values.FirstOrDefault(v => v.HasValue);
 
     private static bool? GetBool(JsonElement json, string camelName)
     {
@@ -3429,6 +3594,92 @@ public static class ItemMetadataJsonReader
     }
 
     private static bool HasText(string? value) => !string.IsNullOrWhiteSpace(value);
+}
+
+public sealed record FileIdentityRecord(string ItemId, string Path, string PreviousPath, DateTimeOffset RenamedAt);
+
+public sealed class FileIdentityStore
+{
+    private readonly string _path;
+    private readonly object _gate = new();
+    private readonly JsonSerializerOptions _jsonOptions = new(JsonSerializerDefaults.Web) { WriteIndented = true };
+    private Dictionary<string, FileIdentityRecord> _records;
+
+    public FileIdentityStore(string path)
+    {
+        _path = path;
+        Directory.CreateDirectory(Path.GetDirectoryName(_path)!);
+        _records = Load();
+    }
+
+    public string? GetItemId(string path)
+    {
+        var key = NormalizePath(path);
+        if (string.IsNullOrWhiteSpace(key)) return null;
+        lock (_gate)
+        {
+            return _records.TryGetValue(key, out var record) && !string.IsNullOrWhiteSpace(record.ItemId)
+                ? record.ItemId
+                : null;
+        }
+    }
+
+    public void RememberRename(string oldPath, string newPath, string itemId)
+    {
+        if (string.IsNullOrWhiteSpace(itemId) || string.IsNullOrWhiteSpace(newPath)) return;
+        var oldKey = NormalizePath(oldPath);
+        var newKey = NormalizePath(newPath);
+        if (string.IsNullOrWhiteSpace(newKey)) return;
+        lock (_gate)
+        {
+            if (!string.IsNullOrWhiteSpace(oldKey) && !string.Equals(oldKey, newKey, StringComparison.OrdinalIgnoreCase))
+                _records.Remove(oldKey);
+            _records[newKey] = new FileIdentityRecord(itemId, newPath, oldPath, DateTimeOffset.UtcNow);
+            Persist();
+        }
+    }
+
+    private Dictionary<string, FileIdentityRecord> Load()
+    {
+        try
+        {
+            if (!File.Exists(_path)) return new(StringComparer.OrdinalIgnoreCase);
+            var records = JsonSerializer.Deserialize<Dictionary<string, FileIdentityRecord>>(File.ReadAllText(_path), _jsonOptions)
+                ?? new Dictionary<string, FileIdentityRecord>(StringComparer.OrdinalIgnoreCase);
+            return new Dictionary<string, FileIdentityRecord>(records, StringComparer.OrdinalIgnoreCase);
+        }
+        catch
+        {
+            return new Dictionary<string, FileIdentityRecord>(StringComparer.OrdinalIgnoreCase);
+        }
+    }
+
+    private void Persist()
+    {
+        try
+        {
+            Directory.CreateDirectory(Path.GetDirectoryName(_path)!);
+            File.WriteAllText(_path, JsonSerializer.Serialize(_records, _jsonOptions));
+        }
+        catch
+        {
+            // File identity mapping is best-effort. The active cache is still updated immediately.
+        }
+    }
+
+    private static string NormalizePath(string path)
+    {
+        try
+        {
+            return string.IsNullOrWhiteSpace(path)
+                ? string.Empty
+                : Path.GetFullPath(path).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+        }
+        catch
+        {
+            return string.Empty;
+        }
+    }
 }
 
 public sealed class MetadataStore
@@ -3508,6 +3759,7 @@ public sealed class MetadataStore
                 ControlScheme = kind == "Manual" ? First(o.ControlScheme, item.ControlScheme) : string.Empty,
                 ItemsCovered = kind == "Manual" && o.ItemsCovered is not null ? CleanDistinct(o.ItemsCovered) : (item.ItemsCovered ?? []),
                 WarrantySupport = kind == "Manual" ? First(o.WarrantySupport, item.WarrantySupport) : string.Empty,
+                PageCount = o.PageCount.HasValue && o.PageCount.Value > 0 ? o.PageCount.Value : item.PageCount,
                 MetadataSource = First(o.MetadataSource, item.MetadataSource),
                 Notes = First(o.Notes, item.Notes)
             };
@@ -3574,6 +3826,7 @@ public sealed class MetadataStore
             ControlScheme = kind == "Manual" ? Keep(update.ControlScheme, item.ControlScheme) : item.ControlScheme,
             ItemsCovered = kind == "Manual" && update.ItemsCovered is not null ? CleanDistinct(update.ItemsCovered) : item.ItemsCovered,
             WarrantySupport = kind == "Manual" ? Keep(update.WarrantySupport, item.WarrantySupport) : item.WarrantySupport,
+            PageCount = update.PageCount.HasValue && update.PageCount.Value > 0 ? update.PageCount.Value : item.PageCount,
             MetadataSource = Keep(update.MetadataSource, item.MetadataSource),
             Notes = Keep(update.Notes, item.Notes)
         };
@@ -3689,6 +3942,7 @@ public sealed class MetadataStore
                 ControlScheme: update.ControlScheme ?? existing?.ControlScheme,
                 ItemsCovered: update.ItemsCovered ?? existing?.ItemsCovered,
                 WarrantySupport: update.WarrantySupport ?? existing?.WarrantySupport,
+                PageCount: update.PageCount ?? existing?.PageCount,
                 MetadataSource: update.MetadataSource ?? existing?.MetadataSource,
                 Notes: update.Notes ?? existing?.Notes,
                 Removed: update.Removed ?? existing?.Removed);
@@ -3778,15 +4032,17 @@ public sealed class LibraryCache
     private readonly SemaphoreSlim _lock = new(1, 1);
     private List<LibraryDefinition> _libraries;
     private readonly MetadataStore _metadataStore;
+    private readonly FileIdentityStore _identityStore;
     private readonly string _cachePath;
     private readonly TaskMonitor _taskMonitor;
     private LibraryScanStats _lastScanStats = LibraryScanStats.Empty;
     private static readonly JsonSerializerOptions CacheJsonOptions = new() { WriteIndented = false };
 
-    public LibraryCache(List<LibraryDefinition> libraries, MetadataStore metadataStore, string cachePath, TaskMonitor taskMonitor)
+    public LibraryCache(List<LibraryDefinition> libraries, MetadataStore metadataStore, FileIdentityStore identityStore, string cachePath, TaskMonitor taskMonitor)
     {
         _libraries = libraries;
         _metadataStore = metadataStore;
+        _identityStore = identityStore;
         _cachePath = cachePath;
         _taskMonitor = taskMonitor;
         _items = LoadPersistedCache();
@@ -3985,7 +4241,9 @@ public sealed class LibraryCache
     private static bool ShouldEnrichMetadata(LibraryItem cached)
     {
         if (!cached.Format.Equals("CBZ", StringComparison.OrdinalIgnoreCase)) return false;
-        if ((cached.MetadataSource ?? string.Empty).Contains("ComicInfo", StringComparison.OrdinalIgnoreCase)) return false;
+        var source = cached.MetadataSource ?? string.Empty;
+        if (source.Contains("Guidevault JSON", StringComparison.OrdinalIgnoreCase)) return false;
+        if (source.Contains("ComicInfo", StringComparison.OrdinalIgnoreCase)) return false;
         return true;
     }
 
@@ -4120,7 +4378,7 @@ public sealed class LibraryCache
         {
             try
             {
-                var id = StableId(candidate.File);
+                var id = _identityStore.GetItemId(candidate.File) ?? StableId(candidate.File);
                 if (_metadataStore.IsRemoved(id)) return;
 
                 var info = new FileInfo(candidate.File);
@@ -4148,12 +4406,29 @@ public sealed class LibraryCache
 
                 Interlocked.Increment(ref parsed);
                 var inferred = MetadataInferer.FromFile(info, relativePath, candidate.Library.Type);
+                ItemMetadataUpdate? guidevaultMetadata = null;
+                var canReadGuidevaultMetadata = format != "PDF"
+                    && (ext.Equals(".cbz", StringComparison.OrdinalIgnoreCase)
+                        || (metadataActivity && ext.Equals(".cbr", StringComparison.OrdinalIgnoreCase)));
+                if (canReadGuidevaultMetadata)
+                {
+                    try
+                    {
+                        guidevaultMetadata = await Task.Run(() => ArchiveReader.GetGuidevaultMetadataAsync(candidate.File), cancellationToken)
+                            .WaitAsync(TimeSpan.FromMilliseconds(1000), cancellationToken);
+                        if (guidevaultMetadata is not null) Interlocked.Increment(ref metadataEnriched);
+                    }
+                    catch
+                    {
+                        guidevaultMetadata = null;
+                    }
+                }
                 // Keep normal scans responsive. ComicInfo parsing is the slow path on
                 // network shares and malformed archives, so the normal rescan defers it.
                 // Use the Metadata Enrichment action when deeper ComicInfo import is wanted.
                 ComicInfoMetadata? comicInfo = null;
                 var canReadComicInfo = format != "PDF" && ext.Equals(".cbz", StringComparison.OrdinalIgnoreCase);
-                var shouldReadComicInfo = canReadComicInfo && metadataActivity;
+                var shouldReadComicInfo = canReadComicInfo && metadataActivity && guidevaultMetadata is null;
                 if (shouldReadComicInfo)
                 {
                     try
@@ -4276,6 +4551,13 @@ public sealed class LibraryCache
                     CharactersCovered: merged.CharactersCovered ?? [],
                     LocationsCovered: merged.LocationsCovered ?? [],
                     MetadataSource: merged.MetadataSource);
+                if (guidevaultMetadata is not null)
+                {
+                    item = MetadataStore.ApplyUpdateSnapshot(item, guidevaultMetadata with
+                    {
+                        MetadataSource = string.IsNullOrWhiteSpace(guidevaultMetadata.MetadataSource) ? "Guidevault JSON" : guidevaultMetadata.MetadataSource
+                    });
+                }
                 bag.Add(_metadataStore.ApplyOverride(item));
             }
             catch
@@ -5608,6 +5890,441 @@ public static class StrategyGuidePlatformResolver
         => Regex.Replace((value ?? string.Empty).ToLowerInvariant(), @"[^a-z0-9]+", " ").Trim();
 }
 
+public static class GuidevaultNativeMetadata
+{
+    public static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web)
+    {
+        WriteIndented = true
+    };
+
+    public static object BuildExport(LibraryItem item, ItemMetadataUpdate update, JsonElement? submittedMetadata = null)
+    {
+        if (submittedMetadata.HasValue && submittedMetadata.Value.ValueKind == JsonValueKind.Object)
+            return BuildExportFromSubmittedMetadata(item, update, submittedMetadata.Value);
+
+        var metadata = new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase)
+        {
+            ["title"] = First(update.Title, item.Title),
+            ["kind"] = First(update.Kind, item.Kind),
+            ["category"] = First(update.Category, item.Category),
+            ["preferredPlatform"] = First(update.Category, item.Category),
+            ["system"] = First(update.System, item.System),
+            ["associatedPlatforms"] = update.AssociatedPlatforms ?? item.AssociatedPlatforms,
+            ["series"] = First(update.Series, item.Series),
+            ["issueNumber"] = First(update.IssueNumber, item.IssueNumber),
+            ["publisher"] = First(update.Publisher, item.Publisher),
+            ["year"] = First(update.Year, item.Year),
+            ["pageCount"] = update.PageCount.HasValue && update.PageCount.Value > 0 ? update.PageCount.Value : item.PageCount,
+            ["metadataPageCount"] = update.PageCount.HasValue && update.PageCount.Value > 0 ? update.PageCount.Value : item.PageCount,
+            ["writer"] = First(update.Writer, item.Writer),
+            ["rating"] = First(update.Rating, item.Rating),
+            ["language"] = First(update.LanguageTag, item.LanguageTag),
+            ["languageTag"] = First(update.LanguageTag, item.LanguageTag),
+            ["summary"] = First(update.Summary, item.Summary),
+            ["tags"] = update.Tags ?? item.Tags,
+            ["notes"] = First(update.Notes, item.Notes),
+            ["metadataSource"] = "Guidevault JSON"
+        };
+
+        var kind = First(update.Kind, item.Kind);
+        if (kind.Equals("Magazine", StringComparison.OrdinalIgnoreCase))
+        {
+            Put(metadata, "magazineTitle", First(update.MagazineTitle, item.MagazineTitle));
+            Put(metadata, "volume", First(update.Volume, item.Volume));
+            Put(metadata, "coverDate", First(update.CoverDate, item.CoverDate));
+            Put(metadata, "publicationDate", First(update.PublicationDate, item.PublicationDate));
+            Put(metadata, "region", First(update.Region, item.Region));
+            Put(metadata, "platformFocus", First(update.PlatformFocus, item.PlatformFocus));
+            Put(metadata, "primarySystem", First(update.PrimarySystem, item.PrimarySystem));
+            Put(metadata, "magazineCategory", First(update.MagazineCategory, item.MagazineCategory));
+            Put(metadata, "coverSubject", First(update.CoverSubject, item.CoverSubject));
+            Put(metadata, "featuredGames", update.FeaturedGames ?? item.FeaturedGames);
+            Put(metadata, "featuredPlatforms", update.FeaturedPlatforms ?? item.FeaturedPlatforms);
+            Put(metadata, "specialFeatures", update.SpecialFeatures ?? item.SpecialFeatures);
+            Put(metadata, "includedExtras", update.IncludedExtras ?? item.IncludedExtras);
+        }
+        else if (kind.Equals("Manual", StringComparison.OrdinalIgnoreCase))
+        {
+            Put(metadata, "manualTitle", First(update.ManualTitle, item.ManualTitle));
+            Put(metadata, "manualType", First(update.ManualType, item.ManualType));
+            Put(metadata, "gameTitle", First(update.GameTitle, item.GameTitle));
+            Put(metadata, "publicationDate", First(update.PublicationDate, item.PublicationDate));
+            Put(metadata, "region", First(update.Region, item.Region));
+            Put(metadata, "franchise", First(update.Franchise, item.Franchise));
+            Put(metadata, "developer", First(update.Developer, item.Developer));
+            Put(metadata, "gamePublisher", First(update.GamePublisher, item.GamePublisher));
+            Put(metadata, "gameReleaseYear", First(update.GameReleaseYear, item.GameReleaseYear));
+            Put(metadata, "genre", First(update.Genre, item.Genre));
+            Put(metadata, "includedSections", update.IncludedSections ?? item.IncludedSections ?? []);
+            Put(metadata, "includedExtras", update.IncludedExtras ?? item.IncludedExtras);
+            Put(metadata, "controlScheme", First(update.ControlScheme, item.ControlScheme));
+            Put(metadata, "charactersCovered", update.CharactersCovered ?? item.CharactersCovered ?? []);
+            Put(metadata, "itemsCovered", update.ItemsCovered ?? item.ItemsCovered ?? []);
+            Put(metadata, "warrantySupport", First(update.WarrantySupport, item.WarrantySupport));
+        }
+        else
+        {
+            Put(metadata, "strategyGuideTitle", First(update.Title, item.Title));
+            Put(metadata, "gameTitle", First(update.GameTitle, item.GameTitle));
+            Put(metadata, "isbn", JoinNonEmpty(First(update.Isbn10, item.Isbn10), First(update.Isbn13, item.Isbn13)));
+            Put(metadata, "isbn10", First(update.Isbn10, item.Isbn10));
+            Put(metadata, "isbn13", First(update.Isbn13, item.Isbn13));
+            Put(metadata, "guideType", First(update.GuideType, item.GuideType));
+            Put(metadata, "editionType", First(update.Edition, item.Edition));
+            Put(metadata, "edition", First(update.Edition, item.Edition));
+            Put(metadata, "franchise", First(update.Franchise, item.Franchise));
+            Put(metadata, "publicationDate", First(update.PublicationDate, item.PublicationDate));
+            Put(metadata, "region", First(update.Region, item.Region));
+            Put(metadata, "developer", First(update.Developer, item.Developer));
+            Put(metadata, "gamePublisher", First(update.GamePublisher, item.GamePublisher));
+            Put(metadata, "gameReleaseYear", First(update.GameReleaseYear, item.GameReleaseYear));
+            Put(metadata, "genre", First(update.Genre, item.Genre));
+            Put(metadata, "coveredGames", update.CoveredGames ?? item.CoveredGames ?? []);
+            Put(metadata, "coveredPlatforms", update.CoveredPlatforms ?? item.CoveredPlatforms ?? []);
+            Put(metadata, "guideTopics", update.GuideTopics ?? item.GuideTopics ?? []);
+            Put(metadata, "specialFeatures", update.SpecialFeatures ?? item.SpecialFeatures);
+            Put(metadata, "includedExtras", update.IncludedExtras ?? item.IncludedExtras);
+            Put(metadata, "charactersCovered", update.CharactersCovered ?? item.CharactersCovered ?? []);
+            Put(metadata, "locationsCovered", update.LocationsCovered ?? item.LocationsCovered ?? []);
+        }
+
+        var fileSizeBytes = item.SizeBytes;
+        var exportedItem = new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase)
+        {
+            ["suggestedFileName"] = SuggestedFileName(item, metadata),
+            ["fileSizeBytes"] = fileSizeBytes,
+            ["format"] = item.Format,
+            ["kind"] = kind,
+            ["pageCount"] = metadata.TryGetValue("pageCount", out var pc) ? pc : item.PageCount,
+            ["metadata"] = metadata
+        };
+
+        return new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase)
+        {
+            ["schema"] = "guidevault.item-metadata.v1",
+            ["exportedAt"] = DateTimeOffset.UtcNow,
+            ["guidevaultVersion"] = GuidevaultBuildInfo.Version,
+            ["exportScope"] = "item",
+            ["item"] = exportedItem
+        };
+    }
+
+    private static object BuildExportFromSubmittedMetadata(LibraryItem item, ItemMetadataUpdate update, JsonElement submittedMetadata)
+    {
+        var metadata = JsonSerializer.Deserialize<Dictionary<string, object?>>(submittedMetadata.GetRawText(), JsonOptions)
+            ?? new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase);
+        metadata = new Dictionary<string, object?>(metadata, StringComparer.OrdinalIgnoreCase);
+
+        void PutIfMissing(string key, object? value)
+        {
+            if (value is null) return;
+            if (metadata.TryGetValue(key, out var existing) && !IsEmptyValue(existing)) return;
+            metadata[key] = value;
+        }
+
+        var kind = First(update.Kind, item.Kind);
+        var pageCount = update.PageCount.HasValue && update.PageCount.Value > 0 ? update.PageCount.Value : item.PageCount;
+        PutIfMissing("title", First(update.Title, item.Title));
+        PutIfMissing("kind", kind);
+        PutIfMissing("category", First(update.Category, item.Category));
+        PutIfMissing("preferredPlatform", First(update.Category, item.Category));
+        PutIfMissing("system", First(update.System, item.System));
+        PutIfMissing("publisher", First(update.Publisher, item.Publisher));
+        PutIfMissing("year", First(update.Year, item.Year));
+        PutIfMissing("languageTag", First(update.LanguageTag, item.LanguageTag));
+        PutIfMissing("tags", update.Tags ?? item.Tags);
+        if (pageCount > 0)
+        {
+            metadata["pageCount"] = pageCount;
+            metadata["metadataPageCount"] = pageCount;
+        }
+        metadata["metadataSource"] = "Guidevault JSON";
+
+        var exportedItem = new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase)
+        {
+            ["suggestedFileName"] = SuggestedFileName(item, metadata),
+            ["fileSizeBytes"] = item.SizeBytes,
+            ["format"] = item.Format,
+            ["kind"] = kind,
+            ["metadata"] = metadata
+        };
+        if (pageCount > 0) exportedItem["pageCount"] = pageCount;
+
+        return new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase)
+        {
+            ["schema"] = "guidevault.item-metadata.v1",
+            ["exportedAt"] = DateTimeOffset.UtcNow,
+            ["guidevaultVersion"] = GuidevaultBuildInfo.Version,
+            ["exportScope"] = "item",
+            ["item"] = exportedItem
+        };
+    }
+
+    public static string BuildSuggestedFileName(LibraryItem item, ItemMetadataUpdate update, JsonElement? submittedMetadata = null)
+    {
+        if (submittedMetadata.HasValue && submittedMetadata.Value.ValueKind == JsonValueKind.Object)
+        {
+            var submitted = submittedMetadata.Value;
+            var explicitTarget = GetSubmittedString(submitted, "targetFileName");
+            if (!string.IsNullOrWhiteSpace(explicitTarget))
+                return SanitizeSuggestedFileName(explicitTarget, item.FileName);
+
+            var schema = GetSubmittedString(submitted, "namingSchema");
+            if (!string.IsNullOrWhiteSpace(schema))
+            {
+                var metadata = JsonSerializer.Deserialize<Dictionary<string, object?>>(submitted.GetRawText(), JsonOptions)
+                    ?? new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase);
+                metadata = new Dictionary<string, object?>(metadata, StringComparer.OrdinalIgnoreCase);
+                var pageCount = update.PageCount.HasValue && update.PageCount.Value > 0 ? update.PageCount.Value : item.PageCount;
+                PutIfMissing(metadata, "title", First(update.Title, item.Title));
+                PutIfMissing(metadata, "strategyGuideTitle", First(update.Title, item.Title));
+                PutIfMissing(metadata, "manualTitle", First(update.ManualTitle, item.ManualTitle));
+                PutIfMissing(metadata, "magazineTitle", First(update.MagazineTitle, item.MagazineTitle));
+                PutIfMissing(metadata, "gameTitle", First(update.GameTitle, item.GameTitle));
+                PutIfMissing(metadata, "preferredPlatform", First(update.Category, item.Category));
+                PutIfMissing(metadata, "category", First(update.Category, item.Category));
+                PutIfMissing(metadata, "publisher", First(update.Publisher, item.Publisher));
+                PutIfMissing(metadata, "year", First(update.Year, item.Year));
+                PutIfMissing(metadata, "issueNumber", First(update.IssueNumber, item.IssueNumber));
+                PutIfMissing(metadata, "volume", First(update.Volume, item.Volume));
+                PutIfMissing(metadata, "kind", First(update.Kind, item.Kind));
+                PutIfMissing(metadata, "region", First(update.Region, item.Region));
+                PutIfMissing(metadata, "language", First(update.LanguageTag, item.LanguageTag));
+                PutIfMissing(metadata, "languageTag", First(update.LanguageTag, item.LanguageTag));
+                PutIfMissing(metadata, "edition", First(update.Edition, item.Edition));
+                PutIfMissing(metadata, "guideType", First(update.GuideType, item.GuideType));
+                PutIfMissing(metadata, "franchise", First(update.Franchise, item.Franchise));
+                PutIfMissing(metadata, "gameFranchise", First(update.Franchise, item.Franchise));
+                PutIfMissing(metadata, "developer", First(update.Developer, item.Developer));
+                PutIfMissing(metadata, "gameDeveloper", First(update.Developer, item.Developer));
+                PutIfMissing(metadata, "gamePublisher", First(update.GamePublisher, First(item.GamePublisher, First(update.Publisher, item.Publisher))));
+                PutIfMissing(metadata, "gameReleaseYear", First(update.GameReleaseYear, item.GameReleaseYear));
+                PutIfMissing(metadata, "genre", First(update.Genre, item.Genre));
+                PutIfMissing(metadata, "isbn10", First(update.Isbn10, item.Isbn10));
+                PutIfMissing(metadata, "isbn13", First(update.Isbn13, item.Isbn13));
+                PutIfMissing(metadata, "isbn", First(update.Isbn13, First(item.Isbn13, First(update.Isbn10, item.Isbn10))));
+                PutIfMissing(metadata, "asin", First(update.Asin, item.Asin));
+                PutIfMissing(metadata, "manualType", First(update.ManualType, item.ManualType));
+                PutIfMissing(metadata, "controlScheme", First(update.ControlScheme, item.ControlScheme));
+                PutIfMissing(metadata, "coverStory", First(update.CoverSubject, item.CoverSubject));
+                if (pageCount > 0) PutIfMissing(metadata, "pageCount", pageCount);
+
+                return SanitizeSuggestedFileName(ApplyNamingSchema(schema, item, metadata), item.FileName);
+            }
+        }
+
+        var export = BuildExport(item, update, submittedMetadata);
+        if (export is IDictionary<string, object?> root
+            && root.TryGetValue("item", out var itemObject)
+            && itemObject is IDictionary<string, object?> exportedItem
+            && exportedItem.TryGetValue("suggestedFileName", out var suggested)
+            && suggested is not null)
+        {
+            return SanitizeSuggestedFileName(suggested.ToString() ?? string.Empty, item.FileName);
+        }
+
+        return SanitizeSuggestedFileName(SuggestedFileName(item, new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase)
+        {
+            ["manualTitle"] = update.ManualTitle,
+            ["magazineTitle"] = update.MagazineTitle,
+            ["gameTitle"] = update.GameTitle,
+            ["title"] = update.Title
+        }), item.FileName);
+    }
+
+    private static void PutIfMissing(Dictionary<string, object?> metadata, string key, object? value)
+    {
+        if (value is null) return;
+        if (metadata.TryGetValue(key, out var existing) && !IsEmptyValue(existing)) return;
+        metadata[key] = value;
+    }
+
+    private static string GetSubmittedString(JsonElement payload, string name)
+    {
+        if (payload.ValueKind != JsonValueKind.Object) return string.Empty;
+        foreach (var property in payload.EnumerateObject())
+        {
+            if (!property.Name.Equals(name, StringComparison.OrdinalIgnoreCase)) continue;
+            return property.Value.ValueKind == JsonValueKind.String ? (property.Value.GetString() ?? string.Empty).Trim() : property.Value.ToString().Trim();
+        }
+        return string.Empty;
+    }
+
+    private static string ApplyNamingSchema(string schema, LibraryItem item, Dictionary<string, object?> metadata)
+    {
+        schema = string.IsNullOrWhiteSpace(schema) ? "{title}" : schema.Trim();
+        var title = FirstValue(metadata, "strategyGuideTitle", "manualTitle", "magazineTitle", "title");
+        if (string.IsNullOrWhiteSpace(title)) title = item.Title;
+        var platform = FirstValue(metadata, "preferredPlatform", "category", "system");
+        if (string.IsNullOrWhiteSpace(platform)) platform = item.Category;
+        var publisher = FirstValue(metadata, "publisher");
+        var gamePublisher = FirstValue(metadata, "gamePublisher", "publisher");
+        var developer = FirstValue(metadata, "developer", "gameDeveloper");
+        var isbn10 = FirstValue(metadata, "isbn10");
+        var isbn13 = FirstValue(metadata, "isbn13");
+        var isbn = FirstValue(metadata, "isbn", "isbn13", "isbn10");
+        if (string.IsNullOrWhiteSpace(isbn)) isbn = First(isbn13, isbn10);
+
+        var tokens = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+        {
+            ["title"] = title,
+            ["mainTitle"] = title,
+            ["guideTitle"] = title,
+            ["strategyGuideTitle"] = FirstValue(metadata, "strategyGuideTitle", "title"),
+            ["manualTitle"] = FirstValue(metadata, "manualTitle", "title"),
+            ["magazineTitle"] = FirstValue(metadata, "magazineTitle", "title"),
+            ["gameTitle"] = FirstValue(metadata, "gameTitle", "coverSubject", "title"),
+            ["platform"] = platform,
+            ["preferredPlatform"] = platform,
+            ["publisher"] = publisher,
+            ["year"] = FirstValue(metadata, "year"),
+            ["issue"] = FirstValue(metadata, "issueNumber"),
+            ["issueNumber"] = FirstValue(metadata, "issueNumber"),
+            ["volume"] = FirstValue(metadata, "volume"),
+            ["number"] = FirstValue(metadata, "number"),
+            ["month"] = FirstValue(metadata, "month", "publicationMonth"),
+            ["kind"] = FirstValue(metadata, "kind"),
+            ["contentType"] = FirstValue(metadata, "kind"),
+            ["region"] = FirstValue(metadata, "region"),
+            ["language"] = FirstValue(metadata, "language", "languageTag"),
+            ["edition"] = FirstValue(metadata, "edition", "editionType"),
+            ["editionType"] = FirstValue(metadata, "editionType"),
+            ["editionYear"] = FirstValue(metadata, "editionYear"),
+            ["editionVolume"] = FirstValue(metadata, "editionVolume"),
+            ["guideType"] = FirstValue(metadata, "guideType"),
+            ["franchise"] = FirstValue(metadata, "gameFranchise", "franchise", "series"),
+            ["gameFranchise"] = FirstValue(metadata, "gameFranchise", "franchise", "series"),
+            ["gamePublisher"] = gamePublisher,
+            ["developer"] = developer,
+            ["gameDeveloper"] = developer,
+            ["genre"] = FirstValue(metadata, "genre"),
+            ["gameReleaseYear"] = FirstValue(metadata, "gameReleaseYear"),
+            ["isbn"] = isbn,
+            ["isbn10"] = isbn10,
+            ["isbn13"] = isbn13,
+            ["asin"] = FirstValue(metadata, "asin"),
+            ["manualType"] = FirstValue(metadata, "manualType"),
+            ["controlScheme"] = FirstValue(metadata, "controlScheme"),
+            ["coverStory"] = FirstValue(metadata, "coverStory", "coverSubject")
+        };
+
+        var normalizedTokens = tokens
+            .GroupBy(pair => NormalizeSchemaTokenKey(pair.Key), StringComparer.OrdinalIgnoreCase)
+            .ToDictionary(group => group.Key, group => group.First().Value, StringComparer.OrdinalIgnoreCase);
+
+        var expanded = Regex.Replace(schema, @"\{([^{}]+)\}", match =>
+        {
+            var key = match.Groups[1].Value.Trim();
+            if (tokens.TryGetValue(key, out var value)) return value.Trim();
+            var normalizedKey = NormalizeSchemaTokenKey(key);
+            return normalizedTokens.TryGetValue(normalizedKey, out var normalizedValue) ? normalizedValue.Trim() : string.Empty;
+        });
+        expanded = Regex.Replace(expanded, @"\s+", " ").Trim();
+        expanded = Regex.Replace(expanded, @"\s+-\s+(?=$)", " ").Trim();
+        expanded = Regex.Replace(expanded, @"^\s*-\s+", string.Empty).Trim();
+        expanded = Regex.Replace(expanded, @"\s+\|\s+(?=$)", " ").Trim();
+        expanded = Regex.Replace(expanded, @"^\s*\|\s+", string.Empty).Trim();
+        expanded = Regex.Replace(expanded, @"\s+-\s+", " - ").Trim();
+        expanded = Regex.Replace(expanded, @"\s+\|\s+", " | ").Trim();
+        expanded = Regex.Replace(expanded, @"^[-_.| ]+|[-_.| ]+$", string.Empty).Trim();
+        return string.IsNullOrWhiteSpace(expanded) ? title : expanded;
+    }
+
+    private static string NormalizeSchemaTokenKey(string key)
+    {
+        if (string.IsNullOrWhiteSpace(key)) return string.Empty;
+        return Regex.Replace(key.Trim().ToLowerInvariant(), @"[^a-z0-9]+", string.Empty);
+    }
+
+    private static string FirstValue(Dictionary<string, object?> metadata, params string[] keys)
+    {
+        foreach (var key in keys)
+        {
+            if (!metadata.TryGetValue(key, out var value) || IsEmptyValue(value)) continue;
+            if (value is JsonElement element)
+            {
+                if (element.ValueKind == JsonValueKind.String) return element.GetString()?.Trim() ?? string.Empty;
+                if (element.ValueKind == JsonValueKind.Array) return string.Join(", ", element.EnumerateArray().Select(v => v.ValueKind == JsonValueKind.String ? v.GetString() : v.ToString()).Where(v => !string.IsNullOrWhiteSpace(v)).Select(v => v!.Trim()));
+                return element.ToString().Trim();
+            }
+            if (value is IEnumerable<string> values) return string.Join(", ", values.Where(v => !string.IsNullOrWhiteSpace(v)).Select(v => (v ?? string.Empty).Trim()));
+            var converted = value?.ToString();
+            return string.IsNullOrWhiteSpace(converted) ? string.Empty : converted.Trim();
+        }
+        return string.Empty;
+    }
+
+    public static string SanitizeSuggestedFileName(string suggestedFileName, string fallbackFileName)
+    {
+        var currentExtension = Path.GetExtension(fallbackFileName ?? string.Empty);
+        var leaf = Path.GetFileName(suggestedFileName ?? string.Empty);
+        if (string.IsNullOrWhiteSpace(leaf)) leaf = Path.GetFileName(fallbackFileName ?? string.Empty);
+
+        var baseName = Path.GetFileNameWithoutExtension(leaf);
+        if (string.IsNullOrWhiteSpace(baseName)) baseName = Path.GetFileNameWithoutExtension(fallbackFileName ?? string.Empty);
+        if (string.IsNullOrWhiteSpace(baseName)) baseName = "Guidevault Metadata";
+
+        foreach (var invalid in Path.GetInvalidFileNameChars())
+            baseName = baseName.Replace(invalid, '-');
+
+        baseName = Regex.Replace(baseName, @"\s+", " ");
+        baseName = Regex.Replace(baseName, @"\s+-\s+", " - ");
+        baseName = baseName.Trim().Trim('.', '-').Trim();
+        if (string.IsNullOrWhiteSpace(baseName)) baseName = "Guidevault Metadata";
+
+        var maxBaseLength = Math.Max(16, 180 - currentExtension.Length);
+        if (baseName.Length > maxBaseLength) baseName = baseName[..maxBaseLength].Trim().Trim('.', '-').Trim();
+        return $"{baseName}{currentExtension}";
+    }
+
+    private static bool IsEmptyValue(object? value)
+    {
+        if (value is null) return true;
+        if (value is string text) return string.IsNullOrWhiteSpace(text);
+        if (value is JsonElement element)
+        {
+            if (element.ValueKind == JsonValueKind.Null || element.ValueKind == JsonValueKind.Undefined) return true;
+            if (element.ValueKind == JsonValueKind.String) return string.IsNullOrWhiteSpace(element.GetString());
+            if (element.ValueKind == JsonValueKind.Array) return !element.EnumerateArray().Any();
+        }
+        return false;
+    }
+
+    private static string SuggestedFileName(LibraryItem item, Dictionary<string, object?> metadata)
+    {
+        var title = metadata.TryGetValue("strategyGuideTitle", out var strategyGuideTitle) ? strategyGuideTitle?.ToString() : string.Empty;
+        if (string.IsNullOrWhiteSpace(title) && metadata.TryGetValue("manualTitle", out var manualTitle)) title = manualTitle?.ToString();
+        if (string.IsNullOrWhiteSpace(title) && metadata.TryGetValue("magazineTitle", out var magazineTitle)) title = magazineTitle?.ToString();
+        if (string.IsNullOrWhiteSpace(title) && metadata.TryGetValue("gameTitle", out var gameTitle)) title = gameTitle?.ToString();
+        if (string.IsNullOrWhiteSpace(title) && metadata.TryGetValue("title", out var itemTitle)) title = itemTitle?.ToString();
+        if (string.IsNullOrWhiteSpace(title)) title = item.Title;
+        var safeTitle = Regex.Replace(title ?? "Guidevault Metadata", "[\\/:*?\"<>|]+", " - ").Trim();
+        return $"{safeTitle}{Path.GetExtension(item.FileName)}";
+    }
+
+    private static void Put(Dictionary<string, object?> metadata, string key, object? value)
+    {
+        if (value is null) return;
+        if (value is string text && string.IsNullOrWhiteSpace(text)) return;
+        if (value is IEnumerable<string> values)
+        {
+            var cleaned = values.Where(v => !string.IsNullOrWhiteSpace(v)).Select(v => v.Trim()).Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
+            if (cleaned.Length == 0) return;
+            metadata[key] = cleaned;
+            return;
+        }
+        metadata[key] = value;
+    }
+
+    private static string First(string? candidate, string fallback)
+        => string.IsNullOrWhiteSpace(candidate) ? (fallback ?? string.Empty) : candidate.Trim();
+
+    private static string JoinNonEmpty(params string[] values)
+        => string.Join(", ", values.Where(v => !string.IsNullOrWhiteSpace(v)).Select(v => v.Trim()).Distinct(StringComparer.OrdinalIgnoreCase));
+}
+
+public sealed record ArchiveMetadataWriteResult(bool Success, string Message, string MetadataFileName, string WrittenArchivePath, bool CreatedPackage, string OriginalArchivePath);
+
 public sealed record ArchiveValidationResult(bool IsReadable, string Message, int PageCount);
 
 public static class ArchiveReader
@@ -5746,6 +6463,317 @@ public static class ArchiveReader
 
         ClearCoverCacheForPath(archivePath);
         return new ArchiveValidationResult(false, "Archive contains image entries, but none of the leading pages could be read.", entries.Length);
+    }
+
+    private static readonly string[] GuidevaultMetadataEntryNames =
+    [
+        "guidevault-guide-metadata.json",
+        "guidevault-manual-metadata.json",
+        "guidevault-magazine-metadata.json"
+    ];
+
+    public static string GetGuidevaultMetadataEntryName(string kind)
+    {
+        if (kind.Equals("Manual", StringComparison.OrdinalIgnoreCase)) return "guidevault-manual-metadata.json";
+        if (kind.Equals("Magazine", StringComparison.OrdinalIgnoreCase)) return "guidevault-magazine-metadata.json";
+        return "guidevault-guide-metadata.json";
+    }
+
+    public static async Task<ItemMetadataUpdate?> GetGuidevaultMetadataAsync(string archivePath)
+    {
+        try
+        {
+            if (string.IsNullOrWhiteSpace(archivePath) || !File.Exists(archivePath)) return null;
+            if (Path.GetExtension(archivePath).Equals(".pdf", StringComparison.OrdinalIgnoreCase)) return null;
+
+            var json = await ReadFirstTextEntryAsync(archivePath, GuidevaultMetadataEntryNames);
+            if (string.IsNullOrWhiteSpace(json)) return null;
+
+            using var document = JsonDocument.Parse(json);
+            var root = document.RootElement;
+            var metadataElement = root;
+            int? itemPageCount = null;
+
+            if (TryGetJsonProperty(root, "item", out var itemElement))
+            {
+                if (TryGetJsonProperty(itemElement, "pageCount", out var pageCountElement))
+                    itemPageCount = ReadInt(pageCountElement);
+                if (TryGetJsonProperty(itemElement, "metadata", out var nestedMetadata))
+                    metadataElement = nestedMetadata;
+            }
+            else if (TryGetJsonProperty(root, "metadata", out var directMetadata))
+            {
+                metadataElement = directMetadata;
+            }
+
+            var update = ItemMetadataJsonReader.Read(metadataElement);
+            var metadataPageCount = itemPageCount ?? update.PageCount;
+            return update with
+            {
+                PageCount = metadataPageCount,
+                MetadataSource = string.IsNullOrWhiteSpace(update.MetadataSource) ? "Guidevault JSON" : update.MetadataSource
+            };
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    public static async Task<ArchiveMetadataWriteResult> WriteGuidevaultMetadataAsync(string archivePath, string kind, string json)
+    {
+        if (string.IsNullOrWhiteSpace(archivePath) || !File.Exists(archivePath))
+            return new ArchiveMetadataWriteResult(false, "Source file was not found.", string.Empty, string.Empty, false, archivePath);
+
+        var metadataFileName = GetGuidevaultMetadataEntryName(kind);
+        var ext = Path.GetExtension(archivePath);
+        try
+        {
+            if (ext.Equals(".cbz", StringComparison.OrdinalIgnoreCase))
+            {
+                await RewriteZipWithMetadataAsync(archivePath, archivePath, metadataFileName, json);
+                ClearCacheForWrittenArchive(archivePath);
+                return new ArchiveMetadataWriteResult(true, $"Wrote {metadataFileName} into the CBZ archive.", metadataFileName, archivePath, false, archivePath);
+            }
+
+            if (ext.Equals(".cbr", StringComparison.OrdinalIgnoreCase))
+            {
+                var packagePath = GuidevaultPackagePath(archivePath, ".cbz");
+                await CreateCbzFromReadableArchiveAsync(archivePath, packagePath, metadataFileName, json);
+                ClearCacheForWrittenArchive(packagePath);
+                return new ArchiveMetadataWriteResult(true, $"Created {Path.GetFileName(packagePath)} and wrote {metadataFileName} inside it. CBR/RAR archives are read-only in Guidevault, so the metadata package is a CBZ copy.", metadataFileName, packagePath, true, archivePath);
+            }
+
+            if (ext.Equals(".pdf", StringComparison.OrdinalIgnoreCase))
+            {
+                var packagePath = GuidevaultPackagePath(archivePath, ".zip");
+                await CreatePdfMetadataZipAsync(archivePath, packagePath, metadataFileName, json);
+                return new ArchiveMetadataWriteResult(true, $"Created {Path.GetFileName(packagePath)} with the PDF and {metadataFileName} inside it.", metadataFileName, packagePath, true, archivePath);
+            }
+
+            return new ArchiveMetadataWriteResult(false, $"Unsupported source format: {ext}", metadataFileName, string.Empty, false, archivePath);
+        }
+        catch (Exception ex)
+        {
+            return new ArchiveMetadataWriteResult(false, $"Unable to write Guidevault metadata: {ex.Message}", metadataFileName, string.Empty, false, archivePath);
+        }
+    }
+
+    private static async Task<string?> ReadFirstTextEntryAsync(string archivePath, string[] entryNames)
+    {
+        if (Path.GetExtension(archivePath).Equals(".cbz", StringComparison.OrdinalIgnoreCase))
+        {
+            try
+            {
+                using var zip = ZipFile.OpenRead(archivePath);
+                foreach (var entryName in entryNames)
+                {
+                    var entry = zip.Entries.FirstOrDefault(e => string.Equals(Path.GetFileName(e.FullName), entryName, StringComparison.OrdinalIgnoreCase));
+                    if (entry is null) continue;
+                    await using var stream = entry.Open();
+                    using var reader = new StreamReader(stream);
+                    return await reader.ReadToEndAsync();
+                }
+            }
+            catch
+            {
+                // Fall through to SharpCompress for mislabeled archives.
+            }
+        }
+
+        using var archiveReader = ReaderFactory.OpenReader(archivePath);
+        while (archiveReader.MoveToNextEntry())
+        {
+            var current = archiveReader.Entry;
+            if (current.IsDirectory) continue;
+            var currentName = Path.GetFileName(current.Key ?? string.Empty);
+            if (!entryNames.Any(name => string.Equals(currentName, name, StringComparison.OrdinalIgnoreCase))) continue;
+            await using var input = archiveReader.OpenEntryStream();
+            using var textReader = new StreamReader(input);
+            return await textReader.ReadToEndAsync();
+        }
+
+        return null;
+    }
+
+    private static async Task RewriteZipWithMetadataAsync(string sourcePath, string destinationPath, string metadataFileName, string json)
+    {
+        var directory = Path.GetDirectoryName(sourcePath) ?? Directory.GetCurrentDirectory();
+        var tempPath = Path.Combine(directory, $".{Path.GetFileName(sourcePath)}.{Guid.NewGuid():N}.tmp");
+        var backupPath = Path.Combine(directory, $".{Path.GetFileName(sourcePath)}.{Guid.NewGuid():N}.bak");
+
+        try
+        {
+            using (var source = ZipFile.OpenRead(sourcePath))
+            using (var output = ZipFile.Open(tempPath, ZipArchiveMode.Create))
+            {
+                foreach (var entry in source.Entries)
+                {
+                    var rootName = Path.GetFileName(entry.FullName);
+                    if (GuidevaultMetadataEntryNames.Any(name => string.Equals(rootName, name, StringComparison.OrdinalIgnoreCase))) continue;
+
+                    var copied = output.CreateEntry(entry.FullName, CompressionLevel.Optimal);
+                    copied.LastWriteTime = entry.LastWriteTime;
+                    if (string.IsNullOrEmpty(entry.Name) && entry.FullName.EndsWith("/", StringComparison.Ordinal)) continue;
+
+                    await using var input = entry.Open();
+                    await using var dest = copied.Open();
+                    await input.CopyToAsync(dest);
+                }
+
+                await WriteZipTextEntryAsync(output, metadataFileName, json);
+            }
+
+            if (Path.GetFullPath(sourcePath).Equals(Path.GetFullPath(destinationPath), StringComparison.OrdinalIgnoreCase))
+            {
+                File.Move(sourcePath, backupPath);
+                try
+                {
+                    File.Move(tempPath, destinationPath);
+                    TryDeleteFile(backupPath);
+                }
+                catch
+                {
+                    if (File.Exists(backupPath) && !File.Exists(sourcePath)) File.Move(backupPath, sourcePath);
+                    throw;
+                }
+            }
+            else
+            {
+                if (File.Exists(destinationPath)) File.Delete(destinationPath);
+                File.Move(tempPath, destinationPath);
+            }
+        }
+        finally
+        {
+            TryDeleteFile(tempPath);
+        }
+    }
+
+    private static async Task CreateCbzFromReadableArchiveAsync(string sourcePath, string destinationPath, string metadataFileName, string json)
+    {
+        var directory = Path.GetDirectoryName(destinationPath) ?? Directory.GetCurrentDirectory();
+        Directory.CreateDirectory(directory);
+        var tempPath = Path.Combine(directory, $".{Path.GetFileName(destinationPath)}.{Guid.NewGuid():N}.tmp");
+        try
+        {
+            using (var output = ZipFile.Open(tempPath, ZipArchiveMode.Create))
+            using (var reader = ReaderFactory.OpenReader(sourcePath))
+            {
+                var usedNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                while (reader.MoveToNextEntry())
+                {
+                    var entry = reader.Entry;
+                    if (entry.IsDirectory) continue;
+                    var entryName = Normalize(entry.Key ?? string.Empty).TrimStart('/');
+                    if (string.IsNullOrWhiteSpace(entryName)) continue;
+                    var rootName = Path.GetFileName(entryName);
+                    if (GuidevaultMetadataEntryNames.Any(name => string.Equals(rootName, name, StringComparison.OrdinalIgnoreCase))) continue;
+                    if (!usedNames.Add(entryName)) continue;
+
+                    var copied = output.CreateEntry(entryName, CompressionLevel.Optimal);
+                    await using var input = reader.OpenEntryStream();
+                    await using var dest = copied.Open();
+                    await input.CopyToAsync(dest);
+                }
+
+                await WriteZipTextEntryAsync(output, metadataFileName, json);
+            }
+
+            if (File.Exists(destinationPath)) File.Delete(destinationPath);
+            File.Move(tempPath, destinationPath);
+        }
+        finally
+        {
+            TryDeleteFile(tempPath);
+        }
+    }
+
+    private static async Task CreatePdfMetadataZipAsync(string sourcePath, string destinationPath, string metadataFileName, string json)
+    {
+        var directory = Path.GetDirectoryName(destinationPath) ?? Directory.GetCurrentDirectory();
+        Directory.CreateDirectory(directory);
+        var tempPath = Path.Combine(directory, $".{Path.GetFileName(destinationPath)}.{Guid.NewGuid():N}.tmp");
+        try
+        {
+            using (var output = ZipFile.Open(tempPath, ZipArchiveMode.Create))
+            {
+                var pdfEntry = output.CreateEntry(Path.GetFileName(sourcePath), CompressionLevel.Optimal);
+                await using (var input = File.OpenRead(sourcePath))
+                await using (var dest = pdfEntry.Open())
+                {
+                    await input.CopyToAsync(dest);
+                }
+
+                await WriteZipTextEntryAsync(output, metadataFileName, json);
+            }
+
+            if (File.Exists(destinationPath)) File.Delete(destinationPath);
+            File.Move(tempPath, destinationPath);
+        }
+        finally
+        {
+            TryDeleteFile(tempPath);
+        }
+    }
+
+    private static async Task WriteZipTextEntryAsync(ZipArchive archive, string entryName, string text)
+    {
+        var metadataEntry = archive.CreateEntry(entryName, CompressionLevel.Optimal);
+        await using var output = metadataEntry.Open();
+        await using var writer = new StreamWriter(output, new UTF8Encoding(false));
+        await writer.WriteAsync(text);
+    }
+
+    private static string GuidevaultPackagePath(string sourcePath, string extension)
+    {
+        var directory = Path.GetDirectoryName(sourcePath) ?? Directory.GetCurrentDirectory();
+        var name = Path.GetFileNameWithoutExtension(sourcePath);
+        return Path.Combine(directory, $"{name}.guidevault-metadata{extension}");
+    }
+
+    private static bool TryGetJsonProperty(JsonElement json, string name, out JsonElement value)
+    {
+        if (json.ValueKind == JsonValueKind.Object)
+        {
+            if (json.TryGetProperty(name, out value)) return true;
+            foreach (var property in json.EnumerateObject())
+            {
+                if (property.Name.Equals(name, StringComparison.OrdinalIgnoreCase))
+                {
+                    value = property.Value;
+                    return true;
+                }
+            }
+        }
+
+        value = default;
+        return false;
+    }
+
+    private static int? ReadInt(JsonElement element)
+    {
+        if (element.ValueKind == JsonValueKind.Number && element.TryGetInt32(out var number)) return Math.Max(0, number);
+        if (element.ValueKind == JsonValueKind.String && int.TryParse(element.GetString(), out var parsed)) return Math.Max(0, parsed);
+        return null;
+    }
+
+    private static void ClearCacheForWrittenArchive(string archivePath)
+    {
+        ClearCoverCacheForPath(archivePath);
+        EntryCache.TryRemove(archivePath, out _);
+    }
+
+    private static void TryDeleteFile(string path)
+    {
+        try
+        {
+            if (!string.IsNullOrWhiteSpace(path) && File.Exists(path)) File.Delete(path);
+        }
+        catch
+        {
+            // Best effort cleanup only.
+        }
     }
 
     public static async Task<ComicInfoMetadata?> GetComicInfoAsync(string archivePath)
@@ -6177,6 +7205,6 @@ public static class ArchiveReader
 
 static class GuidevaultBuildInfo
 {
-    public const string Version = "0.9.43";
+    public const string Version = "0.9.52";
 }
 

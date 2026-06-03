@@ -61,7 +61,9 @@ const GUIDEVAULT_READING_ACTIVITY_KEY = 'guidevault.readingActivity.v1';
 const GUIDEVAULT_CATEGORY_STRUCTURE_KEY = 'guidevault.categoryStructure.v1';
 const GUIDEVAULT_COVER_SIZE_KEY = 'guidevault.libraryCoverSize.v1';
 const GUIDEVAULT_FAVORITES_KEY = 'guidevault.favorites.v1';
-const GUIDEVAULT_APP_VERSION = '0.9.43';
+const GUIDEVAULT_APP_VERSION = '0.9.52';
+const GUIDEVAULT_FILENAME_SCHEMA_KEY = 'guidevault.filenameRename.schema.v1';
+const GUIDEVAULT_DEFAULT_FILENAME_SCHEMA = '{title}';
 const GUIDEVAULT_STABLE_TAG_FEED_URL = 'https://api.github.com/repos/Shredder5262/GuideVault/tags';
 const GUIDEVAULT_RELEASES_URL = 'https://github.com/Shredder5262/GuideVault/releases';
 const GUIDEVAULT_PACKAGE_URL = 'https://github.com/Shredder5262/GuideVault/pkgs/container/guidevault';
@@ -909,14 +911,29 @@ function getProfileFormValues(prefix) {
   return {
     username: $(`${prefix}Username`)?.value?.trim() || '',
     email: $(`${prefix}Email`)?.value?.trim() || '',
+    identity: $(`${prefix}Identity`)?.value?.trim() || '',
     password: $(`${prefix}Password`)?.value || '',
     avatarDataUrl: state.auth.profile?.avatarDataUrl || readLoginProfile()?.avatarDataUrl || ''
   };
+}
+function normalizeLoginIdentity(value = '') {
+  return String(value || '').trim().toLowerCase();
 }
 function validateLoginProfile(profile) {
   if (!profile.username || !profile.email || !profile.password) return 'Username, email, and password are required.';
   if (!profile.email.includes('@') || profile.email.startsWith('@') || profile.email.endsWith('@')) return 'Enter a valid email address.';
   return '';
+}
+function validateExistingLoginCredentials(form) {
+  if (!form.identity || !form.password) return 'Username / email address and password are required.';
+  return '';
+}
+function profileMatchesLoginIdentity(profile, identity) {
+  const value = normalizeLoginIdentity(identity);
+  return !!value && [profile?.username, profile?.email]
+    .map(normalizeLoginIdentity)
+    .filter(Boolean)
+    .includes(value);
 }
 function setLoginStatus(message = '', tone = '') {
   const el = $('loginStatus');
@@ -948,11 +965,39 @@ function updateLoginPageMode() {
     help.textContent = '';
     help.classList.add('hidden');
   }
-  if ($('loginAction')) $('loginAction').textContent = firstUse ? 'Create Local Login' : 'Sign In';
-  if (!firstUse) {
-    if ($('loginUsername')) $('loginUsername').value = profile.username || '';
-    if ($('loginEmail')) $('loginEmail').value = profile.email || '';
+
+  const identityMode = !firstUse;
+  const identityLabel = $('loginIdentityLabel');
+  const identityInput = $('loginIdentity');
+  const usernameLabel = $('loginUsernameLabel');
+  const usernameInput = $('loginUsername');
+  const emailLabel = $('loginEmailLabel');
+  const emailInput = $('loginEmail');
+
+  identityLabel?.classList.toggle('hidden', !identityMode);
+  identityInput?.classList.toggle('hidden', !identityMode);
+  usernameLabel?.classList.toggle('hidden', identityMode);
+  usernameInput?.classList.toggle('hidden', identityMode);
+  emailLabel?.classList.toggle('hidden', identityMode);
+  emailInput?.classList.toggle('hidden', identityMode);
+
+  if (identityInput) {
+    identityInput.disabled = !identityMode;
+    identityInput.required = identityMode;
+    identityInput.value = identityMode ? (profile.username || profile.email || '') : '';
   }
+  if (usernameInput) {
+    usernameInput.disabled = identityMode;
+    usernameInput.required = !identityMode;
+    usernameInput.value = identityMode ? '' : (usernameInput.value || '');
+  }
+  if (emailInput) {
+    emailInput.disabled = identityMode;
+    emailInput.required = !identityMode;
+    emailInput.value = identityMode ? '' : (emailInput.value || '');
+  }
+
+  if ($('loginAction')) $('loginAction').textContent = firstUse ? 'Create Local Login' : 'Sign In';
   if ($('loginPassword')) $('loginPassword').value = '';
   setLoginStatus('');
 }
@@ -963,7 +1008,7 @@ function showLoginScreen(message = '') {
   if ($('loginView')) $('loginView').classList.remove('hidden');
   updateLoginPageMode();
   if (message) setLoginStatus(message, 'info');
-  requestAnimationFrame(() => ($('loginPassword') || $('loginUsername'))?.focus?.());
+  requestAnimationFrame(() => ($('loginIdentity') && !$('loginIdentity').classList.contains('hidden') ? $('loginIdentity') : $('loginUsername'))?.focus?.());
 }
 
 function userInitials(profile = state.auth.profile || readLoginProfile() || {}) {
@@ -1238,17 +1283,20 @@ function handleLoginSubmit(e) {
   e?.preventDefault?.();
   const existing = readLoginProfile();
   const form = getProfileFormValues('login');
-  const validation = validateLoginProfile(form);
-  if (validation) { setLoginStatus(validation, 'error'); return; }
   if (!existing) {
+    const validation = validateLoginProfile(form);
+    if (validation) { setLoginStatus(validation, 'error'); return; }
     saveLoginProfile(form);
     setLoginStatus('Local login created.', 'success');
     showAuthenticatedApp();
     return;
   }
-  const matches = form.username === existing.username && form.email === existing.email && form.password === existing.password;
+
+  const validation = validateExistingLoginCredentials(form);
+  if (validation) { setLoginStatus(validation, 'error'); return; }
+  const matches = profileMatchesLoginIdentity(existing, form.identity) && form.password === existing.password;
   if (!matches) {
-    setLoginStatus('The username, email, or password does not match the saved local profile.', 'error');
+    setLoginStatus('The username / email address or password does not match the saved local profile.', 'error');
     return;
   }
   state.auth.profile = existing;
@@ -4239,6 +4287,7 @@ function activateTab(tab) {
   state.activeTab = tab || 'overview';
   document.querySelectorAll('.tab').forEach(b => b.classList.toggle('active', b.dataset.tab === state.activeTab));
   document.querySelectorAll('.tab-panel').forEach(p => p.classList.toggle('hidden', p.id !== `${state.activeTab}Panel`));
+  if (state.activeTab === 'file-name') updateMetadataFileMaintenance();
 }
 
 function setupHomebarIconFallbacks() {
@@ -6241,6 +6290,7 @@ function updateTypedMetadataFieldVisibility(kind = $('editKind')?.value || '') {
   if ($('editPlatformMatchLabel')) $('editPlatformMatchLabel').classList.add('hidden');
   if ($('editSeriesLabel')) $('editSeriesLabel').classList.toggle('hidden', isStrategyGuide || isManual);
   updateEditionControls();
+  updateMetadataExportButtonLabel(kind);
 }
 
 function setMagazineFieldsVisible(visible) {
@@ -6256,6 +6306,659 @@ function setStrategyGuideFieldsVisible(visible) {
 function csvInput(id) {
   const el = $(id);
   return el ? el.value.split(/[;,|]/).map(v => v.trim()).filter(Boolean) : [];
+}
+
+function numericInput(id) {
+  const el = $(id);
+  const raw = String(el?.value || '').trim();
+  if (!raw) return 0;
+  const n = Number(raw);
+  return Number.isFinite(n) && n > 0 ? Math.round(n) : 0;
+}
+
+function itemFileNameOnly(item = {}) {
+  const candidates = [
+    item.fileName, item.FileName, item.name, item.Name,
+    item.originalFileName, item.OriginalFileName,
+    item.sourceFileName, item.SourceFileName,
+    item.relativePath, item.RelativePath,
+    item.path, item.Path
+  ].filter(Boolean);
+
+  const value = String(candidates[0] || displayTitle(item) || item.title || 'guidevault-item').trim();
+  return value.split(/[\\/]/).pop() || value;
+}
+
+function metadataExportSourceFileName(item = {}) {
+  const fileName = itemFileNameOnly(item);
+  if (fileName && fileName !== 'guidevault-item') return fileName;
+  const pathValue = String(item.path || item.Path || item.relativePath || item.RelativePath || item.libraryPath || item.LibraryPath || '').trim();
+  if (pathValue) return pathValue.split(/[\\/]/).pop() || pathValue;
+  return '';
+}
+
+function itemContentHash(item = {}) {
+  return String(
+    item.contentHash || item.ContentHash ||
+    item.sha256 || item.Sha256 || item.SHA256 ||
+    item.fileHash || item.FileHash ||
+    item.hash || item.Hash ||
+    item.archiveHash || item.ArchiveHash ||
+    ''
+  ).trim();
+}
+
+function metadataExportKindWord(kind = $('editKind')?.value || state.selected?.kind || '') {
+  if (kind === 'Manual') return 'Manual';
+  if (kind === 'Magazine') return 'Magazine';
+  return 'Guide';
+}
+
+function updateMetadataExportButtonLabel(kind = $('editKind')?.value || state.selected?.kind || '') {
+  const btn = $('exportGuideMetadataBtn');
+  if (!btn) return;
+  btn.textContent = `Export ${metadataExportKindWord(kind)} Metadata`;
+  btn.title = `Write this ${metadataExportKindWord(kind).toLowerCase()} metadata into the archive/package as Guidevault JSON`;
+}
+
+function metadataExportSlug(value = '') {
+  return String(value || 'guidevault-metadata')
+    .toLowerCase()
+    .replace(/['"]/g, '')
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .slice(0, 90) || 'guidevault-metadata';
+}
+
+function metadataExportSafeFileName(value = '') {
+  return String(value || 'Guidevault Metadata')
+    .replace(/[\\/:*?"<>|]+/g, ' - ')
+    .replace(/\s+/g, ' ')
+    .replace(/\s+-\s+/g, ' - ')
+    .trim()
+    .replace(/[. ]+$/g, '')
+    .slice(0, 160) || 'Guidevault Metadata';
+}
+
+function metadataExportTitleFromMetadata(metadata = {}, item = {}) {
+  return metadata.strategyGuideTitle
+    || metadata.manualTitle
+    || metadata.magazineTitle
+    || metadata.title
+    || displayTitle(item)
+    || item.title
+    || 'Guidevault Metadata';
+}
+
+function fileRenameCurrentSchema() {
+  const field = $('fileRenameSchema');
+  const fromField = field ? String(field.value || '') : '';
+  if (fromField.trim()) return fromField;
+  try {
+    const saved = String(localStorage.getItem(GUIDEVAULT_FILENAME_SCHEMA_KEY) || '');
+    if (saved.trim()) return saved;
+  } catch {}
+  return GUIDEVAULT_DEFAULT_FILENAME_SCHEMA;
+}
+
+function saveFileRenameSchema(value = '') {
+  const raw = String(value || '');
+  const schema = raw.trim() ? raw : GUIDEVAULT_DEFAULT_FILENAME_SCHEMA;
+  try { localStorage.setItem(GUIDEVAULT_FILENAME_SCHEMA_KEY, schema); } catch {}
+  const field = $('fileRenameSchema');
+  if (field && field.value !== schema) field.value = schema;
+  return schema;
+}
+
+function hydrateFileRenameSchema() {
+  renderFilenameSchemaTokenButtons();
+  const field = $('fileRenameSchema');
+  if (!field) return;
+  if (document.activeElement === field) return;
+  let schema = GUIDEVAULT_DEFAULT_FILENAME_SCHEMA;
+  try { schema = String(localStorage.getItem(GUIDEVAULT_FILENAME_SCHEMA_KEY) || '').trim() || schema; } catch {}
+  if (!String(field.value || '').trim() || field.value === GUIDEVAULT_DEFAULT_FILENAME_SCHEMA) field.value = schema;
+}
+
+function metadataFileExtension(item = {}) {
+  const format = String(item.format || item.Format || '').trim().toLowerCase();
+  if (['cbz', 'cbr', 'pdf'].includes(format)) return `.${format}`;
+  const fileName = metadataExportSourceFileName(item);
+  const match = fileName.match(/\.[^.\/]+$/);
+  return match ? match[0] : '';
+}
+
+const GUIDEVAULT_FILENAME_SCHEMA_TOKEN_GROUPS = [
+  {
+    id: 'common',
+    label: 'Common',
+    kinds: ['Manual', 'Strategy Guide', 'Magazine'],
+    tokens: [
+      { label: 'Main Title', token: '{title}' },
+      { label: 'Platform', token: '{platform}' },
+      { label: 'Publisher', token: '{publisher}' },
+      { label: 'Year', token: '{year}' },
+      { label: 'Region', token: '{region}' },
+      { label: 'Language', token: '{language}' },
+      { label: 'Content Type', token: '{kind}' }
+    ]
+  },
+  {
+    id: 'game',
+    label: 'Game / release',
+    kinds: ['Manual', 'Strategy Guide'],
+    tokens: [
+      { label: 'Game Title', token: '{gameTitle}' },
+      { label: 'Franchise', token: '{franchise}' },
+      { label: 'Game Publisher', token: '{gamePublisher}' },
+      { label: 'Developer', token: '{developer}' },
+      { label: 'Genre', token: '{genre}' },
+      { label: 'Game Release Year', token: '{gameReleaseYear}' }
+    ]
+  },
+  {
+    id: 'strategy',
+    label: 'Strategy guide',
+    kinds: ['Strategy Guide'],
+    tokens: [
+      { label: 'Guide Title', token: '{strategyGuideTitle}' },
+      { label: 'Guide Type', token: '{guideType}' },
+      { label: 'Edition', token: '{edition}' },
+      { label: 'ISBN', token: '{isbn}' },
+      { label: 'ISBN-10', token: '{isbn10}' },
+      { label: 'ISBN-13', token: '{isbn13}' }
+    ]
+  },
+  {
+    id: 'manual',
+    label: 'Manual',
+    kinds: ['Manual'],
+    tokens: [
+      { label: 'Manual Title', token: '{manualTitle}' },
+      { label: 'Manual Type', token: '{manualType}' },
+      { label: 'Control Scheme', token: '{controlScheme}' }
+    ]
+  },
+  {
+    id: 'magazine',
+    label: 'Magazine',
+    kinds: ['Magazine'],
+    tokens: [
+      { label: 'Magazine Title', token: '{magazineTitle}' },
+      { label: 'Issue', token: '{issue}' },
+      { label: 'Volume', token: '{volume}' },
+      { label: 'Number', token: '{number}' },
+      { label: 'Month', token: '{month}' },
+      { label: 'Cover Story', token: '{coverStory}' }
+    ]
+  }
+];
+
+function normalizeFilenameSchemaKind(kind = '') {
+  const k = String(kind || '').trim().toLowerCase();
+  if (k === 'manual' || k === 'manuals') return 'Manual';
+  if (k === 'magazine' || k === 'magazines') return 'Magazine';
+  if (k === 'strategy guide' || k === 'strategy guides' || k === 'guide' || k === 'guides') return 'Strategy Guide';
+  return '';
+}
+
+function filenameSchemaCurrentKind() {
+  return normalizeFilenameSchemaKind($('editKind')?.value || state.selected?.kind || state.selected?.Kind || '');
+}
+
+function renderFilenameSchemaTokenButtons() {
+  const container = $('fileRenameTokenButtons');
+  if (!container) return;
+  const kind = filenameSchemaCurrentKind();
+  const renderKey = kind || 'all';
+  if (container.dataset.kind === renderKey && container.innerHTML.trim()) return;
+  const groups = GUIDEVAULT_FILENAME_SCHEMA_TOKEN_GROUPS.filter(group => !kind || group.kinds.includes(kind));
+  container.innerHTML = groups.map(group => `
+    <div class="filename-token-group" data-token-group="${escapeHtml(group.id)}">
+      <div class="filename-token-group-title">${escapeHtml(group.label)}</div>
+      <div class="filename-token-group-buttons">
+        ${group.tokens.map(({ label, token }) => `<button type="button" class="filename-token-button" data-token="${escapeHtml(token)}" title="Insert ${escapeHtml(token)}">${escapeHtml(label)}</button>`).join('')}
+      </div>
+    </div>
+  `).join('');
+  container.dataset.kind = renderKey;
+}
+
+function insertFilenameSchemaToken(token = '') {
+  const field = $('fileRenameSchema');
+  if (!field || !token) return;
+  const value = String(field.value || '');
+  const start = typeof field.selectionStart === 'number' ? field.selectionStart : value.length;
+  const end = typeof field.selectionEnd === 'number' ? field.selectionEnd : value.length;
+  const before = value.slice(0, start);
+  const after = value.slice(end);
+  const needsLeadingSpace = before.length > 0 && !/[\s([{_./]$/.test(before);
+  const needsTrailingSpace = after.length > 0 && !/^[\s)\]}_.]/.test(after);
+  const insertion = `${needsLeadingSpace ? ' ' : ''}${token}${needsTrailingSpace ? ' ' : ''}`;
+  field.value = `${before}${insertion}${after}`;
+  const nextPos = before.length + insertion.length;
+  field.focus();
+  try { field.setSelectionRange(nextPos, nextPos); } catch {}
+  updateMetadataFileMaintenance();
+}
+
+function normalizeFilenameSchemaTokenKey(key = '') {
+  return String(key || '').trim().toLowerCase().replace(/[^a-z0-9]+/g, '');
+}
+
+function filenameSchemaTokenMap(metadata = {}, item = {}) {
+  const title = metadataExportTitleFromMetadata(metadata, item);
+  const platform = metadata.preferredPlatform || metadata.category || metadata.system || item.category || item.Category || '';
+  const franchise = metadata.gameFranchise || metadata.franchise || metadata.series || item.series || item.Series || '';
+  const guideType = Array.isArray(metadata.guideType) ? metadata.guideType.join(', ') : (metadata.guideType || '');
+  const edition = metadata.edition || metadata.editionType || '';
+  const isbn10 = metadata.isbn10 || item.isbn10 || item.Isbn10 || '';
+  const isbn13 = metadata.isbn13 || item.isbn13 || item.Isbn13 || '';
+  const isbn = metadata.isbn || isbn13 || isbn10 || '';
+  const developer = metadata.developer || metadata.gameDeveloper || item.developer || item.Developer || item.gameDeveloper || item.GameDeveloper || '';
+  const gamePublisher = metadata.gamePublisher || item.gamePublisher || item.GamePublisher || metadata.publisher || item.publisher || item.Publisher || '';
+
+  return {
+    title,
+    mainTitle: title,
+    guideTitle: title,
+    strategyGuideTitle: metadata.strategyGuideTitle || title,
+    manualTitle: metadata.manualTitle || title,
+    magazineTitle: metadata.magazineTitle || title,
+    gameTitle: metadata.gameTitle || metadata.coverSubject || title,
+    platform,
+    preferredPlatform: platform,
+    publisher: metadata.publisher || item.publisher || item.Publisher || '',
+    year: metadata.year || item.year || item.Year || '',
+    issue: metadata.issueNumber || item.issueNumber || item.IssueNumber || '',
+    issueNumber: metadata.issueNumber || item.issueNumber || item.IssueNumber || '',
+    volume: metadata.volume || item.volume || item.Volume || '',
+    number: metadata.number || item.number || item.Number || '',
+    month: metadata.month || metadata.publicationMonth || item.month || item.Month || item.publicationMonth || item.PublicationMonth || '',
+    kind: metadata.kind || item.kind || item.Kind || '',
+    contentType: metadata.kind || item.kind || item.Kind || '',
+    region: metadata.region || item.region || item.Region || '',
+    language: metadata.language || metadata.languageTag || item.languageTag || item.LanguageTag || '',
+    edition: Array.isArray(edition) ? edition.join(', ') : edition,
+    editionType: Array.isArray(metadata.editionType) ? metadata.editionType.join(', ') : (metadata.editionType || ''),
+    editionYear: metadata.editionYear || '',
+    editionVolume: metadata.editionVolume || '',
+    guideType,
+    franchise,
+    gameFranchise: franchise,
+    gamePublisher,
+    developer,
+    gameDeveloper: developer,
+    genre: metadata.genre || item.genre || item.Genre || '',
+    gameReleaseYear: metadata.gameReleaseYear || item.gameReleaseYear || item.GameReleaseYear || '',
+    isbn,
+    isbn10,
+    isbn13,
+    asin: metadata.asin || item.asin || item.Asin || '',
+    manualType: metadata.manualType || item.manualType || item.ManualType || '',
+    controlScheme: metadata.controlScheme || item.controlScheme || item.ControlScheme || '',
+    coverStory: metadata.coverStory || item.coverStory || item.CoverStory || ''
+  };
+}
+
+function applyFilenameSchema(schema = GUIDEVAULT_DEFAULT_FILENAME_SCHEMA, metadata = {}, item = {}) {
+  const tokens = filenameSchemaTokenMap(metadata, item);
+  const normalizedTokens = Object.entries(tokens).reduce((acc, [key, value]) => {
+    acc[normalizeFilenameSchemaTokenKey(key)] = value;
+    return acc;
+  }, {});
+  const template = String(schema || GUIDEVAULT_DEFAULT_FILENAME_SCHEMA).trim() ? String(schema || GUIDEVAULT_DEFAULT_FILENAME_SCHEMA) : GUIDEVAULT_DEFAULT_FILENAME_SCHEMA;
+  const expanded = template.replace(/\{([^{}]+)\}/g, (_, key) => {
+    const rawKey = String(key || '').trim();
+    const camelKey = rawKey ? rawKey.charAt(0).toLowerCase() + rawKey.slice(1) : rawKey;
+    const value = tokens[rawKey] ?? tokens[camelKey] ?? normalizedTokens[normalizeFilenameSchemaTokenKey(rawKey)] ?? '';
+    return String(value || '').trim();
+  });
+  const cleaned = expanded
+    .replace(/\s+/g, ' ')
+    .replace(/\s+-\s+(?=$)/g, ' ')
+    .replace(/^\s*-\s+/g, '')
+    .replace(/\s+\|\s+(?=$)/g, ' ')
+    .replace(/^\s*\|\s+/g, '')
+    .replace(/\s+-\s+/g, ' - ')
+    .replace(/\s+\|\s+/g, ' | ')
+    .trim()
+    .replace(/^[-_.| ]+|[-_.| ]+$/g, '');
+  return cleaned || metadataExportTitleFromMetadata(metadata, item);
+}
+
+function metadataExportSuggestedFileName(metadata = {}, item = {}, schema = null) {
+  const extension = metadataFileExtension(item).replace(/^\./, '');
+  const nameSource = schema ? applyFilenameSchema(schema, metadata, item) : metadataExportTitleFromMetadata(metadata, item);
+  const title = metadataExportSafeFileName(nameSource);
+  return extension ? `${title}.${extension}` : title;
+}
+
+function downloadJsonFile(filename, data) {
+  const json = JSON.stringify(data, null, 2);
+  const blob = new Blob([json], { type: 'application/json;charset=utf-8' });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = filename;
+  document.body.appendChild(link);
+  link.click();
+  window.setTimeout(() => {
+    URL.revokeObjectURL(url);
+    link.remove();
+  }, 0);
+}
+
+function buildCurrentMetadataPayloadFromForm(extra = {}) {
+  const selectedKind = $('editKind')?.value || state.selected?.kind || 'Strategy Guide';
+  const tags = $('editTags') ? $('editTags').value.split(',').map(t => t.trim()).filter(Boolean) : [];
+  const associatedPlatforms = $('editAssociatedPlatforms') ? $('editAssociatedPlatforms').value.split(',').map(p => p.trim()).filter(Boolean) : [];
+  const preferredPlatform = selectedKind === 'Strategy Guide' && hasMultipleAssociatedPlatforms(associatedPlatforms)
+    ? MULTI_PLATFORM_LABEL
+    : ($('editCategory')?.value || '');
+
+  const magazinePayload = selectedKind === 'Magazine' ? {
+    magazineTitle: $('editMagazineTitle')?.value || $('editSeries')?.value || '',
+    volume: $('editVolume')?.value || '',
+    coverDate: $('editCoverDate')?.value || '',
+    publicationDate: $('editPublicationDate')?.value || '',
+    region: $('editRegion')?.value || '',
+    platformFocus: $('editPlatformFocus')?.value || '',
+    primarySystem: $('editPrimarySystem')?.value || '',
+    magazineCategory: $('editMagazineCategory')?.value || '',
+    coverSubject: $('editCoverSubject')?.value || '',
+    featuredGames: csvInput('editFeaturedGames'),
+    featuredPlatforms: csvInput('editFeaturedPlatforms'),
+    specialFeatures: csvInput('editSpecialFeatures'),
+    includedExtras: csvInput('editIncludedExtras')
+  } : {};
+
+  const rawIsbn = $('editIsbn')?.value || '';
+  const isbnParts = selectedKind === 'Strategy Guide' ? splitIsbnInput(rawIsbn) : { isbn10: '', isbn13: '' };
+  const strategyPayload = selectedKind === 'Strategy Guide' ? {
+    strategyGuideTitle: $('editTitle')?.value || '',
+    gameTitle: $('editGameTitle')?.value || $('editPlatformMatchTitle')?.value || '',
+    isbn: rawIsbn,
+    isbn10: isbnParts.isbn10,
+    isbn13: isbnParts.isbn13,
+    guideType: getMultiSelectValues('editGuideType'),
+    editionType: getMultiSelectValues('editEditionType'),
+    editionYear: $('editEditionYear')?.value || '',
+    editionVolume: $('editEditionVolume')?.value || '',
+    edition: buildEditionValue(getMultiSelectValues('editEditionType'), $('editEditionYear')?.value || '', $('editEditionVolume')?.value || ''),
+    publicationDate: $('editPublicationDateGuide')?.value || '',
+    region: $('editRegion')?.value || '',
+    gameFranchise: $('editFranchise')?.value || $('editSeries')?.value || '',
+    gameDeveloper: $('editDeveloper')?.value || '',
+    gamePublisher: $('editGamePublisher')?.value || '',
+    gameReleaseYear: $('editGameReleaseYear')?.value || '',
+    genre: $('editGenre')?.value || '',
+    coveredGames: csvInput('editCoveredGames'),
+    coveredPlatforms: csvInput('editCoveredPlatforms'),
+    guideTopics: csvInput('editGuideTopics'),
+    specialFeatures: csvInput('editStrategySpecialFeatures'),
+    charactersCovered: csvInput('editCharactersCovered'),
+    locationsCovered: csvInput('editLocationsCovered')
+  } : {};
+
+  const manualPayload = selectedKind === 'Manual' ? {
+    manualTitle: $('editManualTitle')?.value || $('editTitle')?.value || '',
+    manualType: $('editManualType')?.value || 'Instruction Manual',
+    gameTitle: $('editGameTitle')?.value || $('editSeries')?.value || $('editTitle')?.value || '',
+    publicationDate: $('editPublicationDateGuide')?.value || '',
+    region: $('editRegion')?.value || '',
+    gameFranchise: $('editFranchise')?.value || $('editSeries')?.value || '',
+    gameDeveloper: $('editDeveloper')?.value || '',
+    gamePublisher: $('editGamePublisher')?.value || '',
+    gameReleaseYear: $('editGameReleaseYear')?.value || $('editYear')?.value || '',
+    genre: $('editGenre')?.value || '',
+    includedSections: csvInput('editIncludedSections'),
+    controlScheme: $('editControlScheme')?.value || '',
+    charactersCovered: csvInput('editCharactersCovered'),
+    itemsCovered: csvInput('editItemsCovered'),
+    warrantySupport: $('editWarrantySupport')?.value || ''
+  } : {};
+
+  return normalizeClientMetadataPayload({
+    title: $('editTitle')?.value || '',
+    kind: selectedKind,
+    category: preferredPlatform,
+    preferredPlatform,
+    system: preferredPlatform,
+    associatedPlatforms: selectedKind === 'Strategy Guide' ? associatedPlatforms : [],
+    series: $('editSeries')?.value || '',
+    issueNumber: selectedKind === 'Magazine' ? ($('editIssue')?.value || '') : '',
+    publisher: $('editPublisher')?.value || '',
+    year: $('editYear')?.value || '',
+    pageCount: numericInput('editPageCount'),
+    metadataPageCount: numericInput('editPageCount'),
+    writer: $('editWriter')?.value || '',
+    rating: selectedKind === 'Magazine' ? '' : ($('editEsrbRating')?.value || ''),
+    language: $('editLanguageTag')?.value || '',
+    languageTag: $('editLanguageTag')?.value || '',
+    summary: $('editSummary')?.value || '',
+    tags,
+    notes: $('notesText')?.value || '',
+    ...magazinePayload,
+    ...strategyPayload,
+    ...manualPayload,
+    ...extra
+  });
+}
+
+function buildGuidevaultItemMetadataExport() {
+  if (!state.selected) return null;
+  const item = applyClientMetadataOverride(state.selected);
+  const metadata = buildCurrentMetadataPayloadFromForm();
+  const suggestedFileName = metadataExportSuggestedFileName(metadata, item);
+  const contentHash = itemContentHash(item);
+  const fileSizeBytes = Number(item.sizeBytes ?? item.SizeBytes ?? item.fileSizeBytes ?? item.FileSizeBytes ?? 0) || 0;
+  const pageCount = Number(metadata.pageCount || metadata.metadataPageCount || 0) || 0;
+  const format = item.format || item.Format || '';
+
+  const exportedItem = {
+    suggestedFileName,
+    fileSizeBytes,
+    format,
+    kind: metadata.kind || item.kind || '',
+    metadata
+  };
+
+  if (contentHash) exportedItem.contentHash = contentHash;
+  if (pageCount > 0) exportedItem.pageCount = pageCount;
+
+  return {
+    schema: 'guidevault.item-metadata.v1',
+    exportedAt: new Date().toISOString(),
+    guidevaultVersion: GUIDEVAULT_APP_VERSION,
+    exportScope: 'item',
+    item: exportedItem
+  };
+}
+
+async function exportSelectedGuidevaultMetadata() {
+  if (!state.selected) return;
+  const btn = $('exportGuideMetadataBtn');
+  const originalText = btn?.textContent || '';
+  const selectedId = String(state.selected.id || state.selected.Id || '').trim();
+  if (!selectedId) return;
+
+  try {
+    if (btn) {
+      btn.disabled = true;
+      btn.textContent = 'Writing...';
+    }
+
+    const metadata = buildCurrentMetadataPayloadFromForm({ metadataSource: 'Guidevault JSON' });
+    const optimistic = mergeSavedMetadataClientSide(state.selected, {}, metadata);
+    optimistic.id = optimistic.id || selectedId;
+    optimistic.Id = optimistic.Id || selectedId;
+    replaceItemInState(optimistic);
+    state.selected = optimistic;
+    rememberClientMetadataOverride(selectedId, metadata);
+
+    const res = await fetch(`/api/items/${encodeURIComponent(selectedId)}/metadata/native-export`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(metadata)
+    });
+
+    let data = null;
+    try { data = await res.json(); } catch {}
+    if (!res.ok) throw new Error(data?.error || data?.message || `Metadata export failed. HTTP ${res.status}`);
+
+    if (data?.item) {
+      replaceItemInState(data.item);
+      state.selected = data.item;
+      renderDetails(data.item);
+      activateTab(state.activeTab || 'metadata');
+    }
+
+    const message = data?.message || `Wrote ${data?.metadataFileName || 'Guidevault metadata'} into the item package.`;
+    setStatus(message);
+    if (btn) {
+      btn.textContent = 'Exported';
+      window.setTimeout(() => { if (btn) btn.textContent = originalText || `Export ${metadataExportKindWord(metadata.kind)} Metadata`; }, 1200);
+    }
+  } catch (err) {
+    console.error('Guidevault metadata export failed', err);
+    alert(`Unable to export Guidevault metadata: ${err?.message || err}`);
+    if (btn) btn.textContent = 'Export Failed';
+  } finally {
+    if (btn) {
+      window.setTimeout(() => {
+        btn.disabled = false;
+        if (btn.textContent === 'Export Failed') btn.textContent = originalText || 'Export Metadata';
+      }, 900);
+    }
+  }
+}
+
+function updateMetadataFileMaintenance() {
+  const panel = $('metadataFileMaintenance');
+  if (!panel) return;
+  hydrateFileRenameSchema();
+  const item = state.selected ? applyClientMetadataOverride(state.selected) : null;
+  const currentEl = $('metadataCurrentFileName');
+  const suggestedEl = $('metadataSuggestedFileName');
+  const renameBtn = $('renameToSuggestedFileNameBtn');
+  const statusEl = $('fileRenameStatus');
+
+  if (!item) {
+    panel.classList.add('hidden');
+    if (currentEl) currentEl.textContent = 'â€”';
+    if (suggestedEl) suggestedEl.textContent = 'â€”';
+    if (renameBtn) renameBtn.disabled = true;
+    if (statusEl) statusEl.textContent = 'Select an item to preview its filename.';
+    return;
+  }
+
+  let metadata = {};
+  try { metadata = buildCurrentMetadataPayloadFromForm(); } catch { metadata = {}; }
+  const schema = fileRenameCurrentSchema();
+  const currentFileName = metadataExportSourceFileName(item);
+  const suggestedFileName = metadataExportSuggestedFileName(metadata, item, schema);
+  const sameName = currentFileName && suggestedFileName && currentFileName.toLowerCase() === suggestedFileName.toLowerCase();
+
+  panel.classList.remove('hidden');
+  if (currentEl) currentEl.textContent = currentFileName || 'â€”';
+  if (suggestedEl) suggestedEl.textContent = suggestedFileName || 'â€”';
+  if (renameBtn) {
+    renameBtn.disabled = !suggestedFileName || sameName;
+    renameBtn.title = sameName
+      ? 'The source file already matches the Guide Title filename.'
+      : 'Rename the active source file and update the Guidevault index/database entry.';
+  }
+  if (statusEl) {
+    statusEl.classList.remove('error');
+    statusEl.textContent = sameName
+      ? 'The current source file already matches this naming schema.'
+      : 'Guidevault will rename the source file, update the indexed database entry, and keep this same item identity.';
+  }
+}
+
+function resetFileRenameSchema() {
+  saveFileRenameSchema(GUIDEVAULT_DEFAULT_FILENAME_SCHEMA);
+  updateMetadataFileMaintenance();
+  setStatus('Naming schema reset.');
+}
+
+async function renameSelectedFileToSuggestedName() {
+  if (!state.selected) return;
+  const selectedId = String(state.selected.id || state.selected.Id || '').trim();
+  if (!selectedId) return;
+
+  const btn = $('renameToSuggestedFileNameBtn');
+  const originalText = btn?.textContent || 'Rename file';
+  const schema = saveFileRenameSchema(fileRenameCurrentSchema());
+  const metadata = buildCurrentMetadataPayloadFromForm({ metadataSource: 'Manual edit', namingSchema: schema });
+  const currentFileName = metadataExportSourceFileName(state.selected);
+  const suggestedFileName = metadataExportSuggestedFileName(metadata, state.selected, schema);
+  if (!suggestedFileName) return;
+
+  const confirmed = await showAppConfirm({
+    title: 'Rename file?',
+    message: `Current file:
+${currentFileName || 'â€”'}
+
+New filename:
+${suggestedFileName}
+
+Guidevault will rename the source file, update the indexed database entry, and keep this same item identity.`,
+    okText: 'Rename file',
+    cancelText: 'Cancel'
+  });
+  if (!confirmed) return;
+
+  try {
+    if (btn) {
+      btn.disabled = true;
+      btn.textContent = 'Renaming...';
+    }
+
+    const res = await fetch(`/api/items/${encodeURIComponent(selectedId)}/file/rename-to-suggested`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(metadata)
+    });
+
+    let data = null;
+    try { data = await res.json(); } catch {}
+    if (!res.ok) throw new Error(data?.error || data?.message || `Rename failed. HTTP ${res.status}`);
+
+    if (data?.item) {
+      replaceItemInState(data.item);
+      state.selected = data.item;
+      rememberClientMetadataOverride(selectedId, metadata);
+      renderDetails(data.item);
+      activateTab('file-name');
+      applyFilters();
+    }
+
+    setStatus(data?.message || `Renamed source file to ${data?.newFileName || suggestedFileName}.`);
+    if (btn) {
+      btn.textContent = data?.renamed === false ? 'Already renamed' : 'Renamed';
+      window.setTimeout(() => { if (btn) btn.textContent = originalText; updateMetadataFileMaintenance(); }, 1200);
+    }
+  } catch (err) {
+    console.error('Guide Title filename rename failed', err);
+    const message = `Unable to rename file: ${err?.message || err}`;
+    const statusEl = $('fileRenameStatus');
+    if (statusEl) {
+      statusEl.textContent = message;
+      statusEl.classList.add('error');
+    }
+    setStatus(message);
+    if (btn) btn.textContent = 'Rename Failed';
+  } finally {
+    if (btn) {
+      window.setTimeout(() => {
+        btn.disabled = false;
+        if (btn.textContent === 'Rename Failed') btn.textContent = originalText;
+        updateMetadataFileMaintenance();
+      }, 900);
+    }
+  }
 }
 
 function metadataOverrideKey(itemOrId) {
@@ -7798,6 +8501,7 @@ function renderDetails(item) {
   setMaybeValue('editGameReleaseYear', (isStrategyGuide || isManual) ? item.gameReleaseYear : '');
   setMaybeValue('editGenre', (isStrategyGuide || isManual) ? item.genre : '');
   $('editYear').value = item.year || '';
+  if ($('editPageCount')) $('editPageCount').value = item.metadataPageCount || item.pageCountMetadata || item.pageCountEntered || item.pageCount || item.PageCount || '';
   $('editWriter').value = item.writer || '';
   $('editSummary').value = item.summary || '';
   setMaybeValue('editFeaturedGames', isMagazine ? itemList(item.featuredGames).replace(/^\u2014$/, '') : '');
@@ -7819,6 +8523,8 @@ function renderDetails(item) {
   $('editTags').value = (item.tags || []).join(', ');
   $('notesText').value = item.notes || '';
   renderDetailReadingProfilePanel(item);
+  updateMetadataExportButtonLabel(item.kind || '');
+  updateMetadataFileMaintenance();
 }
 
 function descriptionFor(item) {
@@ -7919,6 +8625,8 @@ async function saveSelectedMetadata(extra = {}, options = {}) {
       issueNumber: selectedKind === 'Magazine' ? $('editIssue').value : '',
       publisher: $('editPublisher').value,
       year: $('editYear').value,
+      pageCount: numericInput('editPageCount'),
+      metadataPageCount: numericInput('editPageCount'),
       writer: $('editWriter').value,
       rating: selectedKind === 'Magazine' ? '' : ($('editEsrbRating')?.value || ''),
       summary: $('editSummary').value,
@@ -11540,6 +12248,28 @@ document.addEventListener('keydown', e => {
 });
 if ($('editEditionType')) $('editEditionType').addEventListener('change', updateEditionControls);
 if ($('saveMetadataBtn')) $('saveMetadataBtn').addEventListener('click', async e => { e.preventDefault(); await saveSelectedMetadata({}, { tab: 'metadata', button: e.currentTarget }); });
+if ($('exportGuideMetadataBtn')) $('exportGuideMetadataBtn').addEventListener('click', e => { e.preventDefault(); exportSelectedGuidevaultMetadata(); });
+if ($('resetFileRenameSchemaBtn')) $('resetFileRenameSchemaBtn').addEventListener('click', e => { e.preventDefault(); resetFileRenameSchema(); });
+if ($('fileRenameSchema')) {
+  $('fileRenameSchema').addEventListener('input', () => updateMetadataFileMaintenance());
+  $('fileRenameSchema').addEventListener('change', e => { saveFileRenameSchema(e.target.value); updateMetadataFileMaintenance(); });
+}
+document.addEventListener('click', e => {
+  const tokenButton = e.target.closest?.('.filename-token-button');
+  if (tokenButton) { e.preventDefault(); insertFilenameSchemaToken(tokenButton.dataset.token || ''); return; }
+  const rename = e.target.closest?.('#renameToSuggestedFileNameBtn');
+  if (rename) { e.preventDefault(); renameSelectedFileToSuggestedName(); return; }
+  const reset = e.target.closest?.('#resetFileRenameSchemaBtn');
+  if (reset) { e.preventDefault(); resetFileRenameSchema(); }
+});
+if ($('metadataPanel')) {
+  $('metadataPanel').addEventListener('input', () => updateMetadataFileMaintenance());
+  $('metadataPanel').addEventListener('change', () => updateMetadataFileMaintenance());
+}
+if ($('file-namePanel')) {
+  $('file-namePanel').addEventListener('input', () => updateMetadataFileMaintenance());
+  $('file-namePanel').addEventListener('change', () => updateMetadataFileMaintenance());
+}
 if ($('saveNotesBtn')) $('saveNotesBtn').addEventListener('click', async e => { e.preventDefault(); await saveSelectedMetadata({ notes: $('notesText').value }, { tab: 'notes', button: e.currentTarget }); });
 if (document.querySelector('.brand-wordmark')) document.querySelector('.brand-wordmark').addEventListener('click', e => { e.preventDefault(); navigateGuidevaultHome(); });
 document.querySelector('.brand-wordmark')?.addEventListener('keydown', e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); navigateGuidevaultHome(); } });
