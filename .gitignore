@@ -1,87 +1,11 @@
-# Build output
-bin/
-obj/
+**/bin/
+**/obj/
 .vs/
-artifacts/
-publish/
-published/
-release/
-releases/
-dist/
-out/
-
-# Runtime/user data
-guidevault-data/
-data/
-Data/
-cache/
-Cache/
-logs/
-Logs/
-uploads/
-Uploads/
-library/
-Library/
-libraries/
-Libraries/
-books/
-Books/
-manuals/
-Manuals/
-strategy-guides/
-Strategy Guides/
-magazines/
-Magazines/
-src/*/data/
-src/*/Data/
-src/*/cache/
-src/*/Cache/
-src/*/logs/
-src/*/Logs/
-
-# Databases
-*.db
-*.db-shm
-*.db-wal
-*.sqlite
-*.sqlite3
-
-# Local config/secrets
-appsettings.Production.json
-appsettings.Local.json
-appsettings.Development.local.json
-.env
-.env.*
-
-# Local Docker compose files
-docker-compose.yml
-docker-compose.yaml
-docker-compose.override.yml
-compose.yaml
-compose.yml
-compose.override.yaml
-compose.local.yaml
-
-# Temporary patch/build/package files
-patch.py
-Pasted code.ps1
-Pasted text.txt
-Sync-GuideVaultRepo*.ps1
-Update-GuideVaultRepo*.ps1
-Package-GuideVault*.ps1
-*.bak
-*.tmp
-*.temp
-*.log
-*.zip
-*.7z
-*.rar
-*.cbz
-*.cbr
-*.pdf
-
-# IDE / OS junk
+.vscode/
 *.user
-*.suo
-.DS_Store
-Thumbs.db
+src/PageQuest.Web/data/library/*.cbr
+src/PageQuest.Web/data/library/*.pdf
+src/PageQuest.Web/data/pagequest.json
+_repo/
+_packaged/
+Guidevault-source-clean/

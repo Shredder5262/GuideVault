@@ -1,4 +1,4 @@
-services:
+﻿services:
   guidevault:
     image: ghcr.io/shredder5262/guidevault:latest
     container_name: guidevault
@@ -12,6 +12,7 @@ services:
       GUIDEVAULT_DATA: "/data"
       PAGEQUEST__DATA__ROOT: "/data"
 
+      # Keep the default library path inside /data so only ./guidevault-data is created on the host.
       GUIDEVAULT_LIBRARY_PATH: "/data/library"
       PAGEQUEST_LIBRARY_PATH: "/data/library"
 

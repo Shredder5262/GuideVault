@@ -6087,4 +6087,3 @@ static class GuidevaultBuildInfo
 {
     public const string Version = "0.9.40";
 }
-

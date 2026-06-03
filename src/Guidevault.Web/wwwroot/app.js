@@ -1,4 +1,4 @@
-const state = {
+﻿const state = {
   items: [], filtered: [], selected: null, filter: 'All Content', categoryFilter: '', viewMode: 'all', activeTab: 'overview', customFilter: null,
   reader: { item: null, pages: [], index: 0, animating: false, displayMode: 2, transitionMode: 'stable', overlayVisible: false, advancedVisible: false, magnifierSettingsVisible: false, scrubbing: false, shading: null, zoom: 100, magnifier: null, magnifierActive: false, longPressTimer: null, suppressHitClickUntil: 0, backgrounds: [], background: '', backgroundBrightness: 72 },
   libraryPath: '',
@@ -1923,7 +1923,7 @@ function renderOpdsSettings() {
           <td><span class="opds-masked-key">${maskOpdsKey(key.secret)}</span><button class="opds-inline-copy" type="button" data-opds-action="copy-key" title="Copy key">⧉</button></td>
           <td>${escapeHtml(key.expiresAt ? formatOpdsDate(key.expiresAt) : 'Never')}</td>
           <td>${escapeHtml(formatOpdsDate(key.lastAccessed))}</td>
-          <td class="opds-actions-cell"><button class="opds-action-button" type="button" data-opds-action="rotate" title="Rotate key">⟳</button><button class="opds-action-button danger" type="button" data-opds-action="delete" title="Delete key">🗑</button></td>
+          <td class="opds-actions-cell"><button class="opds-action-button" type="button" data-opds-action="rotate" title="Rotate key">⟳</button><button class="opds-action-button danger" type="button" data-opds-action="delete" title="Delete key">ðŸ—‘</button></td>
         </tr>`).join('')
       : '<tr><td colspan="5" class="opds-empty-row">No authorization keys yet. Select + New to generate one.</td></tr>';
   }
@@ -2630,7 +2630,7 @@ function currentDeviceScreenText() {
   const width = window.screen?.width || window.innerWidth || 0;
   const height = window.screen?.height || window.innerHeight || 0;
   const orientation = width && height ? (width >= height ? 'landscape' : 'portrait') : '';
-  return width && height ? `${width}×${height}${orientation ? ` (${orientation})` : ''}` : '';
+  return width && height ? `${width}Ã—${height}${orientation ? ` (${orientation})` : ''}` : '';
 }
 
 function buildDeviceHeartbeatPayload() {
@@ -2779,7 +2779,7 @@ function renderEmailDeviceTable(emailDevices = []) {
           <td><strong>${escapeHtml(device.name || 'Email Device')}</strong></td>
           <td>${escapeHtml(device.email || '—')}</td>
           <td>${escapeHtml(device.platform || 'Email')}</td>
-          <td><button class="device-table-action danger" type="button" data-device-email-action="delete">🗑</button></td>
+          <td><button class="device-table-action danger" type="button" data-device-email-action="delete">ðŸ—‘</button></td>
         </tr>`).join('')
       : '<tr><td colspan="4" class="device-empty-row">No data to display</td></tr>';
   }
@@ -2879,7 +2879,7 @@ function deviceClassLabel(device = {}) {
   const screen = String(device.screen || '');
   if (/ipad|tablet|silk|kindle|playbook/.test(platform) || /ipad|tablet|silk|kindle|playbook/.test(ua)) return 'Tablet';
   if (/iphone|ipod|android|ios|mobile/.test(platform) || /iphone|ipod|android|mobile/.test(ua)) return 'Mobile';
-  const match = screen.match(/(\d+)\s*[×x]\s*(\d+)/i);
+  const match = screen.match(/(\d+)\s*[Ã—x]\s*(\d+)/i);
   if (match) {
     const width = Number(match[1]);
     const height = Number(match[2]);
@@ -4121,7 +4121,6 @@ function normalizePlatformIconManifest(map) {
 async function loadPlatformIcons() {
   try {
     let res = await fetch('/assets/icons/platforms/manifest.json', { cache: 'no-store' });
-    if (!res.ok) res = await fetch('/icons/platforms/manifest.json', { cache: 'no-store' });
     state.iconMap = res.ok ? normalizePlatformIconManifest(await res.json()) : {};
   } catch {
     state.iconMap = {};
@@ -4265,7 +4264,7 @@ function renderLibrariesSettings() {
       <td class="library-actions">
         <button class="small-icon rescan-library" data-index="${index}" title="Rescan this library">⟳</button>
         <button class="small-icon edit-library" data-index="${index}" title="Edit library">✎</button>
-        <button class="small-icon danger remove-library" data-index="${index}" title="Remove library">🗑</button>
+        <button class="small-icon danger remove-library" data-index="${index}" title="Remove library">ðŸ—‘</button>
       </td>
     </tr>`;
   }).join('') || `<tr><td colspan="4" class="empty-row">No libraries yet. Add a library folder to begin.</td></tr>`;
@@ -5162,7 +5161,7 @@ function renderKeybindsSettings() {
         <p class="sub">${escapeHtml(def.description)}</p>
       </div>
       <div class="keybind-actions" aria-label="${escapeForAttribute(def.title)} actions">
-        <button class="keybind-action" data-keybind-action="add" type="button" title="Add alternate key" aria-label="Add alternate key">＋</button>
+        <button class="keybind-action" data-keybind-action="add" type="button" title="Add alternate key" aria-label="Add alternate key">ï¼‹</button>
         <button class="keybind-action" data-keybind-action="reset" type="button" title="Reset binding" aria-label="Reset binding">♻</button>
       </div>
     </div>`;
