@@ -13,7 +13,7 @@ using System.Net.Http.Headers;
 using SharpCompress.Readers;
 
 var builder = WebApplication.CreateBuilder(args);
-const string GuidevaultVersion = "0.9.56";
+const string GuidevaultVersion = "0.9.57";
 var app = builder.Build();
 var metadataJsonOptions = new JsonSerializerOptions(JsonSerializerDefaults.Web) { PropertyNameCaseInsensitive = true };
 var options = app.Configuration.GetSection("Guidevault").Get<GuidevaultOptions>() ?? new GuidevaultOptions();
@@ -715,31 +715,46 @@ app.MapPost("/api/items/{id}/metadata/native-export", async (string id, JsonElem
 
     var cached = cache.TryGetCachedItem(id);
     if (cached is null)
+    {
+        if (GuidevaultLibraryIoGate.IsBusy)
+            return Results.Conflict(new { error = GuidevaultLibraryIoGate.BusyMessage });
+
         cached = (await cache.GetItemsAsync()).FirstOrDefault(i => i.Id == id);
+    }
 
     if (cached is null)
         return Results.NotFound(new { error = "Item not found." });
 
-    var updated = metadataStore.ApplyOverride(cached);
-    updated = MetadataStore.ApplyUpdateSnapshot(updated, update);
-    cache.ReplaceCachedItem(updated, persist: false);
+    if (!GuidevaultLibraryIoGate.TryBeginArchiveWrite(out var archiveWriteLease, out var busyMessage) || archiveWriteLease is null)
+        return Results.Conflict(new { error = busyMessage });
 
-    var exportDocument = GuidevaultNativeMetadata.BuildExport(updated, update, payload);
-    var exportJson = JsonSerializer.Serialize(exportDocument, GuidevaultNativeMetadata.JsonOptions);
-    var writeResult = await ArchiveReader.WriteGuidevaultMetadataAsync(updated.Path, updated.Kind, exportJson);
-    if (!writeResult.Success)
-        return Results.BadRequest(new { error = writeResult.Message });
-
-    return Results.Ok(new
+    try
     {
-        item = updated,
-        metadataFileName = writeResult.MetadataFileName,
-        writtenArchivePath = writeResult.WrittenArchivePath,
-        writtenArchiveFileName = Path.GetFileName(writeResult.WrittenArchivePath),
-        createdPackage = writeResult.CreatedPackage,
-        originalArchivePath = writeResult.OriginalArchivePath,
-        message = writeResult.Message
-    });
+        var updated = metadataStore.ApplyOverride(cached);
+        updated = MetadataStore.ApplyUpdateSnapshot(updated, update);
+        cache.ReplaceCachedItem(updated, persist: false);
+
+        var exportDocument = GuidevaultNativeMetadata.BuildExport(updated, update, payload);
+        var exportJson = JsonSerializer.Serialize(exportDocument, GuidevaultNativeMetadata.JsonOptions);
+        var writeResult = await ArchiveReader.WriteGuidevaultMetadataAsync(updated.Path, updated.Kind, exportJson);
+        if (!writeResult.Success)
+            return Results.BadRequest(new { error = writeResult.Message });
+
+        return Results.Ok(new
+        {
+            item = updated,
+            metadataFileName = writeResult.MetadataFileName,
+            writtenArchivePath = writeResult.WrittenArchivePath,
+            writtenArchiveFileName = Path.GetFileName(writeResult.WrittenArchivePath),
+            createdPackage = writeResult.CreatedPackage,
+            originalArchivePath = writeResult.OriginalArchivePath,
+            message = writeResult.Message
+        });
+    }
+    finally
+    {
+        archiveWriteLease.Dispose();
+    }
 });
 
 app.MapPost("/api/items/{id}/file/rename-to-suggested", async (string id, JsonElement payload) =>
@@ -752,7 +767,12 @@ app.MapPost("/api/items/{id}/file/rename-to-suggested", async (string id, JsonEl
 
     var cached = cache.TryGetCachedItem(id);
     if (cached is null)
+    {
+        if (GuidevaultLibraryIoGate.IsBusy)
+            return Results.Conflict(new { error = GuidevaultLibraryIoGate.BusyMessage });
+
         cached = (await cache.GetItemsAsync()).FirstOrDefault(i => i.Id == id);
+    }
 
     if (cached is null)
         return Results.NotFound(new { error = "Item not found." });
@@ -800,6 +820,9 @@ app.MapPost("/api/items/{id}/file/rename-to-suggested", async (string id, JsonEl
     if (File.Exists(destinationPath))
         return Results.BadRequest(new { error = $"A file named {Path.GetFileName(destinationPath)} already exists in this folder." });
 
+    if (!GuidevaultLibraryIoGate.TryBeginArchiveWrite(out var archiveWriteLease, out var busyMessage) || archiveWriteLease is null)
+        return Results.Conflict(new { error = busyMessage });
+
     try
     {
         File.Move(sourcePath, destinationPath);
@@ -834,6 +857,10 @@ app.MapPost("/api/items/{id}/file/rename-to-suggested", async (string id, JsonEl
     catch (Exception ex)
     {
         return Results.BadRequest(new { error = $"Unable to rename source file: {ex.Message}" });
+    }
+    finally
+    {
+        archiveWriteLease.Dispose();
     }
 });
 
@@ -4135,6 +4162,7 @@ public sealed class LibraryCache
         try
         {
             if (_items is not null) return _items;
+            using var libraryIoLease = await GuidevaultLibraryIoGate.BeginLibraryScanAsync();
             _items = await ScanAsync();
             SavePersistedCache(_items);
             return _items;
@@ -4153,6 +4181,11 @@ public sealed class LibraryCache
         await _lock.WaitAsync();
         try
         {
+            if (GuidevaultLibraryIoGate.IsBusy)
+                _taskMonitor.Update(taskId, "Waiting for the current file write/rename operation to finish before scanning...", 1);
+
+            using var libraryIoLease = await GuidevaultLibraryIoGate.BeginLibraryScanAsync();
+
             // Keep the existing item index available while the scan rebuilds. Archive
             // entry/cover memory caches are intentionally not blown away here because
             // repeated add/remove/cleanup operations can otherwise thrash network archives.
@@ -7313,8 +7346,50 @@ public static class ArchiveReader
 }
 
 
+
+static class GuidevaultLibraryIoGate
+{
+    private static readonly SemaphoreSlim Gate = new(1, 1);
+
+    public static bool IsBusy => Gate.CurrentCount == 0;
+
+    public static string BusyMessage =>
+        "A library scan, cleanup, metadata enrichment, metadata export, or file rename is already working with the library files. Wait for that task to finish before exporting metadata or renaming files. Running these at the same time can make large or mounted libraries extremely slow.";
+
+    public static async Task<IDisposable> BeginLibraryScanAsync(CancellationToken cancellationToken = default)
+    {
+        await Gate.WaitAsync(cancellationToken);
+        return new Releaser();
+    }
+
+    public static bool TryBeginArchiveWrite(out IDisposable? lease, out string message)
+    {
+        if (Gate.Wait(0))
+        {
+            lease = new Releaser();
+            message = string.Empty;
+            return true;
+        }
+
+        lease = null;
+        message = BusyMessage;
+        return false;
+    }
+
+    private sealed class Releaser : IDisposable
+    {
+        private int _released;
+
+        public void Dispose()
+        {
+            if (Interlocked.Exchange(ref _released, 1) == 0)
+                Gate.Release();
+        }
+    }
+}
+
 static class GuidevaultBuildInfo
 {
-    public const string Version = "0.9.56";
+    public const string Version = "0.9.57";
 }
 

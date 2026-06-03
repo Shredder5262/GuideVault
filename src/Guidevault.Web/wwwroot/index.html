@@ -4,7 +4,7 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Guidevault</title>
-  <link rel="stylesheet" href="/styles.css?v=0.9.56-filename-build-fix" />
+  <link rel="stylesheet" href="/styles.css?v=0.9.57-library-io-guard" />
 </head>
 <body class="right-collapsed auth-locked">
   <section id="loginView" class="login-view" aria-labelledby="loginTitle">
@@ -1391,6 +1391,20 @@
             <div class="system-update-list">
               <details class="system-update-entry" open>
                 <summary>
+                  <span>Guidevault 0.9.56 - Library File Operation Guard</span>
+                  <em>Installed</em>
+                </summary>
+                <div class="system-update-body">
+                  <h3>Improved <b>3</b></h3>
+                  <ul>
+                    <li>Prevents metadata export and file rename operations from running while a library scan, cleanup, or metadata enrichment task is actively reading library files.</li>
+                    <li>Queues scans behind active metadata writes/renames instead of letting both operations compete for the same CBZ/PDF/CBR files.</li>
+                    <li>Shows a clear in-app busy message instead of allowing long file-operation stalls caused by scan/write contention.</li>
+                  </ul>
+                </div>
+              </details>
+              <details class="system-update-entry" open>
+                <summary>
                   <span>Guidevault 0.9.55 - Filename Sanitizer Build Fix</span>
                   <em>Installed</em>
                 </summary>
@@ -2602,7 +2616,7 @@
   </dialog>
 
 
-  <script src="/app.js?v=0.9.56-filename-build-fix"></script>
+  <script src="/app.js?v=0.9.57-library-io-guard"></script>
 </body>
 </html>
 
