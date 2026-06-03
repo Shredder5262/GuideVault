@@ -1,98 +1,297 @@
-<<<<<<< HEAD
 # Guidevault
-<img width="1686" height="892" alt="2026-06-02 11_53_06-C__Users_Andrew_Documents_Rainmeter_Skins_ASUSROG_Launcher with Icons 2_ASUSROG " src="https://github.com/user-attachments/assets/5ed83b6b-be5d-4458-b0df-e152558ffe10" />
-=======
-# Guidevault v0.9.7
->>>>>>> d76383b (Update Guidevault to 0.9.40)
 
-Guidevault is a first-version self-hosted web reader for video game manuals, strategy guides, and gaming magazines.
+Self-hosted digital library and web reader for **video game manuals, strategy guides, and gaming magazines**.
 
-## v0.7 reader update
+Guidevault is built for people who keep local collections of scanned game literature and want a clean browser-based way to organize, browse, read, and preserve them.
 
-- Adds a stronger open-book spine/gutter shader between two-page spreads.
-- Fullscreen spreads now render as one joined book surface instead of two disconnected panels.
-- Page curl animation was softened and shaded to feel more like paper turning across the center.
+## Screenshot
 
-## Run locally
+![Guidevault main interface](docs/images/guidevault-main.png)
 
-```powershell
-cd C:\Users\Andrew\Documents\VSCode\PageQuest\src\PageQuest.Web
-dotnet restore
-dotnet run
-```
+## Current status
 
-Open the localhost URL shown by `dotnet run`. The default local Guidevault port is `http://localhost:5478` so it does not conflict with Kavita on port 5000.
+Guidevault is currently in active pre-release development.
 
-## What v0.5 adds
+Current working version: **0.9.40**
 
-- Library root path is no longer shown on the main library screen.
-- Library root is now managed from **Settings**.
-- Drill-in details page tabs now work:
-  - Overview
-  - Metadata
-  - Notes
-- Metadata can be edited and saved per item.
-- Notes can be edited and saved per item.
-- Items can be removed from the library index without touching, uploading, copying, or deleting the source files.
-- CBZ/CBR imports read `ComicInfo.xml` metadata:
-  - Title
-  - Series
-  - Number / issue number
-  - Writer
-  - Publisher
-  - Year
-  - Summary / Notes
-  - Genre
-  - Tags
-- Magazines use `ComicInfo.xml` issue numbers for category sorting when available.
-- Reader now treats page 1 as the cover, then switches to two-page book spreads for interior pages.
-- Reader page-turn animation is adjusted to behave more like a page curl across an open book.
+The app is usable for local/self-hosted testing, but some advanced admin areas are still being refined.
 
-## Suggested folder layout
+## Features
+
+- Self-hosted web interface for game literature
+- Browser-based reader for manuals, strategy guides, and magazines
+- Support for `.cbz`, `.cbr`, and `.pdf` library items
+- Local folder scanning without uploading source files into the app
+- Manual, strategy guide, and magazine library sections
+- Details pages with overview, metadata, and notes
+- Editable metadata and library cleanup tools
+- Guidevault-native metadata direction with legacy `ComicInfo.xml` import support
+- Associated platform metadata for multi-platform strategy guides
+- Reader options for single-page, two-page, and adaptive page layouts
+- Book-style reader visuals with page transitions, spine/gutter shading, and fullscreen support
+- User accounts, profiles, and profile images
+- Customizable home shelves and side navigation
+- OPDS support for compatible readers
+- Server settings for hostname, base URL, port, backups, media paths, email, users, and recurring tasks
+- Update history available from the app info area
+
+## Supported content types
+
+Guidevault is focused on video game literature:
+
+- Game manuals
+- Strategy guides
+- Gaming magazines
+- Reference material
+- Scanned game inserts, maps, and related reading material
+
+Supported file types:
 
 ```text
-Guidevault Library\
-  Manuals\
-    Super Nintendo (SNES)\
-    Sega Genesis\
-
-  Strategy Guides\
-    Super Nintendo (SNES)\
-    PlayStation (PS1)\
-
-  Magazines\
-    Nintendo Power\
-    Electronic Gaming Monthly\
+.cbz
+.cbr
+.pdf
 ```
 
-Supported files: `.pdf`, `.cbz`, `.cbr`.
+## Suggested library layout
 
-## Docker preparation
+Guidevault can scan any configured folder, but this kind of structure keeps collections easier to manage:
 
-The project includes a `Dockerfile` and `docker-compose.yml`. The current local test path is still the recommended path while the reader/import UI is being shaped.
+```text
+Guidevault Library/
+  Manuals/
+    Nintendo Entertainment System/
+    Super Nintendo Entertainment System/
+    Sega Genesis/
 
+  Strategy Guides/
+    Nintendo/
+    Sega/
+    Sony PlayStation/
 
-## v0.7.1
+  Magazines/
+    Nintendo Power/
+    Electronic Gaming Monthly/
+    GamePro/
+```
 
-- Left sidebar now starts collapsed/icon-only by default. Use the hamburger button to expand it.
+## Quick start with Docker
 
+Create a folder for Guidevault data and point the library mount at your own collection folder.
 
-## v0.7.3
+```yaml
+services:
+  guidevault:
+    image: ghcr.io/shredder5262/guidevault:latest
+    container_name: guidevault
+    restart: unless-stopped
+    ports:
+      - "5478:5478"
+    environment:
+      ASPNETCORE_URLS: "http://+:5478"
+      GUIDEVAULT_DATA: "/data"
+      GUIDEVAULT_LIBRARY_PATH: "/library"
+    volumes:
+      - ./guidevault-data:/data
+      - D:/GameLibrary/Guides:/library:ro
+```
 
-- The old right-side details drawer has been removed. Clicking an item opens a dedicated details page.
-- Left sidebar remains open by default.
+Start the container:
 
-## v0.9.1
+```powershell
+docker compose up -d
+```
 
-- Visible branding now uses Guidevault with a small GV cartridge-vault icon.
-- The details overview is content-focused: detected system, ESRB rating, optional web link, issue/publisher/year/writer/pages, summary, and tags.
-- ComicInfo.xml `Series` is treated as the detected system/category for scanned guide/manual items.
-- Cover rendering now uses contain-style sizing so rectangular/wide manuals are not cropped.
-- The visible ODSP placeholder card was removed from the settings UI.
+Then open:
 
+```text
+http://localhost:5478
+```
 
-## v0.9.7
+Guidevault uses port `5478` by default so it can coexist with other self-hosted readers that commonly use port `5000`.
 
-- Strategy guides now appear in every platform library listed in Associated Platforms.
-- The old multi-platform bucket is no longer used for library placement when associated platforms are available.
-- Visible System / Category labels were renamed to Preferred Platform.
+## Local development
+
+From a local checkout:
+
+```powershell
+cd <GUIDEVAULT_ROOT>
+dotnet restore .\src\Guidevault.Web\Guidevault.Web.csproj
+dotnet run --project .\src\Guidevault.Web\Guidevault.Web.csproj
+```
+
+Then open the localhost URL shown by `dotnet run`.
+
+If your local checkout still uses the legacy project folder name, run the matching project file from your local source tree instead.
+
+## First run
+
+On first launch, Guidevault creates the initial local user account.
+
+First-run setup asks for:
+
+- Username
+- Email address
+- Password
+
+After the first account exists, users can sign in with either:
+
+- Username
+- Email address
+
+## Library scanning
+
+Guidevault is designed to **scan and index local files**, not upload them into the app.
+
+The original manual, guide, or magazine files remain in the library folder you choose. Guidevault stores its own app data, generated cache, metadata, profile data, and settings separately under its configured data path.
+
+## Metadata
+
+Guidevault supports imported and editable metadata for game literature.
+
+Common metadata fields include:
+
+- Title
+- Series
+- Preferred platform
+- Associated platforms
+- Publisher
+- Year
+- Region
+- Language
+- Issue number
+- Volume / number
+- Guide type
+- Edition type
+- ISBN / ASIN
+- Summary
+- Tags
+- Notes
+
+`ComicInfo.xml` is supported as a legacy import source. The preferred long-term direction is Guidevault-native metadata for game literature.
+
+## Reader
+
+The reader supports several book-focused behaviors:
+
+- Cover-first reading
+- Single-page mode
+- Two-page spreads
+- Adaptive two-page handling
+- Fullscreen reading
+- Page transitions
+- Bookmark support
+- Zoom and magnifier controls
+- Background and shading preferences
+- Per-item and per-series reading profile direction
+
+## OPDS
+
+Guidevault includes OPDS support for compatible reading clients.
+
+OPDS can be enabled or disabled from the server settings area. The local default port is:
+
+```text
+http://localhost:5478
+```
+
+## Email and users
+
+Guidevault includes early support for:
+
+- User management
+- Invite flow scaffolding
+- Email templates
+- Email history
+- Transactional email provider direction
+- SMTP fallback for providers that still support app passwords or service credentials
+
+For long-term reliability, a transactional email provider is recommended over a personal mailbox.
+
+## Backups and maintenance
+
+The server settings area includes early options for:
+
+- Library backup paths
+- Bookmarks directory
+- Logging level
+- Recurring task configuration
+- Email history review
+- Server/network configuration
+
+Backup and maintenance workflows are expected to continue improving as the app moves toward release-candidate status.
+
+## Development notes
+
+Do not commit local runtime data or personal library files.
+
+Keep these out of the repository:
+
+```text
+guidevault-data/
+data/
+cache/
+logs/
+covers/
+thumbnails/
+uploads/
+library/
+libraries/
+books/
+manuals/
+strategy-guides/
+magazines/
+bin/
+obj/
+.vs/
+.env
+*.db
+*.db-shm
+*.db-wal
+*.sqlite
+*.sqlite3
+*.cbz
+*.cbr
+*.pdf
+```
+
+## Recent update highlights
+
+### 0.9.40
+
+- Login now accepts username or email after the initial account has been created.
+- Account/profile flow was refined.
+- My Profile now opens as a dedicated personal profile page.
+- Profile picture support was added.
+- Settings screens were expanded for server, media, OPDS, email, users, and tasks.
+- Email template preview, test email behavior, and email history were added/refined.
+- Side navigation customization was expanded.
+- Visible branding continues moving from the old project name to Guidevault.
+
+### 0.9.x
+
+- Guidevault branding and GV cartridge-vault identity were added.
+- Strategy guide metadata was expanded for platforms, guide types, editions, ISBN/ASIN, and related fields.
+- Manuals, strategy guides, and magazines received more purpose-built detail views.
+- OPDS support was added.
+- Reader behavior was improved with more stable page swapping and adaptive two-page handling.
+- Update History was added under the Info/System area.
+
+## Roadmap ideas
+
+Potential future additions include:
+
+- Collections and curated shelves
+- Metadata cleanup queue
+- Bulk metadata editor
+- Game dossier pages
+- Backup and restore wizard
+- Advanced search and filters
+- Bookmarks with notes
+- Health dashboard
+- Real maintenance tasks
+- LaunchBox connector/importer
+
+## License
+
+See `LICENSE`.
