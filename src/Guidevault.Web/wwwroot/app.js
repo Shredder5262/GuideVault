@@ -49,6 +49,8 @@ const READER_BACKGROUND_KEY = 'guidevault.readerBackground.v1';
 const READER_BACKGROUND_BRIGHTNESS_KEY = 'guidevault.readerBackgroundBrightness.v1';
 const GUIDEVAULT_METADATA_OVERRIDES_KEY = 'guidevault.metadataOverrides.v2';
 const GUIDEVAULT_METADATA_COLUMNS_KEY = 'guidevault.metadataManagerColumns.v1';
+const METADATA_MANAGER_RENDER_LIMIT = 250;
+const METADATA_MANAGER_SEARCH_DEBOUNCE_MS = 220;
 const GUIDEVAULT_LOGIN_PROFILE_KEY = 'guidevault.localLoginProfile.v1';
 const GUIDEVAULT_READING_PROFILES_KEY = 'guidevault.readingProfiles.v1';
 const GUIDEVAULT_OPDS_SETTINGS_KEY = 'guidevault.opdsSettings.v1';
@@ -6299,6 +6301,51 @@ function metadataManagerIsUnsortedStrategyGuide(item) {
   return buckets.some(v => /^unsorted(?: strategy guides)?$/i.test(v));
 }
 
+
+function metadataManagerSearchText(item) {
+  if (!item) return '';
+  const cacheKey = [
+    item.id, item.Id, item.updatedAt, item.modified, item.metadataSource,
+    item.title, item.manualTitle, item.gameTitle, item.magazineTitle,
+    item.kind, item.publisher, item.gamePublisher, item.year,
+    item.languageTag, item.region, item.series, item.franchise,
+    item.category, item.system, item.primarySystem,
+    item.summary
+  ].join('|');
+
+  if (item.__metadataManagerSearchKey === cacheKey && item.__metadataManagerSearchText) {
+    return item.__metadataManagerSearchText;
+  }
+
+  const text = [
+    metadataManagerItemName(item),
+    item.title,
+    item.kind,
+    metadataManagerCategoryValue(item),
+    metadataManagerSeriesValue(item),
+    item.publisher,
+    item.gamePublisher,
+    item.year,
+    item.languageTag,
+    item.region,
+    metadataManagerTopicValue(item),
+    platformListText(item),
+    item.metadataSource,
+    item.summary,
+    ...(item.tags || [])
+  ].join(' ').toLowerCase();
+
+  try {
+    Object.defineProperty(item, '__metadataManagerSearchKey', { value: cacheKey, writable: true, configurable: true });
+    Object.defineProperty(item, '__metadataManagerSearchText', { value: text, writable: true, configurable: true });
+  } catch {
+    item.__metadataManagerSearchKey = cacheKey;
+    item.__metadataManagerSearchText = text;
+  }
+
+  return text;
+}
+
 function metadataManagerEditableItems() {
   const allowed = new Set(['Manual', 'Strategy Guide', 'Magazine']);
   const manager = state.metadataManager || {};
@@ -6320,10 +6367,7 @@ function metadataManagerEditableItems() {
     if (missing === 'missing-topics' && metadataManagerTopicValue(item).trim()) return false;
     if (missing === 'unsorted-strategy-guides' && !metadataManagerIsUnsortedStrategyGuide(item)) return false;
     if (missing === 'multi-platform-strategy-guides' && !metadataManagerIsMultiPlatformStrategyGuide(item)) return false;
-    if (q) {
-      const haystack = [metadataManagerItemName(item), item.title, item.kind, metadataManagerCategoryValue(item), metadataManagerSeriesValue(item), item.publisher, item.gamePublisher, item.year, item.languageTag, item.region, metadataManagerTopicValue(item), platformListText(item), item.metadataSource, item.summary, ...(item.tags || [])].join(' ').toLowerCase();
-      if (!haystack.includes(q)) return false;
-    }
+    if (q && !metadataManagerSearchText(item).includes(q)) return false;
     return true;
   }).sort((a, b) => metadataManagerItemName(a).localeCompare(metadataManagerItemName(b), undefined, { sensitivity: 'base' }));
 }
@@ -6675,8 +6719,10 @@ function metadataManagerNormalizedPayload(item) {
 function renderMetadataManager() {
   if (!$('settingsMetadataManagerPanel')) return;
   state.metadataManager = state.metadataManager || { selectedIds: [], dirty: {}, filterKind: '', search: '', missing: '', category: '', visibleColumns: [] };
-  metadataManagerRenderCategoryFilter();
-  renderMetadataManagerColumnPicker();
+  const categorySelect = $('metadataManagerCategory');
+  if (categorySelect && !categorySelect.options.length) metadataManagerRenderCategoryFilter();
+  const columnPicker = $('metadataManagerColumnPicker');
+  if (columnPicker && !columnPicker.childElementCount) renderMetadataManagerColumnPicker();
   const manager = state.metadataManager;
   if ($('metadataManagerSearch')) $('metadataManagerSearch').value = manager.search || '';
   if ($('metadataManagerKind')) $('metadataManagerKind').value = manager.filterKind || '';
@@ -6686,6 +6732,8 @@ function renderMetadataManager() {
   const selectedSet = new Set(manager.selectedIds || []);
   const dirty = manager.dirty || {};
   const columns = metadataManagerVisibleColumns();
+  const renderLimit = METADATA_MANAGER_RENDER_LIMIT;
+  const renderedItems = items.slice(0, renderLimit);
   const summary = $('metadataManagerSummary');
   if (summary) {
     summary.innerHTML = metadataManagerSummaryStats(items).map(([label, value]) => `<div class="metadata-manager-stat"><span>${escapeHtml(label)}</span><strong>${escapeHtml(value)}</strong></div>`).join('');
@@ -6699,7 +6747,7 @@ function renderMetadataManager() {
   }
   const body = $('metadataManagerTableBody');
   if (body) {
-    body.innerHTML = items.length ? items.map(item => {
+    body.innerHTML = items.length ? renderedItems.map(item => {
       const id = metadataManagerItemId(item);
       const rowDirty = dirty[id] || {};
       const rowClass = Object.keys(rowDirty).length ? ' class="metadata-row-dirty"' : '';
@@ -6716,21 +6764,39 @@ function renderMetadataManager() {
         <td><input class="metadata-manager-row-check" type="checkbox" data-id="${escapeForAttribute(id)}" ${selectedSet.has(id) ? 'checked' : ''} /></td>
         ${columns.map(column => `<td>${cellFor(column)}</td>`).join('')}
       </tr>`;
-    }).join('') : `<tr><td colspan="${columns.length + 1}" class="metadata-manager-empty">No metadata entries match this filter.</td></tr>`;
+    }).join('') + (items.length > renderedItems.length ? `<tr><td colspan="${columns.length + 1}" class="metadata-manager-empty">Showing ${renderedItems.length} of ${items.length} matching entries. Narrow the search or filters to edit a smaller set.</td></tr>` : '') : `<tr><td colspan="${columns.length + 1}" class="metadata-manager-empty">No metadata entries match this filter.</td></tr>`;
   }
-  if ($('metadataManagerCount')) $('metadataManagerCount').textContent = `${items.length} visible / ${(state.items || []).filter(i => ['Manual','Strategy Guide','Magazine'].includes(i.kind)).length} editable entries`;
+  if ($('metadataManagerCount')) $('metadataManagerCount').textContent = `${renderedItems.length} rendered / ${items.length} matched / ${(state.items || []).filter(i => ['Manual','Strategy Guide','Magazine'].includes(i.kind)).length} editable entries`;
   if ($('metadataManagerDirtyCount')) $('metadataManagerDirtyCount').textContent = `${Object.keys(dirty).length} edited`;
   const headerCheck = $('metadataManagerHeaderCheck');
   if (headerCheck) {
     headerCheck.addEventListener('change', e => metadataManagerSelectVisible(!!e.currentTarget.checked));
-    const visibleIds = items.map(metadataManagerItemId).filter(Boolean);
+    const visibleIds = renderedItems.map(metadataManagerItemId).filter(Boolean);
     headerCheck.checked = visibleIds.length > 0 && visibleIds.every(id => selectedSet.has(id));
   }
+}
+
+
+function metadataManagerScheduleRender(delay = METADATA_MANAGER_SEARCH_DEBOUNCE_MS) {
+  state.metadataManager = state.metadataManager || {};
+  if (state.metadataManager.renderTimer) clearTimeout(state.metadataManager.renderTimer);
+  state.metadataManager.renderTimer = setTimeout(() => {
+    state.metadataManager.renderTimer = null;
+    renderMetadataManager();
+  }, Math.max(0, Number(delay) || 0));
 }
 
 function metadataManagerUpdateFilter(field, value) {
   state.metadataManager = state.metadataManager || {};
   state.metadataManager[field] = value;
+  if (field === 'search') {
+    metadataManagerSetStatus(value ? 'Searching metadata...' : '', '');
+    metadataManagerScheduleRender();
+    return;
+  }
+  if (field === 'filterKind' || field === 'missing' || field === 'category') {
+    state.metadataManager.selectedIds = [];
+  }
   renderMetadataManager();
 }
 
@@ -7134,7 +7200,7 @@ function manualOverviewHtml(item) {
   const identityTags = [manualType, systemLabel, item.year].filter(Boolean);
   const rating = String(item?.rating || '').trim();
   const esrbLabel = esrbDisplayLabel(rating);
-  const esrbHtml = `<img class="manual-hero-esrb" src="${escapeHtml(esrbIconUrl(rating))}" alt="${escapeHtml(esrbLabel)}" title="${escapeHtml(esrbLabel)}" onerror="this.onerror=null;this.src='/assets/ESRB/ratednone.png';" />`;
+  const esrbHtml = `<img class="manual-hero-esrb" src="${escapeHtml(esrbIconUrl(rating))}" alt="${escapeHtml(esrbLabel)}" title="${escapeHtml(esrbLabel)}" onerror="this.onerror=null;this.src='/assets/ESRB/RatedNone.png';" />`;
   return `
     <div class="manual-hero-overview has-hero-esrb">
       <div class="manual-hero-copy">
@@ -7195,7 +7261,7 @@ function strategyOverviewHtml(item) {
   const showEsrb = isEsrbIconEligible(item);
   const esrbLabel = esrbDisplayLabel(rating);
   const esrbHtml = showEsrb
-    ? `<img class="strategy-hero-esrb" src="${escapeHtml(esrbIconUrl(rating))}" alt="${escapeHtml(esrbLabel)}" title="${escapeHtml(esrbLabel)}" onerror="this.onerror=null;this.src='/assets/ESRB/ratednone.png';" />`
+    ? `<img class="strategy-hero-esrb" src="${escapeHtml(esrbIconUrl(rating))}" alt="${escapeHtml(esrbLabel)}" title="${escapeHtml(esrbLabel)}" onerror="this.onerror=null;this.src='/assets/ESRB/RatedNone.png';" />`
     : '';
   return `
     <div class="strategy-hero-overview${showEsrb ? ' has-hero-esrb' : ''}">
@@ -7324,8 +7390,8 @@ function esrbIconUrl(value) {
     rp: 'ratedrp.png',
     ec: 'ratedec.png',
     ka: 'ratedka.png',
-    none: 'ratednone.png'
-  }[key] || 'ratednone.png';
+    none: 'RatedNone.png'
+  }[key] || 'RatedNone.png';
   return `/assets/ESRB/${file}`;
 }
 
@@ -7362,7 +7428,7 @@ function updateDetailEsrbIcon(item) {
   icon.src = esrbIconUrl(rating);
   icon.title = esrbDisplayLabel(rating);
   icon.onerror = () => {
-    if (!icon.src.endsWith('/ratednone.png')) icon.src = '/assets/ESRB/ratednone.png';
+    if (!icon.src.endsWith('/RatedNone.png')) icon.src = '/assets/ESRB/RatedNone.png';
   };
 }
 
@@ -11407,7 +11473,7 @@ if ($('metadataManagerSearch')) $('metadataManagerSearch').addEventListener('inp
 if ($('metadataManagerKind')) $('metadataManagerKind').addEventListener('change', e => metadataManagerUpdateFilter('filterKind', e.currentTarget.value));
 if ($('metadataManagerMissing')) $('metadataManagerMissing').addEventListener('change', e => metadataManagerUpdateFilter('missing', e.currentTarget.value));
 if ($('metadataManagerCategory')) $('metadataManagerCategory').addEventListener('change', e => metadataManagerUpdateFilter('category', e.currentTarget.value));
-if ($('metadataManagerRefresh')) $('metadataManagerRefresh').addEventListener('click', () => { renderMetadataManager(); metadataManagerSetStatus('Metadata grid refreshed.', 'success'); });
+if ($('metadataManagerRefresh')) $('metadataManagerRefresh').addEventListener('click', () => { const picker = $('metadataManagerColumnPicker'); if (picker) picker.innerHTML = ''; const cat = $('metadataManagerCategory'); if (cat) cat.innerHTML = ''; renderMetadataManager(); metadataManagerSetStatus('Metadata grid refreshed.', 'success'); });
 if ($('metadataManagerSelectAll')) $('metadataManagerSelectAll').addEventListener('click', () => metadataManagerSelectVisible(true));
 if ($('metadataManagerClearSelection')) $('metadataManagerClearSelection').addEventListener('click', () => { state.metadataManager.selectedIds = []; renderMetadataManager(); });
 if ($('metadataManagerApplyBatch')) $('metadataManagerApplyBatch').addEventListener('click', async () => { try { await metadataManagerApplyBatch(); } catch (err) { console.error(err); metadataManagerSetStatus(`Batch apply failed: ${err?.message || err}`, 'error'); } });

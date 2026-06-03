@@ -1781,7 +1781,8 @@ public sealed class SystemInfoRecord
 
 public sealed class StableUpdateChecker
 {
-    private const string DefaultStableFeedUrl = "https://api.github.com/repos/Shredder5262/guidevault/releases/latest";
+    private const string DefaultStableFeedUrl = "https://api.github.com/repos/Shredder5262/GuideVault/releases/latest";
+    private const string DefaultTagFeedUrl = "https://api.github.com/repos/Shredder5262/GuideVault/tags";
     private const string DefaultReleaseUrl = "https://github.com/Shredder5262/guidevault/releases/latest";
     private const string DefaultPackageUrl = "https://github.com/Shredder5262/GuideVault/pkgs/container/guidevault";
     private static readonly HttpClient Http = CreateHttpClient();
@@ -1828,13 +1829,14 @@ public sealed class StableUpdateChecker
         StableUpdateResult result;
         try
         {
-            using var request = new HttpRequestMessage(HttpMethod.Get, feedUrl);
-            request.Headers.CacheControl = new CacheControlHeaderValue { NoCache = force };
-            using var response = await Http.SendAsync(request, HttpCompletionOption.ResponseHeadersRead);
-            response.EnsureSuccessStatusCode();
-            await using var stream = await response.Content.ReadAsStreamAsync();
-            using var doc = await JsonDocument.ParseAsync(stream);
+            var fetched = await FetchUpdateJsonAsync(feedUrl, force);
+            using var doc = fetched.Document;
+            var feedUrlUsed = fetched.Url;
             var root = doc.RootElement;
+            if (root.ValueKind == JsonValueKind.Array)
+            {
+                root = root.GetArrayLength() > 0 ? root[0] : throw new InvalidOperationException("The update feed returned an empty release/tag list.");
+            }
             var latestVersion = ReadString(root, "version", "latestVersion", "stableVersion", "tag", "tag_name", "name");
             var image = ReadString(root, "image", "containerImage", "dockerImage") ?? currentImage;
             var releaseUrl = FirstNonEmpty(ReadString(root, "url", "releaseUrl", "releasePath", "htmlUrl", "html_url"), releaseUrlFallback);
@@ -1850,7 +1852,7 @@ public sealed class StableUpdateChecker
                 CurrentImage = currentImage,
                 LatestVersion = NormalizeVersion(latestVersion),
                 LatestImage = image ?? string.Empty,
-                FeedUrl = feedUrl,
+                FeedUrl = feedUrlUsed,
                 ReleaseUrl = releaseUrl,
                 ReleasePath = releaseUrl,
                 PackageUrl = packageUrl,
@@ -1873,6 +1875,7 @@ public sealed class StableUpdateChecker
                 Channel = channel,
                 CurrentVersion = _currentVersion,
                 CurrentImage = currentImage,
+                LatestVersion = _currentVersion,
                 LatestImage = currentImage,
                 FeedUrl = feedUrl,
                 ReleaseUrl = releaseUrlFallback,
@@ -1891,6 +1894,42 @@ public sealed class StableUpdateChecker
             _cachedAt = DateTimeOffset.UtcNow;
         }
         return result;
+    }
+
+    private static async Task<(JsonDocument Document, string Url)> FetchUpdateJsonAsync(string feedUrl, bool force)
+    {
+        var first = await SendUpdateRequestAsync(feedUrl, force);
+        if (first.IsSuccessStatusCode)
+        {
+            await using var stream = await first.Content.ReadAsStreamAsync();
+            return (await JsonDocument.ParseAsync(stream), feedUrl);
+        }
+
+        var firstStatus = (int)first.StatusCode;
+        first.Dispose();
+
+        if (!string.Equals(feedUrl, DefaultTagFeedUrl, StringComparison.OrdinalIgnoreCase))
+        {
+            var fallback = await SendUpdateRequestAsync(DefaultTagFeedUrl, force);
+            if (fallback.IsSuccessStatusCode)
+            {
+                await using var stream = await fallback.Content.ReadAsStreamAsync();
+                return (await JsonDocument.ParseAsync(stream), DefaultTagFeedUrl);
+            }
+
+            var fallbackStatus = (int)fallback.StatusCode;
+            fallback.Dispose();
+            throw new HttpRequestException($"Release feed returned HTTP {firstStatus}; tag feed returned HTTP {fallbackStatus}.");
+        }
+
+        throw new HttpRequestException($"Update feed returned HTTP {firstStatus}.");
+    }
+
+    private static Task<HttpResponseMessage> SendUpdateRequestAsync(string url, bool force)
+    {
+        var request = new HttpRequestMessage(HttpMethod.Get, url);
+        request.Headers.CacheControl = new CacheControlHeaderValue { NoCache = force };
+        return Http.SendAsync(request, HttpCompletionOption.ResponseHeadersRead);
     }
 
     private static HttpClient CreateHttpClient()
