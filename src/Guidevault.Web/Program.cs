@@ -13,7 +13,7 @@ using System.Net.Http.Headers;
 using SharpCompress.Readers;
 
 var builder = WebApplication.CreateBuilder(args);
-const string GuidevaultVersion = "0.9.54";
+const string GuidevaultVersion = "0.9.55";
 var app = builder.Build();
 var metadataJsonOptions = new JsonSerializerOptions(JsonSerializerDefaults.Web) { PropertyNameCaseInsensitive = true };
 var options = app.Configuration.GetSection("Guidevault").Get<GuidevaultOptions>() ?? new GuidevaultOptions();
@@ -6271,24 +6271,50 @@ public static class GuidevaultNativeMetadata
     public static string SanitizeSuggestedFileName(string suggestedFileName, string fallbackFileName)
     {
         var currentExtension = Path.GetExtension(fallbackFileName ?? string.Empty);
-        var leaf = Path.GetFileName(suggestedFileName ?? string.Empty);
-        if (string.IsNullOrWhiteSpace(leaf)) leaf = Path.GetFileName(fallbackFileName ?? string.Empty);
+        if (string.IsNullOrWhiteSpace(currentExtension))
+            currentExtension = Path.GetExtension(suggestedFileName ?? string.Empty);
 
-        var baseName = Path.GetFileNameWithoutExtension(leaf);
+        var rawLeaf = (suggestedFileName ?? string.Empty).Trim();
+        // Guidevault often runs inside a Linux container against a Windows-hosted
+        // library. Path.GetInvalidFileNameChars() is platform-specific, so on Linux
+        // it does not reject Windows-only characters such as ':' or '?'. Always use
+        // a Windows-safe policy for source-file renames so bind-mounted libraries do
+        // not end up with 8.3/short-name aliases such as SQBRU6~B.CBZ.
+        rawLeaf = rawLeaf.Replace('\\', '/');
+        rawLeaf = rawLeaf.Split('/', StringSplitOptions.RemoveEmptyEntries).LastOrDefault() ?? rawLeaf;
+        if (string.IsNullOrWhiteSpace(rawLeaf)) rawLeaf = Path.GetFileName(fallbackFileName ?? string.Empty);
+
+        var baseName = Path.GetFileNameWithoutExtension(rawLeaf);
         if (string.IsNullOrWhiteSpace(baseName)) baseName = Path.GetFileNameWithoutExtension(fallbackFileName ?? string.Empty);
         if (string.IsNullOrWhiteSpace(baseName)) baseName = "Guidevault Metadata";
 
-        foreach (var invalid in Path.GetInvalidFileNameChars())
-            baseName = baseName.Replace(invalid, '-');
-
-        baseName = Regex.Replace(baseName, @"\s+", " ");
-        baseName = Regex.Replace(baseName, @"\s+-\s+", " - ");
-        baseName = baseName.Trim().Trim('.', '-').Trim();
+        baseName = ToWindowsSafeFileNameBase(baseName);
         if (string.IsNullOrWhiteSpace(baseName)) baseName = "Guidevault Metadata";
 
         var maxBaseLength = Math.Max(16, 180 - currentExtension.Length);
-        if (baseName.Length > maxBaseLength) baseName = baseName[..maxBaseLength].Trim().Trim('.', '-').Trim();
+        if (baseName.Length > maxBaseLength)
+            baseName = ToWindowsSafeFileNameBase(baseName[..maxBaseLength]);
+        if (string.IsNullOrWhiteSpace(baseName)) baseName = "Guidevault Metadata";
+
         return $"{baseName}{currentExtension}";
+    }
+
+    private static string ToWindowsSafeFileNameBase(string baseName)
+    {
+        var value = baseName ?? string.Empty;
+        value = value.Replace('â€“', '-').Replace('â€”', '-');
+        value = Regex.Replace(value, "[\\/:*?\"<>|]+", " - ");
+        value = Regex.Replace(value, "[\u0000-\u001F]+", " ");
+        value = Regex.Replace(value, @"\s+", " ");
+        value = Regex.Replace(value, @"\s*-\s*", " - ");
+        value = Regex.Replace(value, @"(?:\s+-\s+){2,}", " - ");
+        value = value.Trim().Trim('.', '-').Trim();
+
+        // Avoid Windows reserved device names even when an extension is present.
+        if (Regex.IsMatch(value, @"^(CON|PRN|AUX|NUL|COM[1-9]|LPT[1-9])$", RegexOptions.IgnoreCase))
+            value = $"{value} File";
+
+        return value;
     }
 
     private static bool IsEmptyValue(object? value)
@@ -7289,6 +7315,6 @@ public static class ArchiveReader
 
 static class GuidevaultBuildInfo
 {
-    public const string Version = "0.9.54";
+    public const string Version = "0.9.55";
 }
 

@@ -4,7 +4,7 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Guidevault</title>
-  <link rel="stylesheet" href="/styles.css?v=0.9.54-filename-preview-target" />
+  <link rel="stylesheet" href="/styles.css?v=0.9.55-windows-safe-filename" />
 </head>
 <body class="right-collapsed auth-locked">
   <section id="loginView" class="login-view" aria-labelledby="loginTitle">
@@ -1391,6 +1391,20 @@
             <div class="system-update-list">
               <details class="system-update-entry" open>
                 <summary>
+                  <span>Guidevault 0.9.54 - Windows-Safe Filename Sanitizing</span>
+                  <em>Installed</em>
+                </summary>
+                <div class="system-update-body">
+                  <h3>Fixed <b>3</b></h3>
+                  <ul>
+                    <li>Filename renames now use Windows-safe sanitizing even when Guidevault is running inside a Linux Docker container.</li>
+                    <li>Characters Windows does not allow in filenames, including colons in titles like <em>Silent Hill 4: The Room</em>, are converted to readable separators before renaming.</li>
+                    <li>Added extra guards for reserved Windows device names and control characters.</li>
+                  </ul>
+                </div>
+              </details>
+              <details class="system-update-entry" open>
+                <summary>
                   <span>Guidevault 0.9.53 - Filename Rename Preview Target</span>
                   <em>Installed</em>
                 </summary>
@@ -2575,7 +2589,7 @@
   </dialog>
 
 
-  <script src="/app.js?v=0.9.54-filename-preview-target"></script>
+  <script src="/app.js?v=0.9.55-windows-safe-filename"></script>
 </body>
 </html>
 

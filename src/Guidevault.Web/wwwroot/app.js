@@ -61,7 +61,7 @@ const GUIDEVAULT_READING_ACTIVITY_KEY = 'guidevault.readingActivity.v1';
 const GUIDEVAULT_CATEGORY_STRUCTURE_KEY = 'guidevault.categoryStructure.v1';
 const GUIDEVAULT_COVER_SIZE_KEY = 'guidevault.libraryCoverSize.v1';
 const GUIDEVAULT_FAVORITES_KEY = 'guidevault.favorites.v1';
-const GUIDEVAULT_APP_VERSION = '0.9.54';
+const GUIDEVAULT_APP_VERSION = '0.9.55';
 const GUIDEVAULT_FILENAME_SCHEMA_KEY = 'guidevault.filenameRename.schema.v1';
 const GUIDEVAULT_DEFAULT_FILENAME_SCHEMA = '{title}';
 const GUIDEVAULT_STABLE_TAG_FEED_URL = 'https://api.github.com/repos/Shredder5262/GuideVault/tags';
@@ -6371,13 +6371,20 @@ function metadataExportSlug(value = '') {
 }
 
 function metadataExportSafeFileName(value = '') {
-  return String(value || 'Guidevault Metadata')
+  let name = String(value || 'Guidevault Metadata')
     .replace(/[\\/:*?"<>|]+/g, ' - ')
+    .replace(/[\u0000-\u001F]+/g, ' ')
     .replace(/\s+/g, ' ')
-    .replace(/\s+-\s+/g, ' - ')
+    .replace(/\s*-\s*/g, ' - ')
+    .replace(/(?:\s+-\s+){2,}/g, ' - ')
     .trim()
+    .replace(/^[-_.| ]+|[-_.| ]+$/g, '')
     .replace(/[. ]+$/g, '')
-    .slice(0, 160) || 'Guidevault Metadata';
+    .slice(0, 160)
+    .trim()
+    .replace(/^[-_.| ]+|[-_.| ]+$/g, '');
+  if (/^(CON|PRN|AUX|NUL|COM[1-9]|LPT[1-9])$/i.test(name)) name = `${name} File`;
+  return name || 'Guidevault Metadata';
 }
 
 function metadataExportTitleFromMetadata(metadata = {}, item = {}) {
