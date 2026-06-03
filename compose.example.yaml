@@ -8,11 +8,14 @@ services:
     environment:
       ASPNETCORE_URLS: "http://+:5478"
       ASPNETCORE_HTTP_PORTS: "5478"
+
       GUIDEVAULT_DATA: "/data"
       PAGEQUEST__DATA__ROOT: "/data"
-      PAGEQUEST__UPDATES__CHANNEL: "stable"
-      PAGEQUEST__UPDATES__CURRENTIMAGE: "ghcr.io/shredder5262/guidevault:latest"
+
+      GUIDEVAULT_LIBRARY_PATH: "/data/library"
+      PAGEQUEST_LIBRARY_PATH: "/data/library"
+
+      GUIDEVAULT__UPDATES__CHANNEL: "stable"
+      GUIDEVAULT__UPDATES__CURRENTIMAGE: "ghcr.io/shredder5262/guidevault:latest"
     volumes:
       - "./guidevault-data:/data"
-      # Optional: map your library read-only when you are ready.
-      # - "D:/Digital Literature:/library:ro"

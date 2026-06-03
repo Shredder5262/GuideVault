@@ -52,7 +52,7 @@ const GUIDEVAULT_READING_ACTIVITY_KEY = 'guidevault.readingActivity.v1';
 const GUIDEVAULT_CATEGORY_STRUCTURE_KEY = 'guidevault.categoryStructure.v1';
 const GUIDEVAULT_COVER_SIZE_KEY = 'guidevault.libraryCoverSize.v1';
 const GUIDEVAULT_FAVORITES_KEY = 'guidevault.favorites.v1';
-const GUIDEVAULT_APP_VERSION = '0.9.31';
+const $10.9.40';
 const GUIDEVAULT_DEVICE_HEARTBEAT_MS = 120000;
 const GUIDEVAULT_UPDATE_CHECK_MS = 30 * 60 * 1000;
 const fmtBytes = n => n > 1024 ** 3 ? `${(n / 1024 ** 3).toFixed(1)} GB` : `${(n / 1024 ** 2).toFixed(1)} MB`;
@@ -10806,3 +10806,4 @@ pollTasks(false);
 installLibraryCardDelegates();
 installGlobalDetailDelegate();
 initializeGuidevaultAuthAndApp();
+

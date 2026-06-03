@@ -1,18 +1,30 @@
-# PageQuest first-version container
+# syntax=docker/dockerfile:1
+
 FROM mcr.microsoft.com/dotnet/sdk:8.0 AS build
 WORKDIR /src
-COPY PageQuest.sln ./
-COPY src/PageQuest.Web/PageQuest.Web.csproj src/PageQuest.Web/
-RUN dotnet restore src/PageQuest.Web/PageQuest.Web.csproj
+
 COPY . .
-RUN dotnet publish src/PageQuest.Web/PageQuest.Web.csproj -c Release -o /app/publish /p:UseAppHost=false
+RUN dotnet restore "src/Guidevault.Web/Guidevault.Web.csproj"
+RUN dotnet publish "src/Guidevault.Web/Guidevault.Web.csproj" \
+    -c Release \
+    -o /app/publish \
+    /p:UseAppHost=false
 
 FROM mcr.microsoft.com/dotnet/aspnet:8.0 AS runtime
 WORKDIR /app
+
 ENV ASPNETCORE_URLS=http://+:5478
-ENV PAGEQUEST_LIBRARY_PATH=/app/data/library
-RUN mkdir -p /app/data/library
+ENV ASPNETCORE_HTTP_PORTS=5478
+ENV GUIDEVAULT_DATA=/data
+ENV PAGEQUEST__DATA__ROOT=/data
+ENV GUIDEVAULT_LIBRARY_PATH=/data/library
+ENV PAGEQUEST_LIBRARY_PATH=/data/library
+
+RUN mkdir -p /data/library
+
 COPY --from=build /app/publish .
+
 EXPOSE 5478
-VOLUME ["/app/data"]
-ENTRYPOINT ["dotnet", "PageQuest.Web.dll"]
+VOLUME ["/data"]
+
+ENTRYPOINT ["dotnet", "Guidevault.Web.dll"]

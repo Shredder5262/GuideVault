@@ -5780,5 +5780,6 @@ public static class ArchiveReader
 
 static class GuidevaultBuildInfo
 {
-    public const string Version = "0.9.31";
+    $10.9.40";
 }
+
