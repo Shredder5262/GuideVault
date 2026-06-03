@@ -131,7 +131,7 @@ app.MapPost("/api/system/performance/trim", () =>
     return Results.Ok(new { trimmed = true, capturedAt = DateTimeOffset.UtcNow });
 });
 
-app.MapGet("/api/system/update-check", async () => Results.Ok(await updateChecker.CheckAsync()));
+app.MapGet("/api/system/update-check", async (bool force = false) => Results.Ok(await updateChecker.CheckAsync(force)));
 
 app.MapGet("/api/server/settings", () => Results.Ok(serverSettingsStore.GetSnapshot()));
 
@@ -1781,7 +1781,10 @@ public sealed class SystemInfoRecord
 
 public sealed class StableUpdateChecker
 {
-    private static readonly HttpClient Http = new() { Timeout = TimeSpan.FromSeconds(8) };
+    private const string DefaultStableFeedUrl = "https://api.github.com/repos/Shredder5262/guidevault/releases/latest";
+    private const string DefaultReleaseUrl = "https://github.com/Shredder5262/guidevault/releases/latest";
+    private const string DefaultPackageUrl = "https://github.com/Shredder5262/GuideVault/pkgs/container/guidevault";
+    private static readonly HttpClient Http = CreateHttpClient();
     private readonly UpdateOptions _options;
     private readonly string _currentVersion;
     private readonly object _gate = new();
@@ -1794,48 +1797,49 @@ public sealed class StableUpdateChecker
         _currentVersion = string.IsNullOrWhiteSpace(currentVersion) ? "0.0.0" : currentVersion.Trim();
     }
 
-    public async Task<StableUpdateResult> CheckAsync()
+    public async Task<StableUpdateResult> CheckAsync(bool force = false)
     {
         var feedUrl = FirstNonEmpty(
             Environment.GetEnvironmentVariable("GUIDEVAULT_STABLE_UPDATE_FEED_URL"),
             Environment.GetEnvironmentVariable("GUIDEVAULT_UPDATE_FEED_URL"),
-            _options.StableFeedUrl);
+            Environment.GetEnvironmentVariable("GUIDEVAULT_RELEASE_API_URL"),
+            _options.StableFeedUrl,
+            DefaultStableFeedUrl);
         var channel = FirstNonEmpty(Environment.GetEnvironmentVariable("GUIDEVAULT_UPDATE_CHANNEL"), _options.Channel, "stable");
-        var currentImage = FirstNonEmpty(Environment.GetEnvironmentVariable("GUIDEVAULT_IMAGE"), _options.CurrentImage);
+        var currentImage = FirstNonEmpty(Environment.GetEnvironmentVariable("GUIDEVAULT_IMAGE"), _options.CurrentImage, "ghcr.io/shredder5262/guidevault:latest");
+        var releaseUrlFallback = FirstNonEmpty(
+            Environment.GetEnvironmentVariable("GUIDEVAULT_RELEASE_URL"),
+            Environment.GetEnvironmentVariable("GUIDEVAULT_RELEASE_PATH"),
+            _options.ReleaseUrl,
+            _options.ReleasePath,
+            DefaultReleaseUrl);
+        var packageUrl = FirstNonEmpty(
+            Environment.GetEnvironmentVariable("GUIDEVAULT_PACKAGE_URL"),
+            _options.PackageUrl,
+            DefaultPackageUrl);
         var cacheMinutes = Math.Clamp(_options.CheckCacheMinutes <= 0 ? 15 : _options.CheckCacheMinutes, 1, 240);
-
-        if (string.IsNullOrWhiteSpace(feedUrl))
-        {
-            return new StableUpdateResult
-            {
-                Configured = false,
-                Channel = channel,
-                CurrentVersion = _currentVersion,
-                CurrentImage = currentImage,
-                Status = "not-configured",
-                Message = "Stable update notifications are disabled until a stable update feed URL is configured."
-            };
-        }
 
         lock (_gate)
         {
-            if (_cached is not null && DateTimeOffset.UtcNow - _cachedAt < TimeSpan.FromMinutes(cacheMinutes))
-                return _cached;
+            if (!force && _cached is not null && DateTimeOffset.UtcNow - _cachedAt < TimeSpan.FromMinutes(cacheMinutes))
+                return _cached with { Forced = false };
         }
 
         StableUpdateResult result;
         try
         {
-            using var response = await Http.GetAsync(feedUrl, HttpCompletionOption.ResponseHeadersRead);
+            using var request = new HttpRequestMessage(HttpMethod.Get, feedUrl);
+            request.Headers.CacheControl = new CacheControlHeaderValue { NoCache = force };
+            using var response = await Http.SendAsync(request, HttpCompletionOption.ResponseHeadersRead);
             response.EnsureSuccessStatusCode();
             await using var stream = await response.Content.ReadAsStreamAsync();
             using var doc = await JsonDocument.ParseAsync(stream);
             var root = doc.RootElement;
-            var latestVersion = ReadString(root, "version", "latestVersion", "stableVersion", "tag");
-            var image = ReadString(root, "image", "containerImage", "dockerImage");
-            var releaseUrl = ReadString(root, "url", "releaseUrl", "htmlUrl");
-            var publishedAt = ReadDate(root, "publishedAt", "published", "date");
-            var notes = ReadStringArray(root, "notes", "releaseNotes", "changes");
+            var latestVersion = ReadString(root, "version", "latestVersion", "stableVersion", "tag", "tag_name", "name");
+            var image = ReadString(root, "image", "containerImage", "dockerImage") ?? currentImage;
+            var releaseUrl = FirstNonEmpty(ReadString(root, "url", "releaseUrl", "releasePath", "htmlUrl", "html_url"), releaseUrlFallback);
+            var publishedAt = ReadDate(root, "publishedAt", "published", "published_at", "date", "created_at");
+            var notes = ReadStringArray(root, "notes", "releaseNotes", "changes", "body", "description");
             var feedChannel = ReadString(root, "channel") ?? channel;
             var available = IsNewerVersion(latestVersion, _currentVersion);
             result = new StableUpdateResult
@@ -1844,16 +1848,21 @@ public sealed class StableUpdateChecker
                 Channel = feedChannel,
                 CurrentVersion = _currentVersion,
                 CurrentImage = currentImage,
-                LatestVersion = latestVersion ?? string.Empty,
+                LatestVersion = NormalizeVersion(latestVersion),
                 LatestImage = image ?? string.Empty,
-                ReleaseUrl = releaseUrl ?? string.Empty,
+                FeedUrl = feedUrl,
+                ReleaseUrl = releaseUrl,
+                ReleasePath = releaseUrl,
+                PackageUrl = packageUrl,
                 PublishedAt = publishedAt,
                 Notes = notes,
                 UpdateAvailable = available,
+                Forced = force,
+                CheckedAt = DateTimeOffset.UtcNow,
                 Status = available ? "available" : "current",
                 Message = available
-                    ? $"Guidevault {latestVersion} is available on the stable channel."
-                    : "Guidevault is current for the configured stable feed."
+                    ? $"Guidevault {NormalizeVersion(latestVersion)} is available on the {feedChannel} channel."
+                    : $"Guidevault is current for the configured {feedChannel} release path."
             };
         }
         catch (Exception ex)
@@ -1864,8 +1873,15 @@ public sealed class StableUpdateChecker
                 Channel = channel,
                 CurrentVersion = _currentVersion,
                 CurrentImage = currentImage,
+                LatestImage = currentImage,
+                FeedUrl = feedUrl,
+                ReleaseUrl = releaseUrlFallback,
+                ReleasePath = releaseUrlFallback,
+                PackageUrl = packageUrl,
+                Forced = force,
+                CheckedAt = DateTimeOffset.UtcNow,
                 Status = "error",
-                Message = $"Stable update check failed: {ex.Message}"
+                Message = $"Stable update check failed, but the configured release path is available below: {ex.Message}"
             };
         }
 
@@ -1875,6 +1891,14 @@ public sealed class StableUpdateChecker
             _cachedAt = DateTimeOffset.UtcNow;
         }
         return result;
+    }
+
+    private static HttpClient CreateHttpClient()
+    {
+        var client = new HttpClient { Timeout = TimeSpan.FromSeconds(8) };
+        client.DefaultRequestHeaders.UserAgent.ParseAdd("GuidevaultUpdateChecker/1.0");
+        client.DefaultRequestHeaders.Accept.ParseAdd("application/json");
+        return client;
     }
 
     private static string FirstNonEmpty(params string?[] values)
@@ -1913,10 +1937,20 @@ public sealed class StableUpdateChecker
             }
             if (value.ValueKind == JsonValueKind.String)
             {
-                return value.GetString()?.Split('\n', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries).Take(12).ToArray() ?? [];
+                return value.GetString()?
+                    .Split('\n', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries)
+                    .Where(line => !line.StartsWith("#", StringComparison.Ordinal))
+                    .Take(12)
+                    .ToArray() ?? [];
             }
         }
         return [];
+    }
+
+    private static string NormalizeVersion(string? value)
+    {
+        var text = Regex.Match(value ?? string.Empty, @"\d+(?:\.\d+){0,3}").Value;
+        return string.IsNullOrWhiteSpace(text) ? (value ?? string.Empty).Trim() : text;
     }
 
     private static bool IsNewerVersion(string? latest, string current)
@@ -1944,7 +1978,7 @@ public sealed class StableUpdateChecker
     }
 }
 
-public sealed class StableUpdateResult
+public sealed record StableUpdateResult
 {
     public bool Configured { get; set; }
     public string Channel { get; set; } = "stable";
@@ -1952,10 +1986,15 @@ public sealed class StableUpdateResult
     public string CurrentImage { get; set; } = string.Empty;
     public string LatestVersion { get; set; } = string.Empty;
     public string LatestImage { get; set; } = string.Empty;
+    public string FeedUrl { get; set; } = string.Empty;
     public string ReleaseUrl { get; set; } = string.Empty;
+    public string ReleasePath { get; set; } = string.Empty;
+    public string PackageUrl { get; set; } = string.Empty;
     public DateTimeOffset? PublishedAt { get; set; }
+    public DateTimeOffset? CheckedAt { get; set; }
     public string[] Notes { get; set; } = [];
     public bool UpdateAvailable { get; set; }
+    public bool Forced { get; set; }
     public string Status { get; set; } = string.Empty;
     public string Message { get; set; } = string.Empty;
 }
@@ -2875,9 +2914,12 @@ public sealed class GuidevaultOptions
 
 public sealed class UpdateOptions
 {
-    public string StableFeedUrl { get; set; } = string.Empty;
+    public string StableFeedUrl { get; set; } = "https://api.github.com/repos/Shredder5262/guidevault/releases/latest";
+    public string ReleaseUrl { get; set; } = "https://github.com/Shredder5262/guidevault/releases/latest";
+    public string ReleasePath { get; set; } = "https://github.com/Shredder5262/guidevault/releases/latest";
+    public string PackageUrl { get; set; } = "https://github.com/Shredder5262/GuideVault/pkgs/container/guidevault";
     public string Channel { get; set; } = "stable";
-    public string CurrentImage { get; set; } = string.Empty;
+    public string CurrentImage { get; set; } = "ghcr.io/shredder5262/guidevault:latest";
     public int CheckCacheMinutes { get; set; } = 15;
 }
 

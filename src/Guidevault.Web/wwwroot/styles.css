@@ -13158,3 +13158,69 @@ body.profile-page-mode .main{
 
 
 /* v0.9.39 — normalize inline view visibility after profile navigation. */
+
+/* Guidevault 0.9.40 update-check notification polish */
+.system-update-notice-main b{
+  overflow-wrap:anywhere;
+  word-break:break-word;
+}
+.guidevault-update-toast{
+  position:fixed;
+  right:24px;
+  bottom:24px;
+  z-index:10050;
+  display:flex;
+  align-items:center;
+  gap:14px;
+  max-width:min(520px,calc(100vw - 48px));
+  padding:14px 16px;
+  border-radius:16px;
+  background:linear-gradient(180deg,rgba(29,68,119,.96),rgba(12,31,58,.98));
+  box-shadow:0 22px 60px rgba(0,0,0,.42),0 0 0 1px rgba(122,180,255,.42),0 0 30px rgba(47,129,255,.22);
+  color:#edf6ff;
+}
+.guidevault-update-toast.hidden{display:none!important;}
+.guidevault-update-toast-icon{
+  width:38px;
+  height:38px;
+  display:inline-flex;
+  align-items:center;
+  justify-content:center;
+  border-radius:13px;
+  background:rgba(47,129,255,.24);
+  color:#ffffff;
+  font-weight:900;
+  box-shadow:inset 0 0 0 1px rgba(180,220,255,.34);
+}
+.guidevault-update-toast-copy{
+  min-width:0;
+  display:grid;
+  gap:3px;
+  flex:1;
+}
+.guidevault-update-toast-copy strong{font-size:15px;}
+.guidevault-update-toast-copy span{font-size:13px;color:#b9cce4;}
+.guidevault-update-toast-actions{
+  display:flex;
+  gap:8px;
+  align-items:center;
+}
+.guidevault-update-toast-actions button{
+  border:1px solid rgba(140,180,235,.34);
+  border-radius:10px;
+  padding:8px 10px;
+  background:rgba(8,18,34,.42);
+  color:#eaf4ff;
+  font-weight:800;
+  cursor:pointer;
+}
+.guidevault-update-toast-actions button:hover{background:rgba(47,129,255,.28);}
+@media (max-width:720px){
+  .guidevault-update-toast{
+    left:14px;
+    right:14px;
+    bottom:14px;
+    flex-wrap:wrap;
+  }
+  .guidevault-update-toast-actions{width:100%;justify-content:flex-end;}
+}

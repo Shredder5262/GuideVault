@@ -34,6 +34,7 @@
   performanceInfo: null,
   updateCheck: null,
   updateCheckTimer: null,
+  updateToastTimer: null,
   deviceHeartbeatTimer: null
 };
 const $ = id => document.getElementById(id);
@@ -103,6 +104,7 @@ const EMAIL_PROVIDER_PRESETS = {
 };
 const GUIDEVAULT_DEVICE_HEARTBEAT_MS = 120000;
 const GUIDEVAULT_UPDATE_CHECK_MS = 30 * 60 * 1000;
+const GUIDEVAULT_UPDATE_NOTIFIED_VERSION_KEY = 'guidevault.update.notifiedVersion.v1';
 const fmtBytes = n => n > 1024 ** 3 ? `${(n / 1024 ** 3).toFixed(1)} GB` : `${(n / 1024 ** 2).toFixed(1)} MB`;
 const categoryOf = item => item.category || item.system || 'Unsorted';
 const associatedPlatformsOf = item => Array.isArray(item?.associatedPlatforms)
@@ -1628,6 +1630,9 @@ function renderUpdateNotification() {
   setText('systemUpdateCurrent', update?.currentVersion || GUIDEVAULT_APP_VERSION);
   setText('systemUpdateLatest', update?.latestVersion || '—');
   setText('systemUpdateImage', update?.latestImage || update?.currentImage || '—');
+  setText('systemUpdateFeed', update?.feedUrl || '—');
+  setText('systemUpdateReleasePath', update?.releasePath || update?.releaseUrl || '—');
+  setText('systemUpdatePackagePath', update?.packageUrl || '—');
   const notes = $('systemUpdateNotes');
   if (notes) {
     const values = Array.isArray(update?.notes) ? update.notes.filter(Boolean) : [];
@@ -1635,11 +1640,80 @@ function renderUpdateNotification() {
   }
   const link = $('systemUpdateLink');
   if (link) {
-    const url = update?.releaseUrl || '';
+    const url = update?.releaseUrl || update?.releasePath || '';
     link.classList.toggle('hidden', !url);
     if (url) link.href = url;
   }
+  const packageLink = $('systemUpdatePackageLink');
+  if (packageLink) {
+    const url = update?.packageUrl || '';
+    packageLink.classList.toggle('hidden', !url);
+    if (url) packageLink.href = url;
+  }
 }
+
+function notifyStableUpdateAvailable(update) {
+  if (!update?.updateAvailable) return;
+  const version = String(update.latestVersion || 'stable').trim() || 'stable';
+  const key = `${version}|${update.releaseUrl || update.releasePath || ''}`;
+  try {
+    if (localStorage.getItem(GUIDEVAULT_UPDATE_NOTIFIED_VERSION_KEY) === key) return;
+    localStorage.setItem(GUIDEVAULT_UPDATE_NOTIFIED_VERSION_KEY, key);
+  } catch {}
+
+  showStableUpdateToast(update);
+
+  try {
+    if ('Notification' in window && Notification.permission === 'granted') {
+      const notification = new Notification(`Guidevault ${version} is available`, {
+        body: 'A new stable Guidevault release has been published.',
+        tag: `guidevault-update-${version}`
+      });
+      notification.onclick = () => {
+        window.focus();
+        const url = update.releaseUrl || update.releasePath || '';
+        if (url) window.open(url, '_blank', 'noopener,noreferrer');
+      };
+    }
+  } catch {}
+}
+
+function showStableUpdateToast(update) {
+  let toast = $('guidevaultUpdateToast');
+  if (!toast) {
+    toast = document.createElement('div');
+    toast.id = 'guidevaultUpdateToast';
+    toast.className = 'guidevault-update-toast hidden';
+    toast.setAttribute('role', 'status');
+    toast.setAttribute('aria-live', 'polite');
+    document.body.appendChild(toast);
+  }
+  const version = escapeHtml(update?.latestVersion || 'stable');
+  const releaseUrl = update?.releaseUrl || update?.releasePath || '';
+  toast.innerHTML = `
+    <div class="guidevault-update-toast-icon">↥</div>
+    <div class="guidevault-update-toast-copy">
+      <strong>Guidevault ${version} is available</strong>
+      <span>A new stable release has been published.</span>
+    </div>
+    <div class="guidevault-update-toast-actions">
+      ${releaseUrl ? '<button type="button" data-update-toast-action="open">Open release</button>' : ''}
+      <button type="button" data-update-toast-action="dismiss">Dismiss</button>
+    </div>`;
+  toast.classList.remove('hidden');
+
+  toast.querySelector('[data-update-toast-action="open"]')?.addEventListener('click', () => {
+    if (releaseUrl) window.open(releaseUrl, '_blank', 'noopener,noreferrer');
+    toast.classList.add('hidden');
+  });
+  toast.querySelector('[data-update-toast-action="dismiss"]')?.addEventListener('click', () => {
+    toast.classList.add('hidden');
+  });
+
+  if (state.updateToastTimer) window.clearTimeout(state.updateToastTimer);
+  state.updateToastTimer = window.setTimeout(() => toast.classList.add('hidden'), 12000);
+}
+
 
 async function checkStableUpdates(force = false) {
   if (!force && state.updateCheck?.checkedAt && Date.now() - state.updateCheck.checkedAt < GUIDEVAULT_UPDATE_CHECK_MS) {
@@ -1652,6 +1726,7 @@ async function checkStableUpdates(force = false) {
     state.updateCheck = await res.json();
     state.updateCheck.checkedAt = Date.now();
     renderUpdateNotification();
+    notifyStableUpdateAvailable(state.updateCheck);
     return state.updateCheck;
   } catch (err) {
     console.warn('Stable update check failed', err);
@@ -11173,7 +11248,7 @@ if ($('detailClearEntryProfile')) $('detailClearEntryProfile').addEventListener(
 if ($('detailReadingProfileManagePresets')) $('detailReadingProfileManagePresets').addEventListener('click', e => { e.preventDefault(); showSettingsScreen('reading-profiles'); });
 if ($('taskMonitorBtn')) $('taskMonitorBtn').addEventListener('click', e => { e.preventDefault(); setTaskPanelVisible(!state.taskPanelVisible); pollTasks(false); });
 if ($('updateNotifyBtn')) $('updateNotifyBtn').addEventListener('click', e => { e.preventDefault(); showSettingsScreen('info'); setSystemInfoStatus('A stable container image update is available. Pull the new image from your Docker host when ready.', 'success'); });
-if ($('systemCheckUpdates')) $('systemCheckUpdates').addEventListener('click', async e => { e.preventDefault(); setSystemInfoStatus('Checking stable update feed...', 'info'); await checkStableUpdates(true); setSystemInfoStatus(state.updateCheck?.message || 'Update check complete.', state.updateCheck?.updateAvailable ? 'success' : ''); });
+if ($('systemCheckUpdates')) $('systemCheckUpdates').addEventListener('click', async e => { e.preventDefault(); setSystemInfoStatus('Checking stable update feed...', 'info'); if ('Notification' in window && Notification.permission === 'default') { try { await Notification.requestPermission(); } catch {} } await checkStableUpdates(true); setSystemInfoStatus(state.updateCheck?.message || 'Update check complete.', state.updateCheck?.updateAvailable ? 'success' : ''); });
 if ($('systemTrimMemory')) $('systemTrimMemory').addEventListener('click', e => { e.preventDefault(); trimGuidevaultMemory(); });
 document.addEventListener('click', e => {
   const clear = e.target.closest?.('#taskClearBtn');
