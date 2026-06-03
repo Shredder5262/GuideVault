@@ -1,10 +1,10 @@
-﻿<!doctype html>
+<!doctype html>
 <html lang="en">
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Guidevault</title>
-  <link rel="stylesheet" href="/styles.css?v=0.9.41" />
+  <link rel="stylesheet" href="/styles.css?v=0.9.42" />
 </head>
 <body class="right-collapsed auth-locked">
   <section id="loginView" class="login-view" aria-labelledby="loginTitle">
@@ -31,7 +31,7 @@
   <div id="app" class="shell hidden">
     <aside class="sidebar" aria-label="Library navigation">
       <div class="brand wordmark-brand">
-        <button id="leftToggle" class="icon-button menu-button" title="Collapse menu">â˜°</button>
+        <button id="leftToggle" class="icon-button menu-button" title="Collapse menu">&#x2630;</button>
         <img class="brand-wordmark" src="/assets/guidevault-wordmark.png" alt="Guidevault" />
       </div>
       <nav id="mainLibraryNav">
@@ -39,11 +39,11 @@
         <button class="nav" data-view="manual-systems" data-filter="Manual" title="Manuals"><span class="nav-icon homebar-icon"><img src="/assets/icons/homebar/manuals.png" alt="" loading="eager" draggable="false" /></span><span class="nav-label">Manuals</span><em id="countManuals">0</em></button>
         <button class="nav" data-view="guide-systems" data-filter="Strategy Guide" title="Strategy Guides"><span class="nav-icon homebar-icon"><img src="/assets/icons/homebar/strategy_guide.png" alt="" loading="eager" draggable="false" /></span><span class="nav-label">Strategy Guides</span><em id="countGuides">0</em></button>
         <button class="nav" data-view="magazine-series" data-filter="Magazine" title="Magazines"><span class="nav-icon homebar-icon"><img src="/assets/icons/homebar/magazines.png" data-fallback-src="/assets/icons/homebar/magainzes.png" alt="" loading="eager" draggable="false" onerror="if(this.dataset.fallbackUsed!=='1'&&this.dataset.fallbackSrc){this.dataset.fallbackUsed='1';this.src=this.dataset.fallbackSrc}else{this.classList.add('homebar-icon-missing')}" /></span><span class="nav-label">Magazines</span><em id="countMags">0</em></button>
-        <button class="nav" data-view="favorites" data-filter="Favorites" title="Favorites"><span class="nav-icon">â˜…</span><span class="nav-label">Favorites</span><em id="countFavs">0</em></button>
+        <button class="nav" data-view="favorites" data-filter="Favorites" title="Favorites"><span class="nav-icon">&#x2605;</span><span class="nav-label">Favorites</span><em id="countFavs">0</em></button>
         <div id="customSideNavItems" class="custom-side-nav-items" aria-label="Custom side navigation"></div>
       </nav>
       <nav id="settingsSideNav" class="settings-side-nav hidden" aria-label="Settings navigation">
-        <button class="settings-side-back" id="settingsBackToLibrary" type="button">â† Library</button>
+        <button class="settings-side-back" id="settingsBackToLibrary" type="button">&#x2190; Library</button>
         <h3>Settings</h3>
         <button class="settings-nav active" data-settings-tab="account">Account</button>
         <div class="settings-submenu" aria-label="Account settings subsections">
@@ -90,21 +90,21 @@
 
     <main class="main">
       <header class="topbar">
-        <div class="search">âŒ• <input id="search" placeholder="Search guides, manuals, magazines, systems, publishers, tags..." /></div>
-        <button id="updateNotifyBtn" class="icon-button top-icon-button update-notify-button hidden" title="Stable update available" aria-label="Stable update available">â†¥<span id="updateNotifyBadge" class="update-notify-badge hidden">1</span></button>
+        <div class="search">&#x2315; <input id="search" placeholder="Search guides, manuals, magazines, systems, publishers, tags..." /></div>
+        <button id="updateNotifyBtn" class="icon-button top-icon-button update-notify-button hidden" title="Stable update available" aria-label="Stable update available">&#x21A5;<span id="updateNotifyBadge" class="update-notify-badge hidden">1</span></button>
         <div class="task-monitor-wrap">
-          <button id="taskMonitorBtn" class="icon-button top-icon-button task-monitor-button" title="Tasks" aria-label="Tasks">â˜‘<span id="taskMonitorBadge" class="task-monitor-badge hidden">0</span></button>
+          <button id="taskMonitorBtn" class="icon-button top-icon-button task-monitor-button" title="Tasks" aria-label="Tasks">&#x2611;<span id="taskMonitorBadge" class="task-monitor-badge hidden">0</span></button>
           <div id="taskMonitorPanel" class="task-monitor-panel hidden" role="dialog" aria-label="Running tasks">
             <div class="task-panel-title">Tasks</div>
             <div id="taskMonitorList" class="task-monitor-list"><div class="task-empty">No running tasks.</div></div>
           </div>
         </div>
-        <button id="settingsBtn" class="icon-button top-icon-button" title="Settings" aria-label="Settings">âš™</button>
+        <button id="settingsBtn" class="icon-button top-icon-button" title="Settings" aria-label="Settings">&#x2699;</button>
         <div class="top-user-wrap">
           <button id="userMenuBtn" class="top-user-button" type="button" aria-haspopup="menu" aria-expanded="false" title="Guidevault user menu">
             <span id="topUserAvatar" class="top-user-avatar">GV</span>
             <span id="topCurrentUser" class="top-user-name">User</span>
-            <span class="top-user-caret" aria-hidden="true">â–¾</span>
+            <span class="top-user-caret" aria-hidden="true">&#x25BE;</span>
           </button>
           <div id="userMenuPanel" class="top-user-menu hidden" role="menu" aria-label="User menu">
             <button id="userMenuProfile" type="button" role="menuitem">My Profile</button>
@@ -122,9 +122,9 @@
         <div id="recentGrid" class="card-row hidden"></div>
         <h2 class="section-browse-title">Browse by Content Type</h2>
         <div class="collection-row">
-          <button class="collection blue" data-kind="Manual"><b>â–¤ Manuals</b><span>Instruction booklets and reference materials.</span><em id="manualSummary">0 items</em></button>
-          <button class="collection green" data-kind="Strategy Guide"><b>â–¥ Strategy Guides</b><span>Walkthroughs, maps, secrets, and complete solutions.</span><em id="guideSummary">0 items</em></button>
-          <button class="collection magenta" data-kind="Magazine"><b>â–§ Magazines</b><span>Gaming magazines, previews, reviews, and retro journalism.</span><em id="magSummary">0 items</em></button>
+          <button class="collection blue" data-kind="Manual"><b>&#x25A4; Manuals</b><span>Instruction booklets and reference materials.</span><em id="manualSummary">0 items</em></button>
+          <button class="collection green" data-kind="Strategy Guide"><b>&#x25A5; Strategy Guides</b><span>Walkthroughs, maps, secrets, and complete solutions.</span><em id="guideSummary">0 items</em></button>
+          <button class="collection magenta" data-kind="Magazine"><b>&#x25A7; Magazines</b><span>Gaming magazines, previews, reviews, and retro journalism.</span><em id="magSummary">0 items</em></button>
         </div>
         <h2 id="gridTitle">All Content</h2>
         <div class="library-grid-area">
@@ -139,7 +139,7 @@
       <section id="detailView" class="detail-view hidden">
         <div class="detail-page-shell">
           <div class="detail-page-top">
-            <button id="backToLibraryFromDetails" class="ghost" type="button">â† Library</button>
+            <button id="backToLibraryFromDetails" class="ghost" type="button">&#x2190; Library</button>
             <div class="detail-title-block">
               <h1 id="detailTitle"></h1>
               <div id="detailSub" class="sub"></div>
@@ -192,7 +192,7 @@
                   <label id="editIsbnLabel" class="strategy-metadata-field hidden">ISBN<input id="editIsbn" placeholder="ISBN-10 or ISBN-13" /></label>
                   <label id="editGuideTypeLabel" class="strategy-metadata-field hidden">Guide Type
                     <div class="meta-multi-select" data-multi-select="editGuideType">
-                      <button class="meta-multi-button" type="button" aria-haspopup="listbox" aria-expanded="false"><span class="meta-multi-value">Select one or more</span><span class="meta-multi-caret">â–¾</span></button>
+                      <button class="meta-multi-button" type="button" aria-haspopup="listbox" aria-expanded="false"><span class="meta-multi-value">Select one or more</span><span class="meta-multi-caret">&#x25BE;</span></button>
                       <div class="meta-multi-panel" role="listbox" aria-label="Guide type options"></div>
                     </div>
                     <select id="editGuideType" multiple class="metadata-hidden-select" aria-hidden="true" tabindex="-1">
@@ -212,7 +212,7 @@
                   </label>
                   <label id="editEditionLabel" class="strategy-metadata-field hidden">Edition Type
                     <div class="meta-multi-select" data-multi-select="editEditionType">
-                      <button class="meta-multi-button" type="button" aria-haspopup="listbox" aria-expanded="false"><span class="meta-multi-value">Standard / Unspecified</span><span class="meta-multi-caret">â–¾</span></button>
+                      <button class="meta-multi-button" type="button" aria-haspopup="listbox" aria-expanded="false"><span class="meta-multi-value">Standard / Unspecified</span><span class="meta-multi-caret">&#x25BE;</span></button>
                       <div class="meta-multi-panel" role="listbox" aria-label="Edition type options"></div>
                     </div>
                     <select id="editEditionType" multiple class="metadata-hidden-select" aria-hidden="true" tabindex="-1">
@@ -283,7 +283,7 @@
                     <div class="reading-profile-card-header">
                       <div>
                         <h3>This Series / Category</h3>
-                        <p id="detailReadingProfileGroupLabel" class="sub">Category: â€”</p>
+                        <p id="detailReadingProfileGroupLabel" class="sub">Category: &#x2014;</p>
                       </div>
                     </div>
                     <p class="sub">Assign a profile here when every item in this series or category should read the same way. This layer takes precedence over the individual entry.</p>
@@ -333,10 +333,10 @@
                 <span id="profileReadBadge" class="profile-read-badge">0 Reads</span>
               </div>
               <div class="profile-quick-stats">
-                <span><strong>Joined:</strong> <em id="profileJoined">â€”</em></span>
-                <span><strong>Last Read:</strong> <em id="profileLastRead">â€”</em></span>
-                <span><strong>Total Read Time:</strong> <em id="profileTotalReadTime">â€”</em></span>
-                <span><strong>Avg Per Week:</strong> <em id="profileAvgPerWeek">â€”</em></span>
+                <span><strong>Joined:</strong> <em id="profileJoined">&#x2014;</em></span>
+                <span><strong>Last Read:</strong> <em id="profileLastRead">&#x2014;</em></span>
+                <span><strong>Total Read Time:</strong> <em id="profileTotalReadTime">&#x2014;</em></span>
+                <span><strong>Avg Per Week:</strong> <em id="profileAvgPerWeek">&#x2014;</em></span>
               </div>
             </div>
           </div>
@@ -475,7 +475,7 @@
                     <h3>Profile Presets</h3>
                     <p class="sub">Presets define how the reader opens: page display, transition, background, and zoom.</p>
                   </div>
-                  <button id="readingProfileNewPreset" class="ghost" type="button">ï¼‹ New</button>
+                  <button id="readingProfileNewPreset" class="ghost" type="button">&#xFF0B; New</button>
                 </div>
                 <label for="readingProfilePresetSelect">Preset</label>
                 <select id="readingProfilePresetSelect"></select>
@@ -548,7 +548,7 @@
                 </div>
                 <div class="customize-add-shelf">
                   <select id="customizeShelfSelect" aria-label="Shelf to add"></select>
-                  <button id="customizeAddShelf" class="primary" type="button">ï¼‹ Add Shelf</button>
+                  <button id="customizeAddShelf" class="primary" type="button">&#xFF0B; Add Shelf</button>
                 </div>
               </div>
               <div id="customizeShelfList" class="customize-shelf-list"></div>
@@ -564,7 +564,7 @@
               <div class="side-nav-layout-grid">
                 <section class="side-nav-builder-card">
                   <div class="side-nav-card-heading">
-                    <span class="side-nav-card-icon">â˜·</span>
+                    <span class="side-nav-card-icon">&#x2637;</span>
                     <div>
                       <h3>Create Shortcut</h3>
                       <p class="sub">Name the shortcut and choose how Guidevault should match library items.</p>
@@ -598,13 +598,13 @@
                       <option value="recent">Recently modified</option>
                     </select></label>
                     <label for="customSideNavIconPreset">List Icon<select id="customSideNavIconPreset">
-                      <option value="â˜·">â˜· List</option>
-                      <option value="â–¦">â–¦ Series</option>
-                      <option value="â–¤">â–¤ Guides</option>
-                      <option value="â–§">â–§ Magazines</option>
-                      <option value="â–£">â–£ Collection</option>
-                      <option value="âŒ•">âŒ• Search</option>
-                      <option value="â˜…">â˜… Favorite</option>
+                      <option value="&#x2637;">&#x2637; List</option>
+                      <option value="&#x25A6;">&#x25A6; Series</option>
+                      <option value="&#x25A4;">&#x25A4; Guides</option>
+                      <option value="&#x25A7;">&#x25A7; Magazines</option>
+                      <option value="&#x25A3;">&#x25A3; Collection</option>
+                      <option value="&#x2315;">&#x2315; Search</option>
+                      <option value="&#x2605;">&#x2605; Favorite</option>
                     </select></label>
                     <label for="customSideNavIcon">Custom Icon<input id="customSideNavIcon" type="text" maxlength="4" placeholder="Optional" /></label>
                   </div>
@@ -613,13 +613,13 @@
                     <div><strong>Magazine list</strong><span>Type: Series, Value: Nintendo Power, Scope: Magazines Only</span></div>
                   </div>
                   <div class="settings-actions inline-actions">
-                    <button id="customSideNavAdd" class="primary" type="button">ï¼‹ Add Side Nav Item</button>
+                    <button id="customSideNavAdd" class="primary" type="button">&#xFF0B; Add Side Nav Item</button>
                     <button id="customSideNavReset" class="ghost" type="button">Reset Custom Items</button>
                   </div>
                 </section>
                 <section class="side-nav-builder-card side-nav-preview-card">
                   <div class="side-nav-card-heading">
-                    <span class="side-nav-card-icon">â–£</span>
+                    <span class="side-nav-card-icon">&#x25A3;</span>
                     <div>
                       <h3>Pinned Items</h3>
                       <p class="sub">These appear under the default Library shortcuts in the left sidebar.</p>
@@ -677,7 +677,7 @@
                   <h2>Manage Authorization Keys</h2>
                   <p class="sub">Generate named keys for OPDS clients. Rotating a key invalidates the previous value for that client.</p>
                 </div>
-                <button id="opdsGenerateKey" class="primary opds-new-key" type="button">ï¼‹ New</button>
+                <button id="opdsGenerateKey" class="primary opds-new-key" type="button">&#xFF0B; New</button>
               </div>
               <div class="opds-new-key-inline hidden" id="opdsNewKeyInline">
                 <label for="opdsNewKeyName">Key Name<input id="opdsNewKeyName" type="text" placeholder="OPDS, Images, LaunchBox Plugin" /></label>
@@ -711,7 +711,7 @@
                 <h1>Email-based Devices</h1>
                 <p class="sub">Track send-to-email devices and connected Guidevault clients. Client history updates when the web app checks in or when OPDS clients use an auth key.</p>
               </div>
-              <button id="deviceAddEmailTop" class="primary device-add-button" type="button">ï¼‹ Add</button>
+              <button id="deviceAddEmailTop" class="primary device-add-button" type="button">&#xFF0B; Add</button>
             </div>
 
             <article class="settings-card device-email-card">
@@ -748,7 +748,7 @@
                 <p class="sub">Recent browsers, web app sessions, and OPDS clients that have connected to this Guidevault server.</p>
               </div>
               <div class="settings-actions inline-actions device-actions">
-                <button id="deviceRefreshHistory" class="ghost" type="button">âŸ³ Refresh</button>
+                <button id="deviceRefreshHistory" class="ghost" type="button">&#x27F3; Refresh</button>
                 <button id="deviceClearStale" class="ghost" type="button">Clear 30+ Day History</button>
               </div>
             </div>
@@ -775,7 +775,7 @@
                 <p class="sub">Monthly client activity for web app sessions, OPDS readers, and other clients that connect to this Guidevault server.</p>
               </div>
               <div class="settings-actions inline-actions device-actions">
-                <button id="insightDeviceRefresh" class="ghost" type="button">âŸ³ Refresh</button>
+                <button id="insightDeviceRefresh" class="ghost" type="button">&#x27F3; Refresh</button>
               </div>
             </div>
 
@@ -803,7 +803,7 @@
             <div class="settings-title-row device-client-title-row insight-client-title-row">
               <div>
                 <h1>Client Devices</h1>
-                <p class="sub">Devices seen this month. Account â†’ Devices remains the place to rename or delete saved device cards.</p>
+                <p class="sub">Devices seen this month. Account &#x2192; Devices remains the place to rename or delete saved device cards.</p>
               </div>
             </div>
             <div id="insightDeviceClientGrid" class="device-client-grid insight-device-client-grid"></div>
@@ -817,7 +817,7 @@
                 <h1>Statistics</h1>
                 <p class="sub">Explore library totals, reading activity, popular metadata, and collection management trends.</p>
               </div>
-              <button id="statisticsRefresh" class="ghost" type="button">âŸ³ Refresh</button>
+              <button id="statisticsRefresh" class="ghost" type="button">&#x27F3; Refresh</button>
             </div>
             <div class="statistics-tabs" role="tablist" aria-label="Statistics sections">
               <button id="statisticsStatsTab" class="statistics-tab active" data-statistics-tab="stats" type="button">Stats</button>
@@ -879,7 +879,7 @@
                 <p class="sub">View, normalize, and edit Manual, Strategy Guide, and Magazine metadata at scale without opening each details page.</p>
               </div>
               <div class="settings-actions inline-actions metadata-manager-actions">
-                <button id="metadataManagerRefresh" class="ghost" type="button">âŸ³ Refresh</button>
+                <button id="metadataManagerRefresh" class="ghost" type="button">&#x27F3; Refresh</button>
                 <button id="metadataManagerExportCsv" class="ghost" type="button">Export CSV</button>
                 <button id="metadataManagerImportJson" class="ghost" type="button">Import JSON</button>
                 <input id="metadataManagerImportFile" class="hidden" type="file" accept="application/json,.json" />
@@ -1003,7 +1003,7 @@
             <article class="settings-card server-settings-card server-general-card">
               <section class="server-general-section network-section">
                 <div class="server-general-section-head">
-                  <span class="server-section-icon">â—Ž</span>
+                  <span class="server-section-icon">&#x25CE;</span>
                   <div>
                     <h2>Networking</h2>
                     <p class="sub">Set the public address users and OPDS clients should use to reach this server.</p>
@@ -1018,7 +1018,7 @@
               </section>
               <section class="server-general-section maintenance-section">
                 <div class="server-general-section-head">
-                  <span class="server-section-icon">â–£</span>
+                  <span class="server-section-icon">&#x25A3;</span>
                   <div>
                     <h2>Backups & Logging</h2>
                     <p class="sub">Choose where maintenance backups are written and how noisy server logs should be.</p>
@@ -1147,7 +1147,7 @@
                 <p class="sub">Invite readers, review pending accounts, and control library-level access.</p>
               </div>
               <div class="settings-actions inline-actions">
-                <button id="usersRefresh" class="ghost" type="button">âŸ³ Refresh</button>
+                <button id="usersRefresh" class="ghost" type="button">&#x27F3; Refresh</button>
               </div>
             </div>
             <div class="users-layout-grid">
@@ -1219,10 +1219,10 @@
                 <p id="settingsImportSub" class="sub">Build multiple libraries by scanning existing folders in place. Source files stay where they already are.</p>
               </div>
               <div class="settings-actions inline-actions">
-                <button id="settingsRescanLibrary" class="ghost">âŸ³ Fast Rescan</button>
-                <button id="settingsEnrichMetadata" class="ghost">âœ¦ Enrich Metadata</button>
-                <button id="settingsCleanupLibrary" class="ghost">ðŸ§¹ Cleanup</button>
-                <button id="settingsAddLibrary" class="primary">ï¼‹ Add Library</button>
+                <button id="settingsRescanLibrary" class="ghost">&#x27F3; Fast Rescan</button>
+                <button id="settingsEnrichMetadata" class="ghost">&#x2726; Enrich Metadata</button>
+                <button id="settingsCleanupLibrary" class="ghost">&#x1F9F9; Cleanup</button>
+                <button id="settingsAddLibrary" class="primary">&#xFF0B; Add Library</button>
               </div>
             </div>
             <div class="libraries-table-wrap">
@@ -1262,7 +1262,7 @@
                 <h1>E-mail History</h1>
                 <p class="sub">Review invite and test email attempts sent by Guidevault.</p>
               </div>
-              <button id="emailHistoryRefresh" class="ghost" type="button">âŸ³ Refresh</button>
+              <button id="emailHistoryRefresh" class="ghost" type="button">&#x27F3; Refresh</button>
             </div>
             <div id="emailHistoryList" class="email-history-list"></div>
             <p id="emailHistoryStatus" class="sub account-status" aria-live="polite"></p>
@@ -1273,19 +1273,19 @@
             <div class="system-about-grid">
               <div class="system-info-field">
                 <span>Version</span>
-                <strong id="systemVersion">â€”</strong>
+                <strong id="systemVersion">&#x2014;</strong>
               </div>
               <div class="system-info-field">
                 <span>Install ID</span>
-                <strong id="systemInstallId">â€”</strong>
+                <strong id="systemInstallId">&#x2014;</strong>
               </div>
               <div class="system-info-field">
                 <span>First Install Version</span>
-                <strong id="systemFirstInstallVersion">â€”</strong>
+                <strong id="systemFirstInstallVersion">&#x2014;</strong>
               </div>
               <div class="system-info-field">
                 <span>First Install Date</span>
-                <strong id="systemFirstInstallDate">â€”</strong>
+                <strong id="systemFirstInstallDate">&#x2014;</strong>
               </div>
             </div>
 
@@ -1307,11 +1307,11 @@
             <div id="systemUpdateNotice" class="system-update-notice hidden" data-status="">
               <div class="system-update-notice-main">
                 <strong id="systemUpdateStatus">Stable update notifications are not configured yet.</strong>
-                <span>Current: <b id="systemUpdateCurrent">â€”</b> â€¢ Latest: <b id="systemUpdateLatest">â€”</b></span>
-                <span>Image: <b id="systemUpdateImage">â€”</b></span>
-                <span>Feed: <b id="systemUpdateFeed">â€”</b></span>
-                <span>Release: <b id="systemUpdateReleasePath">â€”</b></span>
-                <span>Package: <b id="systemUpdatePackagePath">â€”</b></span>
+                <span>Current: <b id="systemUpdateCurrent">&#x2014;</b> &#x2022; Latest: <b id="systemUpdateLatest">&#x2014;</b></span>
+                <span>Image: <b id="systemUpdateImage">&#x2014;</b></span>
+                <span>Feed: <b id="systemUpdateFeed">&#x2014;</b></span>
+                <span>Release: <b id="systemUpdateReleasePath">&#x2014;</b></span>
+                <span>Package: <b id="systemUpdatePackagePath">&#x2014;</b></span>
               </div>
               <ul id="systemUpdateNotes" class="system-update-notes"><li>No release notes were provided by the stable feed.</li></ul>
               <div class="system-diagnostic-actions">
@@ -1325,15 +1325,15 @@
 
             <h2>Performance</h2>
             <div class="system-more-info-grid system-performance-grid">
-              <span>Working Set:</span><strong id="systemWorkingSet">â€”</strong>
-              <span>Private Memory:</span><strong id="systemPrivateMemory">â€”</strong>
-              <span>.NET Managed Memory:</span><strong id="systemManagedMemory">â€”</strong>
-              <span>GC Mode:</span><strong id="systemGcMode">â€”</strong>
-              <span>Library Items:</span><strong id="systemCachedItems">â€”</strong>
-              <span>Tasks:</span><strong id="systemActiveTasks">â€”</strong>
-              <span>Last Scan:</span><strong id="systemLastScan">â€”</strong>
-              <span>Archive Entry Cache:</span><strong id="systemArchiveEntryCache">â€”</strong>
-              <span>Disk Cover Cache:</span><strong id="systemCoverDiskCache">â€”</strong>
+              <span>Working Set:</span><strong id="systemWorkingSet">&#x2014;</strong>
+              <span>Private Memory:</span><strong id="systemPrivateMemory">&#x2014;</strong>
+              <span>.NET Managed Memory:</span><strong id="systemManagedMemory">&#x2014;</strong>
+              <span>GC Mode:</span><strong id="systemGcMode">&#x2014;</strong>
+              <span>Library Items:</span><strong id="systemCachedItems">&#x2014;</strong>
+              <span>Tasks:</span><strong id="systemActiveTasks">&#x2014;</strong>
+              <span>Last Scan:</span><strong id="systemLastScan">&#x2014;</strong>
+              <span>Archive Entry Cache:</span><strong id="systemArchiveEntryCache">&#x2014;</strong>
+              <span>Disk Cover Cache:</span><strong id="systemCoverDiskCache">&#x2014;</strong>
             </div>
             <div class="system-diagnostic-actions">
               <button id="systemTrimMemory" class="ghost" type="button">Trim memory caches</button>
@@ -1343,6 +1343,21 @@
 
             <h2>Update History</h2>
             <div class="system-update-list">
+              <details class="system-update-entry" open>
+                <summary>
+                  <span>Guidevault 0.9.42 - Mojibake-safe UI Icon Encoding</span>
+                  <em>Installed</em>
+                </summary>
+                <div class="system-update-body">
+                  <h3>Fixed <b>3</b></h3>
+                  <ul>
+                    <li>Converted visible UI glyphs to encoding-safe entities/escapes so icons no longer render as mojibake.</li>
+                    <li>Repaired the keybind add icon and other action glyphs that could show as corrupted text.</li>
+                    <li>Kept the app/cache version aligned with 0.9.42 for the browser reload path.</li>
+                  </ul>
+                </div>
+              </details>
+
               <details class="system-update-entry" open>
                 <summary>
                   <span>Guidevault 0.9.40 - Source Cleanup and Asset Path Fixes</span>
@@ -1450,11 +1465,11 @@
                 <div class="system-update-body">
                   <h3>Changed <b>6</b></h3>
                   <ul>
-                    <li>Refined Server â†’ Email with SMTP testing, template upload, built-in templates, and a live preview panel.</li>
+                    <li>Refined Server &#x2192; Email with SMTP testing, template upload, built-in templates, and a live preview panel.</li>
                     <li>Added persistent email history for invite and test email attempts.</li>
-                    <li>Added Info â†’ E-mail History to review recent email activity.</li>
-                    <li>Refined Server â†’ Users with a clearer invite/access layout and current-user cards.</li>
-                    <li>Refined Server â†’ Tasks with schedule cards and one-click maintenance task tiles.</li>
+                    <li>Added Info &#x2192; E-mail History to review recent email activity.</li>
+                    <li>Refined Server &#x2192; Users with a clearer invite/access layout and current-user cards.</li>
+                    <li>Refined Server &#x2192; Tasks with schedule cards and one-click maintenance task tiles.</li>
                     <li>Removed the top-level Import menu item while keeping Library management under Server.</li>
                   </ul>
                 </div>
@@ -1468,9 +1483,9 @@
                   <h3>Changed <b>4</b></h3>
                   <ul>
                     <li>Refined the Account profile picture area by removing the nested avatar container and enlarging the preview.</li>
-                    <li>Improved Customize â†’ Side Nav with a two-column builder, pinned-item preview, result scope filtering, match mode, sort mode, and better default list icons.</li>
+                    <li>Improved Customize &#x2192; Side Nav with a two-column builder, pinned-item preview, result scope filtering, match mode, sort mode, and better default list icons.</li>
                     <li>Left-aligned custom sidebar shortcuts and added item counts for saved side-nav filters.</li>
-                    <li>Reworked Server â†’ General into clearer Networking and Backups & Logging sections with inline guidance.</li>
+                    <li>Reworked Server &#x2192; General into clearer Networking and Backups & Logging sections with inline guidance.</li>
                   </ul>
                 </div>
               </details>
@@ -1484,11 +1499,11 @@
                   <ul>
                     <li>Added local profile picture upload support for the Account screen and top user avatar.</li>
                     <li>Moved OPDS into the Server settings area and added an enable/disable toggle.</li>
-                    <li>Added Server â†’ General settings for hostname, base URL, IP addresses, port, backups, and logging level.</li>
-                    <li>Added Server â†’ Media settings with a configurable bookmarks directory.</li>
-                    <li>Added Server â†’ Email settings for SMTP-based invites and future email workflows.</li>
-                    <li>Added Server â†’ Users with invite, library access, permission, and age-restriction controls.</li>
-                    <li>Added Server â†’ Tasks with recurring task settings and ad-hoc maintenance actions.</li>
+                    <li>Added Server &#x2192; General settings for hostname, base URL, IP addresses, port, backups, and logging level.</li>
+                    <li>Added Server &#x2192; Media settings with a configurable bookmarks directory.</li>
+                    <li>Added Server &#x2192; Email settings for SMTP-based invites and future email workflows.</li>
+                    <li>Added Server &#x2192; Users with invite, library access, permission, and age-restriction controls.</li>
+                    <li>Added Server &#x2192; Tasks with recurring task settings and ad-hoc maintenance actions.</li>
                     <li>Removed Smart Filters and External Sources from Customize and replaced the Side Nav placeholder with custom navigation shortcuts.</li>
                   </ul>
                 </div>
@@ -1550,7 +1565,7 @@
                     <li>Changed normal library rescans into a fast index pass that avoids opening every CBZ archive for ComicInfo metadata.</li>
                     <li>Added a separate low-priority Metadata Enrichment action for deeper ComicInfo import after the library is already usable.</li>
                     <li>Removed expensive last-modified sorting during file discovery so network-mounted libraries begin indexing sooner.</li>
-                    <li>Added scan timing and reuse/deferred metadata counters to Info â†’ System â†’ Performance.</li>
+                    <li>Added scan timing and reuse/deferred metadata counters to Info &#x2192; System &#x2192; Performance.</li>
                     <li>Updated task messages so scanning, cleanup, and enrichment show clearer progress and do not look stuck during large libraries.</li>
                   </ul>
                 </div>
@@ -1565,7 +1580,7 @@
                   <ul>
                     <li>Changed cover caching so large cover byte arrays are kept on disk instead of being pinned in memory after burst loads.</li>
                     <li>Reduced aggressive offscreen cover preloading so the browser requests fewer covers before they are actually near the visible library area.</li>
-                    <li>Added Info â†’ System performance diagnostics for working set, private memory, managed memory, cache counts, task counts, and disk cover cache size.</li>
+                    <li>Added Info &#x2192; System performance diagnostics for working set, private memory, managed memory, cache counts, task counts, and disk cover cache size.</li>
                     <li>Added a safe memory trim action for clearing in-memory archive/cover request caches without deleting persistent user data.</li>
                     <li>Added stable container image update notifications driven by a configurable update feed for Docker/GHCR-style releases.</li>
                   </ul>
@@ -1772,7 +1787,7 @@
                   <h3>Changed <b>5</b></h3>
                   <ul>
                     <li>Updated Home shelf navigation so left/right shelf arrows slide the shelf content instead of jumping instantly.</li>
-                    <li>Removed the redundant Insights â†’ Activity submenu and routed the Insights parent toward Statistics.</li>
+                    <li>Removed the redundant Insights &#x2192; Activity submenu and routed the Insights parent toward Statistics.</li>
                     <li>Replaced the temporary Statistics summary glyphs with cleaner inline SVG icons for series, items, content types, size, file types, and read events.</li>
                     <li>Changed Reading Activity to chart Manuals, Strategy Guides, and Magazines instead of file-format groups.</li>
                     <li>Improved the Management files-added timeline with a legend, month labels, and labeled horizontal count lines.</li>
@@ -1803,9 +1818,9 @@
                 <div class="system-update-body">
                   <h3>Added <b>4</b></h3>
                   <ul>
-                    <li>Added Account â†’ Key Binds with blue-themed key chips, alternate key actions, and reset controls.</li>
-                    <li>Added Account â†’ Customize with a Home shelf manager for replacing the fixed Recently Added shelf with selectable shelves.</li>
-                    <li>Added Insights â†’ Statistics with library totals, popular/recent lists, active-user cards, and reading activity.</li>
+                    <li>Added Account &#x2192; Key Binds with blue-themed key chips, alternate key actions, and reset controls.</li>
+                    <li>Added Account &#x2192; Customize with a Home shelf manager for replacing the fixed Recently Added shelf with selectable shelves.</li>
+                    <li>Added Insights &#x2192; Statistics with library totals, popular/recent lists, active-user cards, and reading activity.</li>
                     <li>Added a Statistics Management tab with files-added timeline and format totals by size and file count.</li>
                   </ul>
                   <h3>Changed <b>1</b></h3>
@@ -1863,7 +1878,7 @@
                 <div class="system-update-body">
                   <h3>Changed <b>3</b></h3>
                   <ul>
-                    <li>Added Focus dropdown filters for Unsorted Strategy Guides and strategy guides with multiple associated platforms in Server â†’ Metadata Manager.</li>
+                    <li>Added Focus dropdown filters for Unsorted Strategy Guides and strategy guides with multiple associated platforms in Server &#x2192; Metadata Manager.</li>
                     <li>Updated Metadata Manager summary stats to expose unsorted and multi-platform strategy guide counts while filtering.</li>
                     <li>Kept the filters aligned with existing Guidevault strategy guide grouping rules while preparing for associated-platform based placement.</li>
                   </ul>
@@ -1902,7 +1917,7 @@
                 <div class="system-update-body">
                   <h3>Added <b>4</b></h3>
                   <ul>
-                    <li>Added Server â†’ Metadata Manager as a bulk metadata workspace for manuals, strategy guides, and magazines.</li>
+                    <li>Added Server &#x2192; Metadata Manager as a bulk metadata workspace for manuals, strategy guides, and magazines.</li>
                     <li>Added a grid view for title, category/system, series/publication, language, region, year, publisher, topics, games, and metadata source.</li>
                     <li>Added batch metadata tools for language, region, category/system, publisher, and tags/topics.</li>
                     <li>Added export/import hooks so metadata can be reviewed outside Guidevault and brought back as JSON.</li>
@@ -1916,7 +1931,7 @@
                 <div class="system-update-body">
                   <h3>Changed <b>2</b></h3>
                   <ul>
-                    <li>Updated the Info â†’ System update-history cards from the temporary purple accent to the default Guidevault blue theme.</li>
+                    <li>Updated the Info &#x2192; System update-history cards from the temporary purple accent to the default Guidevault blue theme.</li>
                     <li>Aligned the More Info accent/link styling with the default blue interface color.</li>
                   </ul>
                 </div>
@@ -1928,7 +1943,7 @@
                 <div class="system-update-body">
                   <h3>Added <b>3</b></h3>
                   <ul>
-                    <li>Added the Info â†’ System page with version, install identity, and first-install metadata.</li>
+                    <li>Added the Info &#x2192; System page with version, install identity, and first-install metadata.</li>
                     <li>Added a stable Guidevault install ID generated as a local <code>GV-YYYYMMDD-XXXXXXXX</code> identifier.</li>
                     <li>Added More Info and Update History sections to match the system-style settings layout.</li>
                   </ul>
@@ -1970,7 +1985,7 @@
             <div class="reader-hud-grabber" aria-hidden="true"></div>
             <div class="reader-hud-main-row reader-hud-main-row-controls">
               <div class="reader-tray-actions reader-tray-left-actions">
-                <button id="prevPage" class="reader-tray-button primary-action" type="button">â€¹ Previous</button>
+                <button id="prevPage" class="reader-tray-button primary-action" type="button">&#x2039; Previous</button>
                 <button id="readerExitDetails" class="reader-tray-button" type="button">Details</button>
                 <button id="readerExitLibrary" class="reader-tray-button" type="button">Library</button>
               </div>
@@ -1988,13 +2003,13 @@
                     </select>
                   </label>
                   <div class="reader-zoom-buttons" aria-label="Reader zoom controls">
-                    <button id="readerZoomOut" class="reader-tray-button reader-icon-button reader-zoom-button" type="button" aria-label="Zoom out" title="Zoom out">âˆ’</button>
+                    <button id="readerZoomOut" class="reader-tray-button reader-icon-button reader-zoom-button" type="button" aria-label="Zoom out" title="Zoom out">&#x2212;</button>
                     <button id="readerZoomIn" class="reader-tray-button reader-icon-button reader-zoom-button" type="button" aria-label="Zoom in" title="Zoom in">+</button>
                     <div class="reader-magnifier-wrap">
                       <button id="readerMagnifierToggle" class="reader-tray-button reader-icon-button reader-magnifier-button" type="button" aria-label="Toggle magnifier" aria-pressed="false" title="Toggle magnifier">
                         <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><circle cx="10.5" cy="10.5" r="6.1"></circle><path d="M15.2 15.2 21 21"></path></svg>
                       </button>
-                      <button id="readerMagnifierMenu" class="reader-tray-button reader-icon-button reader-magnifier-menu-button" type="button" aria-label="Magnifier settings" aria-expanded="false" title="Magnifier settings">â–¾</button>
+                      <button id="readerMagnifierMenu" class="reader-tray-button reader-icon-button reader-magnifier-menu-button" type="button" aria-label="Magnifier settings" aria-expanded="false" title="Magnifier settings">&#x25BE;</button>
                       <div id="readerMagnifierPanel" class="reader-magnifier-panel hidden" role="group" aria-label="Magnifier settings">
                         <div class="reader-panel-title">Magnifier</div>
                         <label class="reader-magnifier-setting" for="readerMagnifierWidth"><span>Width</span><input id="readerMagnifierWidth" type="range" min="160" max="520" value="320" step="10" /></label>
@@ -2024,7 +2039,7 @@
                   </svg>
                 </button>
                 <div class="reader-advanced-wrap">
-                  <button id="readerAdvancedSettings" class="reader-tray-button reader-icon-button reader-advanced-button" type="button" aria-label="Advanced reader settings" aria-expanded="false" title="Advanced reader settings">âš™</button>
+                  <button id="readerAdvancedSettings" class="reader-tray-button reader-icon-button reader-advanced-button" type="button" aria-label="Advanced reader settings" aria-expanded="false" title="Advanced reader settings">&#x2699;</button>
                   <div id="readerAdvancedPanel" class="reader-advanced-panel hidden" role="group" aria-label="Advanced reader settings">
                     <div class="reader-background-controls" aria-label="Reader background controls">
                       <div class="reader-panel-title">Background</div>
@@ -2068,7 +2083,7 @@
                   </div>
                 </div>
                 <button id="readerFullscreen" class="reader-tray-button" type="button">Fullscreen</button>
-                <button id="nextPage" class="reader-tray-button primary-action" type="button">Next â€º</button>
+                <button id="nextPage" class="reader-tray-button primary-action" type="button">Next &#x203A;</button>
               </div>
             </div>
             <div class="reader-scrubber-wrap">
@@ -2133,7 +2148,6 @@
   </dialog>
 
 
-  <script src="/app.js?v=0.9.41"></script>
+  <script src="/app.js?v=0.9.42"></script>
 </body>
 </html>
-

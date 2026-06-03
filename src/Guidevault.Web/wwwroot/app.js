@@ -1,4 +1,4 @@
-﻿const state = {
+const state = {
   items: [], filtered: [], selected: null, filter: 'All Content', categoryFilter: '', viewMode: 'all', activeTab: 'overview', customFilter: null,
   reader: { item: null, pages: [], index: 0, animating: false, displayMode: 2, transitionMode: 'stable', overlayVisible: false, advancedVisible: false, magnifierSettingsVisible: false, scrubbing: false, shading: null, zoom: 100, magnifier: null, magnifierActive: false, longPressTimer: null, suppressHitClickUntil: 0, backgrounds: [], background: '', backgroundBrightness: 72 },
   libraryPath: '',
@@ -40,7 +40,7 @@
 const $ = id => document.getElementById(id);
 function setText(id, value) {
   const el = $(id);
-  if (el) el.textContent = value || '—';
+  if (el) el.textContent = value || '\u2014';
 }
 const READER_BOOKMARKS_KEY = 'guidevault.readerBookmarks.v1';
 const READER_SHADING_KEY = 'guidevault.readerShading.v1';
@@ -59,7 +59,7 @@ const GUIDEVAULT_READING_ACTIVITY_KEY = 'guidevault.readingActivity.v1';
 const GUIDEVAULT_CATEGORY_STRUCTURE_KEY = 'guidevault.categoryStructure.v1';
 const GUIDEVAULT_COVER_SIZE_KEY = 'guidevault.libraryCoverSize.v1';
 const GUIDEVAULT_FAVORITES_KEY = 'guidevault.favorites.v1';
-const GUIDEVAULT_APP_VERSION = '0.9.41';
+const GUIDEVAULT_APP_VERSION = '0.9.42';
 
 const EMAIL_TEMPLATE_PRESETS = [
   {
@@ -135,7 +135,7 @@ function activeLibraryPlatformForItem(item) {
   return libraryCategoryKeysForItem(item).some(value => platformNamesEqual(value, category)) ? category : '';
 }
 function detailSystemLabelForItem(item) {
-  if (!item) return '—';
+  if (!item) return '\u2014';
   const currentLibrary = activeLibraryPlatformForItem(item);
   if (currentLibrary) return currentLibrary;
   if (item.kind === 'Strategy Guide') {
@@ -186,14 +186,14 @@ function libraryCardPlatformMetaHtml(item) {
     </div>`;
   }
   const category = categoryOf(item);
-  return `<small class="card-category">${platformIconHtml(category, 'platform-icon tiny')}<span>${escapeHtml(category)}${hasSequence(item) ? ` • #${escapeHtml(item.issueNumber)}` : ''}</span></small>`;
+  return `<small class="card-category">${platformIconHtml(category, 'platform-icon tiny')}<span>${escapeHtml(category)}${hasSequence(item) ? ` \u2022 #${escapeHtml(item.issueNumber)}` : ''}</span></small>`;
 }
 function isMultiPlatformBucketName(value) {
   return /^multi[-\s]*platform(?: strategy guides?)?$/i.test(String(value || '').trim());
 }
 function pushUniquePlatformBucket(values, value) {
   const text = String(value || '').trim();
-  if (!text || text === '—' || /^unknown$/i.test(text) || isMultiPlatformBucketName(text)) return;
+  if (!text || text === '\u2014' || /^unknown$/i.test(text) || isMultiPlatformBucketName(text)) return;
   if (!values.some(existing => existing.localeCompare(text, undefined, { sensitivity: 'accent' }) === 0)) values.push(text);
 }
 function libraryCategoryKeysForItem(item) {
@@ -458,7 +458,7 @@ function getReadingProfileEntryTargets() {
 function readingProfileLabel(profile) {
   const normalized = normalizeReadingProfile(profile || defaultReadingProfile());
   const background = normalized.background ? readerBackgroundDisplayName(normalized.background) : 'Default Gradient';
-  return `${displayModeLabel(normalized.displayMode)} • ${transitionLabel(normalized.transitionMode)} • ${background} • ${normalized.zoom}% zoom`;
+  return `${displayModeLabel(normalized.displayMode)} \u2022 ${transitionLabel(normalized.transitionMode)} \u2022 ${background} \u2022 ${normalized.zoom}% zoom`;
 }
 
 function readingProfilePresetSummary(preset) {
@@ -496,7 +496,7 @@ function profilePresetOptionsHtml(selectedId = '', options = {}) {
   const chunks = [];
   if (options.includeClear) chunks.push(`<option value="">${escapeHtml(options.clearLabel || 'Inherit')}</option>`);
   presets.forEach(preset => {
-    const defaultBadge = preset.id === profiles.defaultPresetId ? ' — Default' : '';
+    const defaultBadge = preset.id === profiles.defaultPresetId ? ' \u2014 Default' : '';
     const selected = String(preset.id) === String(selectedId || '') ? ' selected' : '';
     chunks.push(`<option value="${escapeHtml(preset.id)}"${selected}>${escapeHtml(preset.name || 'Reading Profile')}${escapeHtml(defaultBadge)}</option>`);
   });
@@ -713,7 +713,7 @@ function updateDetailReadingProfileEffectivePreview(item = state.selected) {
     ? `Inherited from the global default preset.`
     : resolved.source === 'Entry profile'
       ? `Applied directly to this entry.`
-      : `Inherited from ${group?.type === 'series' ? 'series' : 'category'} “${group?.label || 'Unsorted'}”.`;
+      : `Inherited from ${group?.type === 'series' ? 'series' : 'category'} \u201C${group?.label || 'Unsorted'}\u201D.`;
   summary.textContent = `${resolved.source}: ${readingProfilePresetSummary(resolved.profile)}. ${inheritedFrom}${maskedText}${unsavedText}`;
 }
 
@@ -960,7 +960,7 @@ function renderAccountProfile() {
   if ($('accountUsername')) $('accountUsername').value = profile.username || '';
   if ($('accountEmail')) $('accountEmail').value = profile.email || '';
   if ($('accountPassword')) $('accountPassword').value = profile.password || '';
-  if ($('accountProfileSummary')) $('accountProfileSummary').textContent = `${profile.username} • ${profile.email}`;
+  if ($('accountProfileSummary')) $('accountProfileSummary').textContent = `${profile.username} \u2022 ${profile.email}`;
   renderUserAvatarElement($('accountAvatarPreview'), profile);
   syncTopUserMenu();
   setAccountEditMode(false, false);
@@ -968,7 +968,7 @@ function renderAccountProfile() {
 
 function formatProfileRelativeTime(value) {
   const time = dateValue(value);
-  if (!time) return '—';
+  if (!time) return '\u2014';
   const diff = Date.now() - time;
   if (diff < 86400000) return 'today';
   const days = Math.max(1, Math.floor(diff / 86400000));
@@ -1031,13 +1031,13 @@ function renderProfileMetricStrip(stats) {
   const host = $('profileMetricStrip');
   if (!host) return;
   const metrics = [
-    ['Manuals Read', stats.manuals, '▤'],
-    ['Strategy Guides Read', stats.strategyGuides, '⌖'],
-    ['Magazines Read', stats.magazines, '▥'],
-    ['Pages Read', stats.pages.toLocaleString(), '◻'],
-    ['Words Read', stats.words.toLocaleString(), '▦'],
-    ['Authors / Publishers', stats.authors, '♚'],
-    ['Favorites', stats.ratings, '★']
+    ['Manuals Read', stats.manuals, '\u25A4'],
+    ['Strategy Guides Read', stats.strategyGuides, '\u2316'],
+    ['Magazines Read', stats.magazines, '\u25A5'],
+    ['Pages Read', stats.pages.toLocaleString(), '\u25FB'],
+    ['Words Read', stats.words.toLocaleString(), '\u25A6'],
+    ['Authors / Publishers', stats.authors, '\u265A'],
+    ['Favorites', stats.ratings, '\u2605']
   ];
   host.innerHTML = metrics.map(([label, value, icon]) => `<div class="profile-metric"><span>${escapeHtml(label)}</span><i>${escapeHtml(icon)}</i><strong>${escapeHtml(String(value))}</strong></div>`).join('');
 }
@@ -1085,7 +1085,7 @@ function renderProfileRecent(stats) {
   if (!host) return;
   const recent = [...new Set(stats.events.slice().reverse().map(e => String(e.id || '')).filter(Boolean))]
     .map(id => stats.lookup.get(id)).filter(Boolean).slice(0, 6);
-  host.innerHTML = recent.length ? recent.map(item => `<article class="profile-recent-card"><img loading="lazy" src="${coverUrl(item)}" alt="" /><div><strong>${escapeHtml(displayTitle(item))}</strong><span>${escapeHtml(item.kind || '')} • ${escapeHtml(preferredPlatformOf(item) || categoryOf(item) || '—')}</span></div></article>`).join('') : '<article class="settings-card"><p class="sub">Open a manual, guide, or magazine to start filling out recent reads.</p></article>';
+  host.innerHTML = recent.length ? recent.map(item => `<article class="profile-recent-card"><img loading="lazy" src="${coverUrl(item)}" alt="" /><div><strong>${escapeHtml(displayTitle(item))}</strong><span>${escapeHtml(item.kind || '')} \u2022 ${escapeHtml(preferredPlatformOf(item) || categoryOf(item) || '\u2014')}</span></div></article>`).join('') : '<article class="settings-card"><p class="sub">Open a manual, guide, or magazine to start filling out recent reads.</p></article>';
 }
 function renderProfileTopLists(stats) {
   const host = $('profileTopLists');
@@ -1101,7 +1101,7 @@ function renderProfileActivityList(stats) {
   const host = $('profileActivityList');
   if (!host) return;
   const rows = stats.events.slice().reverse().slice(0, 50);
-  host.innerHTML = rows.length ? rows.map(e => `<article class="settings-card profile-activity-row"><strong>${escapeHtml(e.title || 'Unknown item')}</strong><span>${escapeHtml(e.kind || 'Item')} • ${escapeHtml(e.action || 'view')}</span><em>${escapeHtml(e.at ? new Date(e.at).toLocaleString() : 'Unknown time')}</em></article>`).join('') : '<article class="settings-card"><p class="sub">No activity is logged for this range yet.</p></article>';
+  host.innerHTML = rows.length ? rows.map(e => `<article class="settings-card profile-activity-row"><strong>${escapeHtml(e.title || 'Unknown item')}</strong><span>${escapeHtml(e.kind || 'Item')} \u2022 ${escapeHtml(e.action || 'view')}</span><em>${escapeHtml(e.at ? new Date(e.at).toLocaleString() : 'Unknown time')}</em></article>`).join('') : '<article class="settings-card"><p class="sub">No activity is logged for this range yet.</p></article>';
 }
 function setProfileTab(tab = 'overview') {
   state.profilePage.activeTab = ['overview','stats','reviews','activity'].includes(tab) ? tab : 'overview';
@@ -1124,7 +1124,7 @@ function renderPersonalProfile() {
   setText('profileLastRead', stats.lastRead ? formatProfileRelativeTime(stats.lastRead) : 'No reads yet');
   setText('profileTotalReadTime', formatProfileMinutes(stats.estimatedMinutes));
   setText('profileAvgPerWeek', `${Math.max(0, stats.avgPerWeek).toFixed(1)} minutes`);
-  setText('profileOverviewTitle', `A look at ${(profile.username || 'your')}’s journey through Guidevault`);
+  setText('profileOverviewTitle', `A look at ${(profile.username || 'your')}\u2019s journey through Guidevault`);
   if ($('profileRange')) $('profileRange').value = state.profilePage.range || 'all';
   renderProfileMetricStrip(stats);
   renderProfileHeatmap(stats);
@@ -1512,7 +1512,7 @@ function fallbackSystemInfo() {
 }
 
 function formatSystemDate(value) {
-  if (!value) return '—';
+  if (!value) return '\u2014';
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return String(value);
   return date.toLocaleDateString(undefined, { year: 'numeric', month: 'numeric', day: 'numeric' });
@@ -1527,12 +1527,12 @@ function setSystemInfoStatus(message = '', tone = '') {
 
 function renderSystemInfo(info = state.systemInfo || fallbackSystemInfo()) {
   const data = info || fallbackSystemInfo();
-  const setText = (id, value) => { const el = $(id); if (el) el.textContent = value || '—'; };
+  const setText = (id, value) => { const el = $(id); if (el) el.textContent = value || '\u2014'; };
   setText('systemAppName', data.appName || 'Guidevault');
   setText('systemVersion', data.version || GUIDEVAULT_APP_VERSION);
   setText('systemFirstInstallVersion', data.firstInstallVersion || data.version || GUIDEVAULT_APP_VERSION);
   setText('systemFirstInstallDate', formatSystemDate(data.firstInstallDate));
-  setText('systemInstallId', data.installId || '—');
+  setText('systemInstallId', data.installId || '\u2014');
   setText('systemRuntimeMode', data.runtimeMode || 'Local self-hosted web app');
   setText('systemSupportedFiles', data.supportedFiles || 'CBZ, CBR, PDF');
 }
@@ -1547,31 +1547,31 @@ function formatDiagnosticBytes(value) {
 }
 
 function renderSystemPerformance(data = state.performanceInfo) {
-  const setText = (id, value) => { const el = $(id); if (el) el.textContent = value || '—'; };
+  const setText = (id, value) => { const el = $(id); if (el) el.textContent = value || '\u2014'; };
   if (!data) {
-    setText('systemWorkingSet', '—');
-    setText('systemPrivateMemory', '—');
-    setText('systemManagedMemory', '—');
-    setText('systemGcMode', '—');
-    setText('systemArchiveEntryCache', '—');
-    setText('systemCoverDiskCache', '—');
-    setText('systemCachedItems', '—');
-    setText('systemActiveTasks', '—');
-    setText('systemLastScan', '—');
+    setText('systemWorkingSet', '\u2014');
+    setText('systemPrivateMemory', '\u2014');
+    setText('systemManagedMemory', '\u2014');
+    setText('systemGcMode', '\u2014');
+    setText('systemArchiveEntryCache', '\u2014');
+    setText('systemCoverDiskCache', '\u2014');
+    setText('systemCachedItems', '\u2014');
+    setText('systemActiveTasks', '\u2014');
+    setText('systemLastScan', '\u2014');
     return;
   }
   setText('systemWorkingSet', formatDiagnosticBytes(data.process?.workingSetBytes));
   setText('systemPrivateMemory', formatDiagnosticBytes(data.process?.privateMemoryBytes));
   setText('systemManagedMemory', formatDiagnosticBytes(data.dotnet?.totalManagedMemoryBytes));
   setText('systemGcMode', data.dotnet?.isServerGc ? 'Server GC' : 'Workstation GC');
-  setText('systemArchiveEntryCache', `${Number(data.archive?.imageEntryCacheCount || 0)} archive index entr${Number(data.archive?.imageEntryCacheCount || 0) === 1 ? 'y' : 'ies'} • ${Number(data.archive?.inFlightCoverReads || 0)} cover read(s)`);
-  setText('systemCoverDiskCache', `${Number(data.archive?.diskCoverCacheFiles || 0)} file(s) • ${formatDiagnosticBytes(data.archive?.diskCoverCacheBytes)}`);
+  setText('systemArchiveEntryCache', `${Number(data.archive?.imageEntryCacheCount || 0)} archive index entr${Number(data.archive?.imageEntryCacheCount || 0) === 1 ? 'y' : 'ies'} \u2022 ${Number(data.archive?.inFlightCoverReads || 0)} cover read(s)`);
+  setText('systemCoverDiskCache', `${Number(data.archive?.diskCoverCacheFiles || 0)} file(s) \u2022 ${formatDiagnosticBytes(data.archive?.diskCoverCacheBytes)}`);
   setText('systemCachedItems', `${Number(data.library?.cachedItemCount || 0)} item(s)`);
-  setText('systemActiveTasks', `${Number(data.tasks?.activeCount || 0)} active • ${Number(data.tasks?.recentCount || 0)} recent`);
+  setText('systemActiveTasks', `${Number(data.tasks?.activeCount || 0)} active \u2022 ${Number(data.tasks?.recentCount || 0)} recent`);
   const last = data.library?.lastScan || {};
   const elapsed = Number(last.elapsedMs || 0);
-  const elapsedText = elapsed > 0 ? `${(elapsed / 1000).toFixed(1)}s` : '—';
-  setText('systemLastScan', last.message ? `${last.message} • ${elapsedText}` : 'No scan completed this session');
+  const elapsedText = elapsed > 0 ? `${(elapsed / 1000).toFixed(1)}s` : '\u2014';
+  setText('systemLastScan', last.message ? `${last.message} \u2022 ${elapsedText}` : 'No scan completed this session');
 }
 
 async function loadSystemPerformance() {
@@ -1625,14 +1625,14 @@ function renderUpdateNotification() {
     notice.classList.remove('hidden');
     notice.dataset.status = update?.status || '';
   }
-  const setText = (id, value) => { const el = $(id); if (el) el.textContent = value || '—'; };
+  const setText = (id, value) => { const el = $(id); if (el) el.textContent = value || '\u2014'; };
   setText('systemUpdateStatus', update?.message || 'Stable update notifications are not configured yet.');
   setText('systemUpdateCurrent', update?.currentVersion || GUIDEVAULT_APP_VERSION);
-  setText('systemUpdateLatest', update?.latestVersion || '—');
-  setText('systemUpdateImage', update?.latestImage || update?.currentImage || '—');
-  setText('systemUpdateFeed', update?.feedUrl || '—');
-  setText('systemUpdateReleasePath', update?.releasePath || update?.releaseUrl || '—');
-  setText('systemUpdatePackagePath', update?.packageUrl || '—');
+  setText('systemUpdateLatest', update?.latestVersion || '\u2014');
+  setText('systemUpdateImage', update?.latestImage || update?.currentImage || '\u2014');
+  setText('systemUpdateFeed', update?.feedUrl || '\u2014');
+  setText('systemUpdateReleasePath', update?.releasePath || update?.releaseUrl || '\u2014');
+  setText('systemUpdatePackagePath', update?.packageUrl || '\u2014');
   const notes = $('systemUpdateNotes');
   if (notes) {
     const values = Array.isArray(update?.notes) ? update.notes.filter(Boolean) : [];
@@ -1691,7 +1691,7 @@ function showStableUpdateToast(update) {
   const version = escapeHtml(update?.latestVersion || 'stable');
   const releaseUrl = update?.releaseUrl || update?.releasePath || '';
   toast.innerHTML = `
-    <div class="guidevault-update-toast-icon">↥</div>
+    <div class="guidevault-update-toast-icon">\u21A5</div>
     <div class="guidevault-update-toast-copy">
       <strong>Guidevault ${version} is available</strong>
       <span>A new stable release has been published.</span>
@@ -1951,7 +1951,7 @@ function buildOpdsClientUrl(key = getSelectedOpdsKey()) {
 
 function maskOpdsKey(secret) {
   const length = Math.max(14, Math.min(String(secret || '').length, 24));
-  return '•'.repeat(length);
+  return '\u2022'.repeat(length);
 }
 
 function escapeForAttribute(value) {
@@ -1995,10 +1995,10 @@ function renderOpdsSettings() {
       ? settings.keys.map(key => `
         <tr data-key-id="${escapeForAttribute(key.id)}">
           <td><strong>${escapeHtml(key.name)}</strong></td>
-          <td><span class="opds-masked-key">${maskOpdsKey(key.secret)}</span><button class="opds-inline-copy" type="button" data-opds-action="copy-key" title="Copy key">⧉</button></td>
+          <td><span class="opds-masked-key">${maskOpdsKey(key.secret)}</span><button class="opds-inline-copy" type="button" data-opds-action="copy-key" title="Copy key">\u29C9</button></td>
           <td>${escapeHtml(key.expiresAt ? formatOpdsDate(key.expiresAt) : 'Never')}</td>
           <td>${escapeHtml(formatOpdsDate(key.lastAccessed))}</td>
-          <td class="opds-actions-cell"><button class="opds-action-button" type="button" data-opds-action="rotate" title="Rotate key">⟳</button><button class="opds-action-button danger" type="button" data-opds-action="delete" title="Delete key" aria-label="Delete key">${deviceIcon('trash')}</button></td>
+          <td class="opds-actions-cell"><button class="opds-action-button" type="button" data-opds-action="rotate" title="Rotate key">\u27F3</button><button class="opds-action-button danger" type="button" data-opds-action="delete" title="Delete key" aria-label="Delete key">${deviceIcon('trash')}</button></td>
         </tr>`).join('')
       : '<tr><td colspan="5" class="opds-empty-row">No authorization keys yet. Select + New to generate one.</td></tr>';
   }
@@ -2376,7 +2376,7 @@ function renderEmailHistory() {
     const sentAt = item.sentAt ? new Date(item.sentAt).toLocaleString() : 'Unknown time';
     const status = item.status || 'Logged';
     return `<article class="settings-card email-history-row" data-status="${escapeForAttribute(status.toLowerCase())}">
-      <div class="email-history-main"><strong>${escapeHtml(item.subject || 'Guidevault email')}</strong><span>${escapeHtml(item.type || 'Email')} • ${escapeHtml(item.to || '—')}</span><small>${escapeHtml(sentAt)}</small></div>
+      <div class="email-history-main"><strong>${escapeHtml(item.subject || 'Guidevault email')}</strong><span>${escapeHtml(item.type || 'Email')} \u2022 ${escapeHtml(item.to || '\u2014')}</span><small>${escapeHtml(sentAt)}</small></div>
       <div class="email-history-meta"><span>${escapeHtml(status)}</span><em>${escapeHtml(item.templateName || 'Guidevault Invite')}</em></div>
       ${item.message ? `<p class="sub email-history-message">${escapeHtml(item.message)}</p>` : ''}
     </article>`;
@@ -2705,7 +2705,7 @@ function currentDeviceScreenText() {
   const width = window.screen?.width || window.innerWidth || 0;
   const height = window.screen?.height || window.innerHeight || 0;
   const orientation = width && height ? (width >= height ? 'landscape' : 'portrait') : '';
-  return width && height ? `${width}×${height}${orientation ? ` (${orientation})` : ''}` : '';
+  return width && height ? `${width}\u00D7${height}${orientation ? ` (${orientation})` : ''}` : '';
 }
 
 function buildDeviceHeartbeatPayload() {
@@ -2779,7 +2779,7 @@ async function loadDeviceHistory(showStatus = false) {
   }
 }
 
-function formatDeviceDate(value, fallback = '—') {
+function formatDeviceDate(value, fallback = '\u2014') {
   if (!value) return fallback;
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return fallback;
@@ -2808,22 +2808,22 @@ function shortBrowserVersion(version = '') {
 
 function normalizeUiText(value = '') {
   return String(value ?? '')
-    .replace(/Â—/g, '×')
-    .replace(/Ã—/g, '×')
-    .replace(/â€”/g, '—')
-    .replace(/â€“/g, '–')
-    .replace(/â€™/g, "'")
-    .replace(/â€œ/g, '"')
-    .replace(/â€/g, '"')
-    .replace(/â€¢/g, '•')
+    .replace(/\u00C2\u2014/g, '\u00D7')
+    .replace(/\u00C3\u2014/g, '\u00D7')
+    .replace(/\u00E2\u20AC\u201D/g, '\u2014')
+    .replace(/\u00E2\u20AC\u201C/g, '\u2013')
+    .replace(/\u00E2\u20AC\u2122/g, "'")
+    .replace(/\u00E2\u20AC\u0153/g, '"')
+    .replace(/\u00E2\u20AC\u009D/g, '"')
+    .replace(/\u00E2\u20AC\u00A2/g, '\u2022')
     .replace(/\s+/g, ' ')
     .trim();
 }
 
 function normalizeDeviceScreen(value = '') {
-  const text = normalizeUiText(value || '—');
+  const text = normalizeUiText(value || '\u2014');
   return text
-    .replace(/(\d+)\s*(?:×|x|—|–|-)\s*(\d+)/gi, '$1×$2')
+    .replace(/(\d+)\s*(?:\u00D7|x|\u2014|\u2013|-)\s*(\d+)/gi, '$1\u00D7$2')
     .replace(/\s+/g, ' ')
     .trim();
 }
@@ -2856,9 +2856,9 @@ function clientDeviceTitleIcon(device = {}) {
 
 function deviceFact(iconName, label, value) {
   const displayValue = iconName === 'screen'
-    ? normalizeDeviceScreen(value || '—')
-    : normalizeUiText(value || '—');
-  return `<div class="device-card-fact">${deviceIcon(iconName)}<span>${escapeHtml(label)}: <b>${escapeHtml(displayValue || '—')}</b></span></div>`;
+    ? normalizeDeviceScreen(value || '\u2014')
+    : normalizeUiText(value || '\u2014');
+  return `<div class="device-card-fact">${deviceIcon(iconName)}<span>${escapeHtml(label)}: <b>${escapeHtml(displayValue || '\u2014')}</b></span></div>`;
 }
 
 function renderDeviceHistory() {
@@ -2877,7 +2877,7 @@ function renderEmailDeviceTable(emailDevices = []) {
       ? emailDevices.map(device => `
         <tr data-email-device-id="${escapeForAttribute(device.id || '')}">
           <td><strong>${escapeHtml(device.name || 'Email Device')}</strong></td>
-          <td>${escapeHtml(device.email || '—')}</td>
+          <td>${escapeHtml(device.email || '\u2014')}</td>
           <td>${escapeHtml(device.platform || 'Email')}</td>
           <td><button class="device-table-action danger" type="button" data-device-email-action="delete" title="Delete device" aria-label="Delete device">${deviceIcon('trash')}</button></td>
         </tr>`).join('')
@@ -2921,17 +2921,17 @@ function renderClientDeviceCardsInto(gridId, clientDevices = [], options = {}) {
     const browserVersion = shortBrowserVersion(device.browserVersion || '');
     const browserText = device.browserName
       ? normalizeUiText(`${device.browserName}${browserVersion ? ` ${browserVersion}` : ''}`)
-      : '—';
+      : '\u2014';
     const userText = normalizeUiText(device.username || device.authKeyName || device.email || 'local');
     const displayName = normalizeUiText(device.displayName || 'Guidevault Client');
     const platformText = normalizeUiText(device.platform || 'Unknown');
-    const screenText = normalizeDeviceScreen(device.screen || '—');
-    const appVersionText = normalizeUiText(device.appVersion || '—');
+    const screenText = normalizeDeviceScreen(device.screen || '\u2014');
+    const appVersionText = normalizeUiText(device.appVersion || '\u2014');
     return `
       <article class="device-client-card" data-client-device-id="${escapeForAttribute(id)}">
         ${manageable && !isEditing ? `
           <div class="device-card-menu">
-            <button class="device-card-menu-button" type="button" data-device-client-action="toggle-menu" title="Device options" aria-label="Device options">⋮</button>
+            <button class="device-card-menu-button" type="button" data-device-client-action="toggle-menu" title="Device options" aria-label="Device options">\u22EE</button>
             <div class="device-card-menu-popover${menuOpen ? ' open' : ''}">
               <button type="button" data-device-client-action="edit-name">Edit name</button>
               <button class="danger" type="button" data-device-client-action="delete">Delete</button>
@@ -2987,7 +2987,7 @@ function deviceClassLabel(device = {}) {
   const screen = String(device.screen || '');
   if (/ipad|tablet|silk|kindle|playbook/.test(platform) || /ipad|tablet|silk|kindle|playbook/.test(ua)) return 'Tablet';
   if (/iphone|ipod|android|ios|mobile/.test(platform) || /iphone|ipod|android|mobile/.test(ua)) return 'Mobile';
-  const match = screen.match(/(\d+)\s*[×x]\s*(\d+)/i);
+  const match = screen.match(/(\d+)\s*[\u00D7x]\s*(\d+)/i);
   if (match) {
     const width = Number(match[1]);
     const height = Number(match[2]);
@@ -4107,12 +4107,12 @@ function compareItemsByPinnedCategory(a, b) {
 function syncRightToggleLabels() {
   const collapsed = document.body.classList.contains('right-collapsed');
   if ($('rightToggleTop')) {
-    $('rightToggleTop').textContent = collapsed ? '›' : '‹';
+    $('rightToggleTop').textContent = collapsed ? '\u203A' : '\u2039';
     $('rightToggleTop').title = collapsed ? 'Show details panel' : 'Hide details panel';
     $('rightToggleTop').setAttribute('aria-label', $('rightToggleTop').title);
   }
   if ($('rightToggle')) {
-    $('rightToggle').textContent = collapsed ? '‹' : '›';
+    $('rightToggle').textContent = collapsed ? '\u2039' : '\u203A';
     $('rightToggle').title = collapsed ? 'Show details' : 'Collapse details';
   }
 }
@@ -4370,8 +4370,8 @@ function renderLibrariesSettings() {
       <td>${escapeHtml(lib.type || 'Mixed')}</td>
       <td><div class="library-folder-path">${folder ? escapeHtml(folder) : '<span class="sub">No folder set</span>'}</div></td>
       <td class="library-actions">
-        <button class="small-icon rescan-library" data-index="${index}" title="Rescan this library">⟳</button>
-        <button class="small-icon edit-library" data-index="${index}" title="Edit library">✎</button>
+        <button class="small-icon rescan-library" data-index="${index}" title="Rescan this library">\u27F3</button>
+        <button class="small-icon edit-library" data-index="${index}" title="Edit library">\u270E</button>
         <button class="small-icon danger remove-library" data-index="${index}" title="Remove library" aria-label="Remove library">${deviceIcon('trash')}</button>
       </td>
     </tr>`;
@@ -4538,7 +4538,7 @@ function folderBrowseEntryButton(entry) {
   const name = String(entry?.name || path || '').trim();
   if (!path) return '';
   return `<button class="folder-browse-entry" type="button" data-folder-path="${escapeForAttribute(path)}">
-    <span class="folder-browse-icon">▣</span>
+    <span class="folder-browse-icon">\u25A3</span>
     <span>${escapeHtml(name)}</span>
     <small>${escapeHtml(path)}</small>
   </button>`;
@@ -4991,7 +4991,7 @@ function groupAxisLabelForKind(kind) {
 function groupCardSecondaryLabel(kind, name, items) {
   if (kind === 'Magazine') {
     const years = [...new Set(items.map(i => String(i.year || i.coverDate || '').trim()).filter(Boolean))].sort();
-    return years.length ? `${years[0]}${years.length > 1 ? ` – ${years[years.length - 1]}` : ''}` : 'Magazine run';
+    return years.length ? `${years[0]}${years.length > 1 ? ` \u2013 ${years[years.length - 1]}` : ''}` : 'Magazine run';
   }
   if (name === MULTI_PLATFORM_LABEL) return 'Appears across associated platforms';
   if (/unsorted/i.test(name)) return 'Needs preferred platform cleanup';
@@ -5081,7 +5081,7 @@ function sequenceRange(items) {
   const values = items.map(issueValue).filter(n => Number.isFinite(n) && n > 0).sort((a,b)=>a-b);
   if (!values.length) return `${items.length} ${items.length === 1 ? 'issue' : 'issues'}`;
   const first = values[0]; const last = values[values.length - 1];
-  return first === last ? `Issue #${first}` : `Issues #${first}–${last}`;
+  return first === last ? `Issue #${first}` : `Issues #${first}\u2013${last}`;
 }
 function normalizeCategoryStructure(value) {
   return ['content-type', 'platform', 'publisher', 'decade'].includes(value) ? value : 'content-type';
@@ -5114,7 +5114,7 @@ function categoryGroupMarkup(key, label, items, categories, options = {}) {
   }).join('') : `<p class="sub small-pad">${escapeHtml(empty || 'No categories found yet.')}</p>`;
   return `<div class="category-group${collapsed ? ' collapsed' : ''}" data-group-kind="${escapeHtml(key)}">
       <button type="button" class="category-group-toggle" data-kind="${escapeHtml(key)}" aria-expanded="${collapsed ? 'false' : 'true'}" title="${collapsed ? 'Expand' : 'Collapse'} ${escapeHtml(label)}">
-        <span class="collapse-mark" aria-hidden="true">${collapsed ? '▸' : '▾'}</span>
+        <span class="collapse-mark" aria-hidden="true">${collapsed ? '\u25B8' : '\u25BE'}</span>
         <span class="category-group-label">${escapeHtml(label)}</span>
         <em>${items.length}</em>
       </button>
@@ -5145,7 +5145,7 @@ function renderCategories() {
     const publishers = [...new Set(state.items.map(i => String(i.publisher || 'Unsorted Publisher').trim()).filter(Boolean))].sort((a,b)=>a.localeCompare(b));
     markup = categoryGroupMarkup('Publisher', 'Publishers', state.items, publishers, {
       groupKind: 'Publisher',
-      iconFor: () => '<span class="category-mini-icon" aria-hidden="true">▦</span>',
+      iconFor: () => '<span class="category-mini-icon" aria-hidden="true">\u25A6</span>',
       countFor: publisher => state.items.filter(i => String(i.publisher || 'Unsorted Publisher').trim().localeCompare(publisher, undefined, { sensitivity: 'accent' }) === 0).length,
       empty: 'No publisher values found yet.'
     });
@@ -5157,7 +5157,7 @@ function renderCategories() {
     });
     markup = categoryGroupMarkup('Decade', 'Decades', state.items, decades, {
       groupKind: 'Decade',
-      iconFor: () => '<span class="category-mini-icon" aria-hidden="true">◷</span>',
+      iconFor: () => '<span class="category-mini-icon" aria-hidden="true">\u25F7</span>',
       countFor: decade => state.items.filter(i => decadeLabelForItem(i).localeCompare(decade, undefined, { sensitivity: 'accent' }) === 0).length,
       empty: 'No dated entries found yet.'
     });
@@ -5213,13 +5213,13 @@ const KEYBIND_DEFAULTS = [
   { id: 'open-help-menu', title: 'Open help menu', description: 'Opens a help modal with all relevant keybinds', keys: ['H'] },
   { id: 'goto-page', title: 'Goto page', description: 'Open a prompt to switch pages', keys: ['G'] },
   { id: 'toggle-menu', title: 'Toggle menu', description: 'Toggles the reader menu', keys: ['Space'] },
-  { id: 'page-right', title: 'Page right', description: 'Move one page to the right', keys: ['→'] },
-  { id: 'page-left', title: 'Page left', description: 'Move one page to the left', keys: ['←'] },
-  { id: 'page-up', title: 'Page up', description: 'Move one page upwards', keys: ['↑'] },
-  { id: 'page-down', title: 'Page down', description: 'Move one page downwards', keys: ['↓'] },
+  { id: 'page-right', title: 'Page right', description: 'Move one page to the right', keys: ['\u2192'] },
+  { id: 'page-left', title: 'Page left', description: 'Move one page to the left', keys: ['\u2190'] },
+  { id: 'page-up', title: 'Page up', description: 'Move one page upwards', keys: ['\u2191'] },
+  { id: 'page-down', title: 'Page down', description: 'Move one page downwards', keys: ['\u2193'] },
   { id: 'offset-double-page', title: 'Offset double page', description: 'Offset pages for double page spread alignment', keys: ['O'] },
-  { id: 'first-page', title: 'First Page', description: 'Move to the first page', keys: ['Ctrl + ←'] },
-  { id: 'last-page', title: 'Last Page', description: 'Move to the last page', keys: ['Ctrl + →'] }
+  { id: 'first-page', title: 'First Page', description: 'Move to the first page', keys: ['Ctrl + \u2190'] },
+  { id: 'last-page', title: 'Last Page', description: 'Move to the last page', keys: ['Ctrl + \u2192'] }
 ];
 
 const HOME_SHELF_PAGE_SIZE = 6;
@@ -5269,8 +5269,8 @@ function renderKeybindsSettings() {
         <p class="sub">${escapeHtml(def.description)}</p>
       </div>
       <div class="keybind-actions" aria-label="${escapeForAttribute(def.title)} actions">
-        <button class="keybind-action" data-keybind-action="add" type="button" title="Add alternate key" aria-label="Add alternate key">ï¼‹</button>
-        <button class="keybind-action" data-keybind-action="reset" type="button" title="Reset binding" aria-label="Reset binding">♻</button>
+        <button class="keybind-action" data-keybind-action="add" type="button" title="Add alternate key" aria-label="Add alternate key">+</button>
+        <button class="keybind-action" data-keybind-action="reset" type="button" title="Reset binding" aria-label="Reset binding">\u267B</button>
       </div>
     </div>`;
   }).join('');
@@ -5328,10 +5328,10 @@ function isEditableKeyTarget(target) {
 
 function canonicalKeyLabel(label = '') {
   return String(label || '')
-    .replace(/arrowright/ig, '→')
-    .replace(/arrowleft/ig, '←')
-    .replace(/arrowup/ig, '↑')
-    .replace(/arrowdown/ig, '↓')
+    .replace(/arrowright/ig, '\u2192')
+    .replace(/arrowleft/ig, '\u2190')
+    .replace(/arrowup/ig, '\u2191')
+    .replace(/arrowdown/ig, '\u2193')
     .replace(/control/ig, 'ctrl')
     .replace(/command|cmd/ig, 'meta')
     .replace(/\s*\+\s*/g, '+')
@@ -5342,10 +5342,10 @@ function canonicalKeyLabel(label = '') {
 function keyEventToBindingLabel(e) {
   let key = e.key || '';
   if (key === ' ') key = 'Space';
-  if (key === 'ArrowRight') key = '→';
-  else if (key === 'ArrowLeft') key = '←';
-  else if (key === 'ArrowUp') key = '↑';
-  else if (key === 'ArrowDown') key = '↓';
+  if (key === 'ArrowRight') key = '\u2192';
+  else if (key === 'ArrowLeft') key = '\u2190';
+  else if (key === 'ArrowUp') key = '\u2191';
+  else if (key === 'ArrowDown') key = '\u2193';
   else if (key.length === 1) key = key.toUpperCase();
   const parts = [];
   if (e.ctrlKey) parts.push('Ctrl');
@@ -5518,10 +5518,10 @@ function setCustomSideNavStatus(text, tone = '') {
   el.dataset.tone = tone || '';
 }
 function customSideNavDefaultIcon(type = 'series', kindScope = 'all') {
-  if (kindScope === 'Strategy Guide') return '▤';
-  if (kindScope === 'Magazine') return '▧';
-  if (kindScope === 'Manual') return '▦';
-  return ({ series: '▦', kind: '▤', category: '⌘', publisher: '◫', list: '☷', search: '⌕' })[type] || '☷';
+  if (kindScope === 'Strategy Guide') return '\u25A4';
+  if (kindScope === 'Magazine') return '\u25A7';
+  if (kindScope === 'Manual') return '\u25A6';
+  return ({ series: '\u25A6', kind: '\u25A4', category: '\u2318', publisher: '\u25EB', list: '\u2637', search: '\u2315' })[type] || '\u2637';
 }
 function customSideNavTypeLabel(type) {
   return ({ series: 'Series', kind: 'Content Type', category: 'Platform', publisher: 'Publisher', list: 'Curated List', search: 'Search' })[type] || 'Shortcut';
@@ -5594,7 +5594,7 @@ function addCustomSideNavItem() {
   if ($('customSideNavKindScope')) $('customSideNavKindScope').value = 'all';
   if ($('customSideNavMatchMode')) $('customSideNavMatchMode').value = 'contains';
   if ($('customSideNavSortMode')) $('customSideNavSortMode').value = 'default';
-  if ($('customSideNavIconPreset')) $('customSideNavIconPreset').value = '☷';
+  if ($('customSideNavIconPreset')) $('customSideNavIconPreset').value = '\u2637';
   renderCustomizeSettings();
   setCustomSideNavStatus('Side nav shortcut added.', 'success');
 }
@@ -5651,11 +5651,11 @@ function renderCustomizeSettings() {
     list.innerHTML = (settings.homeShelves || []).map((id, index) => {
       const opt = HOME_SHELF_OPTIONS.find(o => o.id === id) || HOME_SHELF_OPTIONS[0];
       return `<div class="customize-shelf-row" data-shelf-id="${escapeForAttribute(id)}">
-        <span class="customize-shelf-handle">⠿</span>
+        <span class="customize-shelf-handle">\u283F</span>
         <div><strong>${escapeHtml(opt.label)}</strong><p class="sub">${escapeHtml(opt.description)}</p></div>
         <div class="customize-shelf-actions">
-          <button class="ghost" data-shelf-action="up" type="button" ${index === 0 ? 'disabled' : ''}>↑</button>
-          <button class="ghost" data-shelf-action="down" type="button" ${index === settings.homeShelves.length - 1 ? 'disabled' : ''}>↓</button>
+          <button class="ghost" data-shelf-action="up" type="button" ${index === 0 ? 'disabled' : ''}>\u2191</button>
+          <button class="ghost" data-shelf-action="down" type="button" ${index === settings.homeShelves.length - 1 ? 'disabled' : ''}>\u2193</button>
           <button class="danger" data-shelf-action="remove" type="button">Remove</button>
         </div>
       </div>`;
@@ -5765,7 +5765,7 @@ function renderHomeShelves() {
     return `<section class="home-shelf" data-home-shelf="${escapeForAttribute(id)}">
       <div class="home-shelf-heading">
         <div class="home-shelf-title-block"><h2>${escapeHtml(opt.label)}</h2><p class="sub">${escapeHtml(opt.description)}</p></div>
-        ${hasPages ? `<div class="home-shelf-controls" aria-label="${escapeForAttribute(opt.label)} shelf navigation"><span>${escapeHtml(rangeText)}</span><button class="home-shelf-arrow" data-home-shelf-nav="prev" data-home-shelf-id="${escapeForAttribute(id)}" type="button" ${offset <= 0 ? 'disabled' : ''} aria-label="Previous ${escapeForAttribute(opt.label)} items">‹</button><button class="home-shelf-arrow" data-home-shelf-nav="next" data-home-shelf-id="${escapeForAttribute(id)}" type="button" ${offset >= maxOffset ? 'disabled' : ''} aria-label="Next ${escapeForAttribute(opt.label)} items">›</button></div>` : ''}
+        ${hasPages ? `<div class="home-shelf-controls" aria-label="${escapeForAttribute(opt.label)} shelf navigation"><span>${escapeHtml(rangeText)}</span><button class="home-shelf-arrow" data-home-shelf-nav="prev" data-home-shelf-id="${escapeForAttribute(id)}" type="button" ${offset <= 0 ? 'disabled' : ''} aria-label="Previous ${escapeForAttribute(opt.label)} items">\u2039</button><button class="home-shelf-arrow" data-home-shelf-nav="next" data-home-shelf-id="${escapeForAttribute(id)}" type="button" ${offset >= maxOffset ? 'disabled' : ''} aria-label="Next ${escapeForAttribute(opt.label)} items">\u203A</button></div>` : ''}
       </div>
       <div class="card-row home-shelf-row${slideClass}" data-home-shelf-row="${escapeForAttribute(id)}">${visible.length ? visible.map(item => cardMarkupForItem(item)).join('') : `<div class="empty-message compact">No items for this shelf yet.</div>`}</div>
     </section>`;
@@ -5805,7 +5805,7 @@ function cardMarkupForItem(item) {
   const itemId = String(item.id || item.Id || '');
   const favorite = isFavoriteItem(item);
   return `<article class="card ${specialCardClass(item)} ${state.selected?.id === item.id ? 'selected' : ''}" data-id="${escapeForAttribute(itemId)}" data-alpha="${alphaKey(displayTitle(item))}">
-      <button class="favorite${favorite ? ' active' : ''}" type="button" data-id="${escapeForAttribute(itemId)}" aria-label="${favorite ? 'Remove from favorites' : 'Add to favorites'}" aria-pressed="${favorite ? 'true' : 'false'}" title="${favorite ? 'Remove from favorites' : 'Add to favorites'}">★</button>
+      <button class="favorite${favorite ? ' active' : ''}" type="button" data-id="${escapeForAttribute(itemId)}" aria-label="${favorite ? 'Remove from favorites' : 'Add to favorites'}" aria-pressed="${favorite ? 'true' : 'false'}" title="${favorite ? 'Remove from favorites' : 'Add to favorites'}">\u2605</button>
       <div class="cover-wrap"><img decoding="async" loading="lazy" data-cover-src="${cover}" src="/assets/missing-cover.svg" alt="${escapeForAttribute(displayTitle(item))} cover" /></div>
       <div class="card-body">
         <div class="card-title">${escapeHtml(displayTitle(item))}</div>
@@ -5911,10 +5911,10 @@ function installGlobalDetailDelegate() {
 
 function isBlankish(value) {
   const v = String(value || '').trim();
-  return !v || v === '—' || /^unknown$/i.test(v) || /^unsorted$/i.test(v);
+  return !v || v === '\u2014' || /^unknown$/i.test(v) || /^unsorted$/i.test(v);
 }
 function detectedSystemOf(item) {
-  if (!item) return '—';
+  if (!item) return '\u2014';
   const kind = item.kind || '';
   const platforms = associatedPlatformsOf(item);
   const preferred = [item.system, item.category, item.primarySystem]
@@ -5927,12 +5927,12 @@ function detectedSystemOf(item) {
     return 'Unsorted Strategy Guides';
   }
   if (!isBlankish(item.series)) return item.series;
-  return '—';
+  return '\u2014';
 }
 
 function platformListHtml(item) {
   const platforms = associatedPlatformsOf(item);
-  if (!platforms.length) return '—';
+  if (!platforms.length) return '\u2014';
   return `<div class="platform-list">${platforms.map(p => `<span class="tag">${platformIconHtml(p, 'platform-icon tiny')}${escapeHtml(p)}</span>`).join('')}</div>`;
 }
 
@@ -5945,7 +5945,7 @@ function normalizeWebLink(value) {
 }
 
 function metaRow(label, value, isHtml = false) {
-  const rendered = isHtml ? String(value || '') : escapeHtml(String(value || '—'));
+  const rendered = isHtml ? String(value || '') : escapeHtml(String(value || '\u2014'));
   return `<dt>${escapeHtml(label)}</dt><dd>${rendered}</dd>`;
 }
 
@@ -5957,7 +5957,7 @@ function itemArray(value) {
 
 function itemList(value) {
   const values = itemArray(value);
-  return values.length ? values.join(', ') : '—';
+  return values.length ? values.join(', ') : '\u2014';
 }
 
 function optionValueOf(option) {
@@ -6433,7 +6433,7 @@ function metadataManagerShowCoverPreview(id, anchor) {
     </div>
     <div class="metadata-cover-preview-caption">
       <strong>${escapeHtml(title)}</strong>
-      <span>${escapeHtml(item.kind || 'Entry')}${year ? ` • ${escapeHtml(year)}` : ''}</span>
+      <span>${escapeHtml(item.kind || 'Entry')}${year ? ` \u2022 ${escapeHtml(year)}` : ''}</span>
       <em>${escapeHtml(category)}</em>
     </div>
   `;
@@ -6621,7 +6621,7 @@ function metadataManagerCleanTitle(value, kind = '') {
   text = text.replace(/\b(retromags|scan|scanned|cbz|cbr|pdf)\b/gi, ' ');
   if (/manual/i.test(kind)) text = text.replace(/\b(instruction\s+booklet|instruction\s+manual|manual)\b/gi, ' ');
   text = text.replace(/\s+#\s*/g, ' #');
-  text = text.replace(/\s*[-–—]\s*/g, ' - ');
+  text = text.replace(/\s*[-\u2013\u2014]\s*/g, ' - ');
   text = text.replace(/\s*:\s*/g, ': ');
   text = text.replace(/\s{2,}/g, ' ').trim(' ', '-', '_', '.');
   return metadataManagerTitleCase(text);
@@ -6707,8 +6707,8 @@ function renderMetadataManager() {
       const preferredPlatformReadOnly = item.kind === 'Strategy Guide' && hasMultipleAssociatedPlatforms(rowAssociatedPlatforms);
       const inputField = (name, value, readOnly = false, title = '') => `<input class="metadata-manager-input ${METADATA_MANAGER_WIDE_COLUMNS.has(name) ? 'wide' : ''} ${readOnly ? 'readonly' : ''}" data-id="${escapeForAttribute(id)}" data-field="${escapeForAttribute(name)}" value="${escapeForAttribute(rowDirty[name] ?? value ?? '')}" ${readOnly ? 'readonly aria-readonly="true"' : ''} ${title ? `title="${escapeForAttribute(title)}"` : ''} />`;
       const cellFor = column => {
-        if (column.key === 'kind') return `<span class="metadata-kind-pill metadata-kind-preview-trigger" data-metadata-preview-id="${escapeForAttribute(metadataManagerItemId(item))}" title="Click and hold to preview cover">${escapeHtml(item.kind || '—')}</span>`;
-        if (column.key === 'metadataSource') return `<span class="metadata-source-text">${escapeHtml(item.metadataSource || '—')}</span>`;
+        if (column.key === 'kind') return `<span class="metadata-kind-pill metadata-kind-preview-trigger" data-metadata-preview-id="${escapeForAttribute(metadataManagerItemId(item))}" title="Click and hold to preview cover">${escapeHtml(item.kind || '\u2014')}</span>`;
+        if (column.key === 'metadataSource') return `<span class="metadata-source-text">${escapeHtml(item.metadataSource || '\u2014')}</span>`;
         if (column.key === 'category' && preferredPlatformReadOnly) return `<input class="metadata-manager-input ${METADATA_MANAGER_WIDE_COLUMNS.has('category') ? 'wide' : ''} readonly" data-id="${escapeForAttribute(id)}" data-field="category" value="${escapeForAttribute(MULTI_PLATFORM_LABEL)}" readonly aria-readonly="true" title="Preferred Platform is read-only when Associated Platforms contains multiple systems." />`;
         return inputField(column.key, metadataManagerFieldValue(item, column.key));
       };
@@ -7058,18 +7058,18 @@ function combinedIsbnText(item) {
 
 function detailValue(value) {
   const raw = String(value ?? '').trim();
-  return raw ? raw : '—';
+  return raw ? raw : '\u2014';
 }
 
 function detailTagListHtml(value) {
   const values = itemArray(value);
-  if (!values.length) return '<span class="muted-dash">—</span>';
+  if (!values.length) return '<span class="muted-dash">\u2014</span>';
   return `<div class="overview-chip-list">${values.map(v => `<span class="overview-chip">${escapeHtml(v)}</span>`).join('')}</div>`;
 }
 
 function chipListHtml(value) {
   const values = itemArray(value);
-  if (!values.length) return '<span class="muted-dash">—</span>';
+  if (!values.length) return '<span class="muted-dash">\u2014</span>';
   return values.map(v => `<span class="overview-chip">${escapeHtml(v)}</span>`).join('');
 }
 
@@ -7252,17 +7252,17 @@ function strategyOverviewHtml(item) {
 }
 
 function magazineTechnicalRows(item) {
-  const sourceFile = item.fileName || (item.path ? String(item.path).split(/[\\/]/).pop() : '—');
-  const libraryPath = item.libraryName || item.libraryType || '—';
+  const sourceFile = item.fileName || (item.path ? String(item.path).split(/[\\/]/).pop() : '\u2014');
+  const libraryPath = item.libraryName || item.libraryType || '\u2014';
   const scanStatus = item.validationStatus && item.validationStatus !== 'ok' ? item.validationStatus : 'OK';
-  const fileSize = Number(item.sizeBytes || 0) > 0 ? `${Math.round(Number(item.sizeBytes) / 1024 / 1024 * 10) / 10} MB` : '—';
-  const modified = item.modified ? new Date(item.modified).toLocaleString() : '—';
+  const fileSize = Number(item.sizeBytes || 0) > 0 ? `${Math.round(Number(item.sizeBytes) / 1024 / 1024 * 10) / 10} MB` : '\u2014';
+  const modified = item.modified ? new Date(item.modified).toLocaleString() : '\u2014';
   return [
     ['Page Count', itemPageCountLabel(item)],
-    ['File Format', item.format || '—'],
+    ['File Format', item.format || '\u2014'],
     ['Source File', sourceFile],
     ['Library', libraryPath],
-    ['Source Path', item.path || '—'],
+    ['Source Path', item.path || '\u2014'],
     ['File Size', fileSize],
     ['Modified Date', modified],
     ['Scan Status', scanStatus],
@@ -7487,7 +7487,7 @@ function renderDetails(item) {
   $('detailTitle').textContent = displayTitle(item);
   updateDetailNavigationButtons(item);
   const detectedSystem = detailSystemLabelForItem(item);
-  $('detailSub').textContent = `${detectedSystem} • ${item.year || 'Unknown'}`;
+  $('detailSub').textContent = `${detectedSystem} \u2022 ${item.year || 'Unknown'}`;
   $('description').textContent = item.summary || descriptionFor(item);
   $('description').classList.toggle('hidden', item.kind === 'Magazine' || item.kind === 'Strategy Guide' || item.kind === 'Manual');
   $('tagList').innerHTML = (item.tags || []).map(t => `<span class="tag">${escapeHtml(t)}</span>`).join('');
@@ -7515,9 +7515,9 @@ function renderDetails(item) {
     const metaRows = [
       ['Detected System', detectedSystem],
       ...(webLink ? [['Web Link', `<a class="meta-link" href="${escapeHtml(webLink)}" target="_blank" rel="noopener noreferrer">${escapeHtml(item.webLink || webLink)}</a>`, true]] : []),
-      ['Publisher', item.publisher || '—'],
-      ['Year', item.year || '—'],
-      ['Writer', item.writer || '—'],
+      ['Publisher', item.publisher || '\u2014'],
+      ['Year', item.year || '\u2014'],
+      ['Writer', item.writer || '\u2014'],
       ['Pages', itemPageCountLabel(item)]
     ];
     if (metaEl) {
@@ -7569,21 +7569,21 @@ function renderDetails(item) {
   $('editYear').value = item.year || '';
   $('editWriter').value = item.writer || '';
   $('editSummary').value = item.summary || '';
-  setMaybeValue('editFeaturedGames', isMagazine ? itemList(item.featuredGames).replace(/^—$/, '') : '');
-  setMaybeValue('editFeaturedPlatforms', isMagazine ? itemList(item.featuredPlatforms).replace(/^—$/, '') : '');
-  setMaybeValue('editSpecialFeatures', isMagazine ? itemList(item.specialFeatures).replace(/^—$/, '') : '');
-  setMaybeValue('editIncludedExtras', (isMagazine || isStrategyGuide || isManual) ? itemList(item.includedExtras).replace(/^—$/, '') : '');
-  setMaybeValue('editCoveredGames', isStrategyGuide ? itemList(item.coveredGames).replace(/^—$/, '') : '');
-  setMaybeValue('editCoveredPlatforms', isStrategyGuide ? itemList(item.coveredPlatforms || item.associatedPlatforms).replace(/^—$/, '') : '');
-  setMaybeValue('editGuideTopics', isStrategyGuide ? itemList(item.guideTopics).replace(/^—$/, '') : '');
-  setMaybeValue('editStrategySpecialFeatures', isStrategyGuide ? itemList(item.specialFeatures).replace(/^—$/, '') : '');
-  setMaybeValue('editCharactersCovered', (isStrategyGuide || isManual) ? itemList(item.charactersCovered).replace(/^—$/, '') : '');
-  setMaybeValue('editLocationsCovered', isStrategyGuide ? itemList(item.locationsCovered).replace(/^—$/, '') : '');
+  setMaybeValue('editFeaturedGames', isMagazine ? itemList(item.featuredGames).replace(/^\u2014$/, '') : '');
+  setMaybeValue('editFeaturedPlatforms', isMagazine ? itemList(item.featuredPlatforms).replace(/^\u2014$/, '') : '');
+  setMaybeValue('editSpecialFeatures', isMagazine ? itemList(item.specialFeatures).replace(/^\u2014$/, '') : '');
+  setMaybeValue('editIncludedExtras', (isMagazine || isStrategyGuide || isManual) ? itemList(item.includedExtras).replace(/^\u2014$/, '') : '');
+  setMaybeValue('editCoveredGames', isStrategyGuide ? itemList(item.coveredGames).replace(/^\u2014$/, '') : '');
+  setMaybeValue('editCoveredPlatforms', isStrategyGuide ? itemList(item.coveredPlatforms || item.associatedPlatforms).replace(/^\u2014$/, '') : '');
+  setMaybeValue('editGuideTopics', isStrategyGuide ? itemList(item.guideTopics).replace(/^\u2014$/, '') : '');
+  setMaybeValue('editStrategySpecialFeatures', isStrategyGuide ? itemList(item.specialFeatures).replace(/^\u2014$/, '') : '');
+  setMaybeValue('editCharactersCovered', (isStrategyGuide || isManual) ? itemList(item.charactersCovered).replace(/^\u2014$/, '') : '');
+  setMaybeValue('editLocationsCovered', isStrategyGuide ? itemList(item.locationsCovered).replace(/^\u2014$/, '') : '');
   setMaybeValue('editManualTitle', isManual ? (item.manualTitle || item.title || '') : '');
   setMaybeValue('editManualType', isManual ? (item.manualType || 'Instruction Manual') : '');
-  setMaybeValue('editIncludedSections', isManual ? itemList(item.includedSections).replace(/^—$/, '') : '');
+  setMaybeValue('editIncludedSections', isManual ? itemList(item.includedSections).replace(/^\u2014$/, '') : '');
   setMaybeValue('editControlScheme', isManual ? item.controlScheme : '');
-  setMaybeValue('editItemsCovered', isManual ? itemList(item.itemsCovered).replace(/^—$/, '') : '');
+  setMaybeValue('editItemsCovered', isManual ? itemList(item.itemsCovered).replace(/^\u2014$/, '') : '');
   setMaybeValue('editWarrantySupport', isManual ? item.warrantySupport : '');
   $('editTags').value = (item.tags || []).join(', ');
   $('notesText').value = item.notes || '';
@@ -9183,7 +9183,7 @@ async function performReaderCoverOpenTransition(nextIndex) {
     };
     const landedTransform = transformAt(1);
 
-    // Stage 1: the part that tested well — a pure, smooth slide from the centered
+    // Stage 1: the part that tested well \u2014 a pure, smooth slide from the centered
     // cover into the final right-page slot. The scale term is normally tiny, but it
     // absorbs small cover-vs-spread padding differences instead of letting them pop.
     await overlay.animate([
@@ -10627,7 +10627,7 @@ function renderTaskMonitor() {
     const updated = task.updatedAt || task.UpdatedAt || '';
     return `<div class="task-card">
       <strong>${title}</strong>
-      <small>${status}${updated ? ` • ${escapeHtml(new Date(updated).toLocaleTimeString())}` : ''}</small>
+      <small>${status}${updated ? ` \u2022 ${escapeHtml(new Date(updated).toLocaleTimeString())}` : ''}</small>
       <small>${message}</small>
       <div class="task-progress" style="--task-progress:${progress}%"><span></span></div>
     </div>`;
@@ -10695,7 +10695,7 @@ function countBy(items, getKey) {
 function topItemsHtml(rows, unit = 'items', limit = 5) {
   const list = (rows || []).slice(0, limit);
   if (!list.length) return '<p class="sub">No data yet.</p>';
-  return list.map(([label, value], index) => `<div class="statistics-rank-row"><span>${index + 1}</span><strong>${escapeHtml(label || '—')}</strong><em>${escapeHtml(String(value))} ${escapeHtml(unit)}</em></div>`).join('');
+  return list.map(([label, value], index) => `<div class="statistics-rank-row"><span>${index + 1}</span><strong>${escapeHtml(label || '\u2014')}</strong><em>${escapeHtml(String(value))} ${escapeHtml(unit)}</em></div>`).join('');
 }
 function classifyDeviceByScreen(item) {
   const text = [item?.platform, item?.browser, item?.screen, item?.userAgent].join(' ').toLowerCase();
@@ -10763,7 +10763,7 @@ function renderStatistics() {
   const recentIds = [...new Set(events.slice().reverse().map(e => e.id).filter(Boolean))];
   const itemLookup = new Map(allItems.map(item => [String(item.id || item.Id), item]));
   const recentItems = recentIds.map(id => itemLookup.get(String(id))).filter(Boolean).slice(0, 5);
-  if ($('statisticsRecentViewed')) $('statisticsRecentViewed').innerHTML = recentItems.length ? recentItems.map(item => `<div class="statistics-book-row"><img loading="lazy" src="${coverUrl(item)}" alt="" /><span><strong>${escapeHtml(displayTitle(item))}</strong><em>${escapeHtml(item.kind || '')} • ${escapeHtml(item.year || '—')}</em></span></div>`).join('') : '<p class="sub">Open a few items to populate recent views.</p>';
+  if ($('statisticsRecentViewed')) $('statisticsRecentViewed').innerHTML = recentItems.length ? recentItems.map(item => `<div class="statistics-book-row"><img loading="lazy" src="${coverUrl(item)}" alt="" /><span><strong>${escapeHtml(displayTitle(item))}</strong><em>${escapeHtml(item.kind || '')} \u2022 ${escapeHtml(item.year || '\u2014')}</em></span></div>`).join('') : '<p class="sub">Open a few items to populate recent views.</p>';
 
   const topDefs = [
     ['Popular Libraries', countBy(allItems, item => item.kind), 'items'],
@@ -11454,5 +11454,4 @@ installLibraryCardDelegates();
 installGlobalDetailDelegate();
 syncEmailTemplatePreview();
 initializeGuidevaultAuthAndApp();
-
 

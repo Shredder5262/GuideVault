@@ -1,4 +1,4 @@
-﻿using System.Collections.Concurrent;
+using System.Collections.Concurrent;
 using System.IO.Compression;
 using System.Security.Cryptography;
 using System.Text;
@@ -13,7 +13,7 @@ using System.Net.Http.Headers;
 using SharpCompress.Readers;
 
 var builder = WebApplication.CreateBuilder(args);
-const string GuidevaultVersion = "0.9.41";
+const string GuidevaultVersion = "0.9.42";
 var app = builder.Build();
 var metadataJsonOptions = new JsonSerializerOptions(JsonSerializerDefaults.Web) { PropertyNameCaseInsensitive = true };
 var options = app.Configuration.GetSection("Guidevault").Get<GuidevaultOptions>() ?? new GuidevaultOptions();
@@ -1178,7 +1178,7 @@ static string[] CategoryBuckets(LibraryItem item)
     void Add(string? value)
     {
         var text = (value ?? string.Empty).Trim();
-        if (string.IsNullOrWhiteSpace(text) || text == "â€”" || IsMultiPlatformBucket(text)) return;
+        if (string.IsNullOrWhiteSpace(text) || text == "—" || IsMultiPlatformBucket(text)) return;
         if (!buckets.Any(existing => string.Equals(existing, text, StringComparison.OrdinalIgnoreCase))) buckets.Add(text);
     }
 
@@ -1215,7 +1215,7 @@ static string OpdsItemDescription(LibraryItem item)
         item.Year,
         item.PageCount > 0 ? $"{item.PageCount} page(s)" : string.Empty
     }.Where(p => !string.IsNullOrWhiteSpace(p)).Distinct(StringComparer.OrdinalIgnoreCase);
-    return string.Join(" â€¢ ", parts);
+    return string.Join(" • ", parts);
 }
 
 static string OpdsSearchText(LibraryItem item) => string.Join(" ", new[]
@@ -4811,7 +4811,7 @@ public static class MetadataInferer
         var suffix = new List<string>();
         if (!string.IsNullOrWhiteSpace(issueNumber)) suffix.Add($"Issue #{issueNumber}");
         if (!string.IsNullOrWhiteSpace(coverDate)) suffix.Add(coverDate);
-        return suffix.Count == 0 ? magazineTitle : $"{magazineTitle} â€” {string.Join(" â€¢ ", suffix)}";
+        return suffix.Count == 0 ? magazineTitle : $"{magazineTitle} — {string.Join(" • ", suffix)}";
     }
 
     private static string ExtractIssueNumber(string value)
@@ -4909,7 +4909,7 @@ public static class MetadataInferer
             if (!string.IsNullOrWhiteSpace(token))
                 value = Regex.Replace(value, Regex.Escape(token), string.Empty, RegexOptions.IgnoreCase).Trim();
         }
-        value = Regex.Replace(value, @"(?i)\b(issue|iss|no\.?|number|vol\.?|volume|#)\b\s*[:#-]?\s*[0-9A-Za-z]+", string.Empty).Trim(' ', '-', ':', '\u2013', '\u2014');
+        value = Regex.Replace(value, @"(?i)\b(issue|iss|no\.?|number|vol\.?|volume|#)\b\s*[:#-]?\s*[0-9A-Za-z]+", string.Empty).Trim(' ', '-', '_', '.', '\u2022');
         return value.Length >= 4 ? value : string.Empty;
     }
 
@@ -4919,7 +4919,7 @@ public static class MetadataInferer
         var features = new List<string>();
         void AddIf(string key, string label) { if (value.Contains(key)) features.Add(label); }
         AddIf("e3", "E3 coverage");
-        AddIf("buyer", "Buyerâ€™s guide");
+        AddIf("buyer", "Buyer’s guide");
         AddIf("holiday", "Holiday guide");
         AddIf("preview", "Previews");
         AddIf("review", "Reviews");
@@ -5378,7 +5378,7 @@ public static class StrategyGuidePlatformResolver
         => Regex.Replace(value ?? string.Empty, @"[^0-9Xx]", string.Empty).ToUpperInvariant();
 
     private static string CleanLanguageTag(string value)
-        => (value ?? string.Empty).Trim(' ', '-', ':', '\u2013', '\u2014').Trim(' ', '-', ':', '\u2013', '\u2014').Replace('_', '-');
+        => (value ?? string.Empty).Trim().Trim('/').Replace('_', '-');
 
     private static async Task<StrategyPlatformResolution> TryResolveFromWikidataAsync(string candidateTitle)
     {
@@ -6127,7 +6127,5 @@ public static class ArchiveReader
 
 static class GuidevaultBuildInfo
 {
-    public const string Version = "0.9.41";
+    public const string Version = "0.9.42";
 }
-
-
