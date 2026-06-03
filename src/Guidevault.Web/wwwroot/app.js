@@ -1923,7 +1923,7 @@ function renderOpdsSettings() {
           <td><span class="opds-masked-key">${maskOpdsKey(key.secret)}</span><button class="opds-inline-copy" type="button" data-opds-action="copy-key" title="Copy key">⧉</button></td>
           <td>${escapeHtml(key.expiresAt ? formatOpdsDate(key.expiresAt) : 'Never')}</td>
           <td>${escapeHtml(formatOpdsDate(key.lastAccessed))}</td>
-          <td class="opds-actions-cell"><button class="opds-action-button" type="button" data-opds-action="rotate" title="Rotate key">⟳</button><button class="opds-action-button danger" type="button" data-opds-action="delete" title="Delete key">ðŸ—‘</button></td>
+          <td class="opds-actions-cell"><button class="opds-action-button" type="button" data-opds-action="rotate" title="Rotate key">⟳</button><button class="opds-action-button danger" type="button" data-opds-action="delete" title="Delete key" aria-label="Delete key">${deviceIcon('trash')}</button></td>
         </tr>`).join('')
       : '<tr><td colspan="5" class="opds-empty-row">No authorization keys yet. Select + New to generate one.</td></tr>';
   }
@@ -2630,7 +2630,7 @@ function currentDeviceScreenText() {
   const width = window.screen?.width || window.innerWidth || 0;
   const height = window.screen?.height || window.innerHeight || 0;
   const orientation = width && height ? (width >= height ? 'landscape' : 'portrait') : '';
-  return width && height ? `${width}Ã—${height}${orientation ? ` (${orientation})` : ''}` : '';
+  return width && height ? `${width}×${height}${orientation ? ` (${orientation})` : ''}` : '';
 }
 
 function buildDeviceHeartbeatPayload() {
@@ -2731,6 +2731,27 @@ function shortBrowserVersion(version = '') {
   return parts.length ? parts[0] + (parts[1] ? `.${parts[1]}` : '') : '';
 }
 
+function normalizeUiText(value = '') {
+  return String(value ?? '')
+    .replace(/Â—/g, '×')
+    .replace(/Ã—/g, '×')
+    .replace(/â€”/g, '—')
+    .replace(/â€“/g, '–')
+    .replace(/â€™/g, "'")
+    .replace(/â€œ/g, '"')
+    .replace(/â€/g, '"')
+    .replace(/â€¢/g, '•')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function normalizeDeviceScreen(value = '') {
+  const text = normalizeUiText(value || '—');
+  return text
+    .replace(/(\d+)\s*(?:×|x|—|–|-)\s*(\d+)/gi, '$1×$2')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
 
 function deviceIcon(name) {
   const icons = {
@@ -2743,6 +2764,7 @@ function deviceIcon(name) {
     version: '<circle cx="6" cy="6" r="3"></circle><circle cx="18" cy="18" r="3"></circle><path d="M8.5 8.5 15.5 15.5"></path><path d="M14 6h4v4"></path>',
     calendar: '<rect x="3" y="5" width="18" height="16" rx="2"></rect><path d="M16 3v4"></path><path d="M8 3v4"></path><path d="M3 10h18"></path>',
     clock: '<circle cx="12" cy="12" r="9"></circle><path d="M12 7v5l3 2"></path>',
+    trash: '<path d="M3 6h18"></path><path d="M8 6V4h8v2"></path><path d="M19 6l-1 14H6L5 6"></path><path d="M10 11v6"></path><path d="M14 11v6"></path>',
     opds: '<path d="M5 19a2 2 0 1 0 0-4 2 2 0 0 0 0 4Z"></path><path d="M4 5c8.3 0 15 6.7 15 15"></path><path d="M4 11c5 0 9 4 9 9"></path>'
   };
   const body = icons[name] || icons.desktop;
@@ -2758,7 +2780,10 @@ function clientDeviceTitleIcon(device = {}) {
 }
 
 function deviceFact(iconName, label, value) {
-  return `<div class="device-card-fact">${deviceIcon(iconName)}<span>${label}: <b>${escapeHtml(value || '—')}</b></span></div>`;
+  const displayValue = iconName === 'screen'
+    ? normalizeDeviceScreen(value || '—')
+    : normalizeUiText(value || '—');
+  return `<div class="device-card-fact">${deviceIcon(iconName)}<span>${escapeHtml(label)}: <b>${escapeHtml(displayValue || '—')}</b></span></div>`;
 }
 
 function renderDeviceHistory() {
@@ -2779,7 +2804,7 @@ function renderEmailDeviceTable(emailDevices = []) {
           <td><strong>${escapeHtml(device.name || 'Email Device')}</strong></td>
           <td>${escapeHtml(device.email || '—')}</td>
           <td>${escapeHtml(device.platform || 'Email')}</td>
-          <td><button class="device-table-action danger" type="button" data-device-email-action="delete">ðŸ—‘</button></td>
+          <td><button class="device-table-action danger" type="button" data-device-email-action="delete" title="Delete device" aria-label="Delete device">${deviceIcon('trash')}</button></td>
         </tr>`).join('')
       : '<tr><td colspan="4" class="device-empty-row">No data to display</td></tr>';
   }
@@ -2789,7 +2814,10 @@ function renderEmailDeviceTable(emailDevices = []) {
 function clientDeviceBadges(device) {
   const badges = [];
   if (device.isActive) badges.push('<span class="device-badge active">Active</span>');
-  if (device.clientType) badges.push(`<span class="device-badge ${String(device.clientType).toLowerCase().includes('opds') ? 'opds' : 'web'}">${escapeHtml(device.clientType)}</span>`);
+  if (device.clientType) {
+    const typeText = normalizeUiText(device.clientType);
+    badges.push(`<span class="device-badge ${String(device.clientType).toLowerCase().includes('opds') ? 'opds' : 'web'}">${escapeHtml(typeText)}</span>`);
+  }
   if (device.authKeyName) badges.push('<span class="device-badge auth">Auth Key</span>');
   return badges.join('');
 }
@@ -2816,9 +2844,14 @@ function renderClientDeviceCardsInto(gridId, clientDevices = [], options = {}) {
     const isEditing = manageable && devices.editingClientId === id;
     const menuOpen = manageable && devices.clientMenuId === id && !isEditing;
     const browserVersion = shortBrowserVersion(device.browserVersion || '');
-    const browserText = device.browserName ? `${device.browserName}${browserVersion ? ` ${browserVersion}` : ''}` : '—';
-    const userText = device.username || device.authKeyName || device.email || 'local';
-    const displayName = device.displayName || 'Guidevault Client';
+    const browserText = device.browserName
+      ? normalizeUiText(`${device.browserName}${browserVersion ? ` ${browserVersion}` : ''}`)
+      : '—';
+    const userText = normalizeUiText(device.username || device.authKeyName || device.email || 'local');
+    const displayName = normalizeUiText(device.displayName || 'Guidevault Client');
+    const platformText = normalizeUiText(device.platform || 'Unknown');
+    const screenText = normalizeDeviceScreen(device.screen || '—');
+    const appVersionText = normalizeUiText(device.appVersion || '—');
     return `
       <article class="device-client-card" data-client-device-id="${escapeForAttribute(id)}">
         ${manageable && !isEditing ? `
@@ -2843,9 +2876,9 @@ function renderClientDeviceCardsInto(gridId, clientDevices = [], options = {}) {
         <div class="device-card-badges">${clientDeviceBadges(device)}<span class="device-card-user">${escapeHtml(userText)}</span></div>
         <div class="device-card-facts">
           ${deviceFact('browser', 'Browser', browserText)}
-          ${deviceFact('platform', 'Platform', device.platform || 'Unknown')}
-          ${deviceFact('screen', 'Screen', device.screen || '—')}
-          ${deviceFact('version', 'App Version', device.appVersion || '—')}
+          ${deviceFact('platform', 'Platform', platformText)}
+          ${deviceFact('screen', 'Screen', screenText)}
+          ${deviceFact('version', 'App Version', appVersionText)}
         </div>
         <div class="device-card-footer">
           <span class="device-card-footer-item">${deviceIcon('calendar')} First Seen: ${escapeHtml(formatDeviceDate(device.firstSeen))}</span>
@@ -2879,7 +2912,7 @@ function deviceClassLabel(device = {}) {
   const screen = String(device.screen || '');
   if (/ipad|tablet|silk|kindle|playbook/.test(platform) || /ipad|tablet|silk|kindle|playbook/.test(ua)) return 'Tablet';
   if (/iphone|ipod|android|ios|mobile/.test(platform) || /iphone|ipod|android|mobile/.test(ua)) return 'Mobile';
-  const match = screen.match(/(\d+)\s*[Ã—x]\s*(\d+)/i);
+  const match = screen.match(/(\d+)\s*[×x]\s*(\d+)/i);
   if (match) {
     const width = Number(match[1]);
     const height = Number(match[2]);
@@ -4264,7 +4297,7 @@ function renderLibrariesSettings() {
       <td class="library-actions">
         <button class="small-icon rescan-library" data-index="${index}" title="Rescan this library">⟳</button>
         <button class="small-icon edit-library" data-index="${index}" title="Edit library">✎</button>
-        <button class="small-icon danger remove-library" data-index="${index}" title="Remove library">ðŸ—‘</button>
+        <button class="small-icon danger remove-library" data-index="${index}" title="Remove library" aria-label="Remove library">${deviceIcon('trash')}</button>
       </td>
     </tr>`;
   }).join('') || `<tr><td colspan="4" class="empty-row">No libraries yet. Add a library folder to begin.</td></tr>`;

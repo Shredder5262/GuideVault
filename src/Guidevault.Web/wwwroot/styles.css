@@ -1324,6 +1324,8 @@ body.right-collapsed .details{
 }
 .library-actions{display:flex; gap:8px;}
 .small-icon{
+  display:inline-grid;
+  place-items:center;
   border:1px solid var(--line);
   background:#223143;
   color:#fff;
@@ -10305,6 +10307,13 @@ body.auth-locked{
   stroke-linecap:round;
   stroke-linejoin:round;
 }
+.small-icon .gv-device-icon,
+.device-table-action .gv-device-icon,
+.opds-action-button .gv-device-icon{
+  width:16px;
+  height:16px;
+}
+
 .device-card-title .gv-device-icon{
   width:22px;
   height:22px;
