@@ -13910,3 +13910,116 @@ button.danger-soft:not(:disabled):hover{
 }
 
 /* Guidevault 0.9.53 - Filename rename preview target */
+
+/* Guidevault 0.9.59 - File & Metadata workflow */
+.file-metadata-action-card{
+  margin:0 0 14px!important;
+  padding:12px 13px!important;
+  border:1px solid rgba(88,151,255,.16)!important;
+  border-radius:14px!important;
+  background:rgba(255,255,255,.024)!important;
+}
+.file-metadata-action-card h4{
+  margin:0 0 4px!important;
+  color:#e7f1ff!important;
+  font-size:13px!important;
+}
+.file-metadata-action-card .sub{
+  margin:0 0 10px!important;
+}
+.file-metadata-actions{
+  grid-template-columns:minmax(0,1fr) minmax(0,1fr) minmax(0,1fr)!important;
+}
+.file-metadata-actions button{
+  width:100%!important;
+}
+@media(max-width:900px){
+  .file-metadata-actions{
+    grid-template-columns:1fr!important;
+  }
+}
+
+
+/* Guidevault 0.9.61 - Strategy platform layout cleanup */
+.library-view.group-mode .group-hub-panel{
+  grid-template-columns:1fr!important;
+  padding:18px 22px!important;
+  margin-bottom:12px!important;
+}
+.library-view.group-mode .group-hub-stats{
+  display:none!important;
+}
+.library-view.group-mode #grid{
+  grid-template-columns:repeat(auto-fill,minmax(315px,1fr))!important;
+  gap:16px!important;
+}
+.library-view.group-mode .category-card.category-card-redesign,
+.library-view.group-mode.magazine-mode .category-card.category-card-redesign{
+  grid-template-columns:minmax(0,1fr) 104px!important;
+  gap:12px!important;
+  min-height:138px!important;
+  padding:16px 16px!important;
+  border-radius:18px!important;
+}
+.library-view.group-mode .category-card-content{
+  gap:9px!important;
+}
+.library-view.group-mode .category-title-line{
+  gap:10px!important;
+}
+.library-view.group-mode .category-platform-mark{
+  width:38px!important;
+  height:38px!important;
+  flex-basis:38px!important;
+}
+.library-view.group-mode .category-platform-mark .platform-icon.large{
+  width:34px!important;
+  height:34px!important;
+}
+.library-view.group-mode .category-card-redesign .category-title{
+  font-size:18px!important;
+  line-height:1.15!important;
+}
+.library-view.group-mode .category-card-redesign .category-title-line p{
+  margin-top:4px!important;
+  font-size:13px!important;
+  line-height:1.25!important;
+}
+.library-view.group-mode .category-card-facts span{
+  padding:4px 8px!important;
+  font-size:11px!important;
+}
+.library-view.group-mode .category-preview-strip{
+  min-height:106px!important;
+  max-height:116px!important;
+  border-radius:14px!important;
+  box-shadow:inset 0 0 0 1px rgba(255,255,255,.05),6px 8px 0 rgba(255,255,255,.018)!important;
+}
+.library-view.group-mode .category-preview-strip img{
+  width:54px!important;
+  height:76px!important;
+  top:14px!important;
+  left:calc(10px + (var(--slot) * 13px))!important;
+  border-radius:7px!important;
+}
+.library-view.group-mode .category-preview-strip img:nth-child(n+4){
+  display:none!important;
+}
+.library-view.group-mode .category-card-redesign.nes-manual-category .category-preview-strip{
+  min-height:92px!important;
+  max-height:100px!important;
+}
+.library-view.group-mode .category-card-redesign.nes-manual-category .category-preview-strip img{
+  width:64px!important;
+  height:45px!important;
+  top:24px!important;
+}
+@media(max-width:760px){
+  .library-view.group-mode .category-card.category-card-redesign,
+  .library-view.group-mode.magazine-mode .category-card.category-card-redesign{
+    grid-template-columns:1fr!important;
+  }
+  .library-view.group-mode .category-preview-strip{
+    min-height:96px!important;
+  }
+}

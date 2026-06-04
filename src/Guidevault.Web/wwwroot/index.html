@@ -1,10 +1,10 @@
-﻿<!doctype html>
+<!doctype html>
 <html lang="en">
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Guidevault</title>
-  <link rel="stylesheet" href="/styles.css?v=0.9.59-fast-enrichment" />
+  <link rel="stylesheet" href="/styles.css?v=0.9.62-strategy-platform-layout" />
 </head>
 <body class="right-collapsed auth-locked">
   <section id="loginView" class="login-view" aria-labelledby="loginTitle">
@@ -160,7 +160,7 @@
               </div>
             </aside>
             <div class="detail-main-column">
-              <div class="tabs"><button class="tab active" data-tab="overview">Overview</button><button class="tab" data-tab="metadata">Metadata</button><button class="tab" data-tab="file-name">Filename</button><button class="tab" data-tab="reading-profile">Reading Profile</button><button class="tab" data-tab="notes">Notes</button></div>
+              <div class="tabs"><button class="tab active" data-tab="overview">Overview</button><button class="tab" data-tab="metadata">Metadata</button><button class="tab" data-tab="file-name">File &amp; Metadata</button><button class="tab" data-tab="reading-profile">Reading Profile</button><button class="tab" data-tab="notes">Notes</button></div>
               <section id="overviewPanel" class="tab-panel">
                 <p id="description"></p>
                 <div id="meta" class="detail-meta-list"></div>
@@ -270,24 +270,29 @@
                 <label id="editCharactersCoveredLabel" class="strategy-metadata-field manual-metadata-field hidden">Characters Covered, comma-separated<input id="editCharactersCovered" /></label>
                 <label id="editLocationsCoveredLabel" class="strategy-metadata-field hidden">Locations Covered, comma-separated<input id="editLocationsCovered" /></label>
                 <label>Tags, comma-separated<input id="editTags" /></label>
-                <div class="metadata-save-export-row">
-                  <button id="saveMetadataBtn" class="primary" type="button">Save Metadata</button>
-                  <button id="exportGuideMetadataBtn" class="ghost" type="button">Export Guide Metadata</button>
-                </div>
-                <p id="metadataExportStatus" class="sub metadata-export-status" aria-live="polite"></p>
               </section>
               <section id="file-namePanel" class="tab-panel hidden">
                 <article id="metadataFileMaintenance" class="metadata-file-maintenance filename-schema-panel" aria-live="polite">
                   <div class="metadata-file-maintenance-header">
                     <div>
-                      <h3>Filename</h3>
-                      <p class="sub">Preview and rename the active source file using a configurable naming schema.</p>
+                      <h3>File &amp; Metadata</h3>
+                      <p class="sub">Save item metadata, write native Guidevault JSON, enrich this file, and rename the active source file.</p>
                     </div>
                   </div>
                   <dl class="metadata-file-maintenance-list">
                     <div><dt>Current file</dt><dd id="metadataCurrentFileName">&#x2014;</dd></div>
                     <div><dt>Preview filename</dt><dd id="metadataSuggestedFileName">&#x2014;</dd></div>
                   </dl>
+                  <div class="file-metadata-action-card">
+                    <h4>Metadata actions</h4>
+                    <p class="sub">Save the form first, then write Guidevault JSON into the package or enrich this single item from existing native metadata.</p>
+                    <div class="metadata-save-export-row file-metadata-actions">
+                      <button id="saveMetadataBtn" class="primary" type="button">Save Metadata</button>
+                      <button id="exportGuideMetadataBtn" class="ghost" type="button">Export Guide Metadata</button>
+                      <button id="enrichCurrentFileMetadataBtn" class="ghost" type="button">Enrich this file</button>
+                    </div>
+                    <p id="metadataExportStatus" class="sub metadata-export-status" aria-live="polite"></p>
+                  </div>
                   <div class="filename-schema-token-area">
                     <span class="field-help">Click a token button to insert it into the schema. Tokens are filtered for the current item type.</span>
                     <div id="fileRenameTokenButtons" class="filename-token-buttons" aria-label="Filename naming tokens"></div>
@@ -1390,6 +1395,48 @@
 
             <h2>Update History</h2>
             <div class="system-update-list">
+              <details class="system-update-entry" open>
+                <summary>
+                  <span>Guidevault 0.9.61 - Strategy Platform Layout Cleanup</span>
+                  <em>Installed</em>
+                </summary>
+                <div class="system-update-body">
+                  <h3>Improved <b>2</b></h3>
+                  <ul>
+                    <li>Removed the Entries, Platforms, and Library Size stat boxes from the Browse by Platform header.</li>
+                    <li>Reduced and tightened the platform/category preview cover well so Strategy Guide category cards no longer over-expand or crowd the layout.</li>
+                  </ul>
+                </div>
+              </details>
+              <details class="system-update-entry" open>
+                <summary>
+                  <span>Guidevault 0.9.60 - Library Duplicate Guard</span>
+                  <em>Installed</em>
+                </summary>
+                <div class="system-update-body">
+                  <h3>Fixed <b>3</b></h3>
+                  <ul>
+                    <li>Prevents the same library folder from being added twice; re-adding the same folder now updates the existing library entry instead of duplicating it.</li>
+                    <li>Deduplicates scan results by physical source path so overlapping configured library roots cannot display the same book twice.</li>
+                    <li>Improves folder-path errors so Docker users know to paste the mounted container path, such as /library/Strategy Guides.</li>
+                  </ul>
+                </div>
+              </details>
+              <details class="system-update-entry" open>
+                <summary>
+                  <span>Guidevault 0.9.59 - File &amp; Metadata Workflow</span>
+                  <em>Installed</em>
+                </summary>
+                <div class="system-update-body">
+                  <h3>Improved <b>4</b></h3>
+                  <ul>
+                    <li>Changed the Filename tab into a broader File &amp; Metadata tab with Save Metadata, Export Metadata, single-file enrichment, and rename actions in one place.</li>
+                    <li>Added a single-file native metadata enrichment action so one CBZ/CBR can be refreshed from Guidevault JSON without running a full-library enrichment pass.</li>
+                    <li>Improved Guidevault JSON import aliases for game franchise, game developer, language, edition, issue, and title fields.</li>
+                    <li>Made the initial library API return the cached index immediately instead of starting a cold filesystem scan during first page load.</li>
+                  </ul>
+                </div>
+              </details>
               <details class="system-update-entry" open>
                 <summary>
                   <span>Guidevault 0.9.58 - Faster Metadata Enrichment</span>
@@ -2645,7 +2692,7 @@
   </dialog>
 
 
-  <script src="/app.js?v=0.9.59-fast-enrichment"></script>
+  <script src="/app.js?v=0.9.62-strategy-platform-layout"></script>
 </body>
 </html>
 

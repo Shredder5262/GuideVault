@@ -1,4 +1,4 @@
-﻿const state = {
+const state = {
   items: [], filtered: [], selected: null, filter: 'All Content', categoryFilter: '', viewMode: 'all', activeTab: 'overview', customFilter: null,
   reader: { item: null, pages: [], index: 0, animating: false, displayMode: 2, transitionMode: 'stable', overlayVisible: false, advancedVisible: false, magnifierSettingsVisible: false, scrubbing: false, shading: null, zoom: 100, fullscreenOnOpen: false, magnifier: null, magnifierActive: false, longPressTimer: null, suppressHitClickUntil: 0, backgrounds: [], background: '', backgroundBrightness: 72 },
   libraryPath: '',
@@ -61,7 +61,7 @@ const GUIDEVAULT_READING_ACTIVITY_KEY = 'guidevault.readingActivity.v1';
 const GUIDEVAULT_CATEGORY_STRUCTURE_KEY = 'guidevault.categoryStructure.v1';
 const GUIDEVAULT_COVER_SIZE_KEY = 'guidevault.libraryCoverSize.v1';
 const GUIDEVAULT_FAVORITES_KEY = 'guidevault.favorites.v1';
-const GUIDEVAULT_APP_VERSION = '0.9.59';
+const GUIDEVAULT_APP_VERSION = '0.9.62';
 const GUIDEVAULT_FILENAME_SCHEMA_KEY = 'guidevault.filenameRename.schema.v1';
 const GUIDEVAULT_DEFAULT_FILENAME_SCHEMA = '{title}';
 const GUIDEVAULT_STABLE_TAG_FEED_URL = 'https://api.github.com/repos/Shredder5262/GuideVault/tags';
@@ -4592,14 +4592,42 @@ function closeLibraryEditor() {
   if ($('libraryEditor')) $('libraryEditor').classList.add('hidden');
 }
 
+function normalizeLibraryFolderForCompare(folder) {
+  return String(folder || '')
+    .trim()
+    .replace(/\\/g, '/')
+    .replace(/\/+$/g, '')
+    .toLowerCase();
+}
+
+function findExistingLibraryFolderIndex(folder, exceptIndex = null) {
+  const key = normalizeLibraryFolderForCompare(folder);
+  if (!key) return -1;
+  return (state.libraries || []).findIndex((lib, index) => {
+    if (exceptIndex !== null && index === exceptIndex) return false;
+    const folders = Array.isArray(lib?.folders) ? lib.folders : (lib?.folder ? [lib.folder] : []);
+    return folders.some(existing => normalizeLibraryFolderForCompare(existing) === key);
+  });
+}
+
 async function saveLibraryEditor() {
   const name = $('libraryNameInput')?.value.trim() || 'Library';
   const type = $('libraryTypeInput')?.value || 'Manuals';
   const folder = $('libraryFolderInput')?.value.trim() || '';
-  if (!folder) { setStatus('Add one folder path for this library.'); return; }
+  if (!folder) { setStatus('Add one folder path for this library. Paste the server/container path, such as /library/Strategy Guides.'); return; }
   const lib = { name, type, folders: [folder], lastScanned: null };
-  if (state.editingLibraryIndex === null) state.libraries.push(lib);
-  else state.libraries[state.editingLibraryIndex] = lib;
+  const duplicateIndex = findExistingLibraryFolderIndex(folder, state.editingLibraryIndex);
+  if (duplicateIndex >= 0) {
+    state.libraries[duplicateIndex] = { ...state.libraries[duplicateIndex], ...lib };
+    if (state.editingLibraryIndex !== null && state.editingLibraryIndex !== duplicateIndex) {
+      state.libraries.splice(state.editingLibraryIndex, 1);
+    }
+    setStatus('That folder was already configured, so Guidevault updated the existing library entry instead of adding a duplicate.');
+  } else if (state.editingLibraryIndex === null) {
+    state.libraries.push(lib);
+  } else {
+    state.libraries[state.editingLibraryIndex] = lib;
+  }
   closeLibraryEditor();
   await saveLibraries('Library saved.');
 }
@@ -4615,16 +4643,26 @@ async function saveLibraries(successMessage = 'Libraries saved.', options = {}) 
   });
   try {
     updateLibraryTask(localTaskId, options.startMessage || 'Saving library settings...', 8, 'running', taskTitle);
-    const cleaned = (state.libraries || []).map(lib => {
+    const cleaned = [];
+    const seenFolders = new Map();
+    (state.libraries || []).forEach(lib => {
       const folder = String((lib?.folders || [])[0] || lib?.folder || '').trim();
-      return {
+      if (!folder) return;
+      const entry = {
         name: lib?.name || 'Library',
         type: lib?.type || 'Manuals',
         folder,
-        folders: folder ? [folder] : [],
+        folders: [folder],
         lastScanned: lib?.lastScanned || null
       };
-    }).filter(lib => lib.folder);
+      const key = normalizeLibraryFolderForCompare(folder);
+      if (seenFolders.has(key)) {
+        cleaned[seenFolders.get(key)] = entry;
+      } else {
+        seenFolders.set(key, cleaned.length);
+        cleaned.push(entry);
+      }
+    });
     const payload = { libraries: cleaned, operation: options.operation || '' };
     const res = await fetch('/api/settings/libraries', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(payload) });
     let data = null;
@@ -4633,7 +4671,6 @@ async function saveLibraries(successMessage = 'Libraries saved.', options = {}) 
       const msg = data?.error || `Unable to save libraries. HTTP ${res.status}`;
       updateLibraryTask(localTaskId, msg, 100, 'failed', taskTitle);
       setStatus(msg);
-      alert(msg);
       return;
     }
     state.libraries = Array.isArray(data?.libraries) ? data.libraries.map(normalizeLibraryForClient) : cleaned.map(normalizeLibraryForClient);
@@ -4659,7 +4696,6 @@ async function saveLibraries(successMessage = 'Libraries saved.', options = {}) 
     console.error(err);
     updateLibraryTask(localTaskId, msg, 100, 'failed', taskTitle);
     setStatus(msg);
-    alert(msg);
   }
 }
 
@@ -4772,7 +4808,6 @@ async function rescanLibrary() {
     const msg = data?.error || 'Scan failed. Check the terminal output.';
     updateLibraryTask(localTaskId, msg, 100, 'failed', 'Library scan');
     setStatus(msg);
-    alert(msg);
     return;
   }
   const taskId = data?.taskId || data?.TaskId || '';
@@ -4806,7 +4841,6 @@ async function cleanupLibrary() {
     const msg = data?.error || 'Cleanup failed. Check the terminal output.';
     updateLibraryTask(localTaskId, msg, 100, 'failed', 'Library cleanup');
     setStatus(msg);
-    alert(msg);
     return;
   }
   const taskId = data?.taskId || data?.TaskId || '';
@@ -5231,7 +5265,6 @@ function renderGroupGrid(id, viewMode) {
   const allKindItems = state.items.filter(i => i.kind === def.kind);
   const groups = sortGroupNamesForCurrentSort(def.kind, sortCategoriesForKind(def.kind, [...new Set(allKindItems.flatMap(libraryCategoryKeysForItem))]), allKindItems);
   renderAlphaRail(groups);
-  const totalSizeLabel = groupCardSizeLabel(allKindItems);
   const overview = groups.length ? `<section class="group-hub-panel">
       <div class="group-hub-copy">
         <span>${escapeHtml(def.kind)} Library</span>
@@ -5239,11 +5272,6 @@ function renderGroupGrid(id, viewMode) {
         <p>${escapeHtml(def.kind === 'Magazine'
           ? 'Magazine runs are grouped by publication so issues stay together and remain easier to scan.'
           : 'Content is grouped by platform so each library tile opens a focused shelf of related entries.')}</p>
-      </div>
-      <div class="group-hub-stats">
-        <div><strong>${allKindItems.length}</strong><span>${allKindItems.length === 1 ? 'entry' : 'entries'}</span></div>
-        <div><strong>${groups.length}</strong><span>${groups.length === 1 ? axis : `${axis}s`}</span></div>
-        <div><strong>${escapeHtml(totalSizeLabel)}</strong><span>library size</span></div>
       </div>
     </section>` : '';
   const cards = groups.map(name => {
@@ -6895,6 +6923,74 @@ async function exportSelectedGuidevaultMetadata() {
   }
 }
 
+async function enrichSelectedFileMetadata() {
+  if (!state.selected) return;
+  const selectedId = String(state.selected.id || state.selected.Id || '').trim();
+  if (!selectedId) return;
+
+  const btn = $('enrichCurrentFileMetadataBtn');
+  const originalText = btn?.textContent || 'Enrich this file';
+  const statusEl = $('metadataExportStatus') || $('fileRenameStatus');
+
+  try {
+    if (btn) {
+      btn.disabled = true;
+      btn.textContent = 'Enriching...';
+    }
+    if (statusEl) {
+      statusEl.textContent = 'Reading Guidevault JSON metadata from this package...';
+      statusEl.classList.remove('error');
+      statusEl.classList.remove('success');
+    }
+
+    const res = await fetch(`/api/items/${encodeURIComponent(selectedId)}/metadata/enrich-native`, {
+      method: 'POST',
+      cache: 'no-store'
+    });
+    let data = null;
+    try { data = await res.json(); } catch {}
+    if (!res.ok) throw new Error(data?.error || data?.message || `Single-file enrichment failed. HTTP ${res.status}`);
+
+    if (data?.item) {
+      replaceItemInState(data.item);
+      state.selected = data.item;
+      clearClientMetadataOverride(selectedId);
+      renderDetails(data.item);
+      activateTab('file-name');
+      applyFilters();
+    }
+
+    const message = data?.message || 'Single-file metadata enrichment complete.';
+    setStatus(message);
+    if (statusEl) {
+      statusEl.textContent = message;
+      statusEl.classList.add('success');
+      statusEl.classList.remove('error');
+    }
+    if (btn) {
+      btn.textContent = 'Enriched';
+      window.setTimeout(() => { if (btn) btn.textContent = originalText; }, 1200);
+    }
+  } catch (err) {
+    console.error('Single-file metadata enrichment failed', err);
+    const message = `Unable to enrich this file: ${err?.message || err}`;
+    setStatus(message);
+    if (statusEl) {
+      statusEl.textContent = message;
+      statusEl.classList.add('error');
+      statusEl.classList.remove('success');
+    }
+    if (btn) btn.textContent = 'Enrich Failed';
+  } finally {
+    if (btn) {
+      window.setTimeout(() => {
+        btn.disabled = false;
+        if (btn.textContent === 'Enrich Failed') btn.textContent = originalText;
+      }, 900);
+    }
+  }
+}
+
 function updateMetadataFileMaintenance() {
   const panel = $('metadataFileMaintenance');
   if (!panel) return;
@@ -6907,8 +7003,8 @@ function updateMetadataFileMaintenance() {
 
   if (!item) {
     panel.classList.add('hidden');
-    if (currentEl) currentEl.textContent = 'â€”';
-    if (suggestedEl) suggestedEl.textContent = 'â€”';
+    if (currentEl) currentEl.textContent = '—';
+    if (suggestedEl) suggestedEl.textContent = '—';
     if (renameBtn) renameBtn.disabled = true;
     if (statusEl) statusEl.textContent = 'Select an item to preview its filename.';
     return;
@@ -6922,8 +7018,8 @@ function updateMetadataFileMaintenance() {
   const sameName = currentFileName && suggestedFileName && currentFileName.toLowerCase() === suggestedFileName.toLowerCase();
 
   panel.classList.remove('hidden');
-  if (currentEl) currentEl.textContent = currentFileName || 'â€”';
-  if (suggestedEl) suggestedEl.textContent = suggestedFileName || 'â€”';
+  if (currentEl) currentEl.textContent = currentFileName || '—';
+  if (suggestedEl) suggestedEl.textContent = suggestedFileName || '—';
   if (renameBtn) {
     renameBtn.disabled = !suggestedFileName || sameName;
     renameBtn.title = sameName
@@ -6963,7 +7059,7 @@ async function renameSelectedFileToSuggestedName() {
   const confirmed = await showAppConfirm({
     title: 'Rename file?',
     message: `Current file:
-${currentFileName || 'â€”'}
+${currentFileName || '—'}
 
 New filename:
 ${suggestedFileName}
@@ -7057,6 +7153,16 @@ function rememberClientMetadataOverride(itemOrId, payload) {
   map[key] = { ...(map[key] || {}), ...normalizeClientMetadataPayload(payload), savedAt: new Date().toISOString() };
   writeClientMetadataOverrides(map);
 }
+function clearClientMetadataOverride(itemOrId) {
+  const key = metadataOverrideKey(itemOrId);
+  if (!key) return;
+  const map = readClientMetadataOverrides();
+  if (Object.prototype.hasOwnProperty.call(map, key)) {
+    delete map[key];
+    writeClientMetadataOverrides(map);
+  }
+}
+
 
 function applyClientMetadataOverride(item) {
   if (!item) return item;
@@ -12311,8 +12417,9 @@ document.addEventListener('keydown', e => {
   if (e.key === 'Escape') closeMetadataMultiSelects();
 });
 if ($('editEditionType')) $('editEditionType').addEventListener('change', updateEditionControls);
-if ($('saveMetadataBtn')) $('saveMetadataBtn').addEventListener('click', async e => { e.preventDefault(); await saveSelectedMetadata({}, { tab: 'metadata', button: e.currentTarget }); });
+if ($('saveMetadataBtn')) $('saveMetadataBtn').addEventListener('click', async e => { e.preventDefault(); await saveSelectedMetadata({}, { tab: state.activeTab || 'file-name', button: e.currentTarget }); });
 if ($('exportGuideMetadataBtn')) $('exportGuideMetadataBtn').addEventListener('click', e => { e.preventDefault(); exportSelectedGuidevaultMetadata(); });
+if ($('enrichCurrentFileMetadataBtn')) $('enrichCurrentFileMetadataBtn').addEventListener('click', e => { e.preventDefault(); enrichSelectedFileMetadata(); });
 if ($('resetFileRenameSchemaBtn')) $('resetFileRenameSchemaBtn').addEventListener('click', e => { e.preventDefault(); resetFileRenameSchema(); });
 if ($('fileRenameSchema')) {
   $('fileRenameSchema').addEventListener('input', () => updateMetadataFileMaintenance());
@@ -12360,7 +12467,6 @@ async function saveLibraryPathFromInput(inputId, statusId, dialogId) {
     const msg = data?.error || 'Unable to save library path.';
     updateLibraryTask(localTaskId, msg, 100, 'failed', 'Library scan');
     if (status) status.textContent = msg;
-    alert(msg);
     return;
   }
   state.libraryPath = data.libraryPath || libraryPath;
