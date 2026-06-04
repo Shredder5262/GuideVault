@@ -4,7 +4,7 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Guidevault</title>
-  <link rel="stylesheet" href="/styles.css?v=0.9.62-strategy-platform-layout" />
+  <link rel="stylesheet" href="/styles.css?v=0.9.66-file-metadata-layout-polish" />
 </head>
 <body class="right-collapsed auth-locked">
   <section id="loginView" class="login-view" aria-labelledby="loginTitle">
@@ -253,7 +253,6 @@
                   <label id="editGameReleaseYearLabel" class="strategy-metadata-field manual-metadata-field hidden">Game Release Year<input id="editGameReleaseYear" /></label>
                   <label id="editGenreLabel" class="strategy-metadata-field manual-metadata-field hidden">Genre<input id="editGenre" placeholder="RPG, Fighting, Action Adventure" /></label>
                 </div>
-                <div id="metadataTechnicalInfo" class="metadata-technical-info hidden"></div>
                 <label>Summary<textarea id="editSummary" rows="5"></textarea></label>
                 <label id="editFeaturedGamesLabel" class="magazine-metadata-field hidden">Featured Games, comma-separated<input id="editFeaturedGames" /></label>
                 <label id="editFeaturedPlatformsLabel" class="magazine-metadata-field hidden">Featured Platforms, comma-separated<input id="editFeaturedPlatforms" /></label>
@@ -272,40 +271,60 @@
                 <label>Tags, comma-separated<input id="editTags" /></label>
               </section>
               <section id="file-namePanel" class="tab-panel hidden">
-                <article id="metadataFileMaintenance" class="metadata-file-maintenance filename-schema-panel" aria-live="polite">
+                <article id="metadataFileMaintenance" class="metadata-file-maintenance filename-schema-panel file-metadata-workflow" aria-live="polite">
                   <div class="metadata-file-maintenance-header">
                     <div>
                       <h3>File &amp; Metadata</h3>
-                      <p class="sub">Save item metadata, write native Guidevault JSON, enrich this file, and rename the active source file.</p>
+                      <p class="sub">Review library data, save item metadata, import or export native Guidevault JSON, and rename the active source file.</p>
                     </div>
                   </div>
-                  <dl class="metadata-file-maintenance-list">
-                    <div><dt>Current file</dt><dd id="metadataCurrentFileName">&#x2014;</dd></div>
-                    <div><dt>Preview filename</dt><dd id="metadataSuggestedFileName">&#x2014;</dd></div>
-                  </dl>
-                  <div class="file-metadata-action-card">
-                    <h4>Metadata actions</h4>
-                    <p class="sub">Save the form first, then write Guidevault JSON into the package or enrich this single item from existing native metadata.</p>
-                    <div class="metadata-save-export-row file-metadata-actions">
-                      <button id="saveMetadataBtn" class="primary" type="button">Save Metadata</button>
-                      <button id="exportGuideMetadataBtn" class="ghost" type="button">Export Guide Metadata</button>
-                      <button id="enrichCurrentFileMetadataBtn" class="ghost" type="button">Enrich this file</button>
+
+                  <section class="file-metadata-card file-metadata-card-library file-metadata-library-top">
+                    <div class="file-metadata-card-heading">
+                      <h4>Library Data</h4>
+                      <p class="sub">Container, path, page count, scan status, and metadata-source details for the selected item.</p>
                     </div>
-                    <p id="metadataExportStatus" class="sub metadata-export-status" aria-live="polite"></p>
+                    <div id="metadataTechnicalInfo" class="metadata-technical-info hidden"></div>
+                  </section>
+
+                  <div class="file-metadata-main-grid">
+                    <section class="file-metadata-card file-metadata-card-rename">
+                      <div class="file-metadata-card-heading">
+                        <h4>Filename</h4>
+                        <p class="sub">Preview and rename the active source file. The file extension is preserved automatically.</p>
+                      </div>
+                      <dl class="metadata-file-maintenance-list file-rename-preview-list">
+                        <div><dt>Current file</dt><dd id="metadataCurrentFileName">&#x2014;</dd></div>
+                        <div><dt>Preview filename</dt><dd id="metadataSuggestedFileName">&#x2014;</dd></div>
+                      </dl>
+                      <div class="filename-schema-token-area">
+                        <span class="field-help">Click a token button to insert it into the schema. Tokens are filtered for the current item type.</span>
+                        <div id="fileRenameTokenButtons" class="filename-token-buttons" aria-label="Filename naming tokens"></div>
+                      </div>
+                      <label class="filename-schema-label" for="fileRenameSchema">Naming Schema
+                        <input id="fileRenameSchema" type="text" value="{title}" placeholder="{title}" autocomplete="off" spellcheck="false" />
+                        <span class="field-help">Default: <code>{title}</code>. Use separators such as <code> - </code> between tokens.</span>
+                      </label>
+                      <div class="metadata-file-maintenance-actions single-action file-rename-actions">
+                        <button id="resetFileRenameSchemaBtn" class="ghost" type="button">Reset naming schema</button>
+                        <button id="renameToSuggestedFileNameBtn" class="primary" type="button">Rename file</button>
+                      </div>
+                      <p id="fileRenameStatus" class="sub filename-rename-status">Guidevault will rename the source file, update the indexed database entry, and keep this same item identity.</p>
+                    </section>
+
+                    <section class="file-metadata-card file-metadata-card-actions">
+                      <div class="file-metadata-card-heading">
+                        <h4>Metadata actions</h4>
+                        <p class="sub">Save the form first, then export native JSON or import Guidevault JSON from only this selected package.</p>
+                      </div>
+                      <div class="metadata-save-export-row file-metadata-actions">
+                        <button id="saveMetadataBtn" class="primary" type="button">Save Metadata</button>
+                        <button id="exportGuideMetadataBtn" class="ghost" type="button">Export Guide Metadata</button>
+                        <button id="enrichCurrentFileMetadataBtn" class="ghost" type="button">Import Guidevault metadata JSON</button>
+                      </div>
+                      <p id="metadataExportStatus" class="sub metadata-export-status" aria-live="polite"></p>
+                    </section>
                   </div>
-                  <div class="filename-schema-token-area">
-                    <span class="field-help">Click a token button to insert it into the schema. Tokens are filtered for the current item type.</span>
-                    <div id="fileRenameTokenButtons" class="filename-token-buttons" aria-label="Filename naming tokens"></div>
-                  </div>
-                  <label class="filename-schema-label" for="fileRenameSchema">Naming Schema
-                    <input id="fileRenameSchema" type="text" value="{title}" placeholder="{title}" autocomplete="off" spellcheck="false" />
-                    <span class="field-help">Default: <code>{title}</code>. The file extension is preserved automatically.</span>
-                  </label>
-                  <div class="metadata-file-maintenance-actions single-action">
-                    <button id="resetFileRenameSchemaBtn" class="ghost" type="button">Reset naming schema</button>
-                    <button id="renameToSuggestedFileNameBtn" class="primary" type="button">Rename file</button>
-                  </div>
-                  <p id="fileRenameStatus" class="sub filename-rename-status">Guidevault will rename the source file, update the indexed database entry, and keep this same item identity.</p>
                 </article>
               </section>
               <section id="reading-profilePanel" class="tab-panel hidden">
@@ -1395,6 +1414,46 @@
 
             <h2>Update History</h2>
             <div class="system-update-list">
+              <details class="system-update-entry" open>
+                <summary>
+                  <span>Guidevault 0.9.65 - File Metadata Layout Polish</span>
+                  <em>Installed</em>
+                </summary>
+                <div class="system-update-body">
+                  <h3>Improved <b>3</b></h3>
+                  <ul>
+                    <li>Moved Library Data to the top of the File &amp; Metadata tab so file/path details are visible before other actions.</li>
+                    <li>Placed rename controls directly with the current file, preview filename, and naming schema.</li>
+                    <li>Renamed the single-file enrichment action to Import Guidevault metadata JSON for clearer intent.</li>
+                  </ul>
+                </div>
+              </details>
+              <details class="system-update-entry" open>
+                <summary>
+                  <span>Guidevault 0.9.64 - File Metadata Layout</span>
+                  <em>Installed</em>
+                </summary>
+                <div class="system-update-body">
+                  <h3>Improved <b>2</b></h3>
+                  <ul>
+                    <li>Moved the Library Data dropdown from the Metadata tab into the File &amp; Metadata tab so file details live with export, enrichment, and rename actions.</li>
+                    <li>Reorganized the File &amp; Metadata tab into clearer File identity, Metadata actions, and Filename schema sections.</li>
+                  </ul>
+                </div>
+              </details>
+              <details class="system-update-entry" open>
+                <summary>
+                  <span>Guidevault 0.9.63 - Custom Collections Persistence</span>
+                  <em>Installed</em>
+                </summary>
+                <div class="system-update-body">
+                  <h3>Fixed <b>2</b></h3>
+                  <ul>
+                    <li>Persists Customize side-nav collections/shortcuts to the server-side Guidevault data folder instead of relying only on browser local storage.</li>
+                    <li>Reloads saved collections after login so pinned collection shortcuts survive logout, browser refresh, and container restarts.</li>
+                  </ul>
+                </div>
+              </details>
               <details class="system-update-entry" open>
                 <summary>
                   <span>Guidevault 0.9.61 - Strategy Platform Layout Cleanup</span>
@@ -2692,7 +2751,7 @@
   </dialog>
 
 
-  <script src="/app.js?v=0.9.62-strategy-platform-layout"></script>
+  <script src="/app.js?v=0.9.66-file-metadata-layout-polish"></script>
 </body>
 </html>
 

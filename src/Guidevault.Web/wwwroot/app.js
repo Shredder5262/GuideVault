@@ -57,11 +57,16 @@ const GUIDEVAULT_OPDS_SETTINGS_KEY = 'guidevault.opdsSettings.v1';
 const GUIDEVAULT_PREFERENCES_KEY = 'guidevault.preferences.v1';
 const GUIDEVAULT_KEYBINDS_KEY = 'guidevault.keybinds.v1';
 const GUIDEVAULT_CUSTOMIZE_KEY = 'guidevault.customize.v1';
+let guidevaultCustomizeSaveTimer = null;
+let guidevaultCustomizeSyncInFlight = false;
 const GUIDEVAULT_READING_ACTIVITY_KEY = 'guidevault.readingActivity.v1';
 const GUIDEVAULT_CATEGORY_STRUCTURE_KEY = 'guidevault.categoryStructure.v1';
 const GUIDEVAULT_COVER_SIZE_KEY = 'guidevault.libraryCoverSize.v1';
 const GUIDEVAULT_FAVORITES_KEY = 'guidevault.favorites.v1';
-const GUIDEVAULT_APP_VERSION = '0.9.62';
+const GUIDEVAULT_LIBRARY_CACHE_KEY = 'guidevault.libraryCache.v1';
+const GUIDEVAULT_GRID_INITIAL_RENDER = 96;
+const GUIDEVAULT_GRID_CHUNK_SIZE = 96;
+const GUIDEVAULT_APP_VERSION = '0.9.66';
 const GUIDEVAULT_FILENAME_SCHEMA_KEY = 'guidevault.filenameRename.schema.v1';
 const GUIDEVAULT_DEFAULT_FILENAME_SCHEMA = '{title}';
 const GUIDEVAULT_STABLE_TAG_FEED_URL = 'https://api.github.com/repos/Shredder5262/GuideVault/tags';
@@ -1256,11 +1261,15 @@ function showAuthenticatedApp() {
   document.body.classList.remove('auth-locked');
   if ($('loginView')) $('loginView').classList.add('hidden');
   if ($('app')) $('app').classList.remove('hidden');
+  loadCustomizeSettings();
+  renderCustomSideNavItems();
+  syncCustomizeSettingsFromServer(true);
   renderAccountProfile();
   syncTopUserMenu();
   startDeviceHeartbeat();
   if (!state.auth.appStarted) {
     state.auth.appStarted = true;
+    renderCachedLibraryImmediately();
     loadLibrary();
     startStableUpdatePolling();
     if (window.location.hash === '#profile') {
@@ -1586,6 +1595,7 @@ function initializeGuidevaultAuthAndApp() {
   loadGuidevaultPreferences();
   loadKeybinds();
   loadCustomizeSettings();
+  syncCustomizeSettingsFromServer(false);
   loadOpdsSettings();
   syncOpdsSettingsFromServer(false);
   updateLoginPageMode();
@@ -4407,6 +4417,49 @@ async function loadSettings() {
   renderLibrariesSettings();
 }
 
+
+function normalizeLibraryPayload(data) {
+  return Array.isArray(data) ? data : (Array.isArray(data?.items) ? data.items : []);
+}
+
+function saveLibraryClientCache(items = state.items) {
+  try {
+    const list = Array.isArray(items) ? items : [];
+    localStorage.setItem(GUIDEVAULT_LIBRARY_CACHE_KEY, JSON.stringify({
+      version: GUIDEVAULT_APP_VERSION,
+      savedAt: new Date().toISOString(),
+      items: list
+    }));
+  } catch (err) {
+    console.debug('Guidevault library browser cache was not saved.', err);
+  }
+}
+
+function loadLibraryClientCache() {
+  try {
+    const raw = localStorage.getItem(GUIDEVAULT_LIBRARY_CACHE_KEY);
+    if (!raw) return [];
+    const data = JSON.parse(raw);
+    return Array.isArray(data?.items) ? data.items : [];
+  } catch (err) {
+    console.debug('Guidevault library browser cache was not readable.', err);
+    return [];
+  }
+}
+
+function renderCachedLibraryImmediately() {
+  if (Array.isArray(state.items) && state.items.length) return false;
+  const cached = loadLibraryClientCache();
+  if (!cached.length) return false;
+  state.items = cached;
+  state._countCache = null;
+  applyClientMetadataOverridesToLibrary();
+  state.libraryLoadedOnce = true;
+  applyFilters();
+  setStatus('Loaded cached library. Refreshing latest library state in the background...');
+  return true;
+}
+
 async function loadLibrary() {
   try {
     const iconPromise = Object.keys(state.iconMap || {}).length ? Promise.resolve() : loadPlatformIcons();
@@ -4416,9 +4469,11 @@ async function loadLibrary() {
     const res = await libraryPromise;
     if (!res.ok) throw new Error(await res.text());
     const data = await res.json();
-    state.items = Array.isArray(data) ? data : (data.items || []);
+    state.items = normalizeLibraryPayload(data);
+    state._countCache = null;
     applyClientMetadataOverridesToLibrary();
     state.libraryLoadedOnce = true;
+    saveLibraryClientCache(state.items);
     if (state.selected) state.selected = state.items.find(i => i.id === state.selected.id) || null;
     applyFilters();
     if (!$('settingsReadingProfilesPanel')?.classList.contains('hidden')) renderReadingProfileSettings();
@@ -4945,14 +5000,25 @@ function compareItemsForLibrarySort(a, b, sort = $('sort')?.value || 'recent') {
 
 function sortGroupNamesForCurrentSort(kind, groups, allItems) {
   const sort = $('sort')?.value || 'recent';
-  const itemsForGroup = name => allItems.filter(i => libraryCategoryKeysForItem(i).some(c => c.localeCompare(name, undefined, { sensitivity: 'accent' }) === 0));
-  const latestForGroup = name => Math.max(0, ...itemsForGroup(name).map(itemRecentTimestamp));
-  const countForGroup = name => itemsForGroup(name).length;
+  const summary = new Map();
+  groups.forEach(name => summary.set(name, { latest: 0, count: 0 }));
+  allItems.forEach(item => {
+    const seen = new Set();
+    libraryCategoryKeysForItem(item).forEach(name => {
+      const match = groups.find(g => g.localeCompare(name, undefined, { sensitivity: 'accent' }) === 0);
+      if (!match || seen.has(match)) return;
+      seen.add(match);
+      const bucket = summary.get(match) || { latest: 0, count: 0 };
+      bucket.count += 1;
+      bucket.latest = Math.max(bucket.latest, itemRecentTimestamp(item));
+      summary.set(match, bucket);
+    });
+  });
 
   return [...groups].sort((a, b) => {
-    if (sort === 'recent') return (latestForGroup(b) - latestForGroup(a)) || compareCategoryNames(kind, a, b);
+    if (sort === 'recent') return ((summary.get(b)?.latest || 0) - (summary.get(a)?.latest || 0)) || compareCategoryNames(kind, a, b);
     if (sort === 'kind' || sort === 'category' || sort === 'title') return compareCategoryNames(kind, a, b);
-    return compareCategoryNames(kind, a, b) || (countForGroup(b) - countForGroup(a));
+    return compareCategoryNames(kind, a, b) || ((summary.get(b)?.count || 0) - (summary.get(a)?.count || 0));
   });
 }
 
@@ -4980,7 +5046,15 @@ function itemSequenceThenTitle(a,b){
   const bothSequenced = a.kind !== 'Manual' && b.kind !== 'Manual' && hasSequence(a) && hasSequence(b);
   return bothSequenced && issueValue(a) !== issueValue(b) ? issueValue(a)-issueValue(b) : a.title.localeCompare(b.title);
 }
-function count(kind) { return state.items.filter(i => i.kind === kind).length; }
+function count(kind) {
+  if (!state._countCache || state._countCacheSource !== state.items) {
+    const cache = { Manual: 0, 'Strategy Guide': 0, Magazine: 0 };
+    (state.items || []).forEach(i => { if (Object.prototype.hasOwnProperty.call(cache, i.kind)) cache[i.kind] += 1; });
+    state._countCache = cache;
+    state._countCacheSource = state.items;
+  }
+  return state._countCache?.[kind] || 0;
+}
 function coverUrl(item) {
   const id = encodeURIComponent(item?.id || item?.Id || '');
   const modified = item?.modified || item?.Modified || '';
@@ -5421,9 +5495,48 @@ function renderCategories() {
 
 
 function renderGrid(id, items) {
-  $(id).innerHTML = items.map(item => cardMarkupForItem(item)).join('') || `<div class="empty-message">No content found. Set a Library Root folder in Settings and scan for CBZ, CBR, or PDF files.</div>`;
-  initializeCoverImages($(id));
+  const host = $(id);
+  if (!host) return;
+  const list = Array.isArray(items) ? items : [];
+  state.libraryRenderToken = (Number(state.libraryRenderToken || 0) + 1) % 1000000;
+  const token = state.libraryRenderToken;
+  if (!list.length) {
+    host.innerHTML = `<div class="empty-message">No content found. Set a Library Root folder in Settings and scan for CBZ, CBR, or PDF files.</div>`;
+    return;
+  }
+
+  const firstCount = Math.min(list.length, GUIDEVAULT_GRID_INITIAL_RENDER);
+  host.innerHTML = list.slice(0, firstCount).map(item => cardMarkupForItem(item)).join('');
+  initializeCoverImages(host);
   attachCoverPrimeScrollHandler();
+
+  if (firstCount >= list.length) return;
+
+  const more = document.createElement('div');
+  more.className = 'library-progressive-render-note';
+  more.textContent = `Loading remaining items... ${firstCount}/${list.length}`;
+  host.appendChild(more);
+
+  let index = firstCount;
+  const appendChunk = () => {
+    if (state.libraryRenderToken !== token || !host.isConnected) return;
+    const end = Math.min(index + GUIDEVAULT_GRID_CHUNK_SIZE, list.length);
+    const wrapper = document.createElement('template');
+    wrapper.innerHTML = list.slice(index, end).map(item => cardMarkupForItem(item)).join('');
+    const nodes = Array.from(wrapper.content.children);
+    nodes.forEach(node => host.insertBefore(node, more));
+    initializeCoverImages(host);
+    index = end;
+    if (index < list.length) {
+      more.textContent = `Loading remaining items... ${index}/${list.length}`;
+      if (typeof requestIdleCallback === 'function') requestIdleCallback(appendChunk, { timeout: 250 });
+      else window.setTimeout(appendChunk, 16);
+    } else {
+      more.remove();
+    }
+  };
+  if (typeof requestIdleCallback === 'function') requestIdleCallback(appendChunk, { timeout: 250 });
+  else window.setTimeout(appendChunk, 16);
 }
 function kindClass(kind) { return kind === 'Magazine' ? 'mag' : kind === 'Strategy Guide' ? 'guide' : 'manual'; }
 function itemPageCountLabel(item) {
@@ -5730,15 +5843,67 @@ function normalizeCustomize(value = {}) {
     sideNav: normalizeSideNavSettings(value?.sideNav || {})
   };
 }
+function customizeSettingsHasUserContent(settings = {}) {
+  const normalized = normalizeCustomize(settings || {});
+  const shelves = normalized.homeShelves || [];
+  const defaultShelves = shelves.length === 1 && shelves[0] === 'recently-added';
+  const customItems = normalized.sideNav?.customItems || [];
+  return !defaultShelves || customItems.length > 0;
+}
 function loadCustomizeSettings() {
   let parsed = {};
   try { parsed = JSON.parse(localStorage.getItem(GUIDEVAULT_CUSTOMIZE_KEY) || '{}') || {}; } catch {}
   state.customize = normalizeCustomize(parsed);
   return state.customize;
 }
-function saveCustomizeSettings() {
+function persistCustomizeSettingsLocal() {
   state.customize = normalizeCustomize(state.customize || {});
   try { localStorage.setItem(GUIDEVAULT_CUSTOMIZE_KEY, JSON.stringify(state.customize)); } catch {}
+  return state.customize;
+}
+async function saveCustomizeSettingsToServer(settings = state.customize) {
+  try {
+    await fetch('/api/customize/settings', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(normalizeCustomize(settings || {}))
+    });
+  } catch (err) {
+    console.warn('Customize settings could not be saved to the server.', err);
+  }
+}
+function saveCustomizeSettings() {
+  const saved = persistCustomizeSettingsLocal();
+  if (guidevaultCustomizeSaveTimer) window.clearTimeout(guidevaultCustomizeSaveTimer);
+  guidevaultCustomizeSaveTimer = window.setTimeout(() => {
+    guidevaultCustomizeSaveTimer = null;
+    saveCustomizeSettingsToServer(saved);
+  }, 160);
+}
+async function syncCustomizeSettingsFromServer(renderAfter = false) {
+  if (guidevaultCustomizeSyncInFlight) return state.customize || loadCustomizeSettings();
+  guidevaultCustomizeSyncInFlight = true;
+  const local = state.customize || loadCustomizeSettings();
+  try {
+    const res = await fetch(`/api/customize/settings?_=${Date.now()}`, { cache: 'no-store' });
+    if (!res.ok) throw new Error(await res.text());
+    const server = normalizeCustomize(await res.json());
+    const localHasContent = customizeSettingsHasUserContent(local);
+    const serverHasContent = customizeSettingsHasUserContent(server);
+    state.customize = serverHasContent || !localHasContent ? server : normalizeCustomize(local);
+    persistCustomizeSettingsLocal();
+    if (localHasContent && !serverHasContent) saveCustomizeSettingsToServer(state.customize);
+    if (renderAfter) {
+      renderCustomSideNavItems();
+      if (!$('settingsCustomizePanel')?.classList.contains('hidden')) renderCustomizeSettings();
+      updateNavActive();
+    }
+  } catch (err) {
+    console.warn('Customize settings could not be loaded from the server; using local browser settings.', err);
+  } finally {
+    guidevaultCustomizeSyncInFlight = false;
+  }
+  return state.customize;
 }
 function setCustomizeStatus(text, tone = '') {
   const el = $('customizeStatus');
@@ -6929,16 +7094,16 @@ async function enrichSelectedFileMetadata() {
   if (!selectedId) return;
 
   const btn = $('enrichCurrentFileMetadataBtn');
-  const originalText = btn?.textContent || 'Enrich this file';
+  const originalText = btn?.textContent || 'Import Guidevault metadata JSON';
   const statusEl = $('metadataExportStatus') || $('fileRenameStatus');
 
   try {
     if (btn) {
       btn.disabled = true;
-      btn.textContent = 'Enriching...';
+      btn.textContent = 'Importing...';
     }
     if (statusEl) {
-      statusEl.textContent = 'Reading Guidevault JSON metadata from this package...';
+      statusEl.textContent = 'Importing Guidevault metadata JSON from this package...';
       statusEl.classList.remove('error');
       statusEl.classList.remove('success');
     }
@@ -6960,7 +7125,7 @@ async function enrichSelectedFileMetadata() {
       applyFilters();
     }
 
-    const message = data?.message || 'Single-file metadata enrichment complete.';
+    const message = data?.message || 'Guidevault metadata JSON import complete.';
     setStatus(message);
     if (statusEl) {
       statusEl.textContent = message;
@@ -6968,24 +7133,24 @@ async function enrichSelectedFileMetadata() {
       statusEl.classList.remove('error');
     }
     if (btn) {
-      btn.textContent = 'Enriched';
+      btn.textContent = 'Imported';
       window.setTimeout(() => { if (btn) btn.textContent = originalText; }, 1200);
     }
   } catch (err) {
     console.error('Single-file metadata enrichment failed', err);
-    const message = `Unable to enrich this file: ${err?.message || err}`;
+    const message = `Unable to import Guidevault metadata JSON: ${err?.message || err}`;
     setStatus(message);
     if (statusEl) {
       statusEl.textContent = message;
       statusEl.classList.add('error');
       statusEl.classList.remove('success');
     }
-    if (btn) btn.textContent = 'Enrich Failed';
+    if (btn) btn.textContent = 'Import Failed';
   } finally {
     if (btn) {
       window.setTimeout(() => {
         btn.disabled = false;
-        if (btn.textContent === 'Enrich Failed') btn.textContent = originalText;
+        if (btn.textContent === 'Import Failed') btn.textContent = originalText;
       }, 900);
     }
   }

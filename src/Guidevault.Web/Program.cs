@@ -13,7 +13,7 @@ using System.Net.Http.Headers;
 using SharpCompress.Readers;
 
 var builder = WebApplication.CreateBuilder(args);
-const string GuidevaultVersion = "0.9.62";
+const string GuidevaultVersion = "0.9.66";
 var app = builder.Build();
 var metadataJsonOptions = new JsonSerializerOptions(JsonSerializerDefaults.Web) { PropertyNameCaseInsensitive = true };
 var options = app.Configuration.GetSection("Guidevault").Get<GuidevaultOptions>() ?? new GuidevaultOptions();
@@ -27,6 +27,7 @@ var emailSettingsPath = Path.Combine(contentRoot, "data", "config", "email.setti
 var emailHistoryPath = Path.Combine(contentRoot, "data", "config", "email.history.json");
 var usersSettingsPath = Path.Combine(contentRoot, "data", "config", "users.settings.json");
 var taskSettingsPath = Path.Combine(contentRoot, "data", "config", "task.settings.json");
+var customizeSettingsPath = Path.Combine(contentRoot, "data", "config", "customize.settings.json");
 var deviceHistoryPath = Path.Combine(contentRoot, "data", "config", "device.history.json");
 var systemInfoPath = Path.Combine(contentRoot, "data", "config", "system.info.json");
 var webRoot = app.Environment.WebRootPath ?? Path.Combine(contentRoot, "wwwroot");
@@ -55,6 +56,7 @@ var emailSettingsStore = new GuidevaultEmailSettingsStore(emailSettingsPath);
 var emailHistoryStore = new GuidevaultEmailHistoryStore(emailHistoryPath);
 var usersStore = new GuidevaultUsersStore(usersSettingsPath);
 var taskSettingsStore = new GuidevaultTaskSettingsStore(taskSettingsPath);
+var customizeSettingsStore = new GuidevaultCustomizeSettingsStore(customizeSettingsPath);
 var deviceStore = new DeviceHistoryStore(deviceHistoryPath);
 var systemInfoStore = new SystemInfoStore(systemInfoPath, GuidevaultVersion);
 var indexCachePath = Path.Combine(contentRoot, "data", "cache", "library-index.json");
@@ -298,6 +300,14 @@ app.MapGet("/api/tasks/settings", () => Results.Ok(taskSettingsStore.GetSettings
 app.MapPut("/api/tasks/settings", (GuidevaultTaskScheduleSettings payload) =>
 {
     var saved = taskSettingsStore.Update(payload ?? new GuidevaultTaskScheduleSettings());
+    return Results.Ok(saved);
+});
+
+app.MapGet("/api/customize/settings", () => Results.Ok(customizeSettingsStore.GetSettings()));
+
+app.MapPut("/api/customize/settings", (GuidevaultCustomizeSettings payload) =>
+{
+    var saved = customizeSettingsStore.SaveSettings(payload ?? new GuidevaultCustomizeSettings());
     return Results.Ok(saved);
 });
 
@@ -2992,6 +3002,158 @@ public sealed record OpdsAuthResult(bool Success, string Secret, OpdsAuthKey? Ke
 public sealed record OpdsNavigationEntry(string Title, string Description, string Href, string Kind = "acquisition");
 public sealed record OpdsKeyCreateRequest(string? Name);
 public sealed record OpdsSettingsUpdate(string? ConnectionUrl, string? SelectedKeyId, bool? Enabled);
+
+
+public sealed class GuidevaultCustomizeSettingsStore
+{
+    private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web) { WriteIndented = true };
+    private readonly string _path;
+    private readonly object _gate = new();
+    private GuidevaultCustomizeSettings _settings;
+
+    public GuidevaultCustomizeSettingsStore(string path)
+    {
+        _path = path;
+        _settings = Normalize(Load());
+        Save();
+    }
+
+    public GuidevaultCustomizeSettings GetSettings()
+    {
+        lock (_gate) return Clone(_settings);
+    }
+
+    public GuidevaultCustomizeSettings SaveSettings(GuidevaultCustomizeSettings payload)
+    {
+        lock (_gate)
+        {
+            _settings = Normalize(payload);
+            Save();
+            return Clone(_settings);
+        }
+    }
+
+    private GuidevaultCustomizeSettings Load()
+    {
+        try
+        {
+            if (File.Exists(_path))
+                return JsonSerializer.Deserialize<GuidevaultCustomizeSettings>(File.ReadAllText(_path), JsonOptions) ?? new GuidevaultCustomizeSettings();
+        }
+        catch
+        {
+            // Fall through to defaults rather than blocking app startup.
+        }
+        return new GuidevaultCustomizeSettings();
+    }
+
+    private void Save()
+    {
+        Directory.CreateDirectory(Path.GetDirectoryName(_path)!);
+        File.WriteAllText(_path, JsonSerializer.Serialize(_settings, JsonOptions));
+    }
+
+    private static GuidevaultCustomizeSettings Normalize(GuidevaultCustomizeSettings? value)
+    {
+        value ??= new GuidevaultCustomizeSettings();
+        var activeTab = string.Equals(value.ActiveTab, "side-nav", StringComparison.OrdinalIgnoreCase) ? "side-nav" : "home";
+        var shelves = (value.HomeShelves ?? new List<string>())
+            .Select(v => (v ?? string.Empty).Trim())
+            .Where(v => !string.IsNullOrWhiteSpace(v))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+        if (shelves.Count == 0) shelves.Add("recently-added");
+
+        var items = (value.SideNav?.CustomItems ?? new List<GuidevaultCustomSideNavItem>())
+            .Select((item, index) => NormalizeItem(item, index))
+            .Where(item => !string.IsNullOrWhiteSpace(item.Label) && !string.IsNullOrWhiteSpace(item.Value))
+            .GroupBy(item => $"{item.Type}::{item.Label}::{item.Value}", StringComparer.OrdinalIgnoreCase)
+            .Select(group => group.First())
+            .ToList();
+
+        return new GuidevaultCustomizeSettings
+        {
+            ActiveTab = activeTab,
+            HomeShelves = shelves,
+            SideNav = new GuidevaultCustomizeSideNavSettings { CustomItems = items }
+        };
+    }
+
+    private static GuidevaultCustomSideNavItem NormalizeItem(GuidevaultCustomSideNavItem? item, int index)
+    {
+        item ??= new GuidevaultCustomSideNavItem();
+        var type = (item.Type ?? string.Empty).Trim().ToLowerInvariant();
+        if (type is not ("series" or "kind" or "category" or "publisher" or "list" or "search")) type = "series";
+        var kindScope = (item.KindScope ?? item.Scope ?? "all").Trim();
+        if (kindScope is not ("Manual" or "Strategy Guide" or "Magazine")) kindScope = "all";
+        var matchMode = string.Equals(item.MatchMode, "exact", StringComparison.OrdinalIgnoreCase) ? "exact" : "contains";
+        var sortMode = (item.SortMode ?? "default").Trim().ToLowerInvariant();
+        if (sortMode is not ("default" or "title" or "sequence" or "recent")) sortMode = "default";
+        var label = (item.Label ?? item.Value ?? $"Shortcut {index + 1}").Trim();
+        var value = (item.Value ?? label).Trim();
+        var icon = (item.Icon ?? item.IconPreset ?? string.Empty).Trim();
+        if (icon.Length > 4) icon = icon[..4];
+        return new GuidevaultCustomSideNavItem
+        {
+            Id = string.IsNullOrWhiteSpace(item.Id) ? $"custom-nav-{Guid.NewGuid():N}" : item.Id.Trim(),
+            Label = label,
+            Type = type,
+            Value = value,
+            KindScope = kindScope,
+            MatchMode = matchMode,
+            SortMode = sortMode,
+            Icon = icon
+        };
+    }
+
+    private static GuidevaultCustomizeSettings Clone(GuidevaultCustomizeSettings value) => Normalize(new GuidevaultCustomizeSettings
+    {
+        ActiveTab = value.ActiveTab,
+        HomeShelves = value.HomeShelves?.ToList() ?? new List<string>(),
+        SideNav = new GuidevaultCustomizeSideNavSettings
+        {
+            CustomItems = value.SideNav?.CustomItems?.Select(item => new GuidevaultCustomSideNavItem
+            {
+                Id = item.Id,
+                Label = item.Label,
+                Type = item.Type,
+                Value = item.Value,
+                KindScope = item.KindScope,
+                Scope = item.Scope,
+                MatchMode = item.MatchMode,
+                SortMode = item.SortMode,
+                Icon = item.Icon,
+                IconPreset = item.IconPreset
+            }).ToList() ?? new List<GuidevaultCustomSideNavItem>()
+        }
+    });
+}
+
+public sealed class GuidevaultCustomizeSettings
+{
+    public string ActiveTab { get; set; } = "home";
+    public List<string> HomeShelves { get; set; } = new() { "recently-added" };
+    public GuidevaultCustomizeSideNavSettings SideNav { get; set; } = new();
+}
+
+public sealed class GuidevaultCustomizeSideNavSettings
+{
+    public List<GuidevaultCustomSideNavItem> CustomItems { get; set; } = new();
+}
+
+public sealed class GuidevaultCustomSideNavItem
+{
+    public string Id { get; set; } = string.Empty;
+    public string Label { get; set; } = string.Empty;
+    public string Type { get; set; } = "series";
+    public string Value { get; set; } = string.Empty;
+    public string KindScope { get; set; } = "all";
+    public string? Scope { get; set; }
+    public string MatchMode { get; set; } = "contains";
+    public string SortMode { get; set; } = "default";
+    public string Icon { get; set; } = string.Empty;
+    public string? IconPreset { get; set; }
+}
 
 public sealed class OpdsSettingsStore
 {
@@ -7638,6 +7800,6 @@ static class GuidevaultLibraryIoGate
 
 static class GuidevaultBuildInfo
 {
-    public const string Version = "0.9.62";
+    public const string Version = "0.9.66";
 }
 
