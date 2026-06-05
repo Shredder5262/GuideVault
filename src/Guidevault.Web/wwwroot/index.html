@@ -4,7 +4,7 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Guidevault</title>
-  <link rel="stylesheet" href="/styles.css?v=0.9.76-manual-metadata-help" />
+  <link rel="stylesheet" href="/styles.css?v=0.9.83-magazine-issue-publisher" />
 </head>
 <body class="right-collapsed auth-locked">
   <section id="loginView" class="login-view" aria-labelledby="loginTitle">
@@ -172,7 +172,7 @@
                 <div class="edit-grid">
                   <label id="editTitleLabel">Title<input id="editTitle" /></label>
                   <label>Type<select id="editKind"><option>Manual</option><option>Strategy Guide</option><option>Magazine</option></select></label>
-                  <label>Preferred Platform<input id="editCategory" /></label>
+                  <label id="editCategoryLabel">Preferred Platform<input id="editCategory" /></label>
                   <label id="editEsrbRatingLabel" class="esrb-metadata-field hidden">ESRB Rating<select id="editEsrbRating">
                     <option value="">Not Rated / Unspecified</option>
                     <option value="E">Everyone</option>
@@ -188,7 +188,6 @@
                   <label id="editAssociatedPlatformsLabel">Associated Platforms<input id="editAssociatedPlatforms" placeholder="PlayStation 2, Nintendo GameCube" /></label>
                   <label id="editPlatformMatchLabel" class="metadata-legacy-match-field hidden">Detected Match<input id="editPlatformMatchTitle" placeholder="Detected game/title match" /></label>
                   <label id="editGameTitleLabel" class="strategy-metadata-field manual-metadata-field hidden">Game Title<input id="editGameTitle" /></label>
-                  <label id="editManualTitleLabel" class="manual-metadata-field hidden">Manual Title<input id="editManualTitle" /></label>
                   <label id="editManualTypeLabel" class="manual-metadata-field hidden">Manual Type<input id="editManualType" placeholder="Instruction Booklet, Reference Card, Operations Manual" /></label>
                   <label id="editIsbnLabel" class="strategy-metadata-field hidden">ISBN<input id="editIsbn" placeholder="ISBN-10 or ISBN-13" /></label>
                   <label id="editGuideTypeLabel" class="strategy-metadata-field hidden">Guide Type
@@ -236,18 +235,19 @@
                   <label id="editIssueLabel">Issue #<input id="editIssue" /></label>
                   <label id="editVolumeLabel" class="magazine-metadata-field hidden">Volume<input id="editVolume" /></label>
                   <label id="editCoverDateLabel" class="magazine-metadata-field hidden">Cover Date<input id="editCoverDate" placeholder="March 1998" /></label>
+                  <label id="editBarcodeUpcIssnLabel" class="magazine-metadata-field hidden">Barcode / UPC / ISSN<input id="editBarcodeUpcIssn" placeholder="UPC or ISSN when known" /></label>
                   <label id="editPublicationDateLabel" class="magazine-metadata-field hidden">Publication Date<input id="editPublicationDate" placeholder="March 1998" /></label>
                   <label>Publisher<input id="editPublisher" /></label>
                   <label id="editRegionLabel" class="magazine-metadata-field strategy-metadata-field manual-metadata-field hidden">Region<input id="editRegion" placeholder="US, UK, Japan, Europe" /></label>
                   <label id="editLanguageLabel" class="magazine-metadata-field strategy-metadata-field manual-metadata-field hidden">Language<input id="editLanguageTag" placeholder="English, en-US, Japanese" /></label>
-                  <label id="editPlatformFocusLabel" class="magazine-metadata-field hidden">Platform Focus<input id="editPlatformFocus" placeholder="Nintendo, Sega, PlayStation, Multi-platform" /></label>
+                  <label id="editPlatformFocusLabel" class="magazine-metadata-field hidden">Platform / Audience Focus<input id="editPlatformFocus" placeholder="Nintendo, Sega, PlayStation, PC, Multi-platform" /></label>
                   <label id="editPrimarySystemLabel" class="magazine-metadata-field hidden">Primary System<input id="editPrimarySystem" placeholder="SNES, PlayStation, PC" /></label>
                   <label id="editMagazineCategoryLabel" class="magazine-metadata-field hidden">Magazine Category<input id="editMagazineCategory" placeholder="Official, cheats/codes, PC gaming" /></label>
                   <label id="editCoverSubjectLabel" class="magazine-metadata-field hidden">Cover Game / Subject<input id="editCoverSubject" /></label>
                   <label id="editYearLabel">Year<input id="editYear" /></label>
                   <label id="editPageCountLabel">Page Count<input id="editPageCount" type="number" min="0" step="1" inputmode="numeric" placeholder="Optional" /></label>
                   <label id="editPublicationDateGuideLabel" class="strategy-metadata-field hidden">Publication Date<input id="editPublicationDateGuide" placeholder="September 1997" /></label>
-                  <label>Writer / Author<input id="editWriter" /></label>
+                  <label id="editWriterLabel">Writer / Author<input id="editWriter" /></label>
                   <label id="editDeveloperLabel" class="strategy-metadata-field manual-metadata-field hidden">Game Developer<input id="editDeveloper" /></label>
                   <label id="editGamePublisherLabel" class="strategy-metadata-field manual-metadata-field hidden">Game Publisher<input id="editGamePublisher" /></label>
                   <label id="editGameReleaseYearLabel" class="strategy-metadata-field manual-metadata-field hidden">Game Release Year<input id="editGameReleaseYear" /></label>
@@ -256,7 +256,7 @@
                 <label>Summary<textarea id="editSummary" rows="5"></textarea></label>
                 <label id="editFeaturedGamesLabel" class="magazine-metadata-field hidden">Featured Games, comma-separated<input id="editFeaturedGames" /></label>
                 <label id="editFeaturedPlatformsLabel" class="magazine-metadata-field hidden">Featured Platforms, comma-separated<input id="editFeaturedPlatforms" /></label>
-                <label id="editSpecialFeaturesLabel" class="magazine-metadata-field hidden">Special Features, comma-separated<input id="editSpecialFeatures" /></label>
+                <label id="editSpecialFeaturesLabel" class="magazine-metadata-field hidden">Sections / Departments, comma-separated<input id="editSpecialFeatures" placeholder="Mail Box, Top 30, Counselors Corner, reviews" /></label>
                 <label id="editIncludedExtrasLabel" class="magazine-metadata-field strategy-metadata-field manual-metadata-field hidden">Physical Extras, comma-separated<input id="editIncludedExtras" placeholder="Poster, map, registration card, disc, overlay" /></label>
                 <label id="editIncludedSectionsLabel" class="manual-metadata-field hidden">Included Sections, comma-separated<input id="editIncludedSections" placeholder="Controls, Story, Items, Warranty" /></label>
                 <label id="editControlSchemeLabel" class="manual-metadata-field hidden">Controls / Control Scheme<input id="editControlScheme" placeholder="Controller, keyboard, light gun, etc." /></label>
@@ -1431,6 +1431,88 @@
             <h2>Update History</h2>
             <div class="system-update-list">
               <details class="system-update-entry" open>
+                <summary>
+                  <span>Guidevault 0.9.83 - Magazine Issue Publisher</span>
+                  <em>Installed</em>
+                </summary>
+                <ul>
+                  <li>Added Publisher to the magazine issue identity overview card when populated.</li>
+                  <li>Kept Barcode / UPC / ISSN, Page Count, and Editor in the same magazine issue identity area.</li>
+                </ul>
+              </details>
+              <details class="system-update-entry">
+                <summary>
+                  <span>Guidevault 0.9.82 - Magazine Issue Identity Save</span>
+                  <em>Installed</em>
+                </summary>
+                <ul>
+                  <li>Fixed Barcode / UPC / ISSN so it saves when using Save Metadata.</li>
+                  <li>Added Barcode / UPC / ISSN, Page Count, and Editor to the magazine issue identity overview card when populated.</li>
+                  <li>Locked the magazine overview context card so Cover Game / Subject and Category sit together on the second row.</li>
+                </ul>
+              </details>
+              <details class="system-update-entry">
+                <summary>
+                  <span>Guidevault 0.9.81 - Magazine Issue Field Labels</span>
+                  <em>Installed</em>
+                </summary>
+                <ul>
+                  <li>Added a Barcode / UPC / ISSN field for magazine issues and displays it with the issue identity details.</li>
+                  <li>Renamed magazine-only metadata labels: Writer / Author to Editor, Region to Country of publication, and Physical Extras to Insert Details.</li>
+                  <li>Adjusted the magazine overview card so Category and Cover Game / Subject sit together on the second row.</li>
+                </ul>
+              </details>
+              <details class="system-update-entry">
+                <summary>
+                  <span>Guidevault 0.9.80 - Magazine Overview Card Layout</span>
+                  <em>Installed</em>
+                </summary>
+                <ul>
+                  <li>Moved Cover Game / Subject next to Category in the magazine overview card to reduce empty space.</li>
+                  <li>Kept magazine Primary System, Publisher, and Page Count in the top detail subtitle instead of repeating them in the overview card.</li>
+                  <li>Preserved the cleaner magazine overview layout without extra Issue Identity or Coverage section headings.</li>
+                </ul>
+              </details>
+              <details class="system-update-entry">
+                <summary>
+                  <span>Guidevault 0.9.79 - Magazine Overview Subheading Cleanup</span>
+                  <em>Installed</em>
+                </summary>
+                <ul>
+                  <li>Removed Issue Identity and Coverage headings from the magazine overview layout.</li>
+                  <li>Removed redundant Magazine Title, Publisher, and Primary System fields from the magazine overview cards.</li>
+                  <li>Moved magazine Primary System, Publisher, and Page Count into the top detail subtitle when available.</li>
+                  <li>Kept Issue # and Volume as top-level subtitle context instead of including issue details in the main title.</li>
+                </ul>
+              </details>
+              <details class="system-update-entry">
+                <summary>
+                  <span>Guidevault 0.9.78 - Magazine Metadata Overview Cleanup</span>
+                  <em>Installed</em>
+                </summary>
+                <ul>
+                  <li>Refined magazine metadata scope by hiding the generic Year field and using Cover Date as the primary issue date.</li>
+                  <li>Renamed magazine Special Features to Sections / Departments for recurring columns, headings, and major issue components.</li>
+                  <li>Changed magazine overview titles so issue number no longer appears in the main title; issue and volume now display as a secondary heading when populated.</li>
+                  <li>Updated the magazine overview layout to reduce redundant fields and only show Volume when it has a value.</li>
+                </ul>
+              </details>
+              <details class="system-update-entry" open>
+                <summary>
+                  <span>Guidevault 0.9.77 - Manual Title Cleanup</span>
+                  <em>Installed</em>
+                </summary>
+                <div class="system-update-body">
+                  <h3>Changed <b>3</b></h3>
+                  <ul>
+                    <li>Removed the duplicate Manual Title field from the manual metadata form.</li>
+                    <li>Manual Title now uses the main Title field for manual records.</li>
+                    <li>Removed Manual Title from the manual identity overview card and clarified Game Title display.</li>
+                  </ul>
+                </div>
+              </details>
+
+              <details class="system-update-entry">
                 <summary>
                   <span>Guidevault 0.9.76 - Manual Metadata Scope Help</span>
                   <em>Installed</em>
@@ -2892,6 +2974,6 @@
   </dialog>
 
 
-  <script src="/app.js?v=0.9.76-manual-metadata-help"></script>
+  <script src="/app.js?v=0.9.83-magazine-issue-publisher"></script>
 </body>
 </html>

@@ -10921,6 +10921,24 @@ body.colorscape-active.detail-page-mode .detail-action-stack .danger{
 }
 
 
+.overview-field.magazine-overview-second-row{
+  grid-row:2;
+}
+.overview-field.magazine-overview-cover-subject{
+  grid-column:1 / span 2;
+}
+.overview-field.magazine-overview-category{
+  grid-column:3 / span 2;
+}
+@media(max-width:900px){
+  .overview-field.magazine-overview-second-row,
+  .overview-field.magazine-overview-cover-subject,
+  .overview-field.magazine-overview-category{
+    grid-row:auto;
+    grid-column:auto;
+  }
+}
+
 /* Metadata Manager */
 .metadata-manager-column-panel {
   border-top: 1px solid rgba(255,255,255,0.08);
@@ -14307,3 +14325,39 @@ button.danger-soft:not(:disabled):hover{
   box-shadow:0 12px 30px rgba(0,0,0,.25);
 }
 .edit-grid label .metadata-info-popover{grid-column:1 / -1}
+
+/* v0.9.77: manual title field cleanup */
+
+
+/* 0.9.78 magazine metadata overview cleanup */
+.magazine-hero-subtitle {
+  margin-top: 0.15rem;
+  color: var(--muted);
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  font-size: 0.78rem;
+}
+
+.magazine-hero-subtitle span {
+  color: var(--accent);
+  margin: 0 0.35rem;
+}
+
+.magazine-entry-title-note {
+  margin-top: 0.45rem;
+  color: var(--muted);
+  font-style: italic;
+}
+
+.magazine-overview-primary-card h3,
+.magazine-overview-context-card h3 {
+  margin: 0 0 0.8rem;
+  color: var(--text);
+  font-size: 0.9rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+.overview-field.force-row-start{
+  grid-column-start:1;
+}

@@ -13,7 +13,7 @@ using System.Net.Http.Headers;
 using SharpCompress.Readers;
 
 var builder = WebApplication.CreateBuilder(args);
-const string GuidevaultVersion = "0.9.76";
+const string GuidevaultVersion = "0.9.83";
 var app = builder.Build();
 var metadataJsonOptions = new JsonSerializerOptions(JsonSerializerDefaults.Web) { PropertyNameCaseInsensitive = true };
 var options = app.Configuration.GetSection("Guidevault").Get<GuidevaultOptions>() ?? new GuidevaultOptions();
@@ -3796,7 +3796,8 @@ public sealed record LibraryItem(
     string ControlScheme = "",
     string[]? ItemsCovered = null,
     string WarrantySupport = "",
-    string MetadataSource = "");
+    string MetadataSource = "",
+    string BarcodeUpcIssn = "");
 
 
 public sealed record ItemMetadataUpdate(
@@ -3830,6 +3831,7 @@ public sealed record ItemMetadataUpdate(
     string? PrimarySystem = null,
     string? MagazineCategory = null,
     string? CoverSubject = null,
+    string? BarcodeUpcIssn = null,
     string[]? FeaturedGames = null,
     string[]? FeaturedPlatforms = null,
     string[]? SpecialFeatures = null,
@@ -3911,6 +3913,7 @@ public static class ItemMetadataJsonReader
             PrimarySystem: GetString(payload, "primarySystem"),
             MagazineCategory: GetString(payload, "magazineCategory"),
             CoverSubject: coverSubject,
+            BarcodeUpcIssn: FirstText(GetString(payload, "barcodeUpcIssn"), GetString(payload, "barcode"), GetString(payload, "upc"), GetString(payload, "issn")),
             FeaturedGames: GetStringArray(payload, "featuredGames"),
             FeaturedPlatforms: GetStringArray(payload, "featuredPlatforms"),
             SpecialFeatures: GetStringArray(payload, "specialFeatures"),
@@ -4185,6 +4188,7 @@ public sealed class MetadataStore
                 PrimarySystem = kind == "Magazine" ? First(o.PrimarySystem, item.PrimarySystem) : string.Empty,
                 MagazineCategory = kind == "Magazine" ? First(o.MagazineCategory, item.MagazineCategory) : string.Empty,
                 CoverSubject = kind == "Magazine" ? First(o.CoverSubject, item.CoverSubject) : string.Empty,
+                BarcodeUpcIssn = kind == "Magazine" ? First(o.BarcodeUpcIssn, item.BarcodeUpcIssn) : string.Empty,
                 FeaturedGames = kind == "Magazine" && o.FeaturedGames is not null ? CleanDistinct(o.FeaturedGames) : item.FeaturedGames,
                 FeaturedPlatforms = kind == "Magazine" && o.FeaturedPlatforms is not null ? CleanDistinct(o.FeaturedPlatforms) : item.FeaturedPlatforms,
                 SpecialFeatures = (kind == "Magazine" || kind == "Strategy Guide" || kind == "Manual") && o.SpecialFeatures is not null ? CleanDistinct(o.SpecialFeatures) : item.SpecialFeatures,
@@ -4252,6 +4256,7 @@ public sealed class MetadataStore
             PrimarySystem = kind == "Magazine" ? Keep(update.PrimarySystem, item.PrimarySystem) : item.PrimarySystem,
             MagazineCategory = kind == "Magazine" ? Keep(update.MagazineCategory, item.MagazineCategory) : item.MagazineCategory,
             CoverSubject = kind == "Magazine" ? Keep(update.CoverSubject, item.CoverSubject) : item.CoverSubject,
+            BarcodeUpcIssn = kind == "Magazine" ? Keep(update.BarcodeUpcIssn, item.BarcodeUpcIssn) : item.BarcodeUpcIssn,
             FeaturedGames = kind == "Magazine" && update.FeaturedGames is not null ? CleanDistinct(update.FeaturedGames) : item.FeaturedGames,
             FeaturedPlatforms = kind == "Magazine" && update.FeaturedPlatforms is not null ? CleanDistinct(update.FeaturedPlatforms) : item.FeaturedPlatforms,
             SpecialFeatures = (kind == "Magazine" || kind == "Strategy Guide" || kind == "Manual") && update.SpecialFeatures is not null ? CleanDistinct(update.SpecialFeatures) : item.SpecialFeatures,
@@ -4368,6 +4373,7 @@ public sealed class MetadataStore
                 PrimarySystem: update.PrimarySystem ?? existing?.PrimarySystem,
                 MagazineCategory: update.MagazineCategory ?? existing?.MagazineCategory,
                 CoverSubject: update.CoverSubject ?? existing?.CoverSubject,
+                BarcodeUpcIssn: update.BarcodeUpcIssn ?? existing?.BarcodeUpcIssn,
                 FeaturedGames: update.FeaturedGames ?? existing?.FeaturedGames,
                 FeaturedPlatforms: update.FeaturedPlatforms ?? existing?.FeaturedPlatforms,
                 SpecialFeatures: update.SpecialFeatures ?? existing?.SpecialFeatures,
@@ -6471,6 +6477,7 @@ public static class GuidevaultNativeMetadata
             Put(metadata, "primarySystem", First(update.PrimarySystem, item.PrimarySystem));
             Put(metadata, "magazineCategory", First(update.MagazineCategory, item.MagazineCategory));
             Put(metadata, "coverSubject", First(update.CoverSubject, item.CoverSubject));
+            Put(metadata, "barcodeUpcIssn", First(update.BarcodeUpcIssn, item.BarcodeUpcIssn));
             Put(metadata, "featuredGames", update.FeaturedGames ?? item.FeaturedGames);
             Put(metadata, "featuredPlatforms", update.FeaturedPlatforms ?? item.FeaturedPlatforms);
             Put(metadata, "specialFeatures", update.SpecialFeatures ?? item.SpecialFeatures);
@@ -6584,6 +6591,7 @@ public static class GuidevaultNativeMetadata
         PutIfMissing("strategyGuideTitle", First(update.Title, item.Title));
         PutIfMissing("manualTitle", First(update.ManualTitle, item.ManualTitle));
         PutIfMissing("magazineTitle", First(update.MagazineTitle, item.MagazineTitle));
+        PutIfMissing("barcodeUpcIssn", First(update.BarcodeUpcIssn, item.BarcodeUpcIssn));
 
         var exportedItem = new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase)
         {
@@ -6652,6 +6660,7 @@ public static class GuidevaultNativeMetadata
                 PutIfMissing(metadata, "manualType", First(update.ManualType, item.ManualType));
                 PutIfMissing(metadata, "controlScheme", First(update.ControlScheme, item.ControlScheme));
                 PutIfMissing(metadata, "coverStory", First(update.CoverSubject, item.CoverSubject));
+                PutIfMissing(metadata, "barcodeUpcIssn", First(update.BarcodeUpcIssn, item.BarcodeUpcIssn));
                 if (pageCount > 0) PutIfMissing(metadata, "pageCount", pageCount);
 
                 return SanitizeSuggestedFileName(ApplyNamingSchema(schema, item, metadata), item.FileName);
@@ -6750,7 +6759,8 @@ public static class GuidevaultNativeMetadata
             ["asin"] = FirstValue(metadata, "asin"),
             ["manualType"] = FirstValue(metadata, "manualType"),
             ["controlScheme"] = FirstValue(metadata, "controlScheme"),
-            ["coverStory"] = FirstValue(metadata, "coverStory", "coverSubject")
+            ["coverStory"] = FirstValue(metadata, "coverStory", "coverSubject"),
+            ["barcodeUpcIssn"] = FirstValue(metadata, "barcodeUpcIssn", "barcode", "upc", "issn")
         };
 
         var normalizedTokens = tokens
@@ -9280,5 +9290,5 @@ static class GuidevaultLibraryIoGate
 
 static class GuidevaultBuildInfo
 {
-    public const string Version = "0.9.76";
+    public const string Version = "0.9.83";
 }
