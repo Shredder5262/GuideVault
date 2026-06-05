@@ -9,7 +9,3 @@ src/PageQuest.Web/data/pagequest.json
 _repo/
 _packaged/
 Guidevault-source-clean/
-# Local cleanup / generated artifacts
-patch.py
-_backup/
-tatus

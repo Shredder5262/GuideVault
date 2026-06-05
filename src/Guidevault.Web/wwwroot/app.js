@@ -69,7 +69,7 @@ const GUIDEVAULT_FAVORITES_KEY = 'guidevault.favorites.v1';
 const GUIDEVAULT_LIBRARY_CACHE_KEY = 'guidevault.libraryCache.v1';
 const GUIDEVAULT_GRID_INITIAL_RENDER = 96;
 const GUIDEVAULT_GRID_CHUNK_SIZE = 96;
-const GUIDEVAULT_APP_VERSION = '0.9.83';
+const GUIDEVAULT_APP_VERSION = '0.9.84';
 const GUIDEVAULT_FILENAME_SCHEMA_KEY = 'guidevault.filenameRename.schema.v1';
 const GUIDEVAULT_DEFAULT_FILENAME_SCHEMA = '{title}';
 const GUIDEVAULT_STABLE_TAG_FEED_URL = 'https://api.github.com/repos/Shredder5262/GuideVault/tags';
@@ -7496,7 +7496,7 @@ function openLibraryInitialSearchValues() {
 }
 
 function openLibraryResultTitle(result = {}) {
-  return [result.title, result.authorWriter, result.publishYear].filter(Boolean).join(' - ') || 'Open Library result';
+  return [result.title, result.authorWriter, result.publishYear].filter(Boolean).join(' • ') || 'Open Library result';
 }
 
 function ensureOpenLibraryMetadataUi() {
@@ -7580,8 +7580,8 @@ function renderOpenLibrarySearchResults(results = state.openLibrary.results || [
       <div class="openlibrary-result-cover">${result.coverPreviewUrl ? `<img src="${escapeForAttribute(result.coverPreviewUrl)}" alt="" loading="lazy" />` : '<span>No cover</span>'}</div>
       <div class="openlibrary-result-main">
         <h4>${escapeHtml(result.title || 'Untitled')}</h4>
-        <p>${escapeHtml([result.authorWriter, result.publisher, result.publishYear].filter(Boolean).join(' - ') || 'No extra result details')}</p>
-        <small>${escapeHtml(result.matchBy || 'Search')} match - ${escapeHtml(result.confidence || 'Unknown')} confidence${result.isbn10 ? ` - ISBN-10 ${escapeHtml(result.isbn10)}` : ''}${result.isbn13 ? ` - ISBN-13 ${escapeHtml(result.isbn13)}` : ''}</small>
+        <p>${escapeHtml([result.authorWriter, result.publisher, result.publishYear].filter(Boolean).join(' • ') || 'No extra result details')}</p>
+        <small>${escapeHtml(result.matchBy || 'Search')} match • ${escapeHtml(result.confidence || 'Unknown')} confidence${result.isbn10 ? ` • ISBN-10 ${escapeHtml(result.isbn10)}` : ''}${result.isbn13 ? ` • ISBN-13 ${escapeHtml(result.isbn13)}` : ''}</small>
       </div>
       <button type="button" class="ghost openlibrary-select-result" data-result-index="${index}">Select</button>
     </article>`).join('');
@@ -7699,11 +7699,11 @@ function openLibraryComparisonHtml(result = {}) {
     <button type="button" id="openLibraryBackToResultsBtn" class="ghost tiny">Back to results</button>
     <div class="openlibrary-cover-compare">
       <figure><figcaption>Guidevault Cover</figcaption>${currentCover ? `<img src="${escapeForAttribute(currentCover)}" alt="Current Guidevault cover" />` : '<span>No Guidevault cover</span>'}</figure>
-      <figure><figcaption>Open Library Cover <em>Preview only  -  not imported</em></figcaption>${result.coverPreviewUrl ? `<img src="${escapeForAttribute(result.coverPreviewUrl)}" alt="Open Library cover preview" />` : '<span>No Open Library cover</span>'}</figure>
+      <figure><figcaption>Open Library Cover <em>Preview only — not imported</em></figcaption>${result.coverPreviewUrl ? `<img src="${escapeForAttribute(result.coverPreviewUrl)}" alt="Open Library cover preview" />` : '<span>No Open Library cover</span>'}</figure>
     </div>
     <div class="openlibrary-selected-source">
       <h4>${escapeHtml(result.title || 'Selected Open Library result')}</h4>
-      <p>${escapeHtml([result.authorWriter, result.publisher, result.publishYear].filter(Boolean).join(' - ') || 'Review fields before importing.')}</p>
+      <p>${escapeHtml([result.authorWriter, result.publisher, result.publishYear].filter(Boolean).join(' • ') || 'Review fields before importing.')}</p>
     </div>
     <div class="openlibrary-table-wrap">
       <table class="openlibrary-comparison-table">
@@ -7836,7 +7836,7 @@ function esrbInitialSearchValues() {
 }
 
 function esrbResultTitle(result = {}) {
-  return [result.title || result.gameTitle, esrbDisplayLabel(result.ratingShort || result.rating), esrbListLabel(result.platforms)].filter(Boolean).join(' - ') || 'ESRB rating result';
+  return [result.title || result.gameTitle, esrbDisplayLabel(result.ratingShort || result.rating), esrbListLabel(result.platforms)].filter(Boolean).join(' • ') || 'ESRB rating result';
 }
 
 function ensureEsrbMetadataUi() {
@@ -7920,8 +7920,8 @@ function renderEsrbSearchResults(results = state.esrb.results || []) {
       <div class="openlibrary-result-cover esrb-result-badge">${rating ? `<img src="${escapeForAttribute(esrbIconUrl(rating))}" alt="${escapeForAttribute(esrbDisplayLabel(rating))}" loading="lazy" />` : '<span>No rating</span>'}</div>
       <div class="openlibrary-result-main esrb-result-main">
         <h4>${escapeHtml(result.title || 'Untitled')}</h4>
-        <p>${escapeHtml([result.publisher, esrbDisplayLabel(rating), esrbListLabel(result.platforms)].filter(Boolean).join(' - ') || 'No extra result details')}</p>
-        <small>${escapeHtml(result.matchBy || 'Game title')} match - ${escapeHtml(result.confidence || 'Unknown')} confidence${esrbListLabel(result.contentDescriptors) ? `  -  ${escapeHtml(esrbListLabel(result.contentDescriptors))}` : ''}</small>
+        <p>${escapeHtml([result.publisher, esrbDisplayLabel(rating), esrbListLabel(result.platforms)].filter(Boolean).join(' • ') || 'No extra result details')}</p>
+        <small>${escapeHtml(result.matchBy || 'Game title')} match • ${escapeHtml(result.confidence || 'Unknown')} confidence${esrbListLabel(result.contentDescriptors) ? ` • ${escapeHtml(esrbListLabel(result.contentDescriptors))}` : ''}</small>
       </div>
       <button type="button" class="ghost esrb-select-result" data-result-index="${index}">Select</button>
     </article>`;
@@ -8023,7 +8023,7 @@ function esrbComparisonHtml(result = {}) {
     <button type="button" id="esrbBackToResultsBtn" class="ghost tiny">Back to results</button>
     <div class="openlibrary-selected-source esrb-selected-source">
       <h4>${escapeHtml(result.title || 'Selected ESRB result')}</h4>
-      <p>${escapeHtml([result.publisher, esrbDisplayLabel(incomingRating), esrbListLabel(result.platforms)].filter(Boolean).join(' - ') || 'Review the rating before importing.')}</p>
+      <p>${escapeHtml([result.publisher, esrbDisplayLabel(incomingRating), esrbListLabel(result.platforms)].filter(Boolean).join(' • ') || 'Review the rating before importing.')}</p>
       <div class="esrb-detail-grid">
         <div><span>Content Descriptors</span><strong>${escapeHtml(esrbListLabel(result.contentDescriptors) || '\u2014')}</strong></div>
         <div><span>Interactive Elements</span><strong>${escapeHtml(esrbListLabel(result.interactiveElements) || '\u2014')}</strong></div>
@@ -8183,7 +8183,7 @@ function igdbInitialSearchValues() {
 }
 
 function igdbResultTitle(result = {}) {
-  return [result.gameTitle || result.name, igdbListLabel(result.platforms || result.associatedPlatforms), result.gameReleaseYear].filter(Boolean).join(' - ') || 'IGDB game result';
+  return [result.gameTitle || result.name, igdbListLabel(result.platforms || result.associatedPlatforms), result.gameReleaseYear].filter(Boolean).join(' • ') || 'IGDB game result';
 }
 
 function ensureIgdbMetadataUi() {
@@ -8270,8 +8270,8 @@ function renderIgdbSearchResults(results = state.igdb.results || []) {
       <div class="openlibrary-result-cover igdb-result-cover">${result.coverPreviewUrl ? `<img src="${escapeForAttribute(result.coverPreviewUrl)}" alt="" loading="lazy" />` : '<span>No cover</span>'}</div>
       <div class="openlibrary-result-main igdb-result-main">
         <h4>${escapeHtml(result.gameTitle || result.name || 'Untitled game')}</h4>
-        <p>${escapeHtml([igdbListLabel(result.developers), igdbListLabel(result.publishers), result.gameReleaseYear].filter(Boolean).join(' - ') || 'No extra result details')}</p>
-        <small>${escapeHtml(result.matchBy || 'Game title')} match - ${escapeHtml(result.confidence || 'Unknown')} confidence${result.gameFranchise ? `  -  ${escapeHtml(result.gameFranchise)}` : ''}${igdbListLabel(result.associatedPlatforms) ? `  -  ${escapeHtml(igdbListLabel(result.associatedPlatforms))}` : ''}</small>
+        <p>${escapeHtml([igdbListLabel(result.developers), igdbListLabel(result.publishers), result.gameReleaseYear].filter(Boolean).join(' • ') || 'No extra result details')}</p>
+        <small>${escapeHtml(result.matchBy || 'Game title')} match • ${escapeHtml(result.confidence || 'Unknown')} confidence${result.gameFranchise ? ` • ${escapeHtml(result.gameFranchise)}` : ''}${igdbListLabel(result.associatedPlatforms) ? ` • ${escapeHtml(igdbListLabel(result.associatedPlatforms))}` : ''}</small>
       </div>
       <button type="button" class="ghost igdb-select-result" data-result-index="${index}">Select</button>
     </article>`).join('');
@@ -8385,7 +8385,7 @@ function igdbComparisonHtml(result = {}) {
     <button type="button" id="igdbBackToResultsBtn" class="ghost tiny">Back to results</button>
     <div class="openlibrary-selected-source igdb-selected-source">
       <h4>${escapeHtml(result.gameTitle || result.name || 'Selected IGDB result')}</h4>
-      <p>${escapeHtml([igdbListLabel(result.developers), igdbListLabel(result.publishers), result.gameReleaseYear, igdbListLabel(result.associatedPlatforms)].filter(Boolean).join(' - ') || 'Review fields before importing.')}</p>
+      <p>${escapeHtml([igdbListLabel(result.developers), igdbListLabel(result.publishers), result.gameReleaseYear, igdbListLabel(result.associatedPlatforms)].filter(Boolean).join(' • ') || 'Review fields before importing.')}</p>
       ${result.coverPreviewUrl ? `<div class="igdb-preview-note"><img src="${escapeForAttribute(result.coverPreviewUrl)}" alt="IGDB cover preview" /><span>IGDB cover preview is only a visual match aid and is not imported.</span></div>` : '<p class="sub">No IGDB cover preview was returned. Covers are not imported from this lookup.</p>'}
     </div>
     <div class="openlibrary-table-wrap igdb-table-wrap">
@@ -8533,8 +8533,8 @@ function updateMetadataFileMaintenance() {
 
   if (!item) {
     panel.classList.add('hidden');
-    if (currentEl) currentEl.textContent = ' - ';
-    if (suggestedEl) suggestedEl.textContent = ' - ';
+    if (currentEl) currentEl.textContent = '—';
+    if (suggestedEl) suggestedEl.textContent = '—';
     if (renameBtn) renameBtn.disabled = true;
     if (statusEl) statusEl.textContent = 'Select an item to preview its filename.';
     return;
@@ -8548,8 +8548,8 @@ function updateMetadataFileMaintenance() {
   const sameName = currentFileName && suggestedFileName && currentFileName.toLowerCase() === suggestedFileName.toLowerCase();
 
   panel.classList.remove('hidden');
-  if (currentEl) currentEl.textContent = currentFileName || ' - ';
-  if (suggestedEl) suggestedEl.textContent = suggestedFileName || ' - ';
+  if (currentEl) currentEl.textContent = currentFileName || '—';
+  if (suggestedEl) suggestedEl.textContent = suggestedFileName || '—';
   if (renameBtn) {
     renameBtn.disabled = !suggestedFileName || sameName;
     renameBtn.title = sameName
@@ -8589,7 +8589,7 @@ async function renameSelectedFileToSuggestedName() {
   const confirmed = await showAppConfirm({
     title: 'Rename file?',
     message: `Current file:
-${currentFileName || ' - '}
+${currentFileName || '—'}
 
 New filename:
 ${suggestedFileName}
@@ -9732,12 +9732,12 @@ function magazineIssueSubtitleParts(item) {
 }
 
 function magazineIssueSubtitleText(item) {
-  return magazineIssueSubtitleParts(item).join(' - ');
+  return magazineIssueSubtitleParts(item).join(' • ');
 }
 
 function magazineIssueSubtitleHtml(item) {
   const parts = magazineIssueSubtitleParts(item);
-  return parts.length ? `<div class="magazine-hero-subtitle">${parts.map(escapeHtml).join(' <span> - </span> ')}</div>` : '';
+  return parts.length ? `<div class="magazine-hero-subtitle">${parts.map(escapeHtml).join(' <span>•</span> ')}</div>` : '';
 }
 
 function magazineDetailSubtitleText(item) {
@@ -9749,7 +9749,7 @@ function magazineDetailSubtitleText(item) {
   return [magazineIssueSubtitleText(item), coverDate, primarySystem, publisher, pageCountText]
     .map(v => String(v || '').trim())
     .filter(Boolean)
-    .join(' - ');
+    .join(' • ');
 }
 
 function magazineOverviewHtml(item) {
@@ -14287,4 +14287,5 @@ installLibraryCardDelegates();
 installGlobalDetailDelegate();
 syncEmailTemplatePreview();
 initializeGuidevaultAuthAndApp();
+
 
