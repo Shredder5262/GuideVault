@@ -2,7 +2,16 @@
 
 Guidevault runs as a self-hosted Docker container on port **5478**.
 
-## Default install
+## Simple install
+
+Create a working folder and the default library folder:
+
+```powershell
+mkdir guidevault
+cd guidevault
+mkdir guidevault-data
+mkdir guidevault-data\library
+```
 
 Create `compose.yaml`:
 
@@ -14,13 +23,6 @@ services:
     restart: unless-stopped
     ports:
       - "5478:5478"
-    environment:
-      ASPNETCORE_URLS: "http://+:5478"
-      ASPNETCORE_HTTP_PORTS: "5478"
-      GUIDEVAULT_DATA: "/data"
-      GUIDEVAULT_LIBRARY_PATH: "/data/library"
-      GUIDEVAULT__UPDATES__CHANNEL: "stable"
-      GUIDEVAULT__UPDATES__CURRENTIMAGE: "ghcr.io/shredder5262/guidevault:latest"
     volumes:
       - "./guidevault-data:/data"
 ```
@@ -37,25 +39,27 @@ Open:
 http://localhost:5478
 ```
 
-This creates one host folder:
-
-```text
-./guidevault-data
-```
-
-The default library folder is:
+Place library files in:
 
 ```text
 ./guidevault-data/library
 ```
 
-Inside the container, scan:
+Inside Guidevault, scan:
 
 ```text
 /data/library
 ```
 
-## Mount an existing library
+No environment variables are needed for the standard install. The Docker image defaults to:
+
+```text
+Port: 5478
+App data: /data
+Default library: /data/library
+```
+
+## Use an existing library folder
 
 Use this layout when your collection already lives somewhere else:
 
@@ -67,23 +71,18 @@ services:
     restart: unless-stopped
     ports:
       - "5478:5478"
-    environment:
-      ASPNETCORE_URLS: "http://+:5478"
-      ASPNETCORE_HTTP_PORTS: "5478"
-      GUIDEVAULT_DATA: "/data"
-      GUIDEVAULT_LIBRARY_PATH: "/library"
-      GUIDEVAULT__UPDATES__CHANNEL: "stable"
-      GUIDEVAULT__UPDATES__CURRENTIMAGE: "ghcr.io/shredder5262/guidevault:latest"
     volumes:
       - "./guidevault-data:/data"
-      - "D:/Digital Literature:/library:ro"
+      - "D:/Digital Literature:/data/library:ro"
 ```
 
 Inside Guidevault, scan:
 
 ```text
-/library
+/data/library
 ```
+
+The `:ro` means the library is mounted read-only. Guidevault still stores its own settings, cache, profiles, OPDS keys, and metadata in `./guidevault-data`.
 
 ## Update
 

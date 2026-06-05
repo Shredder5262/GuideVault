@@ -6,6 +6,15 @@ The default application port is **5478**.
 
 ## Quick start
 
+Create a folder for Guidevault and a default library folder:
+
+```powershell
+mkdir guidevault
+cd guidevault
+mkdir guidevault-data
+mkdir guidevault-data\library
+```
+
 Create `compose.yaml`:
 
 ```yaml
@@ -16,18 +25,11 @@ services:
     restart: unless-stopped
     ports:
       - "5478:5478"
-    environment:
-      ASPNETCORE_URLS: "http://+:5478"
-      ASPNETCORE_HTTP_PORTS: "5478"
-      GUIDEVAULT_DATA: "/data"
-      GUIDEVAULT_LIBRARY_PATH: "/data/library"
-      GUIDEVAULT__UPDATES__CHANNEL: "stable"
-      GUIDEVAULT__UPDATES__CURRENTIMAGE: "ghcr.io/shredder5262/guidevault:latest"
     volumes:
       - "./guidevault-data:/data"
 ```
 
-Start the app:
+Start Guidevault:
 
 ```powershell
 docker compose up -d
@@ -39,36 +41,23 @@ Open:
 http://localhost:5478
 ```
 
-## Default folder behavior
-
-The default Compose example creates one host folder:
-
-```text
-./guidevault-data
-```
-
-Inside the container:
-
-```text
-/data          persistent Guidevault app data
-/data/library  default library folder
-```
-
-If you do nothing else, place manuals, strategy guides, and magazines under:
+Place manuals, strategy guides, and magazines in:
 
 ```text
 ./guidevault-data/library
 ```
 
-Then scan this path inside Guidevault:
+Inside Guidevault, scan this library path:
 
 ```text
 /data/library
 ```
 
+That is the simplest install path. The container already defaults to port `5478`, app data at `/data`, and the default library folder at `/data/library`, so no environment variables are needed for a normal install.
+
 ## Use an existing library folder
 
-To keep your library outside the Guidevault data folder, mount it read-only and point Guidevault at `/library`:
+Use this layout when your collection already lives somewhere else. The example below keeps Guidevault settings/cache in `./guidevault-data` and mounts your existing library directly as `/data/library`.
 
 ```yaml
 services:
@@ -78,25 +67,18 @@ services:
     restart: unless-stopped
     ports:
       - "5478:5478"
-    environment:
-      ASPNETCORE_URLS: "http://+:5478"
-      ASPNETCORE_HTTP_PORTS: "5478"
-      GUIDEVAULT_DATA: "/data"
-      GUIDEVAULT_LIBRARY_PATH: "/library"
-      GUIDEVAULT__UPDATES__CHANNEL: "stable"
-      GUIDEVAULT__UPDATES__CURRENTIMAGE: "ghcr.io/shredder5262/guidevault:latest"
     volumes:
       - "./guidevault-data:/data"
-      - "D:/Digital Literature:/library:ro"
+      - "D:/Digital Literature:/data/library:ro"
 ```
 
-Scan this path inside Guidevault:
+Inside Guidevault, scan:
 
 ```text
-/library
+/data/library
 ```
 
-Docker cannot read arbitrary host paths unless they are mounted into the container. On Windows, use a Docker-shared drive path such as `D:/Digital Literature` instead of a raw in-container Windows path.
+On Windows, use Docker-style paths such as `D:/Digital Literature`. Docker cannot read arbitrary host folders unless they are mounted into the container.
 
 ## Update
 
@@ -110,6 +92,16 @@ docker compose up -d
 ```powershell
 docker logs -f guidevault
 ```
+
+## Backup
+
+Back up the persistent data folder:
+
+```text
+./guidevault-data
+```
+
+This folder contains app settings, generated cache, metadata, reading profiles, OPDS keys, and other persistent Guidevault data.
 
 ## Reset
 

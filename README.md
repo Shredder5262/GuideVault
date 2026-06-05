@@ -41,6 +41,15 @@ Open Library cover art is only shown as a visual comparison aid. It is not impor
 
 ## Quick start with Docker
 
+Create a folder and a default library folder:
+
+```powershell
+mkdir guidevault
+cd guidevault
+mkdir guidevault-data
+mkdir guidevault-data\library
+```
+
 Create `compose.yaml`:
 
 ```yaml
@@ -51,13 +60,6 @@ services:
     restart: unless-stopped
     ports:
       - "5478:5478"
-    environment:
-      ASPNETCORE_URLS: "http://+:5478"
-      ASPNETCORE_HTTP_PORTS: "5478"
-      GUIDEVAULT_DATA: "/data"
-      GUIDEVAULT_LIBRARY_PATH: "/data/library"
-      GUIDEVAULT__UPDATES__CHANNEL: "stable"
-      GUIDEVAULT__UPDATES__CURRENTIMAGE: "ghcr.io/shredder5262/guidevault:latest"
     volumes:
       - "./guidevault-data:/data"
 ```
@@ -74,9 +76,9 @@ Open:
 http://localhost:5478
 ```
 
-This default Compose example creates only one host folder: `./guidevault-data`. The default library path is inside that folder at `./guidevault-data/library`.
+Place manuals, strategy guides, and magazines in `./guidevault-data/library`, then scan `/data/library` inside Guidevault.
 
-For an existing library folder, see [Docker deployment](DOCKER.md).
+For using an existing library folder, see [Docker deployment](DOCKER.md).
 
 ## First run
 
