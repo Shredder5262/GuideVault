@@ -43,7 +43,7 @@ const state = {
 const $ = id => document.getElementById(id);
 function setText(id, value) {
   const el = $(id);
-  if (el) el.textContent = value || '-';
+  if (el) el.textContent = value || '\u2014';
 }
 const READER_BOOKMARKS_KEY = 'guidevault.readerBookmarks.v1';
 const READER_SHADING_KEY = 'guidevault.readerShading.v1';
@@ -69,7 +69,7 @@ const GUIDEVAULT_FAVORITES_KEY = 'guidevault.favorites.v1';
 const GUIDEVAULT_LIBRARY_CACHE_KEY = 'guidevault.libraryCache.v1';
 const GUIDEVAULT_GRID_INITIAL_RENDER = 96;
 const GUIDEVAULT_GRID_CHUNK_SIZE = 96;
-const GUIDEVAULT_APP_VERSION = '0.9.84';
+const GUIDEVAULT_APP_VERSION = '0.9.85';
 const GUIDEVAULT_FILENAME_SCHEMA_KEY = 'guidevault.filenameRename.schema.v1';
 const GUIDEVAULT_DEFAULT_FILENAME_SCHEMA = '{title}';
 const GUIDEVAULT_STABLE_TAG_FEED_URL = 'https://api.github.com/repos/Shredder5262/GuideVault/tags';
@@ -1253,7 +1253,7 @@ function renderProfileRecent(stats) {
   if (!host) return;
   const recent = [...new Set(stats.events.slice().reverse().map(e => String(e.id || '')).filter(Boolean))]
     .map(id => stats.lookup.get(id)).filter(Boolean).slice(0, 6);
-  host.innerHTML = recent.length ? recent.map(item => `<article class="profile-recent-card"><img loading="lazy" src="${coverUrl(item)}" alt="" /><div><strong>${escapeHtml(displayTitle(item))}</strong><span>${escapeHtml(item.kind || '')} \u2022 ${escapeHtml(preferredPlatformOf(item) || categoryOf(item) || '-')}</span></div></article>`).join('') : '<article class="settings-card"><p class="sub">Open a manual, guide, or magazine to start filling out recent reads.</p></article>';
+  host.innerHTML = recent.length ? recent.map(item => `<article class="profile-recent-card"><img loading="lazy" src="${coverUrl(item)}" alt="" /><div><strong>${escapeHtml(displayTitle(item))}</strong><span>${escapeHtml(item.kind || '')} \u2022 ${escapeHtml(preferredPlatformOf(item) || categoryOf(item) || '\u2014')}</span></div></article>`).join('') : '<article class="settings-card"><p class="sub">Open a manual, guide, or magazine to start filling out recent reads.</p></article>';
 }
 function renderProfileTopLists(stats) {
   const host = $('profileTopLists');
@@ -1703,12 +1703,12 @@ function setSystemInfoStatus(message = '', tone = '') {
 
 function renderSystemInfo(info = state.systemInfo || fallbackSystemInfo()) {
   const data = info || fallbackSystemInfo();
-  const setText = (id, value) => { const el = $(id); if (el) el.textContent = value || '-'; };
+  const setText = (id, value) => { const el = $(id); if (el) el.textContent = value || '\u2014'; };
   setText('systemAppName', data.appName || 'Guidevault');
   setText('systemVersion', data.version || GUIDEVAULT_APP_VERSION);
   setText('systemFirstInstallVersion', data.firstInstallVersion || data.version || GUIDEVAULT_APP_VERSION);
   setText('systemFirstInstallDate', formatSystemDate(data.firstInstallDate));
-  setText('systemInstallId', data.installId || '-');
+  setText('systemInstallId', data.installId || '\u2014');
   setText('systemRuntimeMode', data.runtimeMode || 'Local self-hosted web app');
   setText('systemSupportedFiles', data.supportedFiles || 'CBZ, CBR, PDF');
 }
@@ -1723,7 +1723,7 @@ function formatDiagnosticBytes(value) {
 }
 
 function renderSystemPerformance(data = state.performanceInfo) {
-  const setText = (id, value) => { const el = $(id); if (el) el.textContent = value || '-'; };
+  const setText = (id, value) => { const el = $(id); if (el) el.textContent = value || '\u2014'; };
   if (!data) {
     setText('systemWorkingSet', '\u2014');
     setText('systemPrivateMemory', '\u2014');
@@ -1789,7 +1789,7 @@ function renderUpdateNotification() {
     notice.classList.remove('hidden');
     notice.dataset.status = update?.status || '';
   }
-  const setText = (id, value) => { const el = $(id); if (el) el.textContent = value || '-'; };
+  const setText = (id, value) => { const el = $(id); if (el) el.textContent = value || '\u2014'; };
   const hasUpdatePaths = !!(update?.feedUrl || update?.releaseUrl || update?.releasePath || update?.packageUrl);
   const currentVersion = update?.currentVersion || GUIDEVAULT_APP_VERSION;
   const latestVersion = update?.latestVersion || '';
@@ -1799,11 +1799,11 @@ function renderUpdateNotification() {
     : (update?.message || 'Stable update notifications are not configured yet.');
   setText('systemUpdateStatus', friendlyUpdateMessage);
   setText('systemUpdateCurrent', update?.currentVersion || GUIDEVAULT_APP_VERSION);
-  setText('systemUpdateLatest', update?.latestVersion || '-');
-  setText('systemUpdateImage', update?.latestImage || update?.currentImage || '-');
-  setText('systemUpdateFeed', update?.feedUrl || '-');
-  setText('systemUpdateReleasePath', update?.releasePath || update?.releaseUrl || '-');
-  setText('systemUpdatePackagePath', update?.packageUrl || '-');
+  setText('systemUpdateLatest', update?.latestVersion || '\u2014');
+  setText('systemUpdateImage', update?.latestImage || update?.currentImage || '\u2014');
+  setText('systemUpdateFeed', update?.feedUrl || '\u2014');
+  setText('systemUpdateReleasePath', update?.releasePath || update?.releaseUrl || '\u2014');
+  setText('systemUpdatePackagePath', update?.packageUrl || '\u2014');
   const notes = $('systemUpdateNotes');
   if (notes) {
     const values = Array.isArray(update?.notes) ? update.notes.filter(Boolean) : [];
@@ -2623,7 +2623,7 @@ function renderEmailHistory() {
     const sentAt = item.sentAt ? new Date(item.sentAt).toLocaleString() : 'Unknown time';
     const status = item.status || 'Logged';
     return `<article class="settings-card email-history-row" data-status="${escapeForAttribute(status.toLowerCase())}">
-      <div class="email-history-main"><strong>${escapeHtml(item.subject || 'Guidevault email')}</strong><span>${escapeHtml(item.type || 'Email')} \u2022 ${escapeHtml(item.to || '-')}</span><small>${escapeHtml(sentAt)}</small></div>
+      <div class="email-history-main"><strong>${escapeHtml(item.subject || 'Guidevault email')}</strong><span>${escapeHtml(item.type || 'Email')} \u2022 ${escapeHtml(item.to || '\u2014')}</span><small>${escapeHtml(sentAt)}</small></div>
       <div class="email-history-meta"><span>${escapeHtml(status)}</span><em>${escapeHtml(item.templateName || 'Guidevault Invite')}</em></div>
       ${item.message ? `<p class="sub email-history-message">${escapeHtml(item.message)}</p>` : ''}
     </article>`;
@@ -3068,7 +3068,7 @@ function normalizeUiText(value = '') {
 }
 
 function normalizeDeviceScreen(value = '') {
-  const text = normalizeUiText(value || '-');
+  const text = normalizeUiText(value || '\u2014');
   return text
     .replace(/(\d+)\s*(?:\u00D7|x|\u2014|\u2013|-)\s*(\d+)/gi, '$1\u00D7$2')
     .replace(/\s+/g, ' ')
@@ -3103,9 +3103,9 @@ function clientDeviceTitleIcon(device = {}) {
 
 function deviceFact(iconName, label, value) {
   const displayValue = iconName === 'screen'
-    ? normalizeDeviceScreen(value || '-')
-    : normalizeUiText(value || '-');
-  return `<div class="device-card-fact">${deviceIcon(iconName)}<span>${escapeHtml(label)}: <b>${escapeHtml(displayValue || '-')}</b></span></div>`;
+    ? normalizeDeviceScreen(value || '\u2014')
+    : normalizeUiText(value || '\u2014');
+  return `<div class="device-card-fact">${deviceIcon(iconName)}<span>${escapeHtml(label)}: <b>${escapeHtml(displayValue || '\u2014')}</b></span></div>`;
 }
 
 function renderDeviceHistory() {
@@ -3124,7 +3124,7 @@ function renderEmailDeviceTable(emailDevices = []) {
       ? emailDevices.map(device => `
         <tr data-email-device-id="${escapeForAttribute(device.id || '')}">
           <td><strong>${escapeHtml(device.name || 'Email Device')}</strong></td>
-          <td>${escapeHtml(device.email || '-')}</td>
+          <td>${escapeHtml(device.email || '\u2014')}</td>
           <td>${escapeHtml(device.platform || 'Email')}</td>
           <td><button class="device-table-action danger" type="button" data-device-email-action="delete" title="Delete device" aria-label="Delete device">${deviceIcon('trash')}</button></td>
         </tr>`).join('')
@@ -3172,8 +3172,8 @@ function renderClientDeviceCardsInto(gridId, clientDevices = [], options = {}) {
     const userText = normalizeUiText(device.username || device.authKeyName || device.email || 'local');
     const displayName = normalizeUiText(device.displayName || 'Guidevault Client');
     const platformText = normalizeUiText(device.platform || 'Unknown');
-    const screenText = normalizeDeviceScreen(device.screen || '-');
-    const appVersionText = normalizeUiText(device.appVersion || '-');
+    const screenText = normalizeDeviceScreen(device.screen || '\u2014');
+    const appVersionText = normalizeUiText(device.appVersion || '\u2014');
     return `
       <article class="device-client-card" data-client-device-id="${escapeForAttribute(id)}">
         ${manageable && !isEditing ? `
@@ -6433,7 +6433,7 @@ function normalizeWebLink(value) {
 }
 
 function metaRow(label, value, isHtml = false) {
-  const rendered = isHtml ? String(value || '') : escapeHtml(String(value || '-'));
+  const rendered = isHtml ? String(value || '') : escapeHtml(String(value || '\u2014'));
   return `<dt>${escapeHtml(label)}</dt><dd>${rendered}</dd>`;
 }
 
@@ -7496,7 +7496,7 @@ function openLibraryInitialSearchValues() {
 }
 
 function openLibraryResultTitle(result = {}) {
-  return [result.title, result.authorWriter, result.publishYear].filter(Boolean).join(' - ') || 'Open Library result';
+  return [result.title, result.authorWriter, result.publishYear].filter(Boolean).join(' • ') || 'Open Library result';
 }
 
 function ensureOpenLibraryMetadataUi() {
@@ -7580,8 +7580,8 @@ function renderOpenLibrarySearchResults(results = state.openLibrary.results || [
       <div class="openlibrary-result-cover">${result.coverPreviewUrl ? `<img src="${escapeForAttribute(result.coverPreviewUrl)}" alt="" loading="lazy" />` : '<span>No cover</span>'}</div>
       <div class="openlibrary-result-main">
         <h4>${escapeHtml(result.title || 'Untitled')}</h4>
-        <p>${escapeHtml([result.authorWriter, result.publisher, result.publishYear].filter(Boolean).join(' - ') || 'No extra result details')}</p>
-        <small>${escapeHtml(result.matchBy || 'Search')} match - ${escapeHtml(result.confidence || 'Unknown')} confidence${result.isbn10 ? ` - ISBN-10 ${escapeHtml(result.isbn10)}` : ''}${result.isbn13 ? ` - ISBN-13 ${escapeHtml(result.isbn13)}` : ''}</small>
+        <p>${escapeHtml([result.authorWriter, result.publisher, result.publishYear].filter(Boolean).join(' • ') || 'No extra result details')}</p>
+        <small>${escapeHtml(result.matchBy || 'Search')} match • ${escapeHtml(result.confidence || 'Unknown')} confidence${result.isbn10 ? ` • ISBN-10 ${escapeHtml(result.isbn10)}` : ''}${result.isbn13 ? ` • ISBN-13 ${escapeHtml(result.isbn13)}` : ''}</small>
       </div>
       <button type="button" class="ghost openlibrary-select-result" data-result-index="${index}">Select</button>
     </article>`).join('');
@@ -7699,11 +7699,11 @@ function openLibraryComparisonHtml(result = {}) {
     <button type="button" id="openLibraryBackToResultsBtn" class="ghost tiny">Back to results</button>
     <div class="openlibrary-cover-compare">
       <figure><figcaption>Guidevault Cover</figcaption>${currentCover ? `<img src="${escapeForAttribute(currentCover)}" alt="Current Guidevault cover" />` : '<span>No Guidevault cover</span>'}</figure>
-      <figure><figcaption>Open Library Cover <em>Preview only - not imported</em></figcaption>${result.coverPreviewUrl ? `<img src="${escapeForAttribute(result.coverPreviewUrl)}" alt="Open Library cover preview" />` : '<span>No Open Library cover</span>'}</figure>
+      <figure><figcaption>Open Library Cover <em>Preview only — not imported</em></figcaption>${result.coverPreviewUrl ? `<img src="${escapeForAttribute(result.coverPreviewUrl)}" alt="Open Library cover preview" />` : '<span>No Open Library cover</span>'}</figure>
     </div>
     <div class="openlibrary-selected-source">
       <h4>${escapeHtml(result.title || 'Selected Open Library result')}</h4>
-      <p>${escapeHtml([result.authorWriter, result.publisher, result.publishYear].filter(Boolean).join(' - ') || 'Review fields before importing.')}</p>
+      <p>${escapeHtml([result.authorWriter, result.publisher, result.publishYear].filter(Boolean).join(' • ') || 'Review fields before importing.')}</p>
     </div>
     <div class="openlibrary-table-wrap">
       <table class="openlibrary-comparison-table">
@@ -7732,8 +7732,8 @@ function openLibraryComparisonRowHtml(field, current, proposed) {
   return `<tr class="${differs ? 'different' : ''} ${!hasIncoming ? 'missing-incoming' : ''}">
     <td><input type="checkbox" data-openlibrary-field="${escapeForAttribute(field.key)}" ${checked} ${disabled} /></td>
     <td>${escapeHtml(field.label)}</td>
-    <td>${escapeHtml(existing || '-')}</td>
-    <td>${escapeHtml(incoming || '-')}</td>
+    <td>${escapeHtml(existing || '\u2014')}</td>
+    <td>${escapeHtml(incoming || '\u2014')}</td>
   </tr>`;
 }
 
@@ -7836,7 +7836,7 @@ function esrbInitialSearchValues() {
 }
 
 function esrbResultTitle(result = {}) {
-  return [result.title || result.gameTitle, esrbDisplayLabel(result.ratingShort || result.rating), esrbListLabel(result.platforms)].filter(Boolean).join(' - ') || 'ESRB rating result';
+  return [result.title || result.gameTitle, esrbDisplayLabel(result.ratingShort || result.rating), esrbListLabel(result.platforms)].filter(Boolean).join(' • ') || 'ESRB rating result';
 }
 
 function ensureEsrbMetadataUi() {
@@ -7920,8 +7920,8 @@ function renderEsrbSearchResults(results = state.esrb.results || []) {
       <div class="openlibrary-result-cover esrb-result-badge">${rating ? `<img src="${escapeForAttribute(esrbIconUrl(rating))}" alt="${escapeForAttribute(esrbDisplayLabel(rating))}" loading="lazy" />` : '<span>No rating</span>'}</div>
       <div class="openlibrary-result-main esrb-result-main">
         <h4>${escapeHtml(result.title || 'Untitled')}</h4>
-        <p>${escapeHtml([result.publisher, esrbDisplayLabel(rating), esrbListLabel(result.platforms)].filter(Boolean).join(' - ') || 'No extra result details')}</p>
-        <small>${escapeHtml(result.matchBy || 'Game title')} match - ${escapeHtml(result.confidence || 'Unknown')} confidence${esrbListLabel(result.contentDescriptors) ? ` - ${escapeHtml(esrbListLabel(result.contentDescriptors))}` : ''}</small>
+        <p>${escapeHtml([result.publisher, esrbDisplayLabel(rating), esrbListLabel(result.platforms)].filter(Boolean).join(' • ') || 'No extra result details')}</p>
+        <small>${escapeHtml(result.matchBy || 'Game title')} match • ${escapeHtml(result.confidence || 'Unknown')} confidence${esrbListLabel(result.contentDescriptors) ? ` • ${escapeHtml(esrbListLabel(result.contentDescriptors))}` : ''}</small>
       </div>
       <button type="button" class="ghost esrb-select-result" data-result-index="${index}">Select</button>
     </article>`;
@@ -8023,10 +8023,10 @@ function esrbComparisonHtml(result = {}) {
     <button type="button" id="esrbBackToResultsBtn" class="ghost tiny">Back to results</button>
     <div class="openlibrary-selected-source esrb-selected-source">
       <h4>${escapeHtml(result.title || 'Selected ESRB result')}</h4>
-      <p>${escapeHtml([result.publisher, esrbDisplayLabel(incomingRating), esrbListLabel(result.platforms)].filter(Boolean).join(' - ') || 'Review the rating before importing.')}</p>
+      <p>${escapeHtml([result.publisher, esrbDisplayLabel(incomingRating), esrbListLabel(result.platforms)].filter(Boolean).join(' • ') || 'Review the rating before importing.')}</p>
       <div class="esrb-detail-grid">
-        <div><span>Content Descriptors</span><strong>${escapeHtml(esrbListLabel(result.contentDescriptors) || '-')}</strong></div>
-        <div><span>Interactive Elements</span><strong>${escapeHtml(esrbListLabel(result.interactiveElements) || '-')}</strong></div>
+        <div><span>Content Descriptors</span><strong>${escapeHtml(esrbListLabel(result.contentDescriptors) || '\u2014')}</strong></div>
+        <div><span>Interactive Elements</span><strong>${escapeHtml(esrbListLabel(result.interactiveElements) || '\u2014')}</strong></div>
       </div>
       ${result.ratingSummary ? `<p class="esrb-rating-summary">${escapeHtml(result.ratingSummary)}</p>` : '<p class="sub">No ESRB rating summary was returned.</p>'}
     </div>
@@ -8183,7 +8183,7 @@ function igdbInitialSearchValues() {
 }
 
 function igdbResultTitle(result = {}) {
-  return [result.gameTitle || result.name, igdbListLabel(result.platforms || result.associatedPlatforms), result.gameReleaseYear].filter(Boolean).join(' - ') || 'IGDB game result';
+  return [result.gameTitle || result.name, igdbListLabel(result.platforms || result.associatedPlatforms), result.gameReleaseYear].filter(Boolean).join(' • ') || 'IGDB game result';
 }
 
 function ensureIgdbMetadataUi() {
@@ -8270,8 +8270,8 @@ function renderIgdbSearchResults(results = state.igdb.results || []) {
       <div class="openlibrary-result-cover igdb-result-cover">${result.coverPreviewUrl ? `<img src="${escapeForAttribute(result.coverPreviewUrl)}" alt="" loading="lazy" />` : '<span>No cover</span>'}</div>
       <div class="openlibrary-result-main igdb-result-main">
         <h4>${escapeHtml(result.gameTitle || result.name || 'Untitled game')}</h4>
-        <p>${escapeHtml([igdbListLabel(result.developers), igdbListLabel(result.publishers), result.gameReleaseYear].filter(Boolean).join(' - ') || 'No extra result details')}</p>
-        <small>${escapeHtml(result.matchBy || 'Game title')} match - ${escapeHtml(result.confidence || 'Unknown')} confidence${result.gameFranchise ? ` - ${escapeHtml(result.gameFranchise)}` : ''}${igdbListLabel(result.associatedPlatforms) ? ` - ${escapeHtml(igdbListLabel(result.associatedPlatforms))}` : ''}</small>
+        <p>${escapeHtml([igdbListLabel(result.developers), igdbListLabel(result.publishers), result.gameReleaseYear].filter(Boolean).join(' • ') || 'No extra result details')}</p>
+        <small>${escapeHtml(result.matchBy || 'Game title')} match • ${escapeHtml(result.confidence || 'Unknown')} confidence${result.gameFranchise ? ` • ${escapeHtml(result.gameFranchise)}` : ''}${igdbListLabel(result.associatedPlatforms) ? ` • ${escapeHtml(igdbListLabel(result.associatedPlatforms))}` : ''}</small>
       </div>
       <button type="button" class="ghost igdb-select-result" data-result-index="${index}">Select</button>
     </article>`).join('');
@@ -8385,7 +8385,7 @@ function igdbComparisonHtml(result = {}) {
     <button type="button" id="igdbBackToResultsBtn" class="ghost tiny">Back to results</button>
     <div class="openlibrary-selected-source igdb-selected-source">
       <h4>${escapeHtml(result.gameTitle || result.name || 'Selected IGDB result')}</h4>
-      <p>${escapeHtml([igdbListLabel(result.developers), igdbListLabel(result.publishers), result.gameReleaseYear, igdbListLabel(result.associatedPlatforms)].filter(Boolean).join(' - ') || 'Review fields before importing.')}</p>
+      <p>${escapeHtml([igdbListLabel(result.developers), igdbListLabel(result.publishers), result.gameReleaseYear, igdbListLabel(result.associatedPlatforms)].filter(Boolean).join(' • ') || 'Review fields before importing.')}</p>
       ${result.coverPreviewUrl ? `<div class="igdb-preview-note"><img src="${escapeForAttribute(result.coverPreviewUrl)}" alt="IGDB cover preview" /><span>IGDB cover preview is only a visual match aid and is not imported.</span></div>` : '<p class="sub">No IGDB cover preview was returned. Covers are not imported from this lookup.</p>'}
     </div>
     <div class="openlibrary-table-wrap igdb-table-wrap">
@@ -8417,8 +8417,8 @@ function igdbComparisonRowHtml(field, current, proposed) {
   return `<tr class="${differs ? 'different' : ''} ${!hasIncoming ? 'missing-incoming' : ''}">
     <td><input type="checkbox" data-igdb-field="${escapeForAttribute(field.key)}" ${checked} ${disabled} /></td>
     <td>${escapeHtml(field.label)}</td>
-    <td>${escapeHtml(existingDisplay || '-')}</td>
-    <td>${escapeHtml(incomingDisplay || '-')}</td>
+    <td>${escapeHtml(existingDisplay || '\u2014')}</td>
+    <td>${escapeHtml(incomingDisplay || '\u2014')}</td>
   </tr>`;
 }
 
@@ -8533,8 +8533,8 @@ function updateMetadataFileMaintenance() {
 
   if (!item) {
     panel.classList.add('hidden');
-    if (currentEl) currentEl.textContent = '-';
-    if (suggestedEl) suggestedEl.textContent = '-';
+    if (currentEl) currentEl.textContent = '—';
+    if (suggestedEl) suggestedEl.textContent = '—';
     if (renameBtn) renameBtn.disabled = true;
     if (statusEl) statusEl.textContent = 'Select an item to preview its filename.';
     return;
@@ -8548,8 +8548,8 @@ function updateMetadataFileMaintenance() {
   const sameName = currentFileName && suggestedFileName && currentFileName.toLowerCase() === suggestedFileName.toLowerCase();
 
   panel.classList.remove('hidden');
-  if (currentEl) currentEl.textContent = currentFileName || '-';
-  if (suggestedEl) suggestedEl.textContent = suggestedFileName || '-';
+  if (currentEl) currentEl.textContent = currentFileName || '—';
+  if (suggestedEl) suggestedEl.textContent = suggestedFileName || '—';
   if (renameBtn) {
     renameBtn.disabled = !suggestedFileName || sameName;
     renameBtn.title = sameName
@@ -8589,7 +8589,7 @@ async function renameSelectedFileToSuggestedName() {
   const confirmed = await showAppConfirm({
     title: 'Rename file?',
     message: `Current file:
-${currentFileName || '-'}
+${currentFileName || '—'}
 
 New filename:
 ${suggestedFileName}
@@ -9291,8 +9291,8 @@ function renderMetadataManager() {
       const preferredPlatformReadOnly = item.kind === 'Strategy Guide' && hasMultipleAssociatedPlatforms(rowAssociatedPlatforms);
       const inputField = (name, value, readOnly = false, title = '') => `<input class="metadata-manager-input ${METADATA_MANAGER_WIDE_COLUMNS.has(name) ? 'wide' : ''} ${readOnly ? 'readonly' : ''}" data-id="${escapeForAttribute(id)}" data-field="${escapeForAttribute(name)}" value="${escapeForAttribute(rowDirty[name] ?? value ?? '')}" ${readOnly ? 'readonly aria-readonly="true"' : ''} ${title ? `title="${escapeForAttribute(title)}"` : ''} />`;
       const cellFor = column => {
-        if (column.key === 'kind') return `<span class="metadata-kind-pill metadata-kind-preview-trigger" data-metadata-preview-id="${escapeForAttribute(metadataManagerItemId(item))}" title="Click and hold to preview cover">${escapeHtml(item.kind || '-')}</span>`;
-        if (column.key === 'metadataSource') return `<span class="metadata-source-text">${escapeHtml(item.metadataSource || '-')}</span>`;
+        if (column.key === 'kind') return `<span class="metadata-kind-pill metadata-kind-preview-trigger" data-metadata-preview-id="${escapeForAttribute(metadataManagerItemId(item))}" title="Click and hold to preview cover">${escapeHtml(item.kind || '\u2014')}</span>`;
+        if (column.key === 'metadataSource') return `<span class="metadata-source-text">${escapeHtml(item.metadataSource || '\u2014')}</span>`;
         if (column.key === 'category' && preferredPlatformReadOnly) return `<input class="metadata-manager-input ${METADATA_MANAGER_WIDE_COLUMNS.has('category') ? 'wide' : ''} readonly" data-id="${escapeForAttribute(id)}" data-field="category" value="${escapeForAttribute(MULTI_PLATFORM_LABEL)}" readonly aria-readonly="true" title="Preferred Platform is read-only when Associated Platforms contains multiple systems." />`;
         return inputField(column.key, metadataManagerFieldValue(item, column.key));
       };
@@ -9722,19 +9722,6 @@ function valuesEqualText(a, b) {
   return String(a || '').trim().toLowerCase() === String(b || '').trim().toLowerCase();
 }
 
-function guidevaultCleanDisplayText(value) {
-  return String(value ?? '')
-    .replaceAll('\u00e2\u20ac\u201d', ' - ')
-    .replaceAll('\u00e2\u20ac\u201c', ' - ')
-    .replaceAll('\u00e2\u20ac\u00a2', ' - ')
-    .replaceAll('\u00e2\u20ac\u00a6', '...')
-    .replaceAll('\u2014', ' - ')
-    .replaceAll('\u2013', ' - ')
-    .replaceAll('\u2022', ' - ')
-    .replaceAll('\u2026', '...')
-    .replace(/\s+-\s+/g, ' - ')
-    .trim();
-}
 function magazineIssueSubtitleParts(item) {
   const parts = [];
   const issue = String(item?.issueNumber || '').trim();
@@ -9745,12 +9732,12 @@ function magazineIssueSubtitleParts(item) {
 }
 
 function magazineIssueSubtitleText(item) {
-  return magazineIssueSubtitleParts(item).join(' - ');
+  return magazineIssueSubtitleParts(item).join(' • ');
 }
 
 function magazineIssueSubtitleHtml(item) {
   const parts = magazineIssueSubtitleParts(item);
-  return parts.length ? `<div class="magazine-hero-subtitle">${parts.map(escapeHtml).join(' <span> - </span> ')}</div>` : '';
+  return parts.length ? `<div class="magazine-hero-subtitle">${parts.map(escapeHtml).join(' <span>•</span> ')}</div>` : '';
 }
 
 function magazineDetailSubtitleText(item) {
@@ -9760,16 +9747,16 @@ function magazineDetailSubtitleText(item) {
   const pageCount = Number(item?.pageCount ?? item?.PageCount ?? 0) || 0;
   const pageCountText = pageCount > 0 ? `${pageCount} pages` : '';
   return [magazineIssueSubtitleText(item), coverDate, primarySystem, publisher, pageCountText]
-    .map(v => guidevaultCleanDisplayText(v))
+    .map(v => String(v || '').trim())
     .filter(Boolean)
-    .join(' - ');
+    .join(' • ');
 }
 
 function magazineOverviewHtml(item) {
-  const publicationTitle = guidevaultCleanDisplayText(item.magazineTitle || item.series || detectedSystemOf(item) || item.title || 'Video Game Magazine');
-  const displayEntryTitle = guidevaultCleanDisplayText(item.title || '');
+  const publicationTitle = item.magazineTitle || item.series || detectedSystemOf(item) || item.title || 'Video Game Magazine';
+  const displayEntryTitle = String(item.title || '').trim();
   const showEntryTitle = displayEntryTitle && !valuesEqualText(displayEntryTitle, publicationTitle);
-  const coverDate = guidevaultCleanDisplayText(item.coverDate || item.publicationDate || item.year);
+  const coverDate = item.coverDate || item.publicationDate || item.year;
   const publicationDate = item.publicationDate && !valuesEqualText(item.publicationDate, item.coverDate) ? item.publicationDate : '';
   const identityTags = [
     item.magazineCategory || 'Video Game Magazine',
@@ -9942,16 +9929,16 @@ function strategyOverviewHtml(item) {
 
 function magazineTechnicalRows(item) {
   const sourceFile = item.fileName || (item.path ? String(item.path).split(/[\\/]/).pop() : '\u2014');
-  const libraryPath = item.libraryName || item.libraryType || '-';
+  const libraryPath = item.libraryName || item.libraryType || '\u2014';
   const scanStatus = item.validationStatus && item.validationStatus !== 'ok' ? item.validationStatus : 'OK';
   const fileSize = Number(item.sizeBytes || 0) > 0 ? `${Math.round(Number(item.sizeBytes) / 1024 / 1024 * 10) / 10} MB` : '\u2014';
   const modified = item.modified ? new Date(item.modified).toLocaleString() : '\u2014';
   return [
     ['Page Count', itemPageCountLabel(item)],
-    ['File Format', item.format || '-'],
+    ['File Format', item.format || '\u2014'],
     ['Source File', sourceFile],
     ['Library', libraryPath],
-    ['Source Path', item.path || '-'],
+    ['Source Path', item.path || '\u2014'],
     ['File Size', fileSize],
     ['Modified Date', modified],
     ['Scan Status', scanStatus],
@@ -10241,9 +10228,9 @@ function renderDetails(item) {
     const metaRows = [
       ['Detected System', detectedSystem],
       ...(webLink ? [['Web Link', `<a class="meta-link" href="${escapeHtml(webLink)}" target="_blank" rel="noopener noreferrer">${escapeHtml(item.webLink || webLink)}</a>`, true]] : []),
-      ['Publisher', item.publisher || '-'],
-      ['Year', item.year || '-'],
-      ['Writer', item.writer || '-'],
+      ['Publisher', item.publisher || '\u2014'],
+      ['Year', item.year || '\u2014'],
+      ['Writer', item.writer || '\u2014'],
       ['Pages', itemPageCountLabel(item)]
     ];
     if (metaEl) {
@@ -13429,7 +13416,7 @@ function countBy(items, getKey) {
 function topItemsHtml(rows, unit = 'items', limit = 5) {
   const list = (rows || []).slice(0, limit);
   if (!list.length) return '<p class="sub">No data yet.</p>';
-  return list.map(([label, value], index) => `<div class="statistics-rank-row"><span>${index + 1}</span><strong>${escapeHtml(label || '-')}</strong><em>${escapeHtml(String(value))} ${escapeHtml(unit)}</em></div>`).join('');
+  return list.map(([label, value], index) => `<div class="statistics-rank-row"><span>${index + 1}</span><strong>${escapeHtml(label || '\u2014')}</strong><em>${escapeHtml(String(value))} ${escapeHtml(unit)}</em></div>`).join('');
 }
 function classifyDeviceByScreen(item) {
   const text = [item?.platform, item?.browser, item?.screen, item?.userAgent].join(' ').toLowerCase();
@@ -13497,7 +13484,7 @@ function renderStatistics() {
   const recentIds = [...new Set(events.slice().reverse().map(e => e.id).filter(Boolean))];
   const itemLookup = new Map(allItems.map(item => [String(item.id || item.Id), item]));
   const recentItems = recentIds.map(id => itemLookup.get(String(id))).filter(Boolean).slice(0, 5);
-  if ($('statisticsRecentViewed')) $('statisticsRecentViewed').innerHTML = recentItems.length ? recentItems.map(item => `<div class="statistics-book-row"><img loading="lazy" src="${coverUrl(item)}" alt="" /><span><strong>${escapeHtml(displayTitle(item))}</strong><em>${escapeHtml(item.kind || '')} \u2022 ${escapeHtml(item.year || '-')}</em></span></div>`).join('') : '<p class="sub">Open a few items to populate recent views.</p>';
+  if ($('statisticsRecentViewed')) $('statisticsRecentViewed').innerHTML = recentItems.length ? recentItems.map(item => `<div class="statistics-book-row"><img loading="lazy" src="${coverUrl(item)}" alt="" /><span><strong>${escapeHtml(displayTitle(item))}</strong><em>${escapeHtml(item.kind || '')} \u2022 ${escapeHtml(item.year || '\u2014')}</em></span></div>`).join('') : '<p class="sub">Open a few items to populate recent views.</p>';
 
   const topDefs = [
     ['Popular Libraries', countBy(allItems, item => item.kind), 'items'],
