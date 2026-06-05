@@ -69,7 +69,7 @@ const GUIDEVAULT_FAVORITES_KEY = 'guidevault.favorites.v1';
 const GUIDEVAULT_LIBRARY_CACHE_KEY = 'guidevault.libraryCache.v1';
 const GUIDEVAULT_GRID_INITIAL_RENDER = 96;
 const GUIDEVAULT_GRID_CHUNK_SIZE = 96;
-const GUIDEVAULT_APP_VERSION = '0.9.75';
+const GUIDEVAULT_APP_VERSION = '0.9.76';
 const GUIDEVAULT_FILENAME_SCHEMA_KEY = 'guidevault.filenameRename.schema.v1';
 const GUIDEVAULT_DEFAULT_FILENAME_SCHEMA = '{title}';
 const GUIDEVAULT_STABLE_TAG_FEED_URL = 'https://api.github.com/repos/Shredder5262/GuideVault/tags';
@@ -6577,6 +6577,131 @@ function updateEditionControls() {
   if (volumeLabel) volumeLabel.classList.toggle('hidden', !(showStrategy && types.includes('Volume Edition')));
 }
 
+const METADATA_FIELD_HELP = {
+  editTitle: {
+    default: 'Guidevault display title for this item. For manuals, use the manual-facing title; for strategy guides, use the guide title; for magazines, use the issue entry title.',
+    Manual: 'Manual title or display title for the scanned manual. This is separate from Game Title when the manual title differs from the game title.',
+    'Strategy Guide': 'Strategy guide title printed on the guide or used as the Guidevault display title.',
+    Magazine: 'Magazine entry title for this issue, usually the publication name plus issue or cover feature.'
+  },
+  editKind: 'Content type. This controls which metadata fields are shown and how the item is grouped.',
+  editCategory: 'Preferred platform used as the primary platform/category for this item. Strategy guides with multiple associated platforms display as Multi-Platform.',
+  editEsrbRating: 'ESRB rating for the associated game. This belongs to the game, not to the physical manual or guide.',
+  editAssociatedPlatforms: 'Comma-separated platform list where this item should appear. Use Guidevault platform names when possible so icons match.',
+  editPlatformMatchTitle: 'Detected title used by Guidevault when resolving platform or game metadata. Usually hidden after metadata cleanup.',
+  editGameTitle: 'Title of the associated game. For manuals, this is the game the manual originally shipped with.',
+  editManualTitle: 'Manual-specific title printed on the manual, such as Instruction Booklet, Operations Manual, or Reference Card.',
+  editManualType: 'Manual format or classification, such as Instruction Manual, Reference Card, Map, Controls Card, or Operations Manual.',
+  editIsbn: 'ISBN for books/strategy guides. Prefer ISBN-10 when both ISBN-10 and ISBN-13 are known.',
+  editGuideType: 'One or more guide classifications, such as Official Guide, Unofficial Guide, Hint Book, Code Book, or Full Walkthrough.',
+  editEditionType: "Edition classification for a strategy guide, such as First Edition, Collector's Edition, Year Edition, or Volume Edition.",
+  editEditionYear: 'Year value used only when the Edition Type includes Year Edition.',
+  editEditionVolume: 'Volume number used only when the Edition Type includes Volume Edition.',
+  editFranchise: 'Game franchise or series, such as Resident Evil, Final Fantasy, Zelda, or Sonic.',
+  editSeries: 'Series or publication grouping. Hidden for manuals and strategy guides when a more specific franchise/game field is used.',
+  editIssue: 'Magazine issue number.',
+  editMagazineTitle: 'Magazine publication title, such as Nintendo Power, EGM, GamePro, or Official PlayStation Magazine.',
+  editVolume: 'Magazine volume value when printed or known.',
+  editCoverDate: 'Date printed on the magazine cover. This can differ from actual publication date.',
+  editPublicationDate: 'Publication date for magazine issues.',
+  editRegion: 'Region or market for the item, such as US, UK, Japan, Europe, or World.',
+  editLanguageTag: 'Language value for the item. Prefer full words such as English, Japanese, or Spanish.',
+  editPlatformFocus: 'Magazine platform focus, such as Nintendo, Sega, PlayStation, PC, or Multi-platform.',
+  editPrimarySystem: 'Primary magazine system/platform when one system is emphasized.',
+  editMagazineCategory: 'Magazine category, such as Official, PC gaming, cheats/codes, preview, or general gaming.',
+  editCoverSubject: 'Main cover game, character, hardware, or feature subject.',
+  editYear: {
+    default: 'General item year. For books/guides this is usually the publication year; for magazines it is the issue year.',
+    Manual: 'Manuals do not use the generic Year field. Use Game Release Year for the associated game instead.'
+  },
+  editPublicationDateGuide: 'Publication date for a strategy guide or book. Manuals normally do not use this field.',
+  editPageCount: 'User-entered page count for the item. Use the real page count when known; archive page counts may be unreliable.',
+  editPublisher: 'Publisher of the physical item. For manuals this may be the game publisher when printed or known.',
+  editWriter: 'Author or writer credit for a book, guide, or issue when available.',
+  editDeveloper: 'Developer of the associated game.',
+  editGamePublisher: 'Publisher of the associated game, separate from the physical book/manual publisher when needed.',
+  editGameReleaseYear: 'Release year of the associated game. For manuals, this is valid because the manual is tied to the game release.',
+  editGenre: 'Game genre or broad content genre, such as RPG, Fighting, Action Adventure, Racing, or Puzzle.',
+  editFeaturedGames: 'Comma-separated games featured in a magazine issue.',
+  editFeaturedPlatforms: 'Comma-separated platforms featured in a magazine issue.',
+  editSpecialFeatures: 'Comma-separated special features, articles, posters, interviews, or sections.',
+  editIncludedExtras: 'Physical extras included with the item, such as posters, maps, inserts, registration cards, discs, overlays, or stickers.',
+  editIncludedSections: 'Comma-separated manual sections, such as Controls, Story, Characters, Items, Warranty, or Troubleshooting.',
+  editControlScheme: 'Control method or scheme covered by the manual, such as controller, keyboard, mouse, light gun, or arcade controls.',
+  editItemsCovered: 'Comma-separated items, mechanics, modes, or gameplay systems explained in the manual.',
+  editWarrantySupport: 'Warranty, service, support, registration, or troubleshooting information printed in the manual.',
+  editCoveredGames: 'Comma-separated games covered by a strategy guide.',
+  editCoveredPlatforms: 'Comma-separated platforms covered by a strategy guide.',
+  editGuideTopics: 'Comma-separated guide topics, such as walkthrough, maps, secrets, bosses, codes, endings, or collectibles.',
+  editStrategySpecialFeatures: 'Comma-separated special features specific to the strategy guide.',
+  editCharactersCovered: 'Comma-separated characters covered by the manual or guide.',
+  editLocationsCovered: 'Comma-separated locations, maps, stages, worlds, or areas covered by the guide.',
+  editSummary: 'Short description or summary for the item.',
+  editTags: 'Comma-separated freeform tags for filtering and discovery.'
+};
+
+function metadataFieldHelpText(fieldId, kind = $('editKind')?.value || state.selected?.kind || '') {
+  const entry = METADATA_FIELD_HELP[fieldId];
+  if (!entry) return '';
+  if (typeof entry === 'string') return entry;
+  return entry[kind] || entry.default || '';
+}
+
+function metadataHelpFieldIdForLabel(label) {
+  const multi = label.querySelector(':scope > .meta-multi-select[data-multi-select]');
+  if (multi?.dataset?.multiSelect) return multi.dataset.multiSelect;
+  const control = label.querySelector(':scope > input[id], :scope > select[id], :scope > textarea[id]') || label.querySelector('input[id], select[id], textarea[id]');
+  return control?.id || '';
+}
+
+function addMetadataFieldInfoIcons() {
+  const panel = $('metadataPanel');
+  if (!panel || panel.dataset.infoIconsReady === 'true') return;
+  const labels = [...panel.querySelectorAll('label')].filter(label => !label.closest('.meta-multi-panel'));
+  labels.forEach(label => {
+    if (label.querySelector(':scope > .metadata-info-button')) return;
+    const fieldId = metadataHelpFieldIdForLabel(label);
+    const helpText = metadataFieldHelpText(fieldId);
+    if (!fieldId || !helpText) return;
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = 'metadata-info-button';
+    button.dataset.metadataHelpFor = fieldId;
+    button.setAttribute('aria-expanded', 'false');
+    button.setAttribute('aria-label', `About ${label.firstChild?.textContent?.trim() || 'this field'}`);
+    button.title = 'About this field';
+    button.textContent = 'i';
+    const help = document.createElement('span');
+    help.className = 'metadata-info-popover hidden';
+    help.dataset.metadataHelpTextFor = fieldId;
+    help.textContent = helpText;
+    const anchor = label.querySelector(':scope > input, :scope > select, :scope > textarea, :scope > .meta-multi-select') || null;
+    label.insertBefore(button, anchor);
+    label.insertBefore(help, anchor);
+  });
+  panel.dataset.infoIconsReady = 'true';
+  refreshMetadataFieldInfoDescriptions();
+}
+
+function refreshMetadataFieldInfoDescriptions(kind = $('editKind')?.value || state.selected?.kind || '') {
+  const panel = $('metadataPanel');
+  if (!panel) return;
+  panel.querySelectorAll('[data-metadata-help-text-for]').forEach(help => {
+    const fieldId = help.dataset.metadataHelpTextFor || '';
+    help.textContent = metadataFieldHelpText(fieldId, kind) || help.textContent || '';
+  });
+}
+
+function closeMetadataFieldInfoPopovers(except = null) {
+  document.querySelectorAll('.metadata-info-popover:not(.hidden)').forEach(popover => {
+    if (popover === except) return;
+    popover.classList.add('hidden');
+    const fieldId = popover.dataset.metadataHelpTextFor || '';
+    const button = document.querySelector(`.metadata-info-button[data-metadata-help-for="${CSS.escape(fieldId)}"]`);
+    button?.setAttribute('aria-expanded', 'false');
+  });
+}
+
 function setMaybeValue(id, value) {
   const el = $(id);
   if (el) el.value = value || '';
@@ -6601,6 +6726,9 @@ function updateTypedMetadataFieldVisibility(kind = $('editKind')?.value || '') {
   }
   if ($('editPlatformMatchLabel')) $('editPlatformMatchLabel').classList.add('hidden');
   if ($('editSeriesLabel')) $('editSeriesLabel').classList.toggle('hidden', isStrategyGuide || isManual);
+  if ($('editYearLabel')) $('editYearLabel').classList.toggle('hidden', isManual);
+  if ($('editPublicationDateGuideLabel')) $('editPublicationDateGuideLabel').classList.toggle('hidden', !isStrategyGuide);
+  refreshMetadataFieldInfoDescriptions(kind);
   updateEditionControls();
   updateMetadataExportButtonLabel(kind);
 }
@@ -7024,14 +7152,15 @@ function buildCurrentMetadataPayloadFromForm(extra = {}) {
     manualTitle: $('editManualTitle')?.value || $('editTitle')?.value || '',
     manualType: $('editManualType')?.value || 'Instruction Manual',
     gameTitle: $('editGameTitle')?.value || $('editSeries')?.value || $('editTitle')?.value || '',
-    publicationDate: $('editPublicationDateGuide')?.value || '',
+    publicationDate: '',
     region: $('editRegion')?.value || '',
     gameFranchise: $('editFranchise')?.value || $('editSeries')?.value || '',
     gameDeveloper: $('editDeveloper')?.value || '',
     gamePublisher: $('editGamePublisher')?.value || '',
-    gameReleaseYear: $('editGameReleaseYear')?.value || $('editYear')?.value || '',
+    gameReleaseYear: $('editGameReleaseYear')?.value || '',
     genre: $('editGenre')?.value || '',
     includedSections: csvInput('editIncludedSections'),
+    includedExtras: csvInput('editIncludedExtras'),
     controlScheme: $('editControlScheme')?.value || '',
     charactersCovered: csvInput('editCharactersCovered'),
     itemsCovered: csvInput('editItemsCovered'),
@@ -7048,7 +7177,7 @@ function buildCurrentMetadataPayloadFromForm(extra = {}) {
     series: $('editSeries')?.value || '',
     issueNumber: selectedKind === 'Magazine' ? ($('editIssue')?.value || '') : '',
     publisher: $('editPublisher')?.value || '',
-    year: $('editYear')?.value || '',
+    year: selectedKind === 'Manual' ? '' : ($('editYear')?.value || ''),
     pageCount: numericInput('editPageCount'),
     metadataPageCount: numericInput('editPageCount'),
     writer: $('editWriter')?.value || '',
@@ -10058,12 +10187,12 @@ function renderDetails(item) {
   setMaybeValue('editEditionVolume', isStrategyGuide ? (item.editionVolume || inferEditionVolume(item.edition)) : '');
   updateEditionControls();
   setMaybeValue('editFranchise', (isStrategyGuide || isManual) ? (item.franchise || item.series || '') : '');
-  setMaybeValue('editPublicationDateGuide', (isStrategyGuide || isManual) ? item.publicationDate : '');
+  setMaybeValue('editPublicationDateGuide', isStrategyGuide ? item.publicationDate : '');
   setMaybeValue('editDeveloper', (isStrategyGuide || isManual) ? item.developer : '');
   setMaybeValue('editGamePublisher', (isStrategyGuide || isManual) ? item.gamePublisher : '');
-  setMaybeValue('editGameReleaseYear', (isStrategyGuide || isManual) ? item.gameReleaseYear : '');
+  setMaybeValue('editGameReleaseYear', (isStrategyGuide || isManual) ? (item.gameReleaseYear || (isManual ? item.year : '')) : '');
   setMaybeValue('editGenre', (isStrategyGuide || isManual) ? item.genre : '');
-  $('editYear').value = item.year || '';
+  $('editYear').value = isManual ? '' : (item.year || '');
   if ($('editPageCount')) $('editPageCount').value = item.metadataPageCount || item.pageCountMetadata || item.pageCountEntered || item.pageCount || item.PageCount || '';
   $('editWriter').value = item.writer || '';
   $('editSummary').value = item.summary || '';
@@ -10163,12 +10292,12 @@ async function saveSelectedMetadata(extra = {}, options = {}) {
       manualTitle: $('editManualTitle')?.value || $('editTitle')?.value || '',
       manualType: $('editManualType')?.value || 'Instruction Manual',
       gameTitle: $('editGameTitle')?.value || $('editSeries')?.value || $('editTitle')?.value || '',
-      publicationDate: $('editPublicationDateGuide')?.value || '',
+      publicationDate: '',
       region: $('editRegion')?.value || '',
       franchise: $('editFranchise')?.value || $('editSeries')?.value || '',
       developer: $('editDeveloper')?.value || '',
       gamePublisher: $('editGamePublisher')?.value || '',
-      gameReleaseYear: $('editGameReleaseYear')?.value || $('editYear')?.value || '',
+      gameReleaseYear: $('editGameReleaseYear')?.value || '',
       genre: $('editGenre')?.value || '',
       includedSections: csvInput('editIncludedSections'),
       includedExtras: csvInput('editIncludedExtras'),
@@ -10189,7 +10318,7 @@ async function saveSelectedMetadata(extra = {}, options = {}) {
       series: $('editSeries').value,
       issueNumber: selectedKind === 'Magazine' ? $('editIssue').value : '',
       publisher: $('editPublisher').value,
-      year: $('editYear').value,
+      year: selectedKind === 'Manual' ? '' : $('editYear').value,
       pageCount: numericInput('editPageCount'),
       metadataPageCount: numericInput('editPageCount'),
       writer: $('editWriter').value,
@@ -13781,7 +13910,22 @@ if ($('editKind')) $('editKind').addEventListener('change', e => {
 });
 if ($('editAssociatedPlatforms')) $('editAssociatedPlatforms').addEventListener('input', syncPreferredPlatformEditorState);
 initMetadataMultiSelectControls();
+addMetadataFieldInfoIcons();
 document.addEventListener('click', e => {
+  const infoButton = e.target.closest?.('.metadata-info-button');
+  if (infoButton) {
+    e.preventDefault();
+    const fieldId = infoButton.dataset.metadataHelpFor || '';
+    const popover = document.querySelector(`.metadata-info-popover[data-metadata-help-text-for="${CSS.escape(fieldId)}"]`);
+    if (popover) {
+      const willOpen = popover.classList.contains('hidden');
+      closeMetadataFieldInfoPopovers(willOpen ? popover : null);
+      popover.classList.toggle('hidden', !willOpen);
+      infoButton.setAttribute('aria-expanded', willOpen ? 'true' : 'false');
+    }
+    return;
+  }
+  if (!e.target.closest?.('.metadata-info-button') && !e.target.closest?.('.metadata-info-popover')) closeMetadataFieldInfoPopovers();
   const button = e.target.closest?.('.meta-multi-button');
   if (button) {
     e.preventDefault();

@@ -4,7 +4,7 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Guidevault</title>
-  <link rel="stylesheet" href="/styles.css?v=0.9.75-file-metadata-layout-polish" />
+  <link rel="stylesheet" href="/styles.css?v=0.9.76-manual-metadata-help" />
 </head>
 <body class="right-collapsed auth-locked">
   <section id="loginView" class="login-view" aria-labelledby="loginTitle">
@@ -244,9 +244,9 @@
                   <label id="editPrimarySystemLabel" class="magazine-metadata-field hidden">Primary System<input id="editPrimarySystem" placeholder="SNES, PlayStation, PC" /></label>
                   <label id="editMagazineCategoryLabel" class="magazine-metadata-field hidden">Magazine Category<input id="editMagazineCategory" placeholder="Official, cheats/codes, PC gaming" /></label>
                   <label id="editCoverSubjectLabel" class="magazine-metadata-field hidden">Cover Game / Subject<input id="editCoverSubject" /></label>
-                  <label>Year<input id="editYear" /></label>
+                  <label id="editYearLabel">Year<input id="editYear" /></label>
                   <label id="editPageCountLabel">Page Count<input id="editPageCount" type="number" min="0" step="1" inputmode="numeric" placeholder="Optional" /></label>
-                  <label id="editPublicationDateGuideLabel" class="strategy-metadata-field manual-metadata-field hidden">Publication Date<input id="editPublicationDateGuide" placeholder="September 1997" /></label>
+                  <label id="editPublicationDateGuideLabel" class="strategy-metadata-field hidden">Publication Date<input id="editPublicationDateGuide" placeholder="September 1997" /></label>
                   <label>Writer / Author<input id="editWriter" /></label>
                   <label id="editDeveloperLabel" class="strategy-metadata-field manual-metadata-field hidden">Game Developer<input id="editDeveloper" /></label>
                   <label id="editGamePublisherLabel" class="strategy-metadata-field manual-metadata-field hidden">Game Publisher<input id="editGamePublisher" /></label>
@@ -257,7 +257,7 @@
                 <label id="editFeaturedGamesLabel" class="magazine-metadata-field hidden">Featured Games, comma-separated<input id="editFeaturedGames" /></label>
                 <label id="editFeaturedPlatformsLabel" class="magazine-metadata-field hidden">Featured Platforms, comma-separated<input id="editFeaturedPlatforms" /></label>
                 <label id="editSpecialFeaturesLabel" class="magazine-metadata-field hidden">Special Features, comma-separated<input id="editSpecialFeatures" /></label>
-                <label id="editIncludedExtrasLabel" class="magazine-metadata-field hidden">Physical Extras, comma-separated<input id="editIncludedExtras" /></label>
+                <label id="editIncludedExtrasLabel" class="magazine-metadata-field strategy-metadata-field manual-metadata-field hidden">Physical Extras, comma-separated<input id="editIncludedExtras" placeholder="Poster, map, registration card, disc, overlay" /></label>
                 <label id="editIncludedSectionsLabel" class="manual-metadata-field hidden">Included Sections, comma-separated<input id="editIncludedSections" placeholder="Controls, Story, Items, Warranty" /></label>
                 <label id="editControlSchemeLabel" class="manual-metadata-field hidden">Controls / Control Scheme<input id="editControlScheme" placeholder="Controller, keyboard, light gun, etc." /></label>
                 <label id="editItemsCoveredLabel" class="manual-metadata-field hidden">Items / Mechanics Covered, comma-separated<input id="editItemsCovered" /></label>
@@ -1431,6 +1431,22 @@
             <h2>Update History</h2>
             <div class="system-update-list">
               <details class="system-update-entry" open>
+                <summary>
+                  <span>Guidevault 0.9.76 - Manual Metadata Scope Help</span>
+                  <em>Installed</em>
+                </summary>
+                <div class="system-update-body">
+                  <h3>Changed <b>4</b></h3>
+                  <ul>
+                    <li>Removed manual-specific use of the generic Year field in favor of Game Release Year.</li>
+                    <li>Removed Publication Date from manual metadata because it applies to books/guides and magazines, not most game manuals.</li>
+                    <li>Added Physical Extras to the manual metadata form for inserts, maps, posters, cards, discs, overlays, and similar materials.</li>
+                    <li>Added clickable info icons beside metadata fields to explain field scope and acceptable usage.</li>
+                  </ul>
+                </div>
+              </details>
+
+              <details class="system-update-entry">
                 <summary>
                   <span>Guidevault 0.9.75 - IGDB Tab Retention</span>
                   <em>Installed</em>
@@ -2876,7 +2892,6 @@
   </dialog>
 
 
-  <script src="/app.js?v=0.9.75-igdb-tab-retention"></script>
+  <script src="/app.js?v=0.9.76-manual-metadata-help"></script>
 </body>
 </html>
-

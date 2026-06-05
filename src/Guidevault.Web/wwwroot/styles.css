@@ -14266,3 +14266,44 @@ button.danger-soft:not(:disabled):hover{
 
 .server-metadata-source-grid{grid-template-columns:repeat(2,minmax(0,1fr))}
 @media(max-width:900px){.igdb-search-fields,.server-metadata-source-grid{grid-template-columns:1fr}.igdb-search-fields button{width:100%}}
+
+
+/* v0.9.76: metadata field scope help and manual form cleanup */
+.metadata-info-button{
+  display:inline-grid;
+  place-items:center;
+  width:17px;
+  height:17px;
+  margin-left:7px;
+  margin-right:6px;
+  padding:0;
+  border:1px solid rgba(116,186,255,.45);
+  border-radius:999px;
+  background:rgba(47,129,255,.10);
+  color:#a9d7ff;
+  font-size:11px;
+  font-weight:800;
+  line-height:1;
+  cursor:pointer;
+  vertical-align:middle;
+}
+.metadata-info-button:hover,.metadata-info-button:focus-visible{
+  border-color:rgba(116,186,255,.86);
+  color:#e6f4ff;
+  background:rgba(47,129,255,.22);
+  box-shadow:0 0 0 2px rgba(47,129,255,.13);
+  outline:0;
+}
+.metadata-info-popover{
+  display:block;
+  margin:6px 0 8px;
+  padding:8px 10px;
+  border:1px solid rgba(88,151,255,.22);
+  border-radius:9px;
+  background:rgba(8,17,27,.92);
+  color:#bad0e6;
+  font-size:12px;
+  line-height:1.4;
+  box-shadow:0 12px 30px rgba(0,0,0,.25);
+}
+.edit-grid label .metadata-info-popover{grid-column:1 / -1}
