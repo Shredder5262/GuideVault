@@ -1,128 +1,116 @@
-# Guidevault Docker deployment
+# Guidevault Docker container
 
-Guidevault is intended to run cleanly as a self-hosted Docker container.
-
-The default application port is **5478**.
+Guidevault can run as a Docker container for self-hosted use.
 
 ## Quick start
 
-Create a folder for Guidevault and a default library folder:
+From the repo root:
 
 ```powershell
-mkdir guidevault
-cd guidevault
-mkdir guidevault-data
-mkdir guidevault-data\library
-```
-
-Create `compose.yaml`:
-
-```yaml
-services:
-  guidevault:
-    image: ghcr.io/shredder5262/guidevault:latest
-    container_name: guidevault
-    restart: unless-stopped
-    ports:
-      - "5478:5478"
-    volumes:
-      - "./guidevault-data:/data"
-```
-
-Start Guidevault:
-
-```powershell
-docker compose up -d
+copy .env.example .env
+notepad .env
+docker compose up -d --build
 ```
 
 Open:
 
 ```text
-http://localhost:5478
+http://localhost:5000
 ```
 
-Place manuals, strategy guides, and magazines in:
+## Required paths
+
+The container has two important paths:
 
 ```text
-./guidevault-data/library
+/app/data   persistent Guidevault app data
+/library    mounted manuals / strategy guides / magazines library
 ```
 
-Inside Guidevault, scan this library path:
+The default Compose file maps them from your host like this:
 
 ```text
-/data/library
+GUIDEVAULT_DATA_PATH=./data
+GUIDEVAULT_LIBRARY_PATH=./library
 ```
 
-That is the simplest install path. The container already defaults to port `5478`, app data at `/data`, and the default library folder at `/data/library`, so no environment variables are needed for a normal install.
+Edit `.env` to point `GUIDEVAULT_LIBRARY_PATH` at your real library folder.
 
-## Use an existing library folder
-
-Use this layout when your collection already lives somewhere else. The example below keeps Guidevault settings/cache in `./guidevault-data` and mounts your existing library directly as `/data/library`.
-
-```yaml
-services:
-  guidevault:
-    image: ghcr.io/shredder5262/guidevault:latest
-    container_name: guidevault
-    restart: unless-stopped
-    ports:
-      - "5478:5478"
-    volumes:
-      - "./guidevault-data:/data"
-      - "D:/Digital Literature:/data/library:ro"
-```
-
-Inside Guidevault, scan:
+Example Windows path:
 
 ```text
-/data/library
+GUIDEVAULT_LIBRARY_PATH=C:/Users/Andrew/Documents/GuidevaultLibrary
 ```
 
-On Windows, use Docker-style paths such as `D:/Digital Literature`. Docker cannot read arbitrary host folders unless they are mounted into the container.
+Inside Guidevault, scan this path:
 
-## Update
+```text
+/library
+```
+
+Docker cannot read arbitrary Windows paths from inside the container unless those paths are mounted. Existing Windows paths like `C:\...` or `\\server\share\...` need to be mapped into the container first.
+
+## Persistent data
+
+Keep this mounted between updates:
+
+```text
+GUIDEVAULT_DATA_PATH=./data
+```
+
+It stores:
+
+```text
+config
+cache
+metadata overrides
+OPDS keys
+device history
+system identity
+local library settings
+```
+
+Do not delete it unless you intentionally want to reset the container.
+
+## Build manually
 
 ```powershell
-docker compose pull
+docker build -t guidevault:0.9.22 -t guidevault:latest .
+```
+
+## Run manually without Compose
+
+```powershell
+docker run -d `
+  --name guidevault `
+  -p 5000:8080 `
+  -e GUIDEVAULT_LIBRARY_PATH=/library `
+  -v ${PWD}/data:/app/data `
+  -v C:/Users/Andrew/Documents/GuidevaultLibrary:/library:ro `
+  guidevault:0.9.22
+```
+
+Then open:
+
+```text
+http://localhost:5000
+```
+
+## Build release helper files
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\release\Build-GuidevaultDocker.ps1
+```
+
+To export a Docker image tar for another machine:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\release\Build-GuidevaultDocker.ps1 -SaveImageArchive
+```
+
+Load it elsewhere:
+
+```powershell
+docker load -i Guidevault-0.9.22-docker-image.tar
 docker compose up -d
-```
-
-## Logs
-
-```powershell
-docker logs -f guidevault
-```
-
-## Backup
-
-Back up the persistent data folder:
-
-```text
-./guidevault-data
-```
-
-This folder contains app settings, generated cache, metadata, reading profiles, OPDS keys, and other persistent Guidevault data.
-
-## Reset
-
-To reset the app completely, stop the container and delete the persistent data folder:
-
-```powershell
-docker compose down
-Remove-Item -Recurse -Force .\guidevault-data
-```
-
-Only do this if you intentionally want to remove local Guidevault settings, generated cache, metadata, profiles, OPDS keys, and other app data.
-
-## Build locally
-
-```powershell
-docker build -t guidevault:local .
-docker run -d --name guidevault -p 5478:5478 -v ${PWD}/guidevault-data:/data guidevault:local
-```
-
-Open:
-
-```text
-http://localhost:5478
 ```

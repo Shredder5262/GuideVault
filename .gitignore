@@ -1,61 +1,11 @@
-# Build outputs
 **/bin/
 **/obj/
-
-# IDE/editor state
 .vs/
 .vscode/
 *.user
-*.suo
-*.userosscache
-*.sln.docstates
-
-# Local app/runtime data
-guidevault-data/
-data/
-cache/
-logs/
-covers/
-thumbnails/
-uploads/
-tmp/
-
-# Local libraries and scanned source files
-library/
-libraries/
-books/
-manuals/
-strategy-guides/
-magazines/
-*.cbz
-*.cbr
-*.pdf
-
-# Databases and generated state
-*.db
-*.db-shm
-*.db-wal
-*.sqlite
-*.sqlite3
-*.json.bak
-
-# Secrets and local environment
-.env
-.env.*
-*.local
-
-# One-off patch, audit, backup, and packaging artifacts
-scripts/
+src/PageQuest.Web/data/library/*.cbr
+src/PageQuest.Web/data/library/*.pdf
+src/PageQuest.Web/data/pagequest.json
 _repo/
 _packaged/
 Guidevault-source-clean/
-_audit/
-_backup/
-patch.py
-*.patch
-*_patch.zip
-*.zip
-*.tar
-*.tar.gz
-*.7z
-*.rar
