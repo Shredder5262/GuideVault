@@ -35,7 +35,10 @@ const state = {
   updateCheck: null,
   updateCheckTimer: null,
   updateToastTimer: null,
-  deviceHeartbeatTimer: null
+  deviceHeartbeatTimer: null,
+  openLibrary: { results: [], selectedResult: null, resolvedResult: null, step: 'search' },
+  igdb: { results: [], selectedResult: null, resolvedResult: null, step: 'search' },
+  esrb: { results: [], selectedResult: null, resolvedResult: null, step: 'search' }
 };
 const $ = id => document.getElementById(id);
 function setText(id, value) {
@@ -66,7 +69,7 @@ const GUIDEVAULT_FAVORITES_KEY = 'guidevault.favorites.v1';
 const GUIDEVAULT_LIBRARY_CACHE_KEY = 'guidevault.libraryCache.v1';
 const GUIDEVAULT_GRID_INITIAL_RENDER = 96;
 const GUIDEVAULT_GRID_CHUNK_SIZE = 96;
-const GUIDEVAULT_APP_VERSION = '0.9.66';
+const GUIDEVAULT_APP_VERSION = '0.9.75';
 const GUIDEVAULT_FILENAME_SCHEMA_KEY = 'guidevault.filenameRename.schema.v1';
 const GUIDEVAULT_DEFAULT_FILENAME_SCHEMA = '{title}';
 const GUIDEVAULT_STABLE_TAG_FEED_URL = 'https://api.github.com/repos/Shredder5262/GuideVault/tags';
@@ -119,12 +122,67 @@ const GUIDEVAULT_DEVICE_HEARTBEAT_MS = 120000;
 const GUIDEVAULT_UPDATE_CHECK_MS = 30 * 60 * 1000;
 const GUIDEVAULT_UPDATE_NOTIFIED_VERSION_KEY = 'guidevault.update.notifiedVersion.v1';
 const fmtBytes = n => n > 1024 ** 3 ? `${(n / 1024 ** 3).toFixed(1)} GB` : `${(n / 1024 ** 2).toFixed(1)} MB`;
-const categoryOf = item => item.category || item.system || 'Unsorted';
-const associatedPlatformsOf = item => Array.isArray(item?.associatedPlatforms)
-  ? item.associatedPlatforms.map(p => String(p || '').trim()).filter(Boolean)
-  : String(item?.associatedPlatforms || '').split(',').map(p => p.trim()).filter(Boolean);
-const platformListText = item => associatedPlatformsOf(item).join(', ');
 const MULTI_PLATFORM_LABEL = 'Multi-Platform';
+const IGDB_PLATFORM_NAME_OVERRIDES = new Map([
+  ['pc microsoft windows', 'Windows'],
+  ['microsoft windows', 'Windows'],
+  ['windows pc', 'Windows'],
+  ['pc', 'Windows'],
+  ['dos', 'MS-DOS'],
+  ['ms dos', 'MS-DOS'],
+  ['msdos', 'MS-DOS'],
+  ['pc dos', 'MS-DOS'],
+  ['ibm pc dos', 'MS-DOS'],
+  ['playstation 5', 'Sony Playstation 5'],
+  ['sony playstation 5', 'Sony Playstation 5'],
+  ['ps5', 'Sony Playstation 5'],
+  ['playstation 4', 'Sony Playstation 4'],
+  ['sony playstation 4', 'Sony Playstation 4'],
+  ['ps4', 'Sony Playstation 4'],
+  ['playstation 3', 'Sony Playstation 3'],
+  ['sony playstation 3', 'Sony Playstation 3'],
+  ['ps3', 'Sony Playstation 3'],
+  ['playstation 2', 'Sony Playstation 2'],
+  ['sony playstation 2', 'Sony Playstation 2'],
+  ['ps2', 'Sony Playstation 2'],
+  ['playstation', 'Sony Playstation'],
+  ['sony playstation', 'Sony Playstation'],
+  ['ps1', 'Sony Playstation'],
+  ['psx', 'Sony Playstation'],
+  ['playstation portable', 'Sony PSP'],
+  ['sony playstation portable', 'Sony PSP'],
+  ['psp', 'Sony PSP'],
+  ['dreamcast', 'Sega Dreamcast'],
+  ['sega dreamcast', 'Sega Dreamcast'],
+  ['sega dreamcase', 'Sega Dreamcast'],
+  ['xbox', 'Microsoft Xbox'],
+  ['microsoft xbox', 'Microsoft Xbox']
+]);
+function platformNormalizationKey(value = '') {
+  return String(value || '')
+    .toLowerCase()
+    .replace(/[()]/g, ' ')
+    .replace(/[^a-z0-9]+/g, ' ')
+    .trim()
+    .replace(/\s+/g, ' ');
+}
+function normalizeGuidevaultPlatformName(value = '') {
+  const raw = String(value || '').trim();
+  if (!raw) return '';
+  if (isMultiPlatformBucketName(raw)) return MULTI_PLATFORM_LABEL;
+  return IGDB_PLATFORM_NAME_OVERRIDES.get(platformNormalizationKey(raw)) || raw;
+}
+function normalizeGuidevaultPlatformList(value) {
+  const parts = Array.isArray(value)
+    ? value
+    : String(value || '').split(/[;,|]/);
+  const normalized = [];
+  parts.forEach(platform => pushUniquePlatformBucket(normalized, normalizeGuidevaultPlatformName(platform)));
+  return normalized;
+}
+const categoryOf = item => normalizeGuidevaultPlatformName(item.category || item.system || 'Unsorted') || 'Unsorted';
+const associatedPlatformsOf = item => normalizeGuidevaultPlatformList(item?.associatedPlatforms || []);
+const platformListText = item => associatedPlatformsOf(item).join(', ');
 function platformNamesEqual(a, b) {
   return String(a || '').trim().localeCompare(String(b || '').trim(), undefined, { sensitivity: 'accent' }) === 0;
 }
@@ -168,14 +226,27 @@ function platformInitials(name) {
     'Nintendo 64': 'N64',
     'Nintendo Switch': 'NS',
     'PlayStation': 'PS',
+    'Sony Playstation': 'PS',
     'Sony PlayStation': 'PS',
     'PlayStation 2': 'PS2',
+    'Sony Playstation 2': 'PS2',
+    'Sony PlayStation 2': 'PS2',
     'PlayStation 3': 'PS3',
+    'Sony Playstation 3': 'PS3',
+    'Sony PlayStation 3': 'PS3',
     'PlayStation 4': 'PS4',
+    'Sony Playstation 4': 'PS4',
+    'Sony PlayStation 4': 'PS4',
     'PlayStation 5': 'PS5',
+    'Sony Playstation 5': 'PS5',
+    'Sony PlayStation 5': 'PS5',
     'PlayStation Portable': 'PSP',
+    'Sony PSP': 'PSP',
+    'Sony Playstation Vita': 'VITA',
+    'Sony PlayStation Vita': 'VITA',
     'Sega Genesis': 'GEN',
     'Sega Dreamcast': 'DC',
+    'MS-DOS': 'DOS',
     'Xbox': 'XB',
     'Xbox 360': '360',
     'Xbox One': 'X1'
@@ -2196,7 +2267,7 @@ function setTasksSettingsStatus(message = '', tone = '') {
   if (el) { el.textContent = message || ''; el.dataset.tone = tone || ''; }
 }
 function defaultServerSettings() {
-  return { hostName: window.location?.origin || 'http://localhost:5478', baseUrl: '/', ipAddresses: '', port: 5478, loggingLevel: 'Information', backupDirectory: 'data/backups', bookmarksDirectory: 'data/bookmarks' };
+  return { hostName: window.location?.origin || 'http://localhost:5478', baseUrl: '/', ipAddresses: '', port: 5478, loggingLevel: 'Information', backupDirectory: 'data/backups', bookmarksDirectory: 'data/bookmarks', igdbClientId: '', igdbClientSecret: '' };
 }
 function normalizeServerSettings(value = {}) {
   const defaults = defaultServerSettings();
@@ -2207,7 +2278,9 @@ function normalizeServerSettings(value = {}) {
     port: Number(value.port || defaults.port) || defaults.port,
     loggingLevel: String(value.loggingLevel || defaults.loggingLevel).trim(),
     backupDirectory: String(value.backupDirectory || defaults.backupDirectory).trim(),
-    bookmarksDirectory: String(value.bookmarksDirectory || defaults.bookmarksDirectory).trim()
+    bookmarksDirectory: String(value.bookmarksDirectory || defaults.bookmarksDirectory).trim(),
+    igdbClientId: String(value.igdbClientId || '').trim(),
+    igdbClientSecret: String(value.igdbClientSecret || '').trim()
   };
 }
 async function loadServerSettings(showStatus = false) {
@@ -2234,7 +2307,10 @@ function renderServerSettings() {
   if ($('serverBackupDirectory')) $('serverBackupDirectory').value = settings.backupDirectory;
   if ($('serverLoggingLevel')) $('serverLoggingLevel').value = settings.loggingLevel;
   if ($('mediaBookmarksDirectory')) $('mediaBookmarksDirectory').value = settings.bookmarksDirectory;
+  if ($('igdbClientId')) $('igdbClientId').value = settings.igdbClientId || '';
+  if ($('igdbClientSecret')) $('igdbClientSecret').value = settings.igdbClientSecret || '';
 }
+
 function collectServerSettings() {
   const existing = normalizeServerSettings(state.serverSettings || defaultServerSettings());
   return normalizeServerSettings({
@@ -2245,7 +2321,9 @@ function collectServerSettings() {
     port: $('serverPort')?.value ?? existing.port,
     loggingLevel: $('serverLoggingLevel')?.value ?? existing.loggingLevel,
     backupDirectory: $('serverBackupDirectory')?.value ?? existing.backupDirectory,
-    bookmarksDirectory: $('mediaBookmarksDirectory')?.value ?? existing.bookmarksDirectory
+    bookmarksDirectory: $('mediaBookmarksDirectory')?.value ?? existing.bookmarksDirectory,
+    igdbClientId: $('igdbClientId')?.value ?? existing.igdbClientId,
+    igdbClientSecret: $('igdbClientSecret')?.value ?? existing.igdbClientSecret
   });
 }
 async function saveServerSettings(source = 'general') {
@@ -4369,6 +4447,13 @@ function platformIconUrl(name) {
     iconKey(raw),
     iconKey(raw.replace(/\b(super nintendo)\b/i, 'Super Nintendo Entertainment System')),
     iconKey(raw.replace(/\bplaystation\s*\(?ps1\)?\b/i, 'Sony Playstation')),
+    iconKey(raw.replace(/\bplaystation\s*2\b/i, 'Sony Playstation 2')),
+    iconKey(raw.replace(/\bplaystation\s*3\b/i, 'Sony Playstation 3')),
+    iconKey(raw.replace(/\bplaystation\s*4\b/i, 'Sony Playstation 4')),
+    iconKey(raw.replace(/\bplaystation\s*5\b/i, 'Sony Playstation 5')),
+    iconKey(raw.replace(/\bplaystation\s*portable\b/i, 'Sony PSP')),
+    iconKey(raw.replace(/^xbox$/i, 'Microsoft Xbox')),
+    iconKey(raw.replace(/^ms[-\s]?dos$/i, 'DOS')),
     iconKey(raw.replace(/\bnes\b/i, 'Nintendo Entertainment System')),
     iconKey(raw.replace(/\bsnes\b/i, 'Super Nintendo Entertainment System')),
     iconKey(raw.replace(/\bn64\b/i, 'Nintendo 64'))
@@ -7156,7 +7241,1127 @@ async function enrichSelectedFileMetadata() {
   }
 }
 
+
+const OPEN_LIBRARY_IMPORT_FIELDS = [
+  { key: 'title', label: 'Title', payloadKey: 'title' },
+  { key: 'authorWriter', label: 'Author / Writer', payloadKey: 'writer' },
+  { key: 'publisher', label: 'Publisher', payloadKey: 'publisher' },
+  { key: 'publishYear', label: 'Publish Year', payloadKey: 'year' },
+  { key: 'isbn10', label: 'ISBN-10', payloadKey: 'isbn10' },
+  { key: 'isbn13', label: 'ISBN-13', payloadKey: 'isbn13' },
+  { key: 'language', label: 'Language', payloadKey: 'languageTag' },
+  { key: 'summary', label: 'Description / Summary', payloadKey: 'summary' },
+  { key: 'pageCount', label: 'Page Count', payloadKey: 'pageCount' }
+];
+
+function normalizeOpenLibraryLanguage(value = '') {
+  const raw = String(value || '').trim();
+  if (!raw) return '';
+  const key = raw.toLowerCase();
+  if (['en','eng','english'].includes(key)) return 'English';
+  if (['ja','jpn','japanese'].includes(key)) return 'Japanese';
+  if (['fr','fre','fra','french'].includes(key)) return 'French';
+  if (['de','ger','deu','german'].includes(key)) return 'German';
+  if (['es','spa','spanish'].includes(key)) return 'Spanish';
+  if (['it','ita','italian'].includes(key)) return 'Italian';
+  return raw;
+}
+
+function isOpenLibraryBlank(value, key = '') {
+  if (value === null || value === undefined) return true;
+  if (key === 'pageCount') return !(Number(value) > 0);
+  const text = String(value || '').trim();
+  return !text || text === '\u2014' || text.toLowerCase() === 'unknown';
+}
+
+function openLibraryCleanValue(key, value) {
+  if (key === 'language') return normalizeOpenLibraryLanguage(value);
+  if (key === 'pageCount') {
+    const n = Number(value || 0);
+    return Number.isFinite(n) && n > 0 ? Math.round(n) : '';
+  }
+  return String(value ?? '').trim();
+}
+
+function openLibrarySameText(a = '', b = '') {
+  const clean = value => String(value || '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+  return clean(a) && clean(a) === clean(b);
+}
+
+function openLibraryCurrentMetadataForCompare() {
+  let form = {};
+  try { form = buildCurrentMetadataPayloadFromForm(); } catch { form = {}; }
+  const item = state.selected || {};
+  const rawIsbn = form.isbn || combinedIsbnText(item) || `${form.isbn10 || ''} / ${form.isbn13 || ''}`;
+  const isbnParts = splitIsbnInput(rawIsbn);
+  return {
+    title: form.title || item.title || '',
+    authorWriter: form.writer || item.writer || '',
+    publisher: form.publisher || item.publisher || '',
+    publishYear: form.year || item.year || '',
+    isbn10: form.isbn10 || isbnParts.isbn10 || item.isbn10 || '',
+    isbn13: form.isbn13 || isbnParts.isbn13 || item.isbn13 || '',
+    language: form.languageTag || item.languageTag || '',
+    summary: form.summary || item.summary || '',
+    pageCount: form.pageCount || item.pageCount || ''
+  };
+}
+
+function openLibraryInitialSearchValues() {
+  let form = {};
+  try { form = buildCurrentMetadataPayloadFromForm(); } catch { form = {}; }
+  const item = state.selected || {};
+  const title = String(
+    form.strategyGuideTitle || form.manualTitle || form.magazineTitle || form.title ||
+    item.strategyGuideTitle || item.manualTitle || item.magazineTitle || item.title || displayTitle(item) || ''
+  ).trim();
+  const gameTitle = String(form.gameTitle || item.gameTitle || item.platformMatchTitle || item.series || '').trim();
+  const publisher = String(form.publisher || item.publisher || '').trim();
+  const year = String(form.year || item.year || '').trim();
+  const rawIsbn = String(form.isbn || combinedIsbnText(item) || `${form.isbn10 || ''} ${form.isbn13 || ''}` || '').trim();
+  const isbnParts = splitIsbnInput(rawIsbn);
+  const isbn = isbnParts.isbn10 || isbnParts.isbn13 || '';
+  const secondary = gameTitle && !openLibrarySameText(gameTitle, title)
+    ? gameTitle
+    : [publisher, year].filter(Boolean).join(' ');
+  return {
+    q: title || gameTitle || [publisher, year].filter(Boolean).join(' '),
+    secondary,
+    isbn,
+    title,
+    gameTitle,
+    publisher,
+    year
+  };
+}
+
+function openLibraryResultTitle(result = {}) {
+  return [result.title, result.authorWriter, result.publishYear].filter(Boolean).join(' • ') || 'Open Library result';
+}
+
+function ensureOpenLibraryMetadataUi() {
+  if (!$('openLibraryDialog')) {
+    const dialog = document.createElement('dialog');
+    dialog.id = 'openLibraryDialog';
+    dialog.className = 'openlibrary-dialog';
+    dialog.innerHTML = `
+      <div class="openlibrary-modal">
+        <header class="openlibrary-modal-head">
+          <div>
+            <h3>Search Open Library Metadata</h3>
+            <p>Search by strategy guide title first. Use game title, publisher, or year as a secondary hint. Review existing Guidevault values beside Open Library values before importing.</p>
+          </div>
+          <button type="button" id="openLibraryCloseBtn" class="ghost tiny">Close</button>
+        </header>
+        <div id="openLibraryDialogBody" class="openlibrary-modal-body"></div>
+      </div>`;
+    document.body.appendChild(dialog);
+  }
+
+  const existing = $('openLibrarySearchBtn');
+  if (existing) {
+    existing.classList.add('ghost', 'openlibrary-action-button');
+    existing.type = 'button';
+    return;
+  }
+
+  const target = document.querySelector('#file-namePanel .file-metadata-card-actions .file-metadata-actions')
+    || $('exportGuideMetadataBtn')?.parentElement
+    || $('enrichCurrentFileMetadataBtn')?.parentElement
+    || $('file-namePanel')
+    || $('metadataPanel');
+  if (target) {
+    const btn = document.createElement('button');
+    btn.id = 'openLibrarySearchBtn';
+    btn.type = 'button';
+    btn.className = 'ghost openlibrary-action-button';
+    btn.textContent = 'Search Open Library Metadata';
+    btn.title = 'Search Open Library by title/game title and review metadata before importing selected fields.';
+    target.appendChild(btn);
+  }
+}
+
+function openLibrarySetStatus(message = '', tone = '') {
+  const el = $('openLibraryStatus');
+  if (!el) return;
+  el.textContent = message;
+  el.dataset.tone = tone || '';
+}
+
+function openLibrarySearchPanelHtml() {
+  const initial = openLibraryInitialSearchValues();
+  const primaryValue = $('openLibrarySearchInput')?.value || initial.q || '';
+  const secondaryValue = $('openLibrarySecondaryInput')?.value || initial.secondary || '';
+  return `<section class="openlibrary-search-panel">
+    <div class="openlibrary-search-fields">
+      <label>Title / primary search
+        <input id="openLibrarySearchInput" type="search" value="${escapeForAttribute(primaryValue)}" placeholder="Strategy guide title or game title" />
+      </label>
+      <label>Secondary hint
+        <input id="openLibrarySecondaryInput" type="search" value="${escapeForAttribute(secondaryValue)}" placeholder="Optional: game title, publisher, or year" />
+      </label>
+      <button type="button" id="openLibraryRunSearchBtn" class="primary">Search</button>
+    </div>
+    <p class="openlibrary-help">Guidevault searches the title field first, then broadens to the secondary hint and strategy-guide terms. ISBN is only used first when you type or provide an ISBN.</p>
+    <p id="openLibraryStatus" class="openlibrary-status"></p>
+    <div id="openLibraryResults" class="openlibrary-results"></div>
+  </section>`;
+}
+
+function renderOpenLibrarySearchResults(results = state.openLibrary.results || []) {
+  const host = $('openLibraryResults');
+  if (!host) return;
+  if (!results.length) {
+    host.innerHTML = '<div class="openlibrary-empty">No Open Library results yet. Search by strategy guide title first, or try the game title as the secondary hint.</div>';
+    return;
+  }
+  host.innerHTML = results.map((result, index) => `
+    <article class="openlibrary-result-card">
+      <div class="openlibrary-result-cover">${result.coverPreviewUrl ? `<img src="${escapeForAttribute(result.coverPreviewUrl)}" alt="" loading="lazy" />` : '<span>No cover</span>'}</div>
+      <div class="openlibrary-result-main">
+        <h4>${escapeHtml(result.title || 'Untitled')}</h4>
+        <p>${escapeHtml([result.authorWriter, result.publisher, result.publishYear].filter(Boolean).join(' • ') || 'No extra result details')}</p>
+        <small>${escapeHtml(result.matchBy || 'Search')} match • ${escapeHtml(result.confidence || 'Unknown')} confidence${result.isbn10 ? ` • ISBN-10 ${escapeHtml(result.isbn10)}` : ''}${result.isbn13 ? ` • ISBN-13 ${escapeHtml(result.isbn13)}` : ''}</small>
+      </div>
+      <button type="button" class="ghost openlibrary-select-result" data-result-index="${index}">Select</button>
+    </article>`).join('');
+}
+
+function renderOpenLibraryDialog(step = state.openLibrary.step || 'search') {
+  ensureOpenLibraryMetadataUi();
+  const body = $('openLibraryDialogBody');
+  if (!body) return;
+  state.openLibrary.step = step;
+  if (step === 'compare' && state.openLibrary.resolvedResult) {
+    body.innerHTML = openLibraryComparisonHtml(state.openLibrary.resolvedResult);
+    return;
+  }
+  body.innerHTML = openLibrarySearchPanelHtml();
+  renderOpenLibrarySearchResults(state.openLibrary.results || []);
+}
+
+async function openOpenLibraryMetadataDialog() {
+  if (!state.selected) return;
+  ensureOpenLibraryMetadataUi();
+  state.openLibrary.results = [];
+  state.openLibrary.selectedResult = null;
+  state.openLibrary.resolvedResult = null;
+  renderOpenLibraryDialog('search');
+  const dialog = $('openLibraryDialog');
+  try {
+    if (dialog && !dialog.open) dialog.showModal();
+  } catch {
+    if (dialog) dialog.setAttribute('open', 'open');
+  }
+  await runOpenLibraryMetadataSearch(true);
+}
+
+function closeOpenLibraryDialog() {
+  const dialog = $('openLibraryDialog');
+  if (!dialog) return;
+  try { dialog.close(); } catch { dialog.removeAttribute('open'); }
+}
+
+async function runOpenLibraryMetadataSearch(useInitial = false) {
+  ensureOpenLibraryMetadataUi();
+  const initial = openLibraryInitialSearchValues();
+  const input = $('openLibrarySearchInput');
+  const secondaryInput = $('openLibrarySecondaryInput');
+  const primary = String((useInitial ? initial.q : input?.value) || initial.q || '').trim();
+  const secondary = String((useInitial ? initial.secondary : secondaryInput?.value) || initial.secondary || '').trim();
+  if (!primary && !secondary) {
+    openLibrarySetStatus('Enter a strategy guide title, game title, publisher, year, or ISBN to search Open Library.', 'error');
+    return;
+  }
+  if (input && !input.value) input.value = primary;
+  if (secondaryInput && !secondaryInput.value) secondaryInput.value = secondary;
+  openLibrarySetStatus('Searching Open Library...', 'info');
+  const params = new URLSearchParams({ q: primary || secondary, limit: '16' });
+  if (secondary) params.set('secondary', secondary);
+  const typedIsbn = splitIsbnInput(primary || '');
+  if (typedIsbn.isbn10 || typedIsbn.isbn13) params.set('isbn', typedIsbn.isbn10 || typedIsbn.isbn13);
+  if (initial.title) params.set('title', initial.title);
+  if (initial.gameTitle) params.set('gameTitle', initial.gameTitle);
+  if (initial.publisher) params.set('publisher', initial.publisher);
+  if (initial.year) params.set('year', initial.year);
+  try {
+    const res = await fetch(`/api/openlibrary/search?${params.toString()}`, { cache: 'no-store' });
+    let data = null;
+    try { data = await res.json(); } catch {}
+    if (!res.ok) throw new Error(data?.error || `Open Library search failed. HTTP ${res.status}`);
+    state.openLibrary.results = Array.isArray(data?.results) ? data.results : [];
+    renderOpenLibrarySearchResults(state.openLibrary.results);
+    openLibrarySetStatus(state.openLibrary.results.length ? `Found ${state.openLibrary.results.length} result(s). Select the closest match to compare fields.` : 'No Open Library results found. Try the game title by itself, or remove publisher/year hints.', state.openLibrary.results.length ? 'success' : 'error');
+  } catch (err) {
+    console.error('Open Library search failed', err);
+    openLibrarySetStatus(`Open Library search failed: ${err?.message || err}`, 'error');
+  }
+}
+
+async function selectOpenLibrarySearchResult(index) {
+  const result = state.openLibrary.results?.[Number(index)];
+  if (!result) return;
+  state.openLibrary.selectedResult = result;
+  openLibrarySetStatus(`Loading details for ${openLibraryResultTitle(result)}...`, 'info');
+  try {
+    const res = await fetch('/api/openlibrary/resolve', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(result)
+    });
+    let data = null;
+    try { data = await res.json(); } catch {}
+    if (!res.ok) throw new Error(data?.error || `Open Library detail lookup failed. HTTP ${res.status}`);
+    state.openLibrary.resolvedResult = data;
+    renderOpenLibraryDialog('compare');
+  } catch (err) {
+    console.error('Open Library detail lookup failed', err);
+    openLibrarySetStatus(`Open Library detail lookup failed: ${err?.message || err}`, 'error');
+  }
+}
+
+function openLibraryComparisonHtml(result = {}) {
+  const current = openLibraryCurrentMetadataForCompare();
+  const proposed = {
+    title: openLibraryCleanValue('title', result.title),
+    authorWriter: openLibraryCleanValue('authorWriter', result.authorWriter),
+    publisher: openLibraryCleanValue('publisher', result.publisher),
+    publishYear: openLibraryCleanValue('publishYear', result.publishYear),
+    isbn10: openLibraryCleanValue('isbn10', result.isbn10),
+    isbn13: openLibraryCleanValue('isbn13', result.isbn13),
+    language: openLibraryCleanValue('language', result.language),
+    summary: openLibraryCleanValue('summary', result.summary),
+    pageCount: openLibraryCleanValue('pageCount', result.pageCount)
+  };
+  const currentCover = state.selected ? coverUrl(state.selected) : '';
+  const rows = OPEN_LIBRARY_IMPORT_FIELDS.map(field => openLibraryComparisonRowHtml(field, current, proposed)).join('');
+  return `<section class="openlibrary-compare-panel">
+    <button type="button" id="openLibraryBackToResultsBtn" class="ghost tiny">Back to results</button>
+    <div class="openlibrary-cover-compare">
+      <figure><figcaption>Guidevault Cover</figcaption>${currentCover ? `<img src="${escapeForAttribute(currentCover)}" alt="Current Guidevault cover" />` : '<span>No Guidevault cover</span>'}</figure>
+      <figure><figcaption>Open Library Cover <em>Preview only — not imported</em></figcaption>${result.coverPreviewUrl ? `<img src="${escapeForAttribute(result.coverPreviewUrl)}" alt="Open Library cover preview" />` : '<span>No Open Library cover</span>'}</figure>
+    </div>
+    <div class="openlibrary-selected-source">
+      <h4>${escapeHtml(result.title || 'Selected Open Library result')}</h4>
+      <p>${escapeHtml([result.authorWriter, result.publisher, result.publishYear].filter(Boolean).join(' • ') || 'Review fields before importing.')}</p>
+    </div>
+    <div class="openlibrary-table-wrap">
+      <table class="openlibrary-comparison-table">
+        <thead><tr><th>Import</th><th>Field</th><th>Existing Guidevault Value</th><th>Open Library Value</th></tr></thead>
+        <tbody>${rows}</tbody>
+      </table>
+    </div>
+    <p id="openLibraryStatus" class="openlibrary-status"></p>
+    <footer class="openlibrary-import-actions">
+      <button type="button" id="openLibraryImportSelectedBtn" class="primary">Import Selected Fields</button>
+      <button type="button" id="openLibraryImportEmptyBtn" class="ghost">Import Empty Fields Only</button>
+      <button type="button" id="openLibraryImportAllBtn" class="ghost">Import All Fields</button>
+      <button type="button" id="openLibraryCancelBtn" class="ghost">Cancel</button>
+    </footer>
+  </section>`;
+}
+
+function openLibraryComparisonRowHtml(field, current, proposed) {
+  const existing = openLibraryCleanValue(field.key, current[field.key]);
+  const incoming = openLibraryCleanValue(field.key, proposed[field.key]);
+  const hasIncoming = !isOpenLibraryBlank(incoming, field.key);
+  const existingBlank = isOpenLibraryBlank(existing, field.key);
+  const differs = hasIncoming && String(existing || '').trim() !== String(incoming || '').trim();
+  const checked = hasIncoming && existingBlank ? 'checked' : '';
+  const disabled = hasIncoming ? '' : 'disabled';
+  return `<tr class="${differs ? 'different' : ''} ${!hasIncoming ? 'missing-incoming' : ''}">
+    <td><input type="checkbox" data-openlibrary-field="${escapeForAttribute(field.key)}" ${checked} ${disabled} /></td>
+    <td>${escapeHtml(field.label)}</td>
+    <td>${escapeHtml(existing || '\u2014')}</td>
+    <td>${escapeHtml(incoming || '\u2014')}</td>
+  </tr>`;
+}
+
+function openLibrarySelectedFieldsForMode(mode = 'selected') {
+  const result = state.openLibrary.resolvedResult || {};
+  const current = openLibraryCurrentMetadataForCompare();
+  const fields = [];
+  OPEN_LIBRARY_IMPORT_FIELDS.forEach(field => {
+    const incoming = openLibraryCleanValue(field.key, result[field.key]);
+    if (isOpenLibraryBlank(incoming, field.key)) return;
+    if (mode === 'all') { fields.push(field.key); return; }
+    if (mode === 'empty') {
+      if (isOpenLibraryBlank(current[field.key], field.key)) fields.push(field.key);
+      return;
+    }
+    const checkbox = document.querySelector(`#openLibraryDialog input[data-openlibrary-field="${field.key}"]`);
+    if (checkbox?.checked) fields.push(field.key);
+  });
+  return fields;
+}
+
+function openLibraryPayloadFromFields(fieldKeys = []) {
+  const result = state.openLibrary.resolvedResult || {};
+  const payload = { metadataSource: 'Open Library' };
+  fieldKeys.forEach(key => {
+    const field = OPEN_LIBRARY_IMPORT_FIELDS.find(f => f.key === key);
+    if (!field) return;
+    const value = openLibraryCleanValue(key, result[key]);
+    if (isOpenLibraryBlank(value, key)) return;
+    if (key === 'pageCount') {
+      payload.pageCount = Number(value);
+      payload.metadataPageCount = Number(value);
+    } else if (key === 'language') {
+      payload.languageTag = normalizeOpenLibraryLanguage(value);
+      payload.language = normalizeOpenLibraryLanguage(value);
+    } else if (key === 'publishYear') {
+      payload.year = value;
+    } else if (key === 'authorWriter') {
+      payload.writer = value;
+    } else {
+      payload[field.payloadKey] = value;
+    }
+  });
+  const currentIsbn = splitIsbnInput($('editIsbn')?.value || combinedIsbnText(state.selected) || '');
+  const isbn10 = payload.isbn10 || currentIsbn.isbn10 || state.selected?.isbn10 || '';
+  const isbn13 = payload.isbn13 || currentIsbn.isbn13 || state.selected?.isbn13 || '';
+  if (payload.isbn10 || payload.isbn13) payload.isbn = [isbn10, isbn13].filter(Boolean).join(' / ');
+  return payload;
+}
+
+async function importOpenLibraryMetadata(mode = 'selected') {
+  const fields = openLibrarySelectedFieldsForMode(mode);
+  if (!fields.length) {
+    openLibrarySetStatus('No importable Open Library fields were selected.', 'error');
+    return;
+  }
+  const payload = openLibraryPayloadFromFields(fields);
+  try {
+    openLibrarySetStatus('Importing selected Open Library metadata...', 'info');
+    const updated = await saveSelectedMetadata(payload, { tab: 'file-name' });
+    if (updated) {
+      setStatus('Open Library metadata imported. Cover preview was not imported.');
+      closeOpenLibraryDialog();
+    }
+  } catch (err) {
+    console.error('Open Library metadata import failed', err);
+    openLibrarySetStatus(`Open Library metadata import failed: ${err?.message || err}`, 'error');
+  }
+}
+
+
+
+const ESRB_IMPORT_FIELDS = [
+  { key: 'rating', label: 'ESRB Rating', payloadKey: 'rating' }
+];
+
+function esrbArray(value) {
+  if (Array.isArray(value)) return value.map(v => String(v || '').trim()).filter(Boolean);
+  return String(value || '').split(/[;,|]/).map(v => v.trim()).filter(Boolean);
+}
+
+function esrbListLabel(value) {
+  return esrbArray(value).join(', ');
+}
+
+function esrbCurrentMetadataForCompare() {
+  let form = {};
+  try { form = buildCurrentMetadataPayloadFromForm(); } catch { form = {}; }
+  const item = state.selected || {};
+  return { rating: form.rating || item.rating || '' };
+}
+
+function esrbInitialSearchValues() {
+  let form = {};
+  try { form = buildCurrentMetadataPayloadFromForm(); } catch { form = {}; }
+  const item = state.selected || {};
+  const gameTitle = String(form.gameTitle || item.gameTitle || item.platformMatchTitle || item.series || form.title || item.title || displayTitle(item) || '').trim();
+  const platform = String(form.category || detailSystemLabelForItem(item) || item.category || item.system || '').trim();
+  return { q: gameTitle, platform: platform === MULTI_PLATFORM_LABEL ? '' : platform };
+}
+
+function esrbResultTitle(result = {}) {
+  return [result.title || result.gameTitle, esrbDisplayLabel(result.ratingShort || result.rating), esrbListLabel(result.platforms)].filter(Boolean).join(' • ') || 'ESRB rating result';
+}
+
+function ensureEsrbMetadataUi() {
+  if (!$('esrbDialog')) {
+    const dialog = document.createElement('dialog');
+    dialog.id = 'esrbDialog';
+    dialog.className = 'openlibrary-dialog esrb-dialog';
+    dialog.innerHTML = `
+      <div class="openlibrary-modal esrb-modal">
+        <header class="openlibrary-modal-head esrb-modal-head">
+          <div>
+            <h3>Search ESRB Rating</h3>
+            <p>Search ESRB.org by game title first, optionally using platform as a hint. Review the existing Guidevault rating beside the ESRB value before importing.</p>
+          </div>
+          <button type="button" id="esrbCloseBtn" class="ghost tiny">Close</button>
+        </header>
+        <div id="esrbDialogBody" class="openlibrary-modal-body esrb-modal-body"></div>
+      </div>`;
+    document.body.appendChild(dialog);
+  }
+
+  const existing = $('esrbSearchBtn');
+  if (existing) {
+    existing.classList.add('ghost', 'esrb-action-button');
+    existing.type = 'button';
+    return;
+  }
+
+  const target = document.querySelector('#file-namePanel .file-metadata-card-actions .file-metadata-actions')
+    || $('igdbSearchBtn')?.parentElement
+    || $('openLibrarySearchBtn')?.parentElement
+    || $('metadataPanel');
+  if (target) {
+    const btn = document.createElement('button');
+    btn.id = 'esrbSearchBtn';
+    btn.type = 'button';
+    btn.className = 'ghost esrb-action-button';
+    btn.textContent = 'Search ESRB Rating';
+    btn.title = 'Search ESRB.org by game title and review the rating before importing it.';
+    target.appendChild(btn);
+  }
+}
+
+function esrbSetStatus(message = '', tone = '') {
+  const el = $('esrbStatus');
+  if (!el) return;
+  el.textContent = message;
+  el.dataset.tone = tone || '';
+}
+
+function esrbSearchPanelHtml() {
+  const initial = esrbInitialSearchValues();
+  const primaryValue = $('esrbSearchInput')?.value || initial.q || '';
+  const platformValue = $('esrbPlatformInput')?.value || initial.platform || '';
+  return `<section class="openlibrary-search-panel esrb-search-panel">
+    <div class="openlibrary-search-fields esrb-search-fields">
+      <label>Game title
+        <input id="esrbSearchInput" type="search" value="${escapeForAttribute(primaryValue)}" placeholder="Resident Evil 3 Nemesis" />
+      </label>
+      <label>Platform hint
+        <input id="esrbPlatformInput" type="search" value="${escapeForAttribute(platformValue)}" placeholder="Optional: PlayStation, GameCube, Windows" />
+      </label>
+      <button type="button" id="esrbRunSearchBtn" class="primary">Search</button>
+    </div>
+    <p class="openlibrary-help">ESRB lookup is separate from IGDB and Open Library. It imports only the Guidevault ESRB Rating field.</p>
+    <p id="esrbStatus" class="openlibrary-status esrb-status"></p>
+    <div id="esrbResults" class="openlibrary-results esrb-results"></div>
+  </section>`;
+}
+
+function renderEsrbSearchResults(results = state.esrb.results || []) {
+  const host = $('esrbResults');
+  if (!host) return;
+  if (!results.length) {
+    host.innerHTML = '<div class="openlibrary-empty esrb-empty">No ESRB results yet. Search by the actual game title first, then use platform only as a hint.</div>';
+    return;
+  }
+  host.innerHTML = results.map((result, index) => {
+    const rating = result.ratingShort || result.rating || '';
+    return `<article class="openlibrary-result-card esrb-result-card">
+      <div class="openlibrary-result-cover esrb-result-badge">${rating ? `<img src="${escapeForAttribute(esrbIconUrl(rating))}" alt="${escapeForAttribute(esrbDisplayLabel(rating))}" loading="lazy" />` : '<span>No rating</span>'}</div>
+      <div class="openlibrary-result-main esrb-result-main">
+        <h4>${escapeHtml(result.title || 'Untitled')}</h4>
+        <p>${escapeHtml([result.publisher, esrbDisplayLabel(rating), esrbListLabel(result.platforms)].filter(Boolean).join(' • ') || 'No extra result details')}</p>
+        <small>${escapeHtml(result.matchBy || 'Game title')} match • ${escapeHtml(result.confidence || 'Unknown')} confidence${esrbListLabel(result.contentDescriptors) ? ` • ${escapeHtml(esrbListLabel(result.contentDescriptors))}` : ''}</small>
+      </div>
+      <button type="button" class="ghost esrb-select-result" data-result-index="${index}">Select</button>
+    </article>`;
+  }).join('');
+}
+
+function renderEsrbDialog(step = state.esrb.step || 'search') {
+  ensureEsrbMetadataUi();
+  const body = $('esrbDialogBody');
+  if (!body) return;
+  state.esrb.step = step;
+  if (step === 'compare' && state.esrb.resolvedResult) {
+    body.innerHTML = esrbComparisonHtml(state.esrb.resolvedResult);
+    return;
+  }
+  body.innerHTML = esrbSearchPanelHtml();
+  renderEsrbSearchResults(state.esrb.results || []);
+}
+
+async function openEsrbMetadataDialog() {
+  if (!state.selected) return;
+  ensureEsrbMetadataUi();
+  state.esrb.results = [];
+  state.esrb.selectedResult = null;
+  state.esrb.resolvedResult = null;
+  renderEsrbDialog('search');
+  const dialog = $('esrbDialog');
+  try {
+    if (dialog && !dialog.open) dialog.showModal();
+  } catch {
+    if (dialog) dialog.setAttribute('open', 'open');
+  }
+  await runEsrbMetadataSearch(true);
+}
+
+function closeEsrbDialog() {
+  const dialog = $('esrbDialog');
+  if (!dialog) return;
+  try { dialog.close(); } catch { dialog.removeAttribute('open'); }
+}
+
+async function runEsrbMetadataSearch(useInitial = false) {
+  ensureEsrbMetadataUi();
+  const initial = esrbInitialSearchValues();
+  const input = $('esrbSearchInput');
+  const platformInput = $('esrbPlatformInput');
+  const primary = String((useInitial ? initial.q : input?.value) || initial.q || '').trim();
+  const platform = String((useInitial ? initial.platform : platformInput?.value) || initial.platform || '').trim();
+  if (!primary) {
+    esrbSetStatus('Enter a game title to search ESRB.', 'error');
+    return;
+  }
+  if (input && !input.value) input.value = primary;
+  if (platformInput && !platformInput.value) platformInput.value = platform;
+  esrbSetStatus('Searching ESRB.org...', 'info');
+  const params = new URLSearchParams({ q: primary, limit: '12' });
+  if (platform) params.set('platform', platform);
+  try {
+    const res = await fetch(`/api/esrb/search?${params.toString()}`, { cache: 'no-store' });
+    let data = null;
+    try { data = await res.json(); } catch {}
+    if (!res.ok) throw new Error(data?.error || `ESRB search failed. HTTP ${res.status}`);
+    state.esrb.results = Array.isArray(data?.results) ? data.results : [];
+    renderEsrbSearchResults(state.esrb.results);
+    esrbSetStatus(state.esrb.results.length ? `Found ${state.esrb.results.length} result(s). Select the closest rating to compare.` : 'No ESRB results found. Try the exact game title without guide/book wording.', state.esrb.results.length ? 'success' : 'error');
+  } catch (err) {
+    console.error('ESRB search failed', err);
+    esrbSetStatus(`ESRB search failed: ${err?.message || err}`, 'error');
+  }
+}
+
+async function selectEsrbSearchResult(index) {
+  const result = state.esrb.results?.[Number(index)];
+  if (!result) return;
+  state.esrb.selectedResult = result;
+  esrbSetStatus(`Loading details for ${esrbResultTitle(result)}...`, 'info');
+  try {
+    const res = await fetch('/api/esrb/resolve', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(result)
+    });
+    let data = null;
+    try { data = await res.json(); } catch {}
+    if (!res.ok) throw new Error(data?.error || `ESRB detail lookup failed. HTTP ${res.status}`);
+    state.esrb.resolvedResult = data;
+    renderEsrbDialog('compare');
+  } catch (err) {
+    console.error('ESRB detail lookup failed', err);
+    esrbSetStatus(`ESRB detail lookup failed: ${err?.message || err}`, 'error');
+  }
+}
+
+function esrbComparisonHtml(result = {}) {
+  const current = esrbCurrentMetadataForCompare();
+  const incomingRating = result.ratingShort || result.rating || '';
+  const rows = ESRB_IMPORT_FIELDS.map(field => esrbComparisonRowHtml(field, current, { rating: incomingRating })).join('');
+  return `<section class="openlibrary-compare-panel esrb-compare-panel">
+    <button type="button" id="esrbBackToResultsBtn" class="ghost tiny">Back to results</button>
+    <div class="openlibrary-selected-source esrb-selected-source">
+      <h4>${escapeHtml(result.title || 'Selected ESRB result')}</h4>
+      <p>${escapeHtml([result.publisher, esrbDisplayLabel(incomingRating), esrbListLabel(result.platforms)].filter(Boolean).join(' • ') || 'Review the rating before importing.')}</p>
+      <div class="esrb-detail-grid">
+        <div><span>Content Descriptors</span><strong>${escapeHtml(esrbListLabel(result.contentDescriptors) || '\u2014')}</strong></div>
+        <div><span>Interactive Elements</span><strong>${escapeHtml(esrbListLabel(result.interactiveElements) || '\u2014')}</strong></div>
+      </div>
+      ${result.ratingSummary ? `<p class="esrb-rating-summary">${escapeHtml(result.ratingSummary)}</p>` : '<p class="sub">No ESRB rating summary was returned.</p>'}
+    </div>
+    <div class="openlibrary-table-wrap esrb-table-wrap">
+      <table class="openlibrary-comparison-table esrb-comparison-table">
+        <thead><tr><th>Import</th><th>Field</th><th>Existing Guidevault Value</th><th>ESRB Value</th></tr></thead>
+        <tbody>${rows}</tbody>
+      </table>
+    </div>
+    <p id="esrbStatus" class="openlibrary-status esrb-status"></p>
+    <footer class="openlibrary-import-actions esrb-import-actions">
+      <button type="button" id="esrbImportSelectedBtn" class="primary">Import Selected Fields</button>
+      <button type="button" id="esrbImportEmptyBtn" class="ghost">Import Empty Fields Only</button>
+      <button type="button" id="esrbImportAllBtn" class="ghost">Import All Fields</button>
+      <button type="button" id="esrbCancelBtn" class="ghost">Cancel</button>
+    </footer>
+  </section>`;
+}
+
+function esrbComparisonRowHtml(field, current, proposed) {
+  const existing = String(current[field.key] || '').trim();
+  const incoming = String(proposed[field.key] || '').trim();
+  const hasIncoming = !!incoming;
+  const existingBlank = !existing;
+  const existingDisplay = existing ? esrbDisplayLabel(existing) : '\u2014';
+  const incomingDisplay = incoming ? esrbDisplayLabel(incoming) : '\u2014';
+  const differs = hasIncoming && normalizeEsrbRating(existing) !== normalizeEsrbRating(incoming);
+  const checked = hasIncoming && existingBlank ? 'checked' : '';
+  const disabled = hasIncoming ? '' : 'disabled';
+  return `<tr class="${differs ? 'different' : ''} ${!hasIncoming ? 'missing-incoming' : ''}">
+    <td><input type="checkbox" data-esrb-field="${escapeForAttribute(field.key)}" ${checked} ${disabled} /></td>
+    <td>${escapeHtml(field.label)}</td>
+    <td>${escapeHtml(existingDisplay)}</td>
+    <td>${escapeHtml(incomingDisplay)}</td>
+  </tr>`;
+}
+
+function esrbSelectedFieldsForMode(mode = 'selected') {
+  const result = state.esrb.resolvedResult || {};
+  const current = esrbCurrentMetadataForCompare();
+  const incoming = result.ratingShort || result.rating || '';
+  const fields = [];
+  ESRB_IMPORT_FIELDS.forEach(field => {
+    if (!incoming) return;
+    if (mode === 'all') { fields.push(field.key); return; }
+    if (mode === 'empty') {
+      if (!String(current[field.key] || '').trim()) fields.push(field.key);
+      return;
+    }
+    const checkbox = document.querySelector(`#esrbDialog input[data-esrb-field="${field.key}"]`);
+    if (checkbox?.checked) fields.push(field.key);
+  });
+  return fields;
+}
+
+function esrbPayloadFromFields(fieldKeys = []) {
+  const result = state.esrb.resolvedResult || {};
+  const payload = { metadataSource: 'ESRB' };
+  const rating = String(result.ratingShort || result.rating || '').trim();
+  if (fieldKeys.includes('rating') && rating) payload.rating = rating;
+  if (result.sourceUrl) payload.esrbUrl = result.sourceUrl;
+  if (result.id) payload.esrbId = String(result.id);
+  return payload;
+}
+
+async function importEsrbMetadata(mode = 'selected') {
+  const fields = esrbSelectedFieldsForMode(mode);
+  if (!fields.length) {
+    esrbSetStatus('No importable ESRB fields were selected.', 'error');
+    return;
+  }
+  const payload = esrbPayloadFromFields(fields);
+  try {
+    esrbSetStatus('Importing selected ESRB rating...', 'info');
+    const updated = await saveSelectedMetadata(payload, { tab: 'metadata' });
+    if (updated) {
+      setStatus('ESRB rating imported. IGDB game metadata and Open Library book metadata remain separate.');
+      closeEsrbDialog();
+    }
+  } catch (err) {
+    console.error('ESRB rating import failed', err);
+    esrbSetStatus(`ESRB rating import failed: ${err?.message || err}`, 'error');
+  }
+}
+
+const IGDB_IMPORT_FIELDS = [
+  { key: 'gameTitle', label: 'Game Title', payloadKey: 'gameTitle' },
+  { key: 'gameDeveloper', label: 'Game Developer', payloadKey: 'developer' },
+  { key: 'gamePublisher', label: 'Game Publisher', payloadKey: 'gamePublisher' },
+  { key: 'gameReleaseYear', label: 'Game Release Year', payloadKey: 'gameReleaseYear' },
+  { key: 'gameFranchise', label: 'Game Franchise / Series', payloadKey: 'franchise' },
+  { key: 'genre', label: 'Genre', payloadKey: 'genre' },
+  { key: 'associatedPlatforms', label: 'Associated Platforms', payloadKey: 'associatedPlatforms' },
+  { key: 'preferredPlatform', label: 'Preferred Platform', payloadKey: 'category' }
+];
+
+function igdbArray(value) {
+  if (Array.isArray(value)) return value.map(v => String(v || '').trim()).filter(Boolean);
+  const text = String(value || '').trim();
+  if (!text || text === '\u2014') return [];
+  return text.split(',').map(v => v.trim()).filter(Boolean);
+}
+
+function igdbListLabel(value) {
+  return igdbArray(value).join(', ');
+}
+
+function isIgdbBlank(value, key = '') {
+  if (Array.isArray(value)) return !value.length;
+  const text = key === 'associatedPlatforms' ? igdbListLabel(value) : String(value ?? '').trim();
+  return !text || text === '\u2014' || text.toLowerCase() === 'unknown';
+}
+
+function igdbCleanValue(key, value) {
+  if (key === 'associatedPlatforms') return igdbArray(value);
+  return String(value ?? '').trim();
+}
+
+function igdbDisplayValue(key, value) {
+  if (key === 'associatedPlatforms') return igdbListLabel(value);
+  return String(value ?? '').trim();
+}
+
+function igdbCurrentMetadataForCompare() {
+  let form = {};
+  try { form = buildCurrentMetadataPayloadFromForm(); } catch { form = {}; }
+  const item = state.selected || {};
+  const associated = igdbArray($('editAssociatedPlatforms')?.value || platformListText(item));
+  return {
+    gameTitle: form.gameTitle || item.gameTitle || item.platformMatchTitle || item.series || '',
+    gameDeveloper: form.developer || item.developer || item.gameDeveloper || '',
+    gamePublisher: form.gamePublisher || item.gamePublisher || '',
+    gameReleaseYear: form.gameReleaseYear || item.gameReleaseYear || '',
+    gameFranchise: form.franchise || item.franchise || item.series || '',
+    genre: form.genre || item.genre || '',
+    associatedPlatforms: associated,
+    preferredPlatform: form.category || preferredPlatformOf(item) || categoryOf(item) || ''
+  };
+}
+
+function igdbInitialSearchValues() {
+  let form = {};
+  try { form = buildCurrentMetadataPayloadFromForm(); } catch { form = {}; }
+  const item = state.selected || {};
+  const gameTitle = String(form.gameTitle || item.gameTitle || item.platformMatchTitle || item.series || '').trim();
+  const fallbackTitle = String(form.title || item.title || displayTitle(item) || '').trim();
+  const platform = String(form.category || preferredPlatformOf(item) || categoryOf(item) || '').trim();
+  const year = String(form.gameReleaseYear || item.gameReleaseYear || form.year || item.year || '').trim();
+  return {
+    q: gameTitle || fallbackTitle,
+    platform,
+    year
+  };
+}
+
+function igdbResultTitle(result = {}) {
+  return [result.gameTitle || result.name, igdbListLabel(result.platforms || result.associatedPlatforms), result.gameReleaseYear].filter(Boolean).join(' • ') || 'IGDB game result';
+}
+
+function ensureIgdbMetadataUi() {
+  if (!$('igdbDialog')) {
+    const dialog = document.createElement('dialog');
+    dialog.id = 'igdbDialog';
+    dialog.className = 'openlibrary-dialog igdb-dialog';
+    dialog.innerHTML = `
+      <div class="openlibrary-modal igdb-modal">
+        <header class="openlibrary-modal-head igdb-modal-head">
+          <div>
+            <h3>Search IGDB Game Metadata</h3>
+            <p>Search by game title first. Use platform and year as secondary hints. Review existing Guidevault game fields beside IGDB values before importing.</p>
+          </div>
+          <button type="button" id="igdbCloseBtn" class="ghost tiny">Close</button>
+        </header>
+        <div id="igdbDialogBody" class="openlibrary-modal-body igdb-modal-body"></div>
+      </div>`;
+    document.body.appendChild(dialog);
+  }
+
+  const existing = $('igdbSearchBtn');
+  if (existing) {
+    existing.classList.add('ghost', 'igdb-action-button');
+    existing.type = 'button';
+    return;
+  }
+
+  const target = document.querySelector('#file-namePanel .file-metadata-card-actions .file-metadata-actions')
+    || $('openLibrarySearchBtn')?.parentElement
+    || $('exportGuideMetadataBtn')?.parentElement
+    || $('metadataPanel');
+  if (target) {
+    const btn = document.createElement('button');
+    btn.id = 'igdbSearchBtn';
+    btn.type = 'button';
+    btn.className = 'ghost igdb-action-button';
+    btn.textContent = 'Search IGDB Game Metadata';
+    btn.title = 'Search IGDB by game title and review game metadata before importing selected fields.';
+    target.appendChild(btn);
+  }
+}
+
+function igdbSetStatus(message = '', tone = '') {
+  const el = $('igdbStatus');
+  if (!el) return;
+  el.textContent = message;
+  el.dataset.tone = tone || '';
+}
+
+function igdbSearchPanelHtml() {
+  const initial = igdbInitialSearchValues();
+  const primaryValue = $('igdbSearchInput')?.value || initial.q || '';
+  const platformValue = $('igdbPlatformInput')?.value || initial.platform || '';
+  const yearValue = $('igdbYearInput')?.value || initial.year || '';
+  return `<section class="openlibrary-search-panel igdb-search-panel">
+    <div class="openlibrary-search-fields igdb-search-fields">
+      <label>Game title / primary search
+        <input id="igdbSearchInput" type="search" value="${escapeForAttribute(primaryValue)}" placeholder="Final Fantasy III" />
+      </label>
+      <label>Platform hint
+        <input id="igdbPlatformInput" type="search" value="${escapeForAttribute(platformValue)}" placeholder="Optional: SNES, PlayStation, PC" />
+      </label>
+      <label>Year hint
+        <input id="igdbYearInput" type="search" value="${escapeForAttribute(yearValue)}" placeholder="Optional" />
+      </label>
+      <button type="button" id="igdbRunSearchBtn" class="primary">Search</button>
+    </div>
+    <p class="openlibrary-help">IGDB requires a Twitch/IGDB Client ID and Client Secret in Settings &gt; Server &gt; General &gt; Metadata Sources. Guidevault keeps this lookup separate from Open Library book metadata.</p>
+    <p id="igdbStatus" class="openlibrary-status igdb-status"></p>
+    <div id="igdbResults" class="openlibrary-results igdb-results"></div>
+  </section>`;
+}
+
+function renderIgdbSearchResults(results = state.igdb.results || []) {
+  const host = $('igdbResults');
+  if (!host) return;
+  if (!results.length) {
+    host.innerHTML = '<div class="openlibrary-empty igdb-empty">No IGDB results yet. Search by the actual game title first, then use platform/year only as hints.</div>';
+    return;
+  }
+  host.innerHTML = results.map((result, index) => `
+    <article class="openlibrary-result-card igdb-result-card">
+      <div class="openlibrary-result-cover igdb-result-cover">${result.coverPreviewUrl ? `<img src="${escapeForAttribute(result.coverPreviewUrl)}" alt="" loading="lazy" />` : '<span>No cover</span>'}</div>
+      <div class="openlibrary-result-main igdb-result-main">
+        <h4>${escapeHtml(result.gameTitle || result.name || 'Untitled game')}</h4>
+        <p>${escapeHtml([igdbListLabel(result.developers), igdbListLabel(result.publishers), result.gameReleaseYear].filter(Boolean).join(' • ') || 'No extra result details')}</p>
+        <small>${escapeHtml(result.matchBy || 'Game title')} match • ${escapeHtml(result.confidence || 'Unknown')} confidence${result.gameFranchise ? ` • ${escapeHtml(result.gameFranchise)}` : ''}${igdbListLabel(result.associatedPlatforms) ? ` • ${escapeHtml(igdbListLabel(result.associatedPlatforms))}` : ''}</small>
+      </div>
+      <button type="button" class="ghost igdb-select-result" data-result-index="${index}">Select</button>
+    </article>`).join('');
+}
+
+function renderIgdbDialog(step = state.igdb.step || 'search') {
+  ensureIgdbMetadataUi();
+  const body = $('igdbDialogBody');
+  if (!body) return;
+  state.igdb.step = step;
+  if (step === 'compare' && state.igdb.resolvedResult) {
+    body.innerHTML = igdbComparisonHtml(state.igdb.resolvedResult);
+    return;
+  }
+  body.innerHTML = igdbSearchPanelHtml();
+  renderIgdbSearchResults(state.igdb.results || []);
+}
+
+async function openIgdbMetadataDialog() {
+  if (!state.selected) return;
+  ensureIgdbMetadataUi();
+  state.igdb.results = [];
+  state.igdb.selectedResult = null;
+  state.igdb.resolvedResult = null;
+  renderIgdbDialog('search');
+  const dialog = $('igdbDialog');
+  try {
+    if (dialog && !dialog.open) dialog.showModal();
+  } catch {
+    if (dialog) dialog.setAttribute('open', 'open');
+  }
+  await runIgdbMetadataSearch(true);
+}
+
+function closeIgdbDialog() {
+  const dialog = $('igdbDialog');
+  if (!dialog) return;
+  try { dialog.close(); } catch { dialog.removeAttribute('open'); }
+}
+
+async function runIgdbMetadataSearch(useInitial = false) {
+  ensureIgdbMetadataUi();
+  const initial = igdbInitialSearchValues();
+  const input = $('igdbSearchInput');
+  const platformInput = $('igdbPlatformInput');
+  const yearInput = $('igdbYearInput');
+  const primary = String((useInitial ? initial.q : input?.value) || initial.q || '').trim();
+  const platform = String((useInitial ? initial.platform : platformInput?.value) || initial.platform || '').trim();
+  const year = String((useInitial ? initial.year : yearInput?.value) || initial.year || '').trim();
+  if (!primary) {
+    igdbSetStatus('Enter a game title to search IGDB.', 'error');
+    return;
+  }
+  if (input && !input.value) input.value = primary;
+  if (platformInput && !platformInput.value) platformInput.value = platform;
+  if (yearInput && !yearInput.value) yearInput.value = year;
+  igdbSetStatus('Searching IGDB...', 'info');
+  const params = new URLSearchParams({ q: primary, limit: '16' });
+  if (platform) params.set('platform', platform);
+  if (year) params.set('year', year);
+  try {
+    const res = await fetch(`/api/igdb/search?${params.toString()}`, { cache: 'no-store' });
+    let data = null;
+    try { data = await res.json(); } catch {}
+    if (!res.ok) throw new Error(data?.error || `IGDB search failed. HTTP ${res.status}`);
+    state.igdb.results = Array.isArray(data?.results) ? data.results : [];
+    renderIgdbSearchResults(state.igdb.results);
+    igdbSetStatus(state.igdb.results.length ? `Found ${state.igdb.results.length} result(s). Select the closest game to compare fields.` : 'No IGDB results found. Try the exact game title without guide/book wording.', state.igdb.results.length ? 'success' : 'error');
+  } catch (err) {
+    console.error('IGDB search failed', err);
+    igdbSetStatus(`IGDB search failed: ${err?.message || err}`, 'error');
+  }
+}
+
+async function selectIgdbSearchResult(index) {
+  const result = state.igdb.results?.[Number(index)];
+  if (!result) return;
+  state.igdb.selectedResult = result;
+  igdbSetStatus(`Loading details for ${igdbResultTitle(result)}...`, 'info');
+  try {
+    const res = await fetch('/api/igdb/resolve', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(result)
+    });
+    let data = null;
+    try { data = await res.json(); } catch {}
+    if (!res.ok) throw new Error(data?.error || `IGDB detail lookup failed. HTTP ${res.status}`);
+    state.igdb.resolvedResult = data;
+    renderIgdbDialog('compare');
+  } catch (err) {
+    console.error('IGDB detail lookup failed', err);
+    igdbSetStatus(`IGDB detail lookup failed: ${err?.message || err}`, 'error');
+  }
+}
+
+function igdbComparisonHtml(result = {}) {
+  const current = igdbCurrentMetadataForCompare();
+  const proposed = {
+    gameTitle: igdbCleanValue('gameTitle', result.gameTitle || result.name),
+    gameDeveloper: igdbListLabel(result.developers),
+    gamePublisher: igdbListLabel(result.publishers),
+    gameReleaseYear: igdbCleanValue('gameReleaseYear', result.gameReleaseYear),
+    gameFranchise: igdbCleanValue('gameFranchise', result.gameFranchise),
+    genre: igdbListLabel(result.genres),
+    associatedPlatforms: normalizeGuidevaultPlatformList(result.associatedPlatforms),
+    preferredPlatform: igdbCleanValue('preferredPlatform', normalizeGuidevaultPlatformName(result.preferredPlatform))
+  };
+  const rows = IGDB_IMPORT_FIELDS.map(field => igdbComparisonRowHtml(field, current, proposed)).join('');
+  return `<section class="openlibrary-compare-panel igdb-compare-panel">
+    <button type="button" id="igdbBackToResultsBtn" class="ghost tiny">Back to results</button>
+    <div class="openlibrary-selected-source igdb-selected-source">
+      <h4>${escapeHtml(result.gameTitle || result.name || 'Selected IGDB result')}</h4>
+      <p>${escapeHtml([igdbListLabel(result.developers), igdbListLabel(result.publishers), result.gameReleaseYear, igdbListLabel(result.associatedPlatforms)].filter(Boolean).join(' • ') || 'Review fields before importing.')}</p>
+      ${result.coverPreviewUrl ? `<div class="igdb-preview-note"><img src="${escapeForAttribute(result.coverPreviewUrl)}" alt="IGDB cover preview" /><span>IGDB cover preview is only a visual match aid and is not imported.</span></div>` : '<p class="sub">No IGDB cover preview was returned. Covers are not imported from this lookup.</p>'}
+    </div>
+    <div class="openlibrary-table-wrap igdb-table-wrap">
+      <table class="openlibrary-comparison-table igdb-comparison-table">
+        <thead><tr><th>Import</th><th>Field</th><th>Existing Guidevault Value</th><th>IGDB Value</th></tr></thead>
+        <tbody>${rows}</tbody>
+      </table>
+    </div>
+    <p id="igdbStatus" class="openlibrary-status igdb-status"></p>
+    <footer class="openlibrary-import-actions igdb-import-actions">
+      <button type="button" id="igdbImportSelectedBtn" class="primary">Import Selected Fields</button>
+      <button type="button" id="igdbImportEmptyBtn" class="ghost">Import Empty Fields Only</button>
+      <button type="button" id="igdbImportAllBtn" class="ghost">Import All Fields</button>
+      <button type="button" id="igdbCancelBtn" class="ghost">Cancel</button>
+    </footer>
+  </section>`;
+}
+
+function igdbComparisonRowHtml(field, current, proposed) {
+  const existing = igdbCleanValue(field.key, current[field.key]);
+  const incoming = igdbCleanValue(field.key, proposed[field.key]);
+  const hasIncoming = !isIgdbBlank(incoming, field.key);
+  const existingBlank = isIgdbBlank(existing, field.key);
+  const existingDisplay = igdbDisplayValue(field.key, existing);
+  const incomingDisplay = igdbDisplayValue(field.key, incoming);
+  const differs = hasIncoming && String(existingDisplay || '').trim() !== String(incomingDisplay || '').trim();
+  const checked = hasIncoming && existingBlank ? 'checked' : '';
+  const disabled = hasIncoming ? '' : 'disabled';
+  return `<tr class="${differs ? 'different' : ''} ${!hasIncoming ? 'missing-incoming' : ''}">
+    <td><input type="checkbox" data-igdb-field="${escapeForAttribute(field.key)}" ${checked} ${disabled} /></td>
+    <td>${escapeHtml(field.label)}</td>
+    <td>${escapeHtml(existingDisplay || '\u2014')}</td>
+    <td>${escapeHtml(incomingDisplay || '\u2014')}</td>
+  </tr>`;
+}
+
+function igdbSelectedFieldsForMode(mode = 'selected') {
+  const result = state.igdb.resolvedResult || {};
+  const current = igdbCurrentMetadataForCompare();
+  const proposed = {
+    gameTitle: result.gameTitle || result.name,
+    gameDeveloper: igdbListLabel(result.developers),
+    gamePublisher: igdbListLabel(result.publishers),
+    gameReleaseYear: result.gameReleaseYear,
+    gameFranchise: result.gameFranchise,
+    genre: igdbListLabel(result.genres),
+    associatedPlatforms: normalizeGuidevaultPlatformList(result.associatedPlatforms),
+    preferredPlatform: normalizeGuidevaultPlatformName(result.preferredPlatform)
+  };
+  const fields = [];
+  IGDB_IMPORT_FIELDS.forEach(field => {
+    const incoming = igdbCleanValue(field.key, proposed[field.key]);
+    if (isIgdbBlank(incoming, field.key)) return;
+    if (mode === 'all') { fields.push(field.key); return; }
+    if (mode === 'empty') {
+      if (isIgdbBlank(current[field.key], field.key)) fields.push(field.key);
+      return;
+    }
+    const checkbox = document.querySelector(`#igdbDialog input[data-igdb-field="${field.key}"]`);
+    if (checkbox?.checked) fields.push(field.key);
+  });
+  return fields;
+}
+
+function igdbPayloadFromFields(fieldKeys = []) {
+  const result = state.igdb.resolvedResult || {};
+  const payload = { metadataSource: 'IGDB' };
+  fieldKeys.forEach(key => {
+    const value = key === 'associatedPlatforms'
+      ? normalizeGuidevaultPlatformList(result.associatedPlatforms)
+      : key === 'gameDeveloper'
+        ? igdbListLabel(result.developers)
+        : key === 'gamePublisher'
+          ? igdbListLabel(result.publishers)
+          : key === 'genre'
+            ? igdbListLabel(result.genres)
+            : String(key === 'preferredPlatform' ? normalizeGuidevaultPlatformName(result[key]) : (result[key] || (key === 'gameTitle' ? result.name : '') || '')).trim();
+    if (isIgdbBlank(value, key)) return;
+    if (key === 'associatedPlatforms') {
+      payload.associatedPlatforms = value;
+      payload.coveredPlatforms = value;
+      return;
+    }
+    if (key === 'preferredPlatform') {
+      payload.category = value;
+      payload.system = value;
+      payload.preferredPlatform = value;
+      return;
+    }
+    if (key === 'gameTitle') {
+      payload.gameTitle = value;
+      payload.platformMatchTitle = value;
+      return;
+    }
+    if (key === 'gameDeveloper') {
+      payload.developer = value;
+      payload.gameDeveloper = value;
+      return;
+    }
+    if (key === 'gameFranchise') {
+      payload.franchise = value;
+      payload.gameFranchise = value;
+      return;
+    }
+    const field = IGDB_IMPORT_FIELDS.find(f => f.key === key);
+    if (field) payload[field.payloadKey] = value;
+  });
+  if (result.id) {
+    payload.igdbId = String(result.id);
+    payload.igdbUrl = result.sourceUrl || '';
+  }
+  return payload;
+}
+
+async function importIgdbMetadata(mode = 'selected') {
+  const fields = igdbSelectedFieldsForMode(mode);
+  if (!fields.length) {
+    igdbSetStatus('No importable IGDB fields were selected.', 'error');
+    return;
+  }
+  const payload = igdbPayloadFromFields(fields);
+  try {
+    igdbSetStatus('Importing selected IGDB game metadata...', 'info');
+    const updated = await saveSelectedMetadata(payload, { tab: 'file-name' });
+    if (updated) {
+      setStatus('IGDB game metadata imported. Open Library book metadata remains separate. Covers were not imported.');
+      closeIgdbDialog();
+    }
+  } catch (err) {
+    console.error('IGDB metadata import failed', err);
+    igdbSetStatus(`IGDB metadata import failed: ${err?.message || err}`, 'error');
+  }
+}
+
 function updateMetadataFileMaintenance() {
+  ensureEsrbMetadataUi();
   const panel = $('metadataFileMaintenance');
   if (!panel) return;
   hydrateFileRenameSchema();
@@ -8297,6 +9502,29 @@ function detailValue(value) {
   return raw ? raw : '\u2014';
 }
 
+function firstDetailText(...values) {
+  for (const value of values) {
+    const raw = String(value ?? '').trim();
+    if (raw) return raw;
+  }
+  return '';
+}
+
+function strategyGuideTitleForItem(item) {
+  return firstDetailText(item?.strategyGuideTitle, item?.title, item?.name);
+}
+
+function strategyGameTitleForItem(item) {
+  return firstDetailText(item?.gameTitle, item?.sortTitle, item?.franchise, item?.series, item?.platformMatchTitle);
+}
+
+function detailHeaderTitleForItem(item) {
+  if (item?.kind === 'Strategy Guide') {
+    return strategyGameTitleForItem(item) || strategyGuideTitleForItem(item) || displayTitle(item) || 'Strategy Guide';
+  }
+  return displayTitle(item);
+}
+
 function detailTagListHtml(value) {
   const values = itemArray(value);
   if (!values.length) return '<span class="muted-dash">\u2014</span>';
@@ -8424,7 +9652,8 @@ function manualOverviewHtml(item) {
 
 
 function strategyOverviewHtml(item) {
-  const gameTitle = item.gameTitle || item.platformMatchTitle || item.series || item.title || '';
+  const guideTitle = strategyGuideTitleForItem(item);
+  const gameTitle = strategyGameTitleForItem(item);
   const systemLabel = detailSystemLabelForItem(item);
   const identityTags = [item.guideType || 'Strategy Guide', systemLabel, item.year].filter(Boolean);
   const rating = String(item?.rating || '').trim();
@@ -8437,7 +9666,7 @@ function strategyOverviewHtml(item) {
     <div class="strategy-hero-overview${showEsrb ? ' has-hero-esrb' : ''}">
       <div class="strategy-hero-copy">
         <div class="strategy-hero-kicker">Strategy Guide</div>
-        <h2>${escapeHtml(gameTitle || item.title || 'Strategy Guide')}</h2>
+        <h2>${escapeHtml(guideTitle || gameTitle || 'Strategy Guide')}</h2>
         <p>${escapeHtml(item.summary || descriptionFor(item))}</p>
         <div class="strategy-hero-tags">${identityTags.map(v => `<span class="overview-chip">${escapeHtml(v)}</span>`).join('')}</div>
       </div>
@@ -8446,8 +9675,7 @@ function strategyOverviewHtml(item) {
     <div class="strategy-overview-board">
       <section class="overview-card strategy-quick-card">
         <div class="strategy-snapshot-grid">
-          ${magazineOverviewField('Guide Title', item.title, 'wide')}
-          ${magazineOverviewField('Game', gameTitle)}
+          ${magazineOverviewField('Game Title', gameTitle, 'wide')}
           ${magazineOverviewField('System', systemLabel)}
           ${magazineOverviewField('Publisher', item.publisher)}
           ${magazineOverviewField('Author', item.writer)}
@@ -8753,7 +9981,7 @@ function renderDetails(item) {
   applyColorscapeToDetail(item);
   if ($('readBtn')) $('readBtn').dataset.itemId = item.id || '';
   $('detailCover').classList.toggle('nes-detail-cover', specialCardClass(item).includes('nes-manual-card'));
-  $('detailTitle').textContent = displayTitle(item);
+  $('detailTitle').textContent = detailHeaderTitleForItem(item);
   updateDetailNavigationButtons(item);
   const detectedSystem = detailSystemLabelForItem(item);
   $('detailSub').textContent = `${detectedSystem} \u2022 ${item.year || 'Unknown'}`;
@@ -8859,6 +10087,8 @@ function renderDetails(item) {
   $('notesText').value = item.notes || '';
   renderDetailReadingProfilePanel(item);
   updateMetadataExportButtonLabel(item.kind || '');
+  ensureOpenLibraryMetadataUi();
+  ensureIgdbMetadataUi();
   updateMetadataFileMaintenance();
 }
 
@@ -12606,6 +13836,62 @@ if ($('file-namePanel')) {
   $('file-namePanel').addEventListener('input', () => updateMetadataFileMaintenance());
   $('file-namePanel').addEventListener('change', () => updateMetadataFileMaintenance());
 }
+
+document.addEventListener('click', e => {
+  const openLibrary = e.target.closest?.('#openLibrarySearchBtn');
+  if (openLibrary) { e.preventDefault(); openOpenLibraryMetadataDialog(); return; }
+  const close = e.target.closest?.('#openLibraryCloseBtn, #openLibraryCancelBtn');
+  if (close) { e.preventDefault(); closeOpenLibraryDialog(); return; }
+  const run = e.target.closest?.('#openLibraryRunSearchBtn');
+  if (run) { e.preventDefault(); runOpenLibraryMetadataSearch(false); return; }
+  const select = e.target.closest?.('.openlibrary-select-result');
+  if (select) { e.preventDefault(); selectOpenLibrarySearchResult(select.dataset.resultIndex || '0'); return; }
+  const back = e.target.closest?.('#openLibraryBackToResultsBtn');
+  if (back) { e.preventDefault(); renderOpenLibraryDialog('search'); return; }
+  const selected = e.target.closest?.('#openLibraryImportSelectedBtn');
+  if (selected) { e.preventDefault(); importOpenLibraryMetadata('selected'); return; }
+  const empty = e.target.closest?.('#openLibraryImportEmptyBtn');
+  if (empty) { e.preventDefault(); importOpenLibraryMetadata('empty'); return; }
+  const all = e.target.closest?.('#openLibraryImportAllBtn');
+  if (all) { e.preventDefault(); importOpenLibraryMetadata('all'); }
+});
+
+document.addEventListener('click', e => {
+  const esrb = e.target.closest?.('#esrbSearchBtn');
+  if (esrb) { e.preventDefault(); openEsrbMetadataDialog(); return; }
+  const close = e.target.closest?.('#esrbCloseBtn, #esrbCancelBtn');
+  if (close) { e.preventDefault(); closeEsrbDialog(); return; }
+  const run = e.target.closest?.('#esrbRunSearchBtn');
+  if (run) { e.preventDefault(); runEsrbMetadataSearch(false); return; }
+  const select = e.target.closest?.('.esrb-select-result');
+  if (select) { e.preventDefault(); selectEsrbSearchResult(select.dataset.resultIndex || '0'); return; }
+  const back = e.target.closest?.('#esrbBackToResultsBtn');
+  if (back) { e.preventDefault(); renderEsrbDialog('search'); return; }
+  const selected = e.target.closest?.('#esrbImportSelectedBtn');
+  if (selected) { e.preventDefault(); importEsrbMetadata('selected'); return; }
+  const empty = e.target.closest?.('#esrbImportEmptyBtn');
+  if (empty) { e.preventDefault(); importEsrbMetadata('empty'); return; }
+  const all = e.target.closest?.('#esrbImportAllBtn');
+  if (all) { e.preventDefault(); importEsrbMetadata('all'); }
+});
+document.addEventListener('click', e => {
+  const igdb = e.target.closest?.('#igdbSearchBtn');
+  if (igdb) { e.preventDefault(); openIgdbMetadataDialog(); return; }
+  const close = e.target.closest?.('#igdbCloseBtn, #igdbCancelBtn');
+  if (close) { e.preventDefault(); closeIgdbDialog(); return; }
+  const run = e.target.closest?.('#igdbRunSearchBtn');
+  if (run) { e.preventDefault(); runIgdbMetadataSearch(false); return; }
+  const select = e.target.closest?.('.igdb-select-result');
+  if (select) { e.preventDefault(); selectIgdbSearchResult(select.dataset.resultIndex || '0'); return; }
+  const back = e.target.closest?.('#igdbBackToResultsBtn');
+  if (back) { e.preventDefault(); renderIgdbDialog('search'); return; }
+  const selected = e.target.closest?.('#igdbImportSelectedBtn');
+  if (selected) { e.preventDefault(); importIgdbMetadata('selected'); return; }
+  const empty = e.target.closest?.('#igdbImportEmptyBtn');
+  if (empty) { e.preventDefault(); importIgdbMetadata('empty'); return; }
+  const all = e.target.closest?.('#igdbImportAllBtn');
+  if (all) { e.preventDefault(); importIgdbMetadata('all'); }
+});
 if ($('saveNotesBtn')) $('saveNotesBtn').addEventListener('click', async e => { e.preventDefault(); await saveSelectedMetadata({ notes: $('notesText').value }, { tab: 'notes', button: e.currentTarget }); });
 if (document.querySelector('.brand-wordmark')) document.querySelector('.brand-wordmark').addEventListener('click', e => { e.preventDefault(); navigateGuidevaultHome(); });
 document.querySelector('.brand-wordmark')?.addEventListener('keydown', e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); navigateGuidevaultHome(); } });
@@ -12769,5 +14055,4 @@ installLibraryCardDelegates();
 installGlobalDetailDelegate();
 syncEmailTemplatePreview();
 initializeGuidevaultAuthAndApp();
-
 

@@ -4,7 +4,7 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Guidevault</title>
-  <link rel="stylesheet" href="/styles.css?v=0.9.66-file-metadata-layout-polish" />
+  <link rel="stylesheet" href="/styles.css?v=0.9.65-file-metadata-layout-polish" />
 </head>
 <body class="right-collapsed auth-locked">
   <section id="loginView" class="login-view" aria-labelledby="loginTitle">
@@ -321,6 +321,9 @@
                         <button id="saveMetadataBtn" class="primary" type="button">Save Metadata</button>
                         <button id="exportGuideMetadataBtn" class="ghost" type="button">Export Guide Metadata</button>
                         <button id="enrichCurrentFileMetadataBtn" class="ghost" type="button">Import Guidevault metadata JSON</button>
+                        <button id="openLibrarySearchBtn" class="ghost openlibrary-action-button" type="button">Search Open Library Metadata</button>
+                        <button id="igdbSearchBtn" class="ghost igdb-action-button" type="button">Search IGDB Game Metadata</button>
+                        <button id="esrbSearchBtn" class="ghost esrb-action-button" type="button">Search ESRB Rating</button>
                       </div>
                       <p id="metadataExportStatus" class="sub metadata-export-status" aria-live="polite"></p>
                     </section>
@@ -1106,6 +1109,19 @@
                   <p class="sub">Creates a point-in-time backup using the configured backup directory.</p>
                 </div>
               </section>
+              <section class="server-general-section metadata-source-section">
+                <div class="server-general-section-head">
+                  <span class="server-section-icon">&#x25C8;</span>
+                  <div>
+                    <h2>Metadata Sources</h2>
+                    <p class="sub">Configure external lookup providers. Open Library does not require a key; IGDB uses Twitch application credentials for game metadata lookups.</p>
+                  </div>
+                </div>
+                <div class="server-settings-grid server-metadata-source-grid">
+                  <label for="igdbClientId">IGDB Client ID<input id="igdbClientId" type="text" autocomplete="off" placeholder="Twitch Developer Client ID" /><span class="field-help">Used only by the Guidevault backend when searching IGDB.</span></label>
+                  <label for="igdbClientSecret">IGDB Client Secret<input id="igdbClientSecret" type="password" autocomplete="new-password" placeholder="Twitch Developer Client Secret" /><span class="field-help">Stored locally in Guidevault config. Treat this like a password.</span></label>
+                </div>
+              </section>
               <div class="settings-actions inline-actions server-general-actions">
                 <button id="serverSaveSettings" class="primary" type="button">Save General Settings</button>
               </div>
@@ -1414,6 +1430,115 @@
 
             <h2>Update History</h2>
             <div class="system-update-list">
+              <details class="system-update-entry" open>
+                <summary>
+                  <span>Guidevault 0.9.75 - IGDB Tab Retention</span>
+                  <em>Installed</em>
+                </summary>
+                <div class="system-update-body">
+                  <h3>Changed <b>1</b></h3>
+                  <ul>
+                    <li>Kept the details page on the File &amp; Metadata tab after importing IGDB game metadata instead of switching back to the Metadata tab.</li>
+                  </ul>
+                </div>
+              </details>
+
+              <details class="system-update-entry">
+                <summary>
+                  <span>Guidevault 0.9.74 - ESRB Rating Lookup</span>
+                  <em>Installed</em>
+                </summary>
+                <div class="system-update-body">
+                  <h3>Changed <b>2</b></h3>
+                  <ul>
+                    <li>Added a separate ESRB.org lookup flow for importing the selected game rating into Guidevault.</li>
+                    <li>Adjusted the Open Library metadata button so it no longer uses heavy bold font styling.</li>
+                  </ul>
+                </div>
+              </details>
+
+              <details class="system-update-entry">
+                <summary>
+                  <span>Guidevault 0.9.73 - Platform Icon Name Normalization</span>
+                  <em>Installed</em>
+                </summary>
+                <div class="system-update-body">
+                  <h3>Changed <b>2</b></h3>
+                  <ul>
+                    <li>Normalized PlayStation 2/PS2 platform values to the Guidevault-preferred name Sony Playstation 2.</li>
+                    <li>Expanded platform normalization so imported IGDB names prefer known Guidevault platform/icon names for Sony Playstation generations and related abbreviations.</li>
+                  </ul>
+                </div>
+              </details>
+              <details class="system-update-entry">
+                <summary>
+                  <span>Guidevault 0.9.72 - MS-DOS Platform Normalization</span>
+                  <em>Installed</em>
+                </summary>
+                <div class="system-update-body">
+                  <h3>Changed <b>1</b></h3>
+                  <ul>
+                    <li>Normalized IGDB/platform values of DOS, MS DOS, and related variants to the Guidevault-preferred platform name MS-DOS instead of grouping them under Windows.</li>
+                  </ul>
+                </div>
+              </details>
+              <details class="system-update-entry">
+                <summary>
+                  <span>Guidevault 0.9.71 - Strategy Overview and IGDB Platform Names</span>
+                  <em>Installed</em>
+                </summary>
+                <div class="system-update-body">
+                  <h3>Changed <b>2</b></h3>
+                  <ul>
+                    <li>Removed the duplicate Strategy Guide Title field from the strategy guide overview card because the guide title already appears under the Strategy Guide heading.</li>
+                    <li>Normalized imported/displayed IGDB platform names to Guidevault-preferred names such as Windows, Sony Playstation, Sony Playstation 3, Sony PSP, Sega Dreamcast, and Microsoft Xbox.</li>
+                  </ul>
+                </div>
+              </details>
+              <details class="system-update-entry">
+                <summary>
+                  <span>Guidevault 0.9.70 - Split Open Library and IGDB Metadata Lookups</span>
+                  <em>Installed</em>
+                </summary>
+                <div class="system-update-body">
+                  <h3>Added <b>4</b></h3>
+                  <ul>
+                    <li>Added a separate Search IGDB Game Metadata action for game-side fields instead of mixing game data into the Open Library book lookup.</li>
+                    <li>Added IGDB comparison/import support for game title, developer, publisher, release year, franchise/series, genre, associated platforms, and preferred platform.</li>
+                    <li>Added IGDB Client ID and Client Secret settings under Server &gt; General &gt; Metadata Sources.</li>
+                    <li>Kept external cover art as preview-only; Guidevault/CBZ covers are not replaced by metadata lookups.</li>
+                  </ul>
+                </div>
+              </details>
+              <details class="system-update-entry">
+                <summary>
+                  <span>Guidevault 0.9.69 - Strategy Guide Detail Title Mapping</span>
+                  <em>Installed</em>
+                </summary>
+                <div class="system-update-body">
+                  <h3>Improved <b>3</b></h3>
+                  <ul>
+                    <li>Changed Strategy Guide detail pages so the top page title uses the Game Title value when available.</li>
+                    <li>Changed the Strategy Guide hero heading to show the Strategy Guide Title value instead of repeating the game title.</li>
+                    <li>Clarified the Overview identity fields as Strategy Guide Title and Game Title.</li>
+                  </ul>
+                </div>
+              </details>
+              <details class="system-update-entry" open>
+                <summary>
+                  <span>Guidevault 0.9.68 - Open Library Title-First Metadata Lookup</span>
+                  <em>Installed</em>
+                </summary>
+                <div class="system-update-body">
+                  <h3>Added <b>4</b></h3>
+                  <ul>
+                    <li>Added a themed Search Open Library Metadata action to the File &amp; Metadata workflow.</li>
+                    <li>Changed Open Library lookup to search by strategy guide title first, then game title or a secondary hint instead of assuming ISBN-first.</li>
+                    <li>Added a selectable results flow followed by a side-by-side comparison screen for existing Guidevault values and Open Library values.</li>
+                    <li>Kept Open Library covers as preview-only visual comparisons; Guidevault/CBZ covers are never imported or replaced.</li>
+                  </ul>
+                </div>
+              </details>
               <details class="system-update-entry" open>
                 <summary>
                   <span>Guidevault 0.9.65 - File Metadata Layout Polish</span>
@@ -2751,7 +2876,6 @@
   </dialog>
 
 
-  <script src="/app.js?v=0.9.66-file-metadata-layout-polish"></script>
+  <script src="/app.js?v=0.9.75-igdb-tab-retention"></script>
 </body>
 </html>
-

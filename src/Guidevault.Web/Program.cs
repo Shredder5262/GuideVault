@@ -13,7 +13,7 @@ using System.Net.Http.Headers;
 using SharpCompress.Readers;
 
 var builder = WebApplication.CreateBuilder(args);
-const string GuidevaultVersion = "0.9.66";
+const string GuidevaultVersion = "0.9.75";
 var app = builder.Build();
 var metadataJsonOptions = new JsonSerializerOptions(JsonSerializerDefaults.Web) { PropertyNameCaseInsensitive = true };
 var options = app.Configuration.GetSection("Guidevault").Get<GuidevaultOptions>() ?? new GuidevaultOptions();
@@ -715,6 +715,103 @@ app.MapGet("/api/items/{id}", async (string id) =>
 {
     var item = (await cache.GetItemsAsync()).FirstOrDefault(i => i.Id == id);
     return item is null ? Results.NotFound() : Results.Ok(item);
+});
+
+
+app.MapGet("/api/openlibrary/search", async (string? q, string? secondary, string? isbn, string? title, string? gameTitle, string? publisher, string? year, int? limit) =>
+{
+    try
+    {
+        var results = await OpenLibraryMetadataClient.SearchAsync(q, secondary, isbn, title, gameTitle, publisher, year, limit ?? 16);
+        return Results.Ok(new
+        {
+            provider = "Open Library",
+            searchMode = "title-first",
+            results
+        });
+    }
+    catch (Exception ex)
+    {
+        return Results.BadRequest(new { error = $"Open Library search failed: {ex.Message}" });
+    }
+});
+
+app.MapPost("/api/openlibrary/resolve", async (JsonElement payload) =>
+{
+    try
+    {
+        var result = await OpenLibraryMetadataClient.ResolveAsync(payload);
+        return Results.Ok(result);
+    }
+    catch (Exception ex)
+    {
+        return Results.BadRequest(new { error = $"Open Library metadata lookup failed: {ex.Message}" });
+    }
+});
+
+app.MapGet("/api/igdb/search", async (string? q, string? platform, string? year, int? limit) =>
+{
+    try
+    {
+        var settings = serverSettingsStore.GetSnapshot();
+        var results = await IgdbGameMetadataClient.SearchAsync(q, platform, year, limit ?? 16, settings.IgdbClientId, settings.IgdbClientSecret);
+        return Results.Ok(new
+        {
+            provider = "IGDB",
+            searchMode = "game-title-first",
+            results
+        });
+    }
+    catch (Exception ex)
+    {
+        return Results.BadRequest(new { error = $"IGDB game metadata search failed: {ex.Message}" });
+    }
+});
+
+app.MapPost("/api/igdb/resolve", async (JsonElement payload) =>
+{
+    try
+    {
+        var settings = serverSettingsStore.GetSnapshot();
+        var result = await IgdbGameMetadataClient.ResolveAsync(payload, settings.IgdbClientId, settings.IgdbClientSecret);
+        return Results.Ok(result);
+    }
+    catch (Exception ex)
+    {
+        return Results.BadRequest(new { error = $"IGDB game metadata lookup failed: {ex.Message}" });
+    }
+});
+
+
+app.MapGet("/api/esrb/search", async (string? q, string? platform, int? limit) =>
+{
+    try
+    {
+        var results = await EsrbRatingMetadataClient.SearchAsync(q, platform, limit ?? 12);
+        return Results.Ok(new
+        {
+            provider = "ESRB",
+            searchMode = "game-title-first",
+            results
+        });
+    }
+    catch (Exception ex)
+    {
+        return Results.BadRequest(new { error = $"ESRB rating search failed: {ex.Message}" });
+    }
+});
+
+app.MapPost("/api/esrb/resolve", async (JsonElement payload) =>
+{
+    try
+    {
+        var result = await EsrbRatingMetadataClient.ResolveAsync(payload);
+        return Results.Ok(result);
+    }
+    catch (Exception ex)
+    {
+        return Results.BadRequest(new { error = $"ESRB rating lookup failed: {ex.Message}" });
+    }
 });
 
 app.MapPut("/api/items/{id}/metadata", (string id, JsonElement payload) =>
@@ -2426,6 +2523,8 @@ public sealed class GuidevaultServerSettingsStore
         value.LoggingLevel = NormalizeLogLevel(value.LoggingLevel);
         value.BackupDirectory = NormalizePathValue(value.BackupDirectory, "data/backups");
         value.BookmarksDirectory = NormalizePathValue(value.BookmarksDirectory, "data/bookmarks");
+        value.IgdbClientId = Clean(value.IgdbClientId, string.Empty);
+        value.IgdbClientSecret = Clean(value.IgdbClientSecret, string.Empty);
         return value;
     }
 
@@ -2437,7 +2536,9 @@ public sealed class GuidevaultServerSettingsStore
         Port = value.Port,
         LoggingLevel = value.LoggingLevel,
         BackupDirectory = value.BackupDirectory,
-        BookmarksDirectory = value.BookmarksDirectory
+        BookmarksDirectory = value.BookmarksDirectory,
+        IgdbClientId = value.IgdbClientId,
+        IgdbClientSecret = value.IgdbClientSecret
     };
 
     private static string Clean(string? value, string fallback) => string.IsNullOrWhiteSpace(value) ? fallback : value.Trim();
@@ -2472,6 +2573,8 @@ public sealed class GuidevaultServerSettings
     public string LoggingLevel { get; set; } = "Information";
     public string BackupDirectory { get; set; } = "data/backups";
     public string BookmarksDirectory { get; set; } = "data/bookmarks";
+    public string IgdbClientId { get; set; } = string.Empty;
+    public string IgdbClientSecret { get; set; } = string.Empty;
 }
 
 public sealed record GuidevaultBackupResult(string FileName, string Path, long SizeBytes, DateTimeOffset CreatedAt, string BackupDirectory);
@@ -5832,13 +5935,13 @@ public static class MetadataInferer
         AddIf("Sega Game Gear", @"\b(game gear)\b");
         AddIf("Sega Saturn", @"\b(saturn|sega saturn)\b");
         AddIf("Sega Dreamcast", @"\b(dreamcast)\b");
-        AddIf("PlayStation 5", @"\b(ps5|playstation 5)\b");
-        AddIf("PlayStation 4", @"\b(ps4|playstation 4)\b");
-        AddIf("PlayStation 3", @"\b(ps3|playstation 3)\b");
-        AddIf("PlayStation 2", @"\b(ps2|playstation 2)\b");
-        AddIf("PlayStation (PS1)", @"\b(ps1|psx|playstation|sony playstation)\b");
+        AddIf("Sony Playstation 5", @"\b(ps5|playstation 5|sony playstation 5)\b");
+        AddIf("Sony Playstation 4", @"\b(ps4|playstation 4|sony playstation 4)\b");
+        AddIf("Sony Playstation 3", @"\b(ps3|playstation 3|sony playstation 3)\b");
+        AddIf("Sony Playstation 2", @"\b(ps2|playstation 2|sony playstation 2)\b");
+        AddIf("Sony Playstation", @"\b(ps1|psx|playstation|sony playstation)\b");
         AddIf("Sony PSP", @"\b(psp|playstation portable)\b");
-        AddIf("Sony PlayStation Vita", @"\b(vita|playstation vita|ps vita)\b");
+        AddIf("Sony Playstation Vita", @"\b(vita|playstation vita|ps vita|sony playstation vita)\b");
         AddIf("Microsoft Xbox Series X S", @"\b(xbox series|series x|series s)\b");
         AddIf("Microsoft Xbox One", @"\b(xbox one)\b");
         AddIf("Microsoft Xbox 360", @"\b(xbox 360)\b");
@@ -5850,7 +5953,8 @@ public static class MetadataInferer
         AddIf("Android", @"\b(android)\b");
         AddIf("Apple Mac OS", @"\b(mac os|macos|os x)\b");
         AddIf("Linux", @"\b(linux)\b");
-        AddIf("Windows", @"\b(pc|windows|microsoft windows|ms dos|dos)\b");
+        AddIf("MS-DOS", @"\b(ms[-\s]?dos|dos)\b");
+        AddIf("Windows", @"\b(pc|windows|microsoft windows)\b");
 
         return matches.Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
     }
@@ -5862,7 +5966,11 @@ public static class MetadataInferer
         var cleaned = (value ?? string.Empty).Trim();
         if (cleaned.Equals("GameCube", StringComparison.OrdinalIgnoreCase)) return "Nintendo GameCube";
         if (cleaned.Equals("Xbox", StringComparison.OrdinalIgnoreCase)) return "Microsoft Xbox";
-        if (cleaned.Equals("PlayStation", StringComparison.OrdinalIgnoreCase)) return "PlayStation (PS1)";
+        if (cleaned.Equals("PlayStation", StringComparison.OrdinalIgnoreCase)) return "Sony Playstation";
+        if (cleaned.Equals("PlayStation 2", StringComparison.OrdinalIgnoreCase) || cleaned.Equals("PS2", StringComparison.OrdinalIgnoreCase)) return "Sony Playstation 2";
+        if (cleaned.Equals("PlayStation 3", StringComparison.OrdinalIgnoreCase) || cleaned.Equals("PS3", StringComparison.OrdinalIgnoreCase)) return "Sony Playstation 3";
+        if (cleaned.Equals("PlayStation 4", StringComparison.OrdinalIgnoreCase) || cleaned.Equals("PS4", StringComparison.OrdinalIgnoreCase)) return "Sony Playstation 4";
+        if (cleaned.Equals("PlayStation 5", StringComparison.OrdinalIgnoreCase) || cleaned.Equals("PS5", StringComparison.OrdinalIgnoreCase)) return "Sony Playstation 5";
         if (cleaned.Equals("Microsoft Windows", StringComparison.OrdinalIgnoreCase) || cleaned.Equals("Personal computer", StringComparison.OrdinalIgnoreCase)) return "Windows";
         return cleaned;
     }
@@ -7757,6 +7865,1378 @@ public static class ArchiveReader
 
 
 
+public sealed record OpenLibraryMetadataResult(
+    string Id,
+    string WorkKey,
+    string EditionKey,
+    string Title,
+    string AuthorWriter,
+    string Publisher,
+    string PublishYear,
+    string Isbn10,
+    string Isbn13,
+    string Language,
+    string Summary,
+    int? PageCount,
+    string CoverPreviewUrl,
+    string SourceUrl,
+    string MatchBy,
+    string Confidence);
+
+static class OpenLibraryMetadataClient
+{
+    private static readonly HttpClient Http = CreateHttpClient();
+
+    private static HttpClient CreateHttpClient()
+    {
+        var client = new HttpClient { Timeout = TimeSpan.FromSeconds(15) };
+        client.DefaultRequestHeaders.UserAgent.Add(new ProductInfoHeaderValue("Guidevault", GuidevaultBuildInfo.Version));
+        client.DefaultRequestHeaders.UserAgent.Add(new ProductInfoHeaderValue("OpenLibraryMetadataLookup", "1.1"));
+        client.DefaultRequestHeaders.Accept.Add(new MediaTypeWithQualityHeaderValue("application/json"));
+        return client;
+    }
+
+    public static async Task<IReadOnlyList<OpenLibraryMetadataResult>> SearchAsync(string? q, string? secondary, string? isbn, string? title, string? gameTitle, string? publisher, string? year, int limit)
+    {
+        limit = Math.Clamp(limit, 1, 24);
+        var explicitIsbn = CleanIsbn(FirstNonEmpty(isbn, LooksLikeIsbn(q) ? q : null));
+        var hasExplicitIsbn = explicitIsbn.Length is 10 or 13;
+        var primaryTitle = FirstNonEmpty(q, title, gameTitle);
+        var secondaryTitle = FirstNonEmpty(secondary, gameTitle);
+        var fields = "key,title,author_name,first_publish_year,publisher,publish_year,isbn,language,number_of_pages_median,cover_i,edition_key";
+        var results = new List<OpenLibraryMetadataResult>();
+        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+        if (hasExplicitIsbn)
+        {
+            await AddSearchResultsAsync(results, seen, BuildSearchUrl("isbn", explicitIsbn, limit, fields), "ISBN", primaryTitle, explicitIsbn, limit);
+            if (results.Count >= limit) return results;
+        }
+
+        foreach (var plan in BuildTitleFirstSearchPlan(primaryTitle, secondaryTitle, publisher, year))
+        {
+            await AddSearchResultsAsync(results, seen, BuildSearchUrl(plan.Mode, plan.Query, limit, fields), plan.MatchBy, plan.Query, explicitIsbn, limit);
+            if (results.Count >= limit) break;
+        }
+
+        return results;
+    }
+
+    public static async Task<OpenLibraryMetadataResult> ResolveAsync(JsonElement payload)
+    {
+        var fallback = FromPayload(payload);
+        var workKey = NormalizeWorkKey(FirstNonEmpty(GetString(payload, "workKey"), fallback.WorkKey));
+        var editionKey = NormalizeEditionKey(FirstNonEmpty(GetString(payload, "editionKey"), fallback.EditionKey));
+        var isbn = CleanIsbn(FirstNonEmpty(GetString(payload, "isbn10"), GetString(payload, "isbn13"), GetString(payload, "isbn"), fallback.Isbn10, fallback.Isbn13));
+
+        JsonElement? edition = null;
+        JsonElement? work = null;
+
+        if (!string.IsNullOrWhiteSpace(editionKey))
+            edition = await TryGetJsonAsync($"https://openlibrary.org{editionKey}.json");
+        else if (isbn.Length is 10 or 13)
+            edition = await TryGetJsonAsync($"https://openlibrary.org/isbn/{Uri.EscapeDataString(isbn)}.json");
+
+        if (edition.HasValue)
+        {
+            editionKey = NormalizeEditionKey(FirstNonEmpty(edition.Value.TryGetProperty("key", out var ek) ? ek.GetString() : null, editionKey));
+            workKey = NormalizeWorkKey(FirstNonEmpty(workKey, FirstNestedKey(edition.Value, "works")));
+        }
+
+        if (!string.IsNullOrWhiteSpace(workKey))
+            work = await TryGetJsonAsync($"https://openlibrary.org{workKey}.json");
+
+        var title = FirstNonEmpty(
+            edition.HasValue ? GetString(edition.Value, "title") : null,
+            work.HasValue ? GetString(work.Value, "title") : null,
+            fallback.Title);
+        var publisher = FirstNonEmpty(
+            edition.HasValue ? FirstStringArrayValue(edition.Value, "publishers") : null,
+            fallback.Publisher);
+        var publishYear = FirstNonEmpty(
+            edition.HasValue ? ExtractYear(GetString(edition.Value, "publish_date")) : null,
+            fallback.PublishYear);
+        var isbn10 = FirstNonEmpty(
+            edition.HasValue ? FirstStringArrayValue(edition.Value, "isbn_10") : null,
+            fallback.Isbn10);
+        var isbn13 = FirstNonEmpty(
+            edition.HasValue ? FirstStringArrayValue(edition.Value, "isbn_13") : null,
+            fallback.Isbn13);
+        var language = FirstNonEmpty(
+            edition.HasValue ? NormalizeLanguage(FirstNestedKey(edition.Value, "languages")) : null,
+            fallback.Language);
+        var summary = FirstNonEmpty(
+            work.HasValue ? DescriptionText(work.Value) : null,
+            edition.HasValue ? DescriptionText(edition.Value) : null,
+            fallback.Summary);
+        var pageCount = FirstInt(
+            edition.HasValue ? GetInt(edition.Value, "number_of_pages") : null,
+            fallback.PageCount);
+        var coverId = FirstNonEmpty(
+            edition.HasValue ? FirstIntArrayValue(edition.Value, "covers")?.ToString() : null,
+            work.HasValue ? FirstIntArrayValue(work.Value, "covers")?.ToString() : null,
+            CoverIdFromUrl(fallback.CoverPreviewUrl));
+        var coverUrl = !string.IsNullOrWhiteSpace(coverId)
+            ? $"https://covers.openlibrary.org/b/id/{Uri.EscapeDataString(coverId)}-M.jpg"
+            : fallback.CoverPreviewUrl;
+
+        return fallback with
+        {
+            Id = FirstNonEmpty(editionKey, workKey, fallback.Id),
+            WorkKey = workKey,
+            EditionKey = editionKey,
+            Title = title,
+            AuthorWriter = fallback.AuthorWriter,
+            Publisher = publisher,
+            PublishYear = publishYear,
+            Isbn10 = CleanIsbn(isbn10),
+            Isbn13 = CleanIsbn(isbn13),
+            Language = NormalizeLanguage(language),
+            Summary = summary,
+            PageCount = pageCount,
+            CoverPreviewUrl = coverUrl,
+            SourceUrl = !string.IsNullOrWhiteSpace(editionKey)
+                ? $"https://openlibrary.org{editionKey}"
+                : (!string.IsNullOrWhiteSpace(workKey) ? $"https://openlibrary.org{workKey}" : fallback.SourceUrl)
+        };
+    }
+
+    private sealed record SearchPlan(string Mode, string Query, string MatchBy);
+
+    private static IEnumerable<SearchPlan> BuildTitleFirstSearchPlan(string primaryTitle, string secondaryTitle, string? publisher, string? year)
+    {
+        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        void Add(List<SearchPlan> plans, string mode, string query, string matchBy)
+        {
+            query = CleanSearchText(query);
+            if (string.IsNullOrWhiteSpace(query)) return;
+            var key = mode + "|" + NormalizeText(query);
+            if (seen.Add(key)) plans.Add(new SearchPlan(mode, query, matchBy));
+        }
+
+        var output = new List<SearchPlan>();
+        Add(output, "title", primaryTitle, "Title");
+        Add(output, "title", secondaryTitle, "Game title");
+        Add(output, "q", JoinNonEmpty(primaryTitle, secondaryTitle), "Title + secondary");
+        Add(output, "q", JoinNonEmpty(primaryTitle, publisher, year), "Title + details");
+        Add(output, "q", JoinNonEmpty(primaryTitle, "strategy guide"), "Strategy guide title");
+        Add(output, "q", JoinNonEmpty(secondaryTitle, "strategy guide"), "Game title + strategy guide");
+        Add(output, "q", primaryTitle, "Broad title");
+        Add(output, "q", secondaryTitle, "Broad game title");
+        return output;
+    }
+
+    private static async Task AddSearchResultsAsync(List<OpenLibraryMetadataResult> results, HashSet<string> seen, string url, string matchBy, string query, string isbn, int limit)
+    {
+        if (string.IsNullOrWhiteSpace(url) || results.Count >= limit) return;
+        JsonDocument? doc = null;
+        try
+        {
+            using var stream = await Http.GetStreamAsync(url);
+            doc = await JsonDocument.ParseAsync(stream);
+            if (!doc.RootElement.TryGetProperty("docs", out var docs) || docs.ValueKind != JsonValueKind.Array) return;
+            foreach (var item in docs.EnumerateArray())
+            {
+                var result = FromSearchDoc(item, matchBy, query, isbn);
+                if (string.IsNullOrWhiteSpace(result.Title)) continue;
+                var key = FirstNonEmpty(result.EditionKey, result.WorkKey, NormalizeText(result.Title + result.AuthorWriter + result.PublishYear + result.Publisher));
+                if (!seen.Add(key)) continue;
+                results.Add(result);
+                if (results.Count >= limit) break;
+            }
+        }
+        catch
+        {
+            // One Open Library query variant failing should not prevent the fallback title/game-title variants from running.
+            return;
+        }
+        finally
+        {
+            doc?.Dispose();
+        }
+    }
+
+    private static string BuildSearchUrl(string mode, string value, int limit, string fields)
+    {
+        value = value.Trim();
+        if (string.IsNullOrWhiteSpace(value)) return string.Empty;
+        var param = mode.Equals("isbn", StringComparison.OrdinalIgnoreCase) ? "isbn"
+            : mode.Equals("title", StringComparison.OrdinalIgnoreCase) ? "title"
+            : "q";
+        return $"https://openlibrary.org/search.json?{param}={Uri.EscapeDataString(value)}&limit={limit}&fields={Uri.EscapeDataString(fields)}";
+    }
+
+    private static OpenLibraryMetadataResult FromSearchDoc(JsonElement item, string matchBy, string query, string isbn)
+    {
+        var workKey = NormalizeWorkKey(GetString(item, "key"));
+        var edition = FirstStringArrayValue(item, "edition_key");
+        var editionKey = NormalizeEditionKey(edition);
+        var isbnValues = StringArrayValues(item, "isbn").Select(CleanIsbn).Where(v => v.Length is 10 or 13).Distinct().ToArray();
+        var isbn10 = isbnValues.FirstOrDefault(v => v.Length == 10) ?? string.Empty;
+        var isbn13 = isbnValues.FirstOrDefault(v => v.Length == 13) ?? string.Empty;
+        var title = GetString(item, "title") ?? string.Empty;
+        var author = string.Join(", ", StringArrayValues(item, "author_name").Take(4));
+        var publisher = FirstStringArrayValue(item, "publisher") ?? string.Empty;
+        var year = FirstNonEmpty(GetInt(item, "first_publish_year")?.ToString(), FirstIntArrayValue(item, "publish_year")?.ToString());
+        var language = NormalizeLanguage(FirstStringArrayValue(item, "language"));
+        var pageCount = GetInt(item, "number_of_pages_median");
+        var coverId = GetInt(item, "cover_i")?.ToString() ?? string.Empty;
+        var confidence = Confidence(matchBy, query, isbn, title, isbn10, isbn13, year, publisher);
+        return new OpenLibraryMetadataResult(
+            Id: FirstNonEmpty(editionKey, workKey, title),
+            WorkKey: workKey,
+            EditionKey: editionKey,
+            Title: title,
+            AuthorWriter: author,
+            Publisher: publisher,
+            PublishYear: year,
+            Isbn10: isbn10,
+            Isbn13: isbn13,
+            Language: language,
+            Summary: string.Empty,
+            PageCount: pageCount,
+            CoverPreviewUrl: string.IsNullOrWhiteSpace(coverId) ? string.Empty : $"https://covers.openlibrary.org/b/id/{Uri.EscapeDataString(coverId)}-M.jpg",
+            SourceUrl: !string.IsNullOrWhiteSpace(editionKey) ? $"https://openlibrary.org{editionKey}" : (!string.IsNullOrWhiteSpace(workKey) ? $"https://openlibrary.org{workKey}" : string.Empty),
+            MatchBy: matchBy,
+            Confidence: confidence);
+    }
+
+    private static OpenLibraryMetadataResult FromPayload(JsonElement payload)
+    {
+        return new OpenLibraryMetadataResult(
+            Id: FirstNonEmpty(GetString(payload, "id"), GetString(payload, "editionKey"), GetString(payload, "workKey")),
+            WorkKey: NormalizeWorkKey(GetString(payload, "workKey")),
+            EditionKey: NormalizeEditionKey(GetString(payload, "editionKey")),
+            Title: GetString(payload, "title") ?? string.Empty,
+            AuthorWriter: GetString(payload, "authorWriter") ?? string.Empty,
+            Publisher: GetString(payload, "publisher") ?? string.Empty,
+            PublishYear: GetString(payload, "publishYear") ?? string.Empty,
+            Isbn10: CleanIsbn(GetString(payload, "isbn10")),
+            Isbn13: CleanIsbn(GetString(payload, "isbn13")),
+            Language: NormalizeLanguage(GetString(payload, "language")),
+            Summary: GetString(payload, "summary") ?? string.Empty,
+            PageCount: GetInt(payload, "pageCount"),
+            CoverPreviewUrl: GetString(payload, "coverPreviewUrl") ?? string.Empty,
+            SourceUrl: GetString(payload, "sourceUrl") ?? string.Empty,
+            MatchBy: GetString(payload, "matchBy") ?? string.Empty,
+            Confidence: GetString(payload, "confidence") ?? string.Empty);
+    }
+
+    private static async Task<JsonElement?> TryGetJsonAsync(string url)
+    {
+        try
+        {
+            using var stream = await Http.GetStreamAsync(url);
+            using var doc = await JsonDocument.ParseAsync(stream);
+            return doc.RootElement.Clone();
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    private static bool LooksLikeIsbn(string? value)
+    {
+        var raw = value ?? string.Empty;
+        var clean = CleanIsbn(raw);
+        if (clean.Length is not (10 or 13)) return false;
+        return Regex.IsMatch(raw, @"^[\s0-9Xx\-]+$");
+    }
+
+    private static string CleanSearchText(string value)
+    {
+        var text = Regex.Replace(value ?? string.Empty, @"\s+", " ").Trim();
+        text = Regex.Replace(text, @"\b(?:cbz|cbr|pdf|scan|scanned|retromags)\b", " ", RegexOptions.IgnoreCase).Trim();
+        return Regex.Replace(text, @"\s+", " ").Trim(' ', '-', '_');
+    }
+
+    private static string JoinNonEmpty(params string?[] values) => string.Join(" ", values.Where(v => !string.IsNullOrWhiteSpace(v)).Select(v => v!.Trim()));
+
+    private static string? GetString(JsonElement json, string name)
+    {
+        if (json.ValueKind != JsonValueKind.Object || !json.TryGetProperty(name, out var value)) return null;
+        return value.ValueKind switch
+        {
+            JsonValueKind.String => value.GetString(),
+            JsonValueKind.Number => value.ToString(),
+            JsonValueKind.True => "true",
+            JsonValueKind.False => "false",
+            _ => null
+        };
+    }
+
+    private static int? GetInt(JsonElement json, string name)
+    {
+        if (json.ValueKind != JsonValueKind.Object || !json.TryGetProperty(name, out var value)) return null;
+        if (value.ValueKind == JsonValueKind.Number && value.TryGetInt32(out var parsed)) return parsed;
+        if (value.ValueKind == JsonValueKind.String && int.TryParse(value.GetString(), out parsed)) return parsed;
+        return null;
+    }
+
+    private static int? FirstInt(params int?[] values) => values.FirstOrDefault(v => v.HasValue && v.Value > 0);
+
+    private static IEnumerable<string> StringArrayValues(JsonElement json, string name)
+    {
+        if (json.ValueKind != JsonValueKind.Object || !json.TryGetProperty(name, out var value)) yield break;
+        if (value.ValueKind == JsonValueKind.Array)
+        {
+            foreach (var item in value.EnumerateArray())
+            {
+                var text = item.ValueKind == JsonValueKind.String ? item.GetString() : item.ToString();
+                if (!string.IsNullOrWhiteSpace(text)) yield return text.Trim();
+            }
+        }
+        else if (value.ValueKind == JsonValueKind.String && !string.IsNullOrWhiteSpace(value.GetString()))
+        {
+            yield return value.GetString()!.Trim();
+        }
+    }
+
+    private static string? FirstStringArrayValue(JsonElement json, string name) => StringArrayValues(json, name).FirstOrDefault();
+
+    private static int? FirstIntArrayValue(JsonElement json, string name)
+    {
+        if (json.ValueKind != JsonValueKind.Object || !json.TryGetProperty(name, out var value) || value.ValueKind != JsonValueKind.Array) return null;
+        foreach (var item in value.EnumerateArray())
+        {
+            if (item.ValueKind == JsonValueKind.Number && item.TryGetInt32(out var parsed)) return parsed;
+            if (item.ValueKind == JsonValueKind.String && int.TryParse(item.GetString(), out parsed)) return parsed;
+        }
+        return null;
+    }
+
+    private static string FirstNestedKey(JsonElement json, string name)
+    {
+        if (json.ValueKind != JsonValueKind.Object || !json.TryGetProperty(name, out var value) || value.ValueKind != JsonValueKind.Array) return string.Empty;
+        foreach (var item in value.EnumerateArray())
+        {
+            if (item.ValueKind == JsonValueKind.Object && item.TryGetProperty("key", out var key)) return key.GetString() ?? string.Empty;
+        }
+        return string.Empty;
+    }
+
+    private static string DescriptionText(JsonElement json)
+    {
+        if (json.ValueKind != JsonValueKind.Object || !json.TryGetProperty("description", out var value)) return string.Empty;
+        if (value.ValueKind == JsonValueKind.String) return value.GetString()?.Trim() ?? string.Empty;
+        if (value.ValueKind == JsonValueKind.Object && value.TryGetProperty("value", out var nested) && nested.ValueKind == JsonValueKind.String)
+            return nested.GetString()?.Trim() ?? string.Empty;
+        return string.Empty;
+    }
+
+    private static string ExtractYear(string? value)
+    {
+        var match = Regex.Match(value ?? string.Empty, "(?<!\\d)(18|19|20)\\d{2}(?!\\d)");
+        return match.Success ? match.Value : string.Empty;
+    }
+
+    private static string NormalizeWorkKey(string? value)
+    {
+        var v = (value ?? string.Empty).Trim();
+        if (string.IsNullOrWhiteSpace(v)) return string.Empty;
+        if (v.StartsWith("/works/", StringComparison.OrdinalIgnoreCase)) return v;
+        if (Regex.IsMatch(v, "^OL\\d+W$", RegexOptions.IgnoreCase)) return $"/works/{v}";
+        return v;
+    }
+
+    private static string NormalizeEditionKey(string? value)
+    {
+        var v = (value ?? string.Empty).Trim();
+        if (string.IsNullOrWhiteSpace(v)) return string.Empty;
+        if (v.StartsWith("/books/", StringComparison.OrdinalIgnoreCase)) return v;
+        if (Regex.IsMatch(v, "^OL\\d+M$", RegexOptions.IgnoreCase)) return $"/books/{v}";
+        return v;
+    }
+
+    private static string CleanIsbn(string? value) => Regex.Replace(value ?? string.Empty, "[^0-9Xx]", string.Empty).ToUpperInvariant();
+
+    private static string NormalizeLanguage(string? value)
+    {
+        var raw = (value ?? string.Empty).Trim();
+        if (string.IsNullOrWhiteSpace(raw)) return string.Empty;
+        var key = raw.Split('/').Last().Trim().ToLowerInvariant();
+        return key switch
+        {
+            "en" or "eng" or "english" => "English",
+            "ja" or "jpn" or "japanese" => "Japanese",
+            "fr" or "fre" or "fra" or "french" => "French",
+            "de" or "ger" or "deu" or "german" => "German",
+            "es" or "spa" or "spanish" => "Spanish",
+            "it" or "ita" or "italian" => "Italian",
+            _ => raw.Length <= 3 ? raw.ToUpperInvariant() : raw
+        };
+    }
+
+    private static string CoverIdFromUrl(string? url)
+    {
+        var match = Regex.Match(url ?? string.Empty, @"/b/id/(\d+)-", RegexOptions.IgnoreCase);
+        return match.Success ? match.Groups[1].Value : string.Empty;
+    }
+
+    private static string Confidence(string matchBy, string query, string isbn, string title, string isbn10, string isbn13, string year, string publisher)
+    {
+        if (matchBy.Equals("ISBN", StringComparison.OrdinalIgnoreCase) && !string.IsNullOrWhiteSpace(isbn) && (isbn == isbn10 || isbn == isbn13)) return "High";
+        var queryText = NormalizeText(query);
+        var titleText = NormalizeText(title);
+        if (!string.IsNullOrWhiteSpace(queryText) && !string.IsNullOrWhiteSpace(titleText))
+        {
+            if (queryText.Equals(titleText, StringComparison.OrdinalIgnoreCase)) return "High";
+            if (queryText.Contains(titleText, StringComparison.OrdinalIgnoreCase) || titleText.Contains(queryText, StringComparison.OrdinalIgnoreCase)) return "Medium";
+        }
+        if (!string.IsNullOrWhiteSpace(year) || !string.IsNullOrWhiteSpace(publisher)) return "Medium";
+        return "Low";
+    }
+
+    private static string NormalizeText(string value) => Regex.Replace(value.ToLowerInvariant(), "[^a-z0-9]+", " ").Trim();
+
+    private static string FirstNonEmpty(params string?[] values) => values.FirstOrDefault(v => !string.IsNullOrWhiteSpace(v))?.Trim() ?? string.Empty;
+}
+
+
+public sealed record IgdbGameMetadataResult(
+    int Id,
+    string Name,
+    string GameTitle,
+    string[] Developers,
+    string[] Publishers,
+    string GameReleaseYear,
+    string GameFranchise,
+    string[] Genres,
+    string[] AssociatedPlatforms,
+    string PreferredPlatform,
+    string CoverPreviewUrl,
+    string SourceUrl,
+    string MatchBy,
+    string Confidence);
+
+static class IgdbGameMetadataClient
+{
+    private static readonly HttpClient Http = CreateHttpClient();
+    private static readonly SemaphoreSlim TokenGate = new(1, 1);
+    private static string _accessToken = string.Empty;
+    private static DateTimeOffset _accessTokenExpiresAt = DateTimeOffset.MinValue;
+    private static string _tokenClientId = string.Empty;
+    private static string _tokenSecretFingerprint = string.Empty;
+
+    private static HttpClient CreateHttpClient()
+    {
+        var client = new HttpClient { Timeout = TimeSpan.FromSeconds(20) };
+        client.DefaultRequestHeaders.UserAgent.Add(new ProductInfoHeaderValue("Guidevault", GuidevaultBuildInfo.Version));
+        client.DefaultRequestHeaders.Accept.Add(new MediaTypeWithQualityHeaderValue("application/json"));
+        return client;
+    }
+
+    public static async Task<IReadOnlyList<IgdbGameMetadataResult>> SearchAsync(string? q, string? platform, string? year, int limit, string? clientId, string? clientSecret)
+    {
+        EnsureConfigured(clientId, clientSecret);
+        var query = CleanSearchText(q);
+        if (string.IsNullOrWhiteSpace(query)) throw new InvalidOperationException("Enter a game title to search IGDB.");
+        limit = Math.Clamp(limit, 1, 24);
+
+        var results = await QueryGamesAsync(query, platform, year, limit, clientId!, clientSecret!, excludeVersions: true);
+        if (results.Count == 0)
+            results = await QueryGamesAsync(query, platform, year, limit, clientId!, clientSecret!, excludeVersions: false);
+        var yearHint = ParseYear(year);
+        return results
+            .OrderByDescending(r => ConfidenceRank(r.Confidence))
+            .ThenByDescending(r => PlatformMatchScore(r.AssociatedPlatforms, platform))
+            .ThenBy(r => YearDistance(r.GameReleaseYear, yearHint))
+            .ThenBy(r => r.Name, StringComparer.OrdinalIgnoreCase)
+            .Take(limit)
+            .ToArray();
+    }
+
+    public static async Task<IgdbGameMetadataResult> ResolveAsync(JsonElement payload, string? clientId, string? clientSecret)
+    {
+        var fallback = FromPayload(payload);
+        if (fallback.Id <= 0) return fallback;
+        EnsureConfigured(clientId, clientSecret);
+        var token = await GetAccessTokenAsync(clientId!, clientSecret!);
+        var body = $"fields id,name,first_release_date,genres.name,platforms.name,involved_companies.developer,involved_companies.publisher,involved_companies.company.name,franchise.name,franchises.name,collection.name,collections.name,cover.image_id,url,slug; where id = {fallback.Id}; limit 1;";
+        var json = await PostIgdbAsync("games", body, clientId!, token);
+        using var doc = JsonDocument.Parse(json);
+        if (doc.RootElement.ValueKind == JsonValueKind.Array)
+        {
+            var item = doc.RootElement.EnumerateArray().FirstOrDefault();
+            if (item.ValueKind == JsonValueKind.Object)
+                return FromGameJson(item, fallback.Name, string.Empty, string.Empty);
+        }
+        return fallback;
+    }
+
+    private static async Task<List<IgdbGameMetadataResult>> QueryGamesAsync(string query, string? platform, string? year, int limit, string clientId, string clientSecret, bool excludeVersions)
+    {
+        var token = await GetAccessTokenAsync(clientId, clientSecret);
+        var escaped = EscapeIgdbString(query);
+        var where = excludeVersions ? " where version_parent = null;" : string.Empty;
+        var body = $"search \"{escaped}\"; fields id,name,first_release_date,genres.name,platforms.name,involved_companies.developer,involved_companies.publisher,involved_companies.company.name,franchise.name,franchises.name,collection.name,collections.name,cover.image_id,url,slug;{where} limit {limit};";
+        var json = await PostIgdbAsync("games", body, clientId, token);
+        using var doc = JsonDocument.Parse(json);
+        var results = new List<IgdbGameMetadataResult>();
+        if (doc.RootElement.ValueKind != JsonValueKind.Array) return results;
+        var seen = new HashSet<int>();
+        foreach (var item in doc.RootElement.EnumerateArray())
+        {
+            if (item.ValueKind != JsonValueKind.Object) continue;
+            var result = FromGameJson(item, query, platform, year);
+            if (result.Id <= 0 || !seen.Add(result.Id)) continue;
+            results.Add(result);
+        }
+        return results;
+    }
+
+    private static async Task<string> PostIgdbAsync(string endpoint, string body, string clientId, string token)
+    {
+        using var request = new HttpRequestMessage(HttpMethod.Post, $"https://api.igdb.com/v4/{endpoint.Trim('/')}");
+        request.Headers.TryAddWithoutValidation("Client-ID", clientId);
+        request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
+        request.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("application/json"));
+        request.Content = new StringContent(body, Encoding.UTF8, "text/plain");
+        using var response = await Http.SendAsync(request);
+        var text = await response.Content.ReadAsStringAsync();
+        if (!response.IsSuccessStatusCode)
+            throw new InvalidOperationException($"IGDB returned HTTP {(int)response.StatusCode}: {TrimError(text)}");
+        return text;
+    }
+
+    private static async Task<string> GetAccessTokenAsync(string clientId, string clientSecret)
+    {
+        var fingerprint = SecretFingerprint(clientSecret);
+        if (!string.IsNullOrWhiteSpace(_accessToken)
+            && DateTimeOffset.UtcNow < _accessTokenExpiresAt.AddMinutes(-5)
+            && string.Equals(_tokenClientId, clientId, StringComparison.Ordinal)
+            && string.Equals(_tokenSecretFingerprint, fingerprint, StringComparison.Ordinal))
+            return _accessToken;
+
+        await TokenGate.WaitAsync();
+        try
+        {
+            if (!string.IsNullOrWhiteSpace(_accessToken)
+                && DateTimeOffset.UtcNow < _accessTokenExpiresAt.AddMinutes(-5)
+                && string.Equals(_tokenClientId, clientId, StringComparison.Ordinal)
+                && string.Equals(_tokenSecretFingerprint, fingerprint, StringComparison.Ordinal))
+                return _accessToken;
+
+            using var content = new FormUrlEncodedContent(new Dictionary<string, string>
+            {
+                ["client_id"] = clientId,
+                ["client_secret"] = clientSecret,
+                ["grant_type"] = "client_credentials"
+            });
+            using var response = await Http.PostAsync("https://id.twitch.tv/oauth2/token", content);
+            var text = await response.Content.ReadAsStringAsync();
+            if (!response.IsSuccessStatusCode)
+                throw new InvalidOperationException($"Twitch OAuth token request failed with HTTP {(int)response.StatusCode}: {TrimError(text)}");
+            using var doc = JsonDocument.Parse(text);
+            var token = doc.RootElement.TryGetProperty("access_token", out var access) ? access.GetString() : string.Empty;
+            var expiresIn = doc.RootElement.TryGetProperty("expires_in", out var expires) && expires.TryGetInt32(out var seconds) ? seconds : 3600;
+            if (string.IsNullOrWhiteSpace(token)) throw new InvalidOperationException("Twitch OAuth token response did not include an access token.");
+            _accessToken = token!;
+            _accessTokenExpiresAt = DateTimeOffset.UtcNow.AddSeconds(Math.Max(300, expiresIn));
+            _tokenClientId = clientId;
+            _tokenSecretFingerprint = fingerprint;
+            return _accessToken;
+        }
+        finally
+        {
+            TokenGate.Release();
+        }
+    }
+
+    private static IgdbGameMetadataResult FromGameJson(JsonElement item, string query, string? platform, string? year)
+    {
+        var id = GetInt(item, "id") ?? 0;
+        var name = GetString(item, "name") ?? string.Empty;
+        var developers = CompanyNames(item, developer: true).ToArray();
+        var publishers = CompanyNames(item, publisher: true).ToArray();
+        var genres = ObjectNameArray(item, "genres").ToArray();
+        var platforms = NormalizePlatformNames(ObjectNameArray(item, "platforms")).ToArray();
+        var franchise = FirstNonEmpty(
+            ObjectName(item, "franchise"),
+            ObjectNameArray(item, "franchises").FirstOrDefault(),
+            ObjectName(item, "collection"),
+            ObjectNameArray(item, "collections").FirstOrDefault());
+        var releaseYear = ReleaseYear(item);
+        var cover = CoverUrl(item);
+        var slug = GetString(item, "slug");
+        var sourceUrl = GetString(item, "url") ?? (id > 0 && !string.IsNullOrWhiteSpace(slug) ? $"https://www.igdb.com/games/{slug}" : string.Empty);
+        return new IgdbGameMetadataResult(
+            Id: id,
+            Name: name,
+            GameTitle: name,
+            Developers: developers,
+            Publishers: publishers,
+            GameReleaseYear: releaseYear,
+            GameFranchise: franchise,
+            Genres: genres,
+            AssociatedPlatforms: platforms,
+            PreferredPlatform: platforms.Length == 1 ? platforms[0] : (platforms.Length > 1 ? "Multi-Platform" : string.Empty),
+            CoverPreviewUrl: cover,
+            SourceUrl: sourceUrl,
+            MatchBy: "Game title",
+            Confidence: Confidence(query, name, platforms, platform, releaseYear, year));
+    }
+
+    private static IgdbGameMetadataResult FromPayload(JsonElement payload)
+    {
+        return new IgdbGameMetadataResult(
+            Id: GetInt(payload, "id") ?? 0,
+            Name: FirstNonEmpty(GetString(payload, "name"), GetString(payload, "gameTitle")),
+            GameTitle: FirstNonEmpty(GetString(payload, "gameTitle"), GetString(payload, "name")),
+            Developers: StringArrayValues(payload, "developers").ToArray(),
+            Publishers: StringArrayValues(payload, "publishers").ToArray(),
+            GameReleaseYear: GetString(payload, "gameReleaseYear") ?? string.Empty,
+            GameFranchise: GetString(payload, "gameFranchise") ?? string.Empty,
+            Genres: StringArrayValues(payload, "genres").ToArray(),
+            AssociatedPlatforms: NormalizePlatformNames(StringArrayValues(payload, "associatedPlatforms")).ToArray(),
+            PreferredPlatform: NormalizeGuidevaultPlatformName(GetString(payload, "preferredPlatform") ?? string.Empty),
+            CoverPreviewUrl: GetString(payload, "coverPreviewUrl") ?? string.Empty,
+            SourceUrl: GetString(payload, "sourceUrl") ?? string.Empty,
+            MatchBy: GetString(payload, "matchBy") ?? "Game title",
+            Confidence: GetString(payload, "confidence") ?? "Low");
+    }
+
+    private static IEnumerable<string> CompanyNames(JsonElement json, bool developer = false, bool publisher = false)
+    {
+        if (!json.TryGetProperty("involved_companies", out var companies) || companies.ValueKind != JsonValueKind.Array) yield break;
+        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var item in companies.EnumerateArray())
+        {
+            if (item.ValueKind != JsonValueKind.Object) continue;
+            var isDeveloper = GetBool(item, "developer") == true;
+            var isPublisher = GetBool(item, "publisher") == true;
+            if ((developer && !isDeveloper) || (publisher && !isPublisher)) continue;
+            if (!item.TryGetProperty("company", out var company)) continue;
+            var name = company.ValueKind == JsonValueKind.Object ? GetString(company, "name") : company.ToString();
+            if (!string.IsNullOrWhiteSpace(name) && seen.Add(name.Trim())) yield return name.Trim();
+        }
+    }
+
+    private static IEnumerable<string> ObjectNameArray(JsonElement json, string name)
+    {
+        if (!json.TryGetProperty(name, out var value) || value.ValueKind != JsonValueKind.Array) yield break;
+        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var item in value.EnumerateArray())
+        {
+            var text = item.ValueKind == JsonValueKind.Object ? GetString(item, "name") : item.ToString();
+            if (!string.IsNullOrWhiteSpace(text) && seen.Add(text.Trim())) yield return text.Trim();
+        }
+    }
+
+    private static string ObjectName(JsonElement json, string name)
+    {
+        if (!json.TryGetProperty(name, out var value)) return string.Empty;
+        return value.ValueKind == JsonValueKind.Object ? GetString(value, "name") ?? string.Empty : value.ToString();
+    }
+
+    private static IEnumerable<string> StringArrayValues(JsonElement json, string name)
+    {
+        if (!json.TryGetProperty(name, out var value)) yield break;
+        if (value.ValueKind == JsonValueKind.Array)
+        {
+            foreach (var item in value.EnumerateArray())
+            {
+                var text = item.ValueKind == JsonValueKind.String ? item.GetString() : item.ToString();
+                if (!string.IsNullOrWhiteSpace(text)) yield return text.Trim();
+            }
+        }
+        else if (value.ValueKind == JsonValueKind.String && !string.IsNullOrWhiteSpace(value.GetString()))
+        {
+            yield return value.GetString()!.Trim();
+        }
+    }
+
+    private static string ReleaseYear(JsonElement json)
+    {
+        var seconds = GetLong(json, "first_release_date");
+        if (!seconds.HasValue || seconds.Value <= 0) return string.Empty;
+        try { return DateTimeOffset.FromUnixTimeSeconds(seconds.Value).Year.ToString(); }
+        catch { return string.Empty; }
+    }
+
+    private static string CoverUrl(JsonElement json)
+    {
+        if (!json.TryGetProperty("cover", out var cover) || cover.ValueKind != JsonValueKind.Object) return string.Empty;
+        var imageId = GetString(cover, "image_id");
+        return string.IsNullOrWhiteSpace(imageId) ? string.Empty : $"https://images.igdb.com/igdb/image/upload/t_cover_big/{Uri.EscapeDataString(imageId)}.jpg";
+    }
+
+    private static string Confidence(string query, string title, string[] platforms, string? platformHint, string releaseYear, string? yearHint)
+    {
+        var queryText = NormalizeText(query);
+        var titleText = NormalizeText(title);
+        if (!string.IsNullOrWhiteSpace(queryText) && queryText.Equals(titleText, StringComparison.OrdinalIgnoreCase)) return "High";
+        if (!string.IsNullOrWhiteSpace(queryText) && (titleText.Contains(queryText, StringComparison.OrdinalIgnoreCase) || queryText.Contains(titleText, StringComparison.OrdinalIgnoreCase))) return "Medium";
+        if (PlatformMatchScore(platforms, platformHint) > 0 || (!string.IsNullOrWhiteSpace(yearHint) && releaseYear == ExtractYear(yearHint))) return "Medium";
+        return "Low";
+    }
+
+    private static int ConfidenceRank(string value) => value.Equals("High", StringComparison.OrdinalIgnoreCase) ? 3 : value.Equals("Medium", StringComparison.OrdinalIgnoreCase) ? 2 : 1;
+
+    private static int PlatformMatchScore(string[] platforms, string? platformHint)
+    {
+        var hint = NormalizeText(NormalizeGuidevaultPlatformName(platformHint ?? string.Empty));
+        if (string.IsNullOrWhiteSpace(hint)) return 0;
+        return platforms.Any(p =>
+        {
+            var normalized = NormalizeText(NormalizeGuidevaultPlatformName(p));
+            return normalized.Contains(hint, StringComparison.OrdinalIgnoreCase) || hint.Contains(normalized, StringComparison.OrdinalIgnoreCase);
+        }) ? 1 : 0;
+    }
+
+    private static IEnumerable<string> NormalizePlatformNames(IEnumerable<string> platforms)
+    {
+        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var platform in platforms)
+        {
+            var normalized = NormalizeGuidevaultPlatformName(platform);
+            if (string.IsNullOrWhiteSpace(normalized) || IsMultiPlatformName(normalized)) continue;
+            if (seen.Add(normalized)) yield return normalized;
+        }
+    }
+
+    private static string NormalizeGuidevaultPlatformName(string? value)
+    {
+        var raw = (value ?? string.Empty).Trim();
+        if (string.IsNullOrWhiteSpace(raw)) return string.Empty;
+        if (IsMultiPlatformName(raw)) return "Multi-Platform";
+        return PlatformNameKey(raw) switch
+        {
+            "pc microsoft windows" => "Windows",
+            "microsoft windows" => "Windows",
+            "windows pc" => "Windows",
+            "pc" => "Windows",
+            "dos" => "MS-DOS",
+            "ms dos" => "MS-DOS",
+            "msdos" => "MS-DOS",
+            "pc dos" => "MS-DOS",
+            "ibm pc dos" => "MS-DOS",
+            "playstation 5" => "Sony Playstation 5",
+            "sony playstation 5" => "Sony Playstation 5",
+            "ps5" => "Sony Playstation 5",
+            "playstation 4" => "Sony Playstation 4",
+            "sony playstation 4" => "Sony Playstation 4",
+            "ps4" => "Sony Playstation 4",
+            "playstation 3" => "Sony Playstation 3",
+            "sony playstation 3" => "Sony Playstation 3",
+            "ps3" => "Sony Playstation 3",
+            "playstation 2" => "Sony Playstation 2",
+            "sony playstation 2" => "Sony Playstation 2",
+            "ps2" => "Sony Playstation 2",
+            "playstation" => "Sony Playstation",
+            "sony playstation" => "Sony Playstation",
+            "ps1" => "Sony Playstation",
+            "psx" => "Sony Playstation",
+            "playstation portable" => "Sony PSP",
+            "sony playstation portable" => "Sony PSP",
+            "psp" => "Sony PSP",
+            "dreamcast" => "Sega Dreamcast",
+            "sega dreamcast" => "Sega Dreamcast",
+            "sega dreamcase" => "Sega Dreamcast",
+            "xbox" => "Microsoft Xbox",
+            "microsoft xbox" => "Microsoft Xbox",
+            _ => raw
+        };
+    }
+
+    private static string PlatformNameKey(string value) => Regex.Replace(value.ToLowerInvariant().Replace("(", " ").Replace(")", " "), "[^a-z0-9]+", " ").Trim();
+
+    private static bool IsMultiPlatformName(string value) => Regex.IsMatch(value ?? string.Empty, @"^multi[-\s]*platform(?: strategy guides?)?$", RegexOptions.IgnoreCase);
+
+    private static int YearDistance(string? value, int? yearHint)
+    {
+        var parsed = ParseYear(value);
+        return yearHint.HasValue && parsed.HasValue ? Math.Abs(parsed.Value - yearHint.Value) : 0;
+    }
+
+    private static int? ParseYear(string? value)
+    {
+        var y = ExtractYear(value);
+        return int.TryParse(y, out var parsed) ? parsed : null;
+    }
+
+    private static string ExtractYear(string? value)
+    {
+        var match = Regex.Match(value ?? string.Empty, "(?<!\\d)(18|19|20)\\d{2}(?!\\d)");
+        return match.Success ? match.Value : string.Empty;
+    }
+
+    private static string CleanSearchText(string? value)
+    {
+        var text = Regex.Replace(value ?? string.Empty, @"\s+", " ").Trim();
+        text = Regex.Replace(text, @"\b(?:manual|strategy guide|official guide|unauthorized guide|forbidden game secrets|prima|bradygames|brady games|versus books|cbz|cbr|pdf|scan|scanned)\b", " ", RegexOptions.IgnoreCase).Trim();
+        return Regex.Replace(text, @"\s+", " ").Trim(' ', '-', '_', ':');
+    }
+
+    private static string EscapeIgdbString(string value) => (value ?? string.Empty).Replace("\\", "\\\\").Replace("\"", "\\\"");
+
+    private static void EnsureConfigured(string? clientId, string? clientSecret)
+    {
+        if (string.IsNullOrWhiteSpace(clientId) || string.IsNullOrWhiteSpace(clientSecret))
+            throw new InvalidOperationException("IGDB credentials are not configured. Add your IGDB/Twitch Client ID and Client Secret in Settings > Server > General > Metadata Sources.");
+    }
+
+    private static string SecretFingerprint(string value)
+    {
+        var bytes = SHA256.HashData(Encoding.UTF8.GetBytes(value));
+        return Convert.ToHexString(bytes);
+    }
+
+    private static string TrimError(string value)
+    {
+        var text = Regex.Replace(value ?? string.Empty, @"\s+", " ").Trim();
+        return text.Length > 260 ? text[..260] + "..." : text;
+    }
+
+    private static string? GetString(JsonElement json, string name)
+    {
+        if (json.ValueKind != JsonValueKind.Object || !json.TryGetProperty(name, out var value)) return null;
+        return value.ValueKind switch
+        {
+            JsonValueKind.String => value.GetString(),
+            JsonValueKind.Number => value.ToString(),
+            JsonValueKind.True => "true",
+            JsonValueKind.False => "false",
+            _ => null
+        };
+    }
+
+    private static int? GetInt(JsonElement json, string name)
+    {
+        if (json.ValueKind != JsonValueKind.Object || !json.TryGetProperty(name, out var value)) return null;
+        if (value.ValueKind == JsonValueKind.Number && value.TryGetInt32(out var parsed)) return parsed;
+        if (value.ValueKind == JsonValueKind.String && int.TryParse(value.GetString(), out parsed)) return parsed;
+        return null;
+    }
+
+    private static long? GetLong(JsonElement json, string name)
+    {
+        if (json.ValueKind != JsonValueKind.Object || !json.TryGetProperty(name, out var value)) return null;
+        if (value.ValueKind == JsonValueKind.Number && value.TryGetInt64(out var parsed)) return parsed;
+        if (value.ValueKind == JsonValueKind.String && long.TryParse(value.GetString(), out parsed)) return parsed;
+        return null;
+    }
+
+    private static bool? GetBool(JsonElement json, string name)
+    {
+        if (json.ValueKind != JsonValueKind.Object || !json.TryGetProperty(name, out var value)) return null;
+        if (value.ValueKind == JsonValueKind.True) return true;
+        if (value.ValueKind == JsonValueKind.False) return false;
+        if (value.ValueKind == JsonValueKind.String && bool.TryParse(value.GetString(), out var parsed)) return parsed;
+        return null;
+    }
+
+    private static string NormalizeText(string value) => Regex.Replace((value ?? string.Empty).ToLowerInvariant(), "[^a-z0-9]+", " ").Trim();
+    private static string FirstNonEmpty(params string?[] values) => values.FirstOrDefault(v => !string.IsNullOrWhiteSpace(v))?.Trim() ?? string.Empty;
+}
+
+
+
+public sealed record EsrbRatingMetadataResult(
+    string Id,
+    string Title,
+    string Publisher,
+    string[] Platforms,
+    string Rating,
+    string RatingShort,
+    string[] ContentDescriptors,
+    string[] InteractiveElements,
+    string RatingSummary,
+    string SourceUrl,
+    string MatchBy,
+    string Confidence);
+
+static class EsrbRatingMetadataClient
+{
+    private static readonly HttpClient Http = CreateHttpClient();
+
+    private static HttpClient CreateHttpClient()
+    {
+        var client = new HttpClient { Timeout = TimeSpan.FromSeconds(20) };
+        client.DefaultRequestHeaders.UserAgent.Add(new ProductInfoHeaderValue("Guidevault", GuidevaultBuildInfo.Version));
+        client.DefaultRequestHeaders.Accept.Add(new MediaTypeWithQualityHeaderValue("application/json"));
+        client.DefaultRequestHeaders.Accept.Add(new MediaTypeWithQualityHeaderValue("text/html"));
+        return client;
+    }
+
+    public static async Task<IReadOnlyList<EsrbRatingMetadataResult>> SearchAsync(string? q, string? platform, int limit)
+    {
+        var query = CleanSearchText(q);
+        if (string.IsNullOrWhiteSpace(query)) throw new InvalidOperationException("Enter a game title to search ESRB.");
+        limit = Math.Clamp(limit, 1, 20);
+
+        var urls = new List<string>();
+        var seenUrls = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var url in await FindRatingUrlsAsync(query, limit))
+        {
+            if (seenUrls.Add(url)) urls.Add(url);
+            if (urls.Count >= limit) break;
+        }
+
+        var results = new List<EsrbRatingMetadataResult>();
+        foreach (var url in urls.Take(limit))
+        {
+            try
+            {
+                var html = await GetTextAsync(url);
+                var parsed = FromRatingHtml(html, url, query, platform);
+                if (!string.IsNullOrWhiteSpace(parsed.Title) && !string.IsNullOrWhiteSpace(parsed.RatingShort))
+                    results.Add(parsed);
+            }
+            catch { }
+        }
+
+        return results
+            .OrderByDescending(r => ConfidenceRank(r.Confidence))
+            .ThenByDescending(r => PlatformMatchScore(r.Platforms, platform))
+            .ThenBy(r => r.Title, StringComparer.OrdinalIgnoreCase)
+            .Take(limit)
+            .ToArray();
+    }
+
+    public static async Task<EsrbRatingMetadataResult> ResolveAsync(JsonElement payload)
+    {
+        var fallback = FromPayload(payload);
+        if (string.IsNullOrWhiteSpace(fallback.SourceUrl)) return fallback;
+        try
+        {
+            var html = await GetTextAsync(fallback.SourceUrl);
+            var parsed = FromRatingHtml(html, fallback.SourceUrl, fallback.Title, fallback.Platforms.FirstOrDefault());
+            return string.IsNullOrWhiteSpace(parsed.RatingShort) ? fallback : parsed;
+        }
+        catch
+        {
+            return fallback;
+        }
+    }
+
+    private static async Task<IReadOnlyList<string>> FindRatingUrlsAsync(string query, int limit)
+    {
+        var urls = new List<string>();
+        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        async Task AddFromTextUrl(string url)
+        {
+            try
+            {
+                var text = await GetTextAsync(url);
+                foreach (var ratingUrl in ExtractRatingUrls(text))
+                {
+                    if (seen.Add(ratingUrl)) urls.Add(ratingUrl);
+                    if (urls.Count >= limit) return;
+                }
+            }
+            catch { }
+        }
+
+        await AddFromWordPressSearchAsync(query, limit, urls, seen);
+        if (urls.Count < limit)
+            await AddFromTextUrl($"https://www.esrb.org/?s={Uri.EscapeDataString(query)}");
+        if (urls.Count < limit)
+            await AddFromTextUrl($"https://www.esrb.org/search/?searchKeyword={Uri.EscapeDataString(query)}");
+        if (urls.Count < limit)
+            await AddFromTextUrl($"https://www.esrb.org/search/?gameTitle={Uri.EscapeDataString(query)}");
+        return urls;
+    }
+
+    private static async Task AddFromWordPressSearchAsync(string query, int limit, List<string> urls, HashSet<string> seen)
+    {
+        var encoded = Uri.EscapeDataString(query);
+        var endpoints = new[]
+        {
+            $"https://www.esrb.org/wp-json/wp/v2/search?search={encoded}&per_page={limit}&subtype=rating",
+            $"https://www.esrb.org/wp-json/wp/v2/search?search={encoded}&per_page={limit}&subtype[]=rating",
+            $"https://www.esrb.org/wp-json/wp/v2/search?search={encoded}&per_page={limit}",
+            $"https://www.esrb.org/wp-json/wp/v2/ratings?search={encoded}&per_page={limit}",
+            $"https://www.esrb.org/wp-json/wp/v2/rating?search={encoded}&per_page={limit}"
+        };
+
+        foreach (var endpoint in endpoints)
+        {
+            try
+            {
+                var json = await GetTextAsync(endpoint);
+                foreach (var url in ExtractRatingUrls(json))
+                {
+                    if (seen.Add(url)) urls.Add(url);
+                    if (urls.Count >= limit) return;
+                }
+                using var doc = JsonDocument.Parse(json);
+                if (doc.RootElement.ValueKind != JsonValueKind.Array) continue;
+                foreach (var item in doc.RootElement.EnumerateArray())
+                {
+                    foreach (var candidate in UrlCandidates(item))
+                    {
+                        foreach (var url in ExtractRatingUrls(candidate))
+                        {
+                            if (seen.Add(url)) urls.Add(url);
+                            if (urls.Count >= limit) return;
+                        }
+                    }
+                }
+            }
+            catch { }
+            if (urls.Count >= limit) return;
+        }
+    }
+
+    private static IEnumerable<string> UrlCandidates(JsonElement item)
+    {
+        foreach (var key in new[] { "url", "link", "guid", "permalink" })
+        {
+            if (!item.TryGetProperty(key, out var value)) continue;
+            if (value.ValueKind == JsonValueKind.String && !string.IsNullOrWhiteSpace(value.GetString()))
+                yield return value.GetString()!;
+            else if (value.ValueKind == JsonValueKind.Object && value.TryGetProperty("rendered", out var rendered) && rendered.ValueKind == JsonValueKind.String)
+                yield return rendered.GetString() ?? string.Empty;
+        }
+        if (item.TryGetProperty("_links", out var links) && links.ValueKind == JsonValueKind.Object)
+        {
+            foreach (var prop in links.EnumerateObject())
+            {
+                if (prop.Value.ValueKind != JsonValueKind.Array) continue;
+                foreach (var linkItem in prop.Value.EnumerateArray())
+                {
+                    if (linkItem.ValueKind == JsonValueKind.Object && linkItem.TryGetProperty("href", out var href) && href.ValueKind == JsonValueKind.String)
+                        yield return href.GetString() ?? string.Empty;
+                }
+            }
+        }
+    }
+
+    private static IEnumerable<string> ExtractRatingUrls(string text)
+    {
+        if (string.IsNullOrWhiteSpace(text)) yield break;
+        var decoded = WebUtility.HtmlDecode(text).Replace("\\/", "/");
+        foreach (Match match in Regex.Matches(decoded, @"https?://(?:www\.)?esrb\.org/ratings/\d+/[a-z0-9\-]+/?", RegexOptions.IgnoreCase))
+            yield return NormalizeRatingUrl(match.Value);
+        foreach (Match match in Regex.Matches(decoded, @"/ratings/\d+/[a-z0-9\-]+/?", RegexOptions.IgnoreCase))
+            yield return NormalizeRatingUrl("https://www.esrb.org" + match.Value);
+    }
+
+    private static EsrbRatingMetadataResult FromRatingHtml(string html, string sourceUrl, string query, string? platformHint)
+    {
+        var text = HtmlToText(html);
+        var lines = CleanLines(text).ToArray();
+        var title = Clean(FirstRegex(html, @"<h1[^>]*>(.*?)</h1>") ?? string.Empty);
+        if (string.IsNullOrWhiteSpace(title)) title = TitleFromUrl(sourceUrl);
+        var id = FirstRegex(sourceUrl, @"/ratings/(\d+)/") ?? string.Empty;
+        var publisher = ExtractPublisher(lines, title);
+        var platforms = ExtractListAfter(lines, "Platforms", new[] { "Image", "Rating Summary", "Assigned Rating Info", "Explore More Games" });
+
+        var summary = ExtractSummary(text);
+        var ratingText = FirstNonEmpty(summary, text);
+        var ratingShort = string.Empty;
+        var rating = string.Empty;
+        var ratingMatch = Regex.Match(ratingText, @"\bis\s+rated\s+([A-Z0-9+]+)\s+for\s+([^\.]+?)\s+by\s+the\s+ESRB", RegexOptions.IgnoreCase);
+        if (ratingMatch.Success)
+        {
+            ratingShort = NormalizeRatingShort(ratingMatch.Groups[1].Value);
+            rating = NormalizeRatingLabel(ratingMatch.Groups[2].Value);
+        }
+        if (string.IsNullOrWhiteSpace(ratingShort))
+        {
+            ratingShort = RatingShortFromText(text);
+            rating = RatingLabelFromShort(ratingShort);
+        }
+
+        var descriptors = ExtractContentDescriptors(summary, text);
+        var interactive = ExtractInteractiveElements(summary, lines);
+        var confidence = Confidence(query, title, platforms, platformHint);
+        return new EsrbRatingMetadataResult(
+            Id: id,
+            Title: title,
+            Publisher: publisher,
+            Platforms: platforms,
+            Rating: rating,
+            RatingShort: ratingShort,
+            ContentDescriptors: descriptors,
+            InteractiveElements: interactive,
+            RatingSummary: summary,
+            SourceUrl: NormalizeRatingUrl(sourceUrl),
+            MatchBy: "Game title",
+            Confidence: confidence);
+    }
+
+    private static string[] ExtractContentDescriptors(string summary, string text)
+    {
+        var source = FirstNonEmpty(summary, text);
+        var match = Regex.Match(source, @"\bby\s+the\s+ESRB\s+with\s+(.+?)(?:\.\s|\.?$|\s+Also\s+includes\b)", RegexOptions.IgnoreCase | RegexOptions.Singleline);
+        if (!match.Success) return [];
+        var raw = Regex.Replace(match.Groups[1].Value, @"\s+and\s+", ", ", RegexOptions.IgnoreCase);
+        return SplitList(raw);
+    }
+
+    private static string[] ExtractInteractiveElements(string summary, string[] lines)
+    {
+        var match = Regex.Match(summary ?? string.Empty, @"\bAlso\s+includes\s+(.+?)(?:\.\s|\.?$)", RegexOptions.IgnoreCase | RegexOptions.Singleline);
+        if (match.Success) return SplitList(Regex.Replace(match.Groups[1].Value, @"\s+and\s+", ", ", RegexOptions.IgnoreCase));
+        var start = Array.FindIndex(lines, l => l.Equals("No Interactive Elements", StringComparison.OrdinalIgnoreCase) || l.Equals("Users Interact", StringComparison.OrdinalIgnoreCase) || l.StartsWith("In-Game Purchases", StringComparison.OrdinalIgnoreCase) || l.Contains("Online Interactions", StringComparison.OrdinalIgnoreCase));
+        if (start < 0) return [];
+        var values = new List<string>();
+        for (var i = start; i < lines.Length && values.Count < 4; i++)
+        {
+            var line = lines[i].Trim(' ', '•', '-', '*');
+            if (line.Equals("Rating Summary", StringComparison.OrdinalIgnoreCase) || line.Equals("Assigned Rating Info", StringComparison.OrdinalIgnoreCase) || line.Equals("Explore More Games", StringComparison.OrdinalIgnoreCase)) break;
+            if (line.Equals("No Interactive Elements", StringComparison.OrdinalIgnoreCase)) return ["No Interactive Elements"];
+            if (line.Equals("Users Interact", StringComparison.OrdinalIgnoreCase) || line.StartsWith("In-Game Purchases", StringComparison.OrdinalIgnoreCase) || line.Contains("Online Interactions", StringComparison.OrdinalIgnoreCase))
+                values.Add(line);
+        }
+        return CleanDistinct(values);
+    }
+
+    private static string ExtractSummary(string text)
+    {
+        var match = Regex.Match(text ?? string.Empty, @"(?:Rating Summary|Assigned Rating Info)\s+(.+?)(?:\s+Explore More Games\b|\s+Additional Resources\b|\s+Share\b|$)", RegexOptions.IgnoreCase | RegexOptions.Singleline);
+        if (!match.Success) return string.Empty;
+        return Clean(match.Groups[1].Value);
+    }
+
+    private static string ExtractPublisher(string[] lines, string title)
+    {
+        for (var i = 0; i < lines.Length; i++)
+        {
+            if (!lines[i].Equals(title, StringComparison.OrdinalIgnoreCase)) continue;
+            for (var j = i + 1; j < Math.Min(lines.Length, i + 8); j++)
+            {
+                var line = lines[j];
+                if (string.IsNullOrWhiteSpace(line) || line.Equals("Platforms", StringComparison.OrdinalIgnoreCase) || line.Equals("Image", StringComparison.OrdinalIgnoreCase)) continue;
+                if (line.StartsWith("Advanced Search", StringComparison.OrdinalIgnoreCase)) continue;
+                return line;
+            }
+        }
+        return string.Empty;
+    }
+
+    private static string[] ExtractListAfter(string[] lines, string marker, string[] endMarkers)
+    {
+        var index = Array.FindIndex(lines, l => l.Equals(marker, StringComparison.OrdinalIgnoreCase));
+        if (index < 0 || index + 1 >= lines.Length) return [];
+        var values = new List<string>();
+        for (var i = index + 1; i < lines.Length; i++)
+        {
+            var line = lines[i];
+            if (endMarkers.Any(m => line.Equals(m, StringComparison.OrdinalIgnoreCase))) break;
+            if (Regex.IsMatch(line, @"\bis\s+rated\b", RegexOptions.IgnoreCase)) break;
+            values.AddRange(SplitList(line));
+            if (values.Count > 16) break;
+        }
+        return CleanDistinct(values);
+    }
+
+    private static EsrbRatingMetadataResult FromPayload(JsonElement payload)
+    {
+        return new EsrbRatingMetadataResult(
+            Id: GetString(payload, "id") ?? string.Empty,
+            Title: FirstNonEmpty(GetString(payload, "title"), GetString(payload, "gameTitle"), GetString(payload, "name")),
+            Publisher: GetString(payload, "publisher") ?? string.Empty,
+            Platforms: StringArrayValues(payload, "platforms").ToArray(),
+            Rating: GetString(payload, "rating") ?? string.Empty,
+            RatingShort: GetString(payload, "ratingShort") ?? string.Empty,
+            ContentDescriptors: StringArrayValues(payload, "contentDescriptors").ToArray(),
+            InteractiveElements: StringArrayValues(payload, "interactiveElements").ToArray(),
+            RatingSummary: GetString(payload, "ratingSummary") ?? string.Empty,
+            SourceUrl: GetString(payload, "sourceUrl") ?? string.Empty,
+            MatchBy: GetString(payload, "matchBy") ?? "Game title",
+            Confidence: GetString(payload, "confidence") ?? "Low");
+    }
+
+    private static async Task<string> GetTextAsync(string url)
+    {
+        using var request = new HttpRequestMessage(HttpMethod.Get, url);
+        request.Headers.Referrer = new Uri("https://www.esrb.org/search/");
+        using var response = await Http.SendAsync(request);
+        var text = await response.Content.ReadAsStringAsync();
+        if (!response.IsSuccessStatusCode) throw new InvalidOperationException($"ESRB returned HTTP {(int)response.StatusCode}: {TrimError(text)}");
+        return text;
+    }
+
+    private static string HtmlToText(string html)
+    {
+        var value = Regex.Replace(html ?? string.Empty, @"<script[\s\S]*?</script>|<style[\s\S]*?</style>", " ", RegexOptions.IgnoreCase);
+        value = Regex.Replace(value, @"<(br|/p|/div|/h[1-6]|/li|/section|/article)\b[^>]*>", "\n", RegexOptions.IgnoreCase);
+        value = Regex.Replace(value, @"<[^>]+>", " ");
+        value = WebUtility.HtmlDecode(value);
+        value = Regex.Replace(value, @"[ \t\r\f\v]+", " ");
+        value = Regex.Replace(value, @"\n\s*\n+", "\n");
+        return value.Trim();
+    }
+
+    private static IEnumerable<string> CleanLines(string text)
+    {
+        foreach (var raw in (text ?? string.Empty).Split('\n'))
+        {
+            var line = Clean(raw);
+            if (!string.IsNullOrWhiteSpace(line)) yield return line;
+        }
+    }
+
+    private static string[] SplitList(string value)
+    {
+        return CleanDistinct(Regex.Split(value ?? string.Empty, @",|;|\||\s+/\s+")
+            .Select(v => Regex.Replace(Clean(v.Trim(' ', '.', '•', '-', '*')), @"^(?:and|or)\s+", string.Empty, RegexOptions.IgnoreCase).Trim())
+            .Where(v => !string.IsNullOrWhiteSpace(v)));
+    }
+
+    private static string[] CleanDistinct(IEnumerable<string> values)
+    {
+        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var list = new List<string>();
+        foreach (var value in values)
+        {
+            var clean = Clean(value);
+            if (string.IsNullOrWhiteSpace(clean)) continue;
+            if (seen.Add(clean)) list.Add(clean);
+        }
+        return list.ToArray();
+    }
+
+    private static string RatingShortFromText(string text)
+    {
+        var compact = NormalizeText(text);
+        if (compact.Contains("adults only 18") || Regex.IsMatch(text ?? string.Empty, @"\bAO\b")) return "AO";
+        if (compact.Contains("mature 17") || Regex.IsMatch(text ?? string.Empty, @"\bM\b")) return "M";
+        if (compact.Contains("teen") || Regex.IsMatch(text ?? string.Empty, @"\bT\b")) return "T";
+        if (compact.Contains("everyone 10") || Regex.IsMatch(text ?? string.Empty, @"\bE10\+?\b")) return "E10+";
+        if (compact.Contains("everyone") || Regex.IsMatch(text ?? string.Empty, @"\bE\b")) return "E";
+        if (compact.Contains("rating pending") || Regex.IsMatch(text ?? string.Empty, @"\bRP\b")) return "RP";
+        return string.Empty;
+    }
+
+    private static string NormalizeRatingShort(string value)
+    {
+        var compact = Regex.Replace(value ?? string.Empty, @"[^A-Za-z0-9+]+", string.Empty).ToUpperInvariant();
+        return compact switch
+        {
+            "E10" or "E10+" => "E10+",
+            "E" => "E",
+            "T" => "T",
+            "M" => "M",
+            "AO" => "AO",
+            "RP" => "RP",
+            "EC" => "EC",
+            "KA" => "KA",
+            _ => compact
+        };
+    }
+
+    private static string NormalizeRatingLabel(string value)
+    {
+        var text = Clean(value);
+        text = Regex.Replace(text, @"\s+with\s+.+$", string.Empty, RegexOptions.IgnoreCase).Trim();
+        return text.Trim(' ', '.', ',');
+    }
+
+    private static string RatingLabelFromShort(string value) => NormalizeRatingShort(value) switch
+    {
+        "E" => "Everyone",
+        "E10+" => "Everyone 10+",
+        "T" => "Teen",
+        "M" => "Mature 17+",
+        "AO" => "Adults Only 18+",
+        "RP" => "Rating Pending",
+        "EC" => "Early Childhood",
+        "KA" => "Kids to Adults",
+        _ => string.Empty
+    };
+
+    private static string Confidence(string query, string title, string[] platforms, string? platformHint)
+    {
+        var q = NormalizeText(query);
+        var t = NormalizeText(title);
+        if (!string.IsNullOrWhiteSpace(q) && q.Equals(t, StringComparison.OrdinalIgnoreCase)) return "High";
+        if (!string.IsNullOrWhiteSpace(q) && (t.Contains(q, StringComparison.OrdinalIgnoreCase) || q.Contains(t, StringComparison.OrdinalIgnoreCase))) return "Medium";
+        if (PlatformMatchScore(platforms, platformHint) > 0) return "Medium";
+        return "Low";
+    }
+
+    private static int ConfidenceRank(string value) => value.Equals("High", StringComparison.OrdinalIgnoreCase) ? 3 : value.Equals("Medium", StringComparison.OrdinalIgnoreCase) ? 2 : 1;
+
+    private static int PlatformMatchScore(string[] platforms, string? platformHint)
+    {
+        var hint = NormalizeText(platformHint ?? string.Empty);
+        if (string.IsNullOrWhiteSpace(hint)) return 0;
+        return platforms.Any(platform =>
+        {
+            var normalized = NormalizeText(platform);
+            return normalized.Contains(hint, StringComparison.OrdinalIgnoreCase) || hint.Contains(normalized, StringComparison.OrdinalIgnoreCase);
+        }) ? 1 : 0;
+    }
+
+    private static string CleanSearchText(string? value)
+    {
+        var text = Regex.Replace(value ?? string.Empty, @"\s+", " ").Trim();
+        text = Regex.Replace(text, @"\b(?:manual|strategy guide|official guide|unauthorized guide|forbidden game secrets|prima|bradygames|brady games|versus books|complete|guide|cbz|cbr|pdf|scan|scanned)\b", " ", RegexOptions.IgnoreCase).Trim();
+        return Regex.Replace(text, @"\s+", " ").Trim(' ', '-', '_', ':');
+    }
+
+    private static string FirstRegex(string value, string pattern)
+    {
+        var match = Regex.Match(value ?? string.Empty, pattern, RegexOptions.IgnoreCase | RegexOptions.Singleline);
+        return match.Success ? WebUtility.HtmlDecode(Regex.Replace(match.Groups[1].Value, "<[^>]+>", " ")).Trim() : string.Empty;
+    }
+
+    private static string TitleFromUrl(string sourceUrl)
+    {
+        var match = Regex.Match(sourceUrl ?? string.Empty, @"/ratings/\d+/([^/]+)/?", RegexOptions.IgnoreCase);
+        if (!match.Success) return string.Empty;
+        return string.Join(' ', match.Groups[1].Value.Split('-', StringSplitOptions.RemoveEmptyEntries).Select(w => char.ToUpperInvariant(w[0]) + (w.Length > 1 ? w[1..] : string.Empty)));
+    }
+
+    private static string NormalizeRatingUrl(string url)
+    {
+        var value = (url ?? string.Empty).Trim().Trim('"', '\'', ')', ']', '}');
+        if (value.StartsWith("http://", StringComparison.OrdinalIgnoreCase)) value = "https://" + value[7..];
+        return value.TrimEnd('/') + "/";
+    }
+
+    private static string Clean(string value)
+    {
+        var text = WebUtility.HtmlDecode(value ?? string.Empty);
+        text = Regex.Replace(text, @"\s+", " ").Trim();
+        return text;
+    }
+
+    private static string TrimError(string value)
+    {
+        var text = Regex.Replace(value ?? string.Empty, @"\s+", " ").Trim();
+        return text.Length > 260 ? text[..260] + "..." : text;
+    }
+
+    private static string NormalizeText(string value) => Regex.Replace((value ?? string.Empty).ToLowerInvariant(), "[^a-z0-9+]+", " ").Trim();
+    private static string FirstNonEmpty(params string?[] values) => values.FirstOrDefault(v => !string.IsNullOrWhiteSpace(v))?.Trim() ?? string.Empty;
+
+    private static string? GetString(JsonElement json, string name)
+    {
+        if (json.ValueKind != JsonValueKind.Object || !json.TryGetProperty(name, out var value)) return null;
+        return value.ValueKind switch
+        {
+            JsonValueKind.String => value.GetString(),
+            JsonValueKind.Number => value.ToString(),
+            JsonValueKind.True => "true",
+            JsonValueKind.False => "false",
+            _ => null
+        };
+    }
+
+    private static IEnumerable<string> StringArrayValues(JsonElement json, string name)
+    {
+        if (json.ValueKind != JsonValueKind.Object || !json.TryGetProperty(name, out var value)) yield break;
+        if (value.ValueKind == JsonValueKind.Array)
+        {
+            foreach (var item in value.EnumerateArray())
+            {
+                var text = item.ValueKind == JsonValueKind.String ? item.GetString() : item.ToString();
+                if (!string.IsNullOrWhiteSpace(text)) yield return text.Trim();
+            }
+        }
+        else if (value.ValueKind == JsonValueKind.String && !string.IsNullOrWhiteSpace(value.GetString()))
+        {
+            yield return value.GetString()!.Trim();
+        }
+    }
+}
+
 static class GuidevaultLibraryIoGate
 {
     private static readonly SemaphoreSlim Gate = new(1, 1);
@@ -7800,6 +9280,5 @@ static class GuidevaultLibraryIoGate
 
 static class GuidevaultBuildInfo
 {
-    public const string Version = "0.9.66";
+    public const string Version = "0.9.75";
 }
-
