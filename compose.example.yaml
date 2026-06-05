@@ -8,15 +8,15 @@ services:
     environment:
       ASPNETCORE_URLS: "http://+:5478"
       ASPNETCORE_HTTP_PORTS: "5478"
-
       GUIDEVAULT_DATA: "/data"
-      PAGEQUEST__DATA__ROOT: "/data"
-
-      # Keep the default library path inside /data so only ./guidevault-data is created on the host.
       GUIDEVAULT_LIBRARY_PATH: "/data/library"
-      PAGEQUEST_LIBRARY_PATH: "/data/library"
-
       GUIDEVAULT__UPDATES__CHANNEL: "stable"
       GUIDEVAULT__UPDATES__CURRENTIMAGE: "ghcr.io/shredder5262/guidevault:latest"
     volumes:
+      # Persistent app data, generated cache, metadata, settings, and the default library folder.
+      # This keeps first-run behavior simple: only ./guidevault-data is created on the host.
       - "./guidevault-data:/data"
+
+      # Optional: use an existing library folder instead of ./guidevault-data/library.
+      # Uncomment and adjust the host path, then change GUIDEVAULT_LIBRARY_PATH to /library.
+      # - "D:/Digital Literature:/library:ro"

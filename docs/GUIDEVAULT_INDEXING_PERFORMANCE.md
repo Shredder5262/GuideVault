@@ -1,23 +1,22 @@
-# Guidevault Indexing Performance
+# Guidevault indexing performance
 
-Guidevault 0.9.27 splits library work into two paths so large libraries become usable sooner.
+Library scans should feel predictable and should not block normal navigation longer than necessary.
 
-## Fast Rescan
+## Goals
 
-Fast Rescan is the default scan path. It discovers supported files, compares each file against the persisted index using path, size, and modified time, and reuses unchanged items without reopening their archives.
+- Scans should report clear progress.
+- Removing an item from a library should update the UI quickly.
+- Refreshing a library should detect new, changed, and removed items reliably.
+- Generated metadata and cache work should not make the library appear empty during load.
 
-For new or changed CBZ files, Fast Rescan now infers basic metadata from the file and folder path first. It intentionally defers ComicInfo.xml parsing because opening every archive can be slow on large local collections and very slow on network-mounted libraries.
+## Recommended behavior
 
-## Enrich Metadata
+- Use queued tasks for scan, refresh, cleanup, and removal work.
+- Surface task state through the task monitor.
+- Keep existing library items visible while a scan is running.
+- Mark stale entries for cleanup rather than rebuilding the visible list from scratch.
+- Cache cover and preview data so grids do not show blank covers until hover.
 
-The Enrich Metadata action is the slower, optional pass. It opens CBZ archives at low concurrency and imports ComicInfo.xml metadata after the library is already indexed and usable.
+## Notes
 
-Use this after a first scan when you want deeper metadata such as publication fields, tags, issue details, guide details, or richer platform information from ComicInfo.xml.
-
-## Cleanup
-
-Cleanup remains a safe reconciliation action. It removes stale/untracked entries and refreshes changed files without doing deep validation of every archive.
-
-## Diagnostics
-
-Info -> System -> Performance now includes the last scan summary, including candidate count, reused items, parsed items, deferred metadata imports, enriched metadata count, skipped unreadable files, and elapsed time.
+Large libraries should be treated as long-running background operations. UI state should remain responsive while the backend updates index data.

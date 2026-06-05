@@ -1,14 +1,42 @@
-# Guidevault Platform Classification
+# Guidevault platform classification
 
-Guidevault 0.9.29 expands the fast-index platform detector for retro video-game literature collections.
+Guidevault should normalize source platform names to the platform/icon names used by the app.
 
-The fast scan path intentionally avoids opening every CBZ/CBR archive during normal rescans. Because of that, platform detection relies primarily on folder names, file names, and lightweight path inference. This update adds aliases for more retro systems so valid manuals are less likely to land in **Unsorted Manuals**.
+## Naming rules
 
-Added/expanded platform families include Atari, Amstrad, ColecoVision, Daphne/LaserDisc arcade, Intellivision, Odyssey 2/Videopac, Vectrex, Philips CD-i, Neo Geo, Commodore, MSX, ZX Spectrum, Sharp X68000, FM Towns, and Apple II.
+- Use the existing Guidevault platform/icon name when one exists.
+- Keep platform spelling consistent across imported metadata, details pages, and badges.
+- Treat associated platforms as a multi-value field.
+- Use preferred platform for the best single platform context when appropriate.
 
-If a platform still appears as unsorted, add the platform name to the folder path or update the detector aliases in `MetadataInferer.DetectSystemsFromText`.
+## Examples
 
+| Source value | Guidevault value |
+| --- | --- |
+| PC (Microsoft Windows) | Windows |
+| DOS | MS-DOS |
+| MS DOS | MS-DOS |
+| Playstation | Sony Playstation |
+| Playstation 2 | Sony Playstation 2 |
+| Playstation 3 | Sony Playstation 3 |
+| Playstation Portable | Sony PSP |
+| Dreamcast | Sega Dreamcast |
+| Xbox | Microsoft Xbox |
 
-## Cached unsorted items
+## Associated vs preferred platform
 
-Fast rescans normally reuse unchanged files from the persisted index. In 0.9.29, cached items whose system/category is still Unsorted are re-run through the lightweight filename/folder inference path so classification improvements can repair existing records without opening every archive.
+If a game has one platform:
+
+```text
+Associated platforms = that platform
+Preferred platform = that platform
+```
+
+If a game has multiple platforms:
+
+```text
+Associated platforms = all applicable platforms
+Preferred platform = selected manually or Multi-platform
+```
+
+Manual override should remain available because ports, compilations, regional versions, and remakes can make external source data noisy.

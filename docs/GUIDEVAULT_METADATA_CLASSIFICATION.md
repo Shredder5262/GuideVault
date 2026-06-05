@@ -1,7 +1,45 @@
-# Guidevault metadata classification notes
+# Guidevault metadata classification
 
-Guidevault 0.9.28 tightens filename and folder inference after a false-positive where `Primal Rage` matched the publisher token `Prima` and was classified as a strategy guide.
+Guidevault metadata should be grouped around the kind of item being described.
 
-Classification keywords now use whole-word/phrase matching for guide, magazine, and publisher detection. This keeps fast indexing lightweight while avoiding accidental substring matches inside game titles.
+## Book/guide metadata
 
-If an item is still placed in the wrong type, check the library type first. A library explicitly set to `Manuals`, `Strategy Guides`, or `Magazines` takes precedence over mixed-library filename inference.
+Use this for strategy guides and printed reference books:
+
+- Title
+- Author / writer
+- Publisher
+- Publish year
+- ISBN-10 / ISBN-13
+- ASIN
+- Language
+- Summary
+- Page count
+
+## Game metadata
+
+Use this for the game connected to a manual or strategy guide:
+
+- Game title
+- Developer
+- Publisher
+- Release year
+- Franchise / series
+- Genre
+- Associated platforms
+- Preferred platform
+- ESRB rating
+
+## Magazine metadata
+
+Use this for issue-based publications:
+
+- Magazine title
+- Issue number
+- Month / year
+- Volume / number
+- Featured games
+- Featured platforms
+- Cover story
+- Staff
+- ISSN / barcode
