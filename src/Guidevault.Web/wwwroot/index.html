@@ -4,7 +4,7 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Guidevault</title>
-  <link rel="stylesheet" href="/styles.css?v=0.9.85-magazine-issue-publisher" />
+  <link rel="stylesheet" href="/styles.css?v=0.9.85-encoding-hotfix" />
 </head>
 <body class="right-collapsed auth-locked">
   <section id="loginView" class="login-view" aria-labelledby="loginTitle">
@@ -1431,6 +1431,17 @@
             <h2>Update History</h2>
             <div class="system-update-list">
               <details class="system-update-entry" open>
+                <summary>
+                  <span>Guidevault 0.9.85 - Display Encoding Hotfix</span>
+                  <em>Installed</em>
+                </summary>
+                <ul>
+                  <li>Replaced risky non-ASCII metadata separators with plain ASCII separators.</li>
+                  <li>Cleaned corrupted magazine issue title text such as mojibake dash and bullet characters before display.</li>
+                  <li>Applied the cleanup to magazine hero subtitles, entry titles, and overview identity fields.</li>
+                </ul>
+              </details>
+              <details class="system-update-entry">
                 <summary>
                   <span>Guidevault 0.9.83 - Magazine Issue Publisher</span>
                   <em>Installed</em>
@@ -2974,7 +2985,6 @@
   </dialog>
 
 
-  <script src="/app.js?v=0.9.85-magazine-issue-publisher"></script>
+  <script src="/app.js?v=0.9.85-encoding-hotfix"></script>
 </body>
 </html>
-
