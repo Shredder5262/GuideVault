@@ -13,7 +13,7 @@ using System.Net.Http.Headers;
 using SharpCompress.Readers;
 
 var builder = WebApplication.CreateBuilder(args);
-const string GuidevaultVersion = "0.9.85";
+const string GuidevaultVersion = "0.9.102";
 var app = builder.Build();
 var metadataJsonOptions = new JsonSerializerOptions(JsonSerializerDefaults.Web) { PropertyNameCaseInsensitive = true };
 var options = app.Configuration.GetSection("Guidevault").Get<GuidevaultOptions>() ?? new GuidevaultOptions();
@@ -749,6 +749,20 @@ app.MapPost("/api/openlibrary/resolve", async (JsonElement payload) =>
     }
 });
 
+app.MapGet("/api/igdb/status", async () =>
+{
+    try
+    {
+        var settings = serverSettingsStore.GetSnapshot();
+        var status = await IgdbGameMetadataClient.TestCredentialsAsync(settings.IgdbClientId, settings.IgdbClientSecret);
+        return Results.Ok(status);
+    }
+    catch (Exception ex)
+    {
+        return Results.BadRequest(new { ok = false, error = ex.Message });
+    }
+});
+
 app.MapGet("/api/igdb/search", async (string? q, string? platform, string? year, int? limit) =>
 {
     try
@@ -1216,30 +1230,9 @@ app.MapGet("/api/settings/opds-status", (HttpRequest request) => Results.Ok(new
     note = "OPDS feeds are now served by Guidevault. Generate an OPDS auth key under Server > OPDS / Auth Keys, then copy the masked OPDS URL into a third-party reader."
 }));
 
-app.MapGet("/opds", async (HttpRequest request) =>
-{
-    var auth = AuthorizeOpdsRequest(request, opdsStore, deviceStore);
-    if (!auth.Success) return auth.Response!;
-
-    var items = await cache.GetItemsAsync();
-    return OpdsXml(OpdsNavigationCatalog(
-        request,
-        auth.Secret,
-        "Guidevault",
-        "Guidevault OPDS Catalog",
-        "Browse your local Guidevault library through an authenticated OPDS feed.",
-        new[]
-        {
-            OpdsNavEntry("All Items", "Every indexed manual, strategy guide, and magazine.", "/opds/all"),
-            OpdsNavEntry("Recently Added", "Newest indexed items first.", "/opds/recent"),
-            OpdsNavEntry("Manuals", $"{items.Count(i => KindEquals(i, "Manual"))} manual(s).", "/opds/kind/Manual"),
-            OpdsNavEntry("Strategy Guides", $"{items.Count(i => KindEquals(i, "Strategy Guide"))} strategy guide(s).", "/opds/kind/Strategy%20Guide"),
-            OpdsNavEntry("Magazines", $"{items.Count(i => KindEquals(i, "Magazine"))} magazine(s).", "/opds/kind/Magazine"),
-            OpdsNavEntry("Categories", "Browse by detected category or system.", "/opds/categories"),
-            OpdsNavEntry("Series", "Browse by magazine or guide series.", "/opds/series")
-        }),
-        "navigation");
-});
+app.MapGet("/opds", async (HttpRequest request) => await BuildOpdsRootCatalog(request, cache, opdsStore, deviceStore));
+app.MapGet("/opds/v1", async (HttpRequest request) => await BuildOpdsRootCatalog(request, cache, opdsStore, deviceStore));
+app.MapGet("/opds/v1/{**rest}", (HttpRequest request, string? rest) => RedirectOpdsV1Request(request, rest));
 
 app.MapGet("/opds/all", async (HttpRequest request) =>
 {
@@ -1253,7 +1246,7 @@ app.MapGet("/opds/recent", async (HttpRequest request) =>
 {
     var auth = AuthorizeOpdsRequest(request, opdsStore, deviceStore);
     if (!auth.Success) return auth.Response!;
-    var items = (await cache.GetItemsAsync()).OrderByDescending(i => i.Added).ThenBy(i => DisplayItemTitle(i), StringComparer.OrdinalIgnoreCase).Take(100).ToArray();
+    var items = (await cache.GetItemsAsync()).OrderByDescending(i => i.Added).ThenBy(i => DisplayItemTitle(i), StringComparer.OrdinalIgnoreCase).ToArray();
     return OpdsXml(OpdsAcquisitionCatalog(request, auth.Secret, "Guidevault - Recently Added", "The most recently indexed Guidevault items.", items));
 });
 
@@ -1331,9 +1324,26 @@ app.MapGet("/opds/search", async (HttpRequest request) =>
     var items = (await cache.GetItemsAsync())
         .Where(i => terms.Length == 0 || terms.All(t => OpdsSearchText(i).Contains(t, StringComparison.OrdinalIgnoreCase)))
         .OrderBy(i => DisplayItemTitle(i), StringComparer.OrdinalIgnoreCase)
-        .Take(200)
         .ToArray();
     return OpdsXml(OpdsAcquisitionCatalog(request, auth.Secret, $"Guidevault Search - {query}", string.IsNullOrWhiteSpace(query) ? "Search Guidevault." : $"Search results for {query}.", items));
+});
+
+app.MapGet("/opds/items/{id}", async (HttpRequest request, string id) =>
+{
+    var auth = AuthorizeOpdsRequest(request, opdsStore, deviceStore);
+    if (!auth.Success) return auth.Response!;
+    var item = cache.TryGetCachedItem(id) ?? (await cache.GetItemsAsync()).FirstOrDefault(i => i.Id == id);
+    if (item is null) return Results.NotFound(new { error = "Item not found." });
+    return OpdsXml(OpdsItemDetailsCatalog(request, auth.Secret, item));
+});
+
+app.MapGet("/opds/items/{id}/details", async (HttpRequest request, string id) =>
+{
+    var auth = AuthorizeOpdsRequest(request, opdsStore, deviceStore);
+    if (!auth.Success) return auth.Response!;
+    var item = cache.TryGetCachedItem(id) ?? (await cache.GetItemsAsync()).FirstOrDefault(i => i.Id == id);
+    if (item is null) return Results.NotFound(new { error = "Item not found." });
+    return OpdsHtmlItemDetails(request, auth.Secret, item);
 });
 
 app.MapGet("/opds/items/{id}/download", async (HttpRequest request, string id) =>
@@ -1374,8 +1384,71 @@ static string BuildAbsoluteUrl(HttpRequest request, string pathAndQuery)
 
 static string AppendOpdsAuth(HttpRequest request, string path, string secret)
 {
+    var adjustedPath = EnsureOpdsPageSizeQuery(request, path);
+    var joiner = adjustedPath.Contains('?', StringComparison.Ordinal) ? "&" : "?";
+    return BuildAbsoluteUrl(request, $"{adjustedPath}{joiner}auth={Uri.EscapeDataString(secret)}");
+}
+
+static string EnsureOpdsPageSizeQuery(HttpRequest request, string path)
+{
+    if (PathHasOpdsPagingQuery(path)) return path;
+
+    var requestedPageSize = FirstPositiveQueryInt(request, "pageSize")
+        ?? FirstPositiveQueryInt(request, "limit")
+        ?? FirstPositiveQueryInt(request, "count");
+    if (requestedPageSize is null) return path;
+
+    var pageSize = NormalizeOpdsPageSize(requestedPageSize.Value);
     var joiner = path.Contains('?', StringComparison.Ordinal) ? "&" : "?";
-    return BuildAbsoluteUrl(request, $"{path}{joiner}auth={Uri.EscapeDataString(secret)}");
+    return $"{path}{joiner}pageSize={pageSize}";
+}
+
+static bool PathHasOpdsPagingQuery(string path)
+{
+    var question = path.IndexOf('?');
+    if (question < 0 || question >= path.Length - 1) return false;
+
+    var query = path[(question + 1)..];
+    foreach (var part in query.Split('&', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+    {
+        var separator = part.IndexOf('=');
+        var key = separator >= 0 ? part[..separator] : part;
+        key = Uri.UnescapeDataString(key).Trim();
+        if (IsOpdsPagingQueryKey(key)) return true;
+    }
+
+    return false;
+}
+
+static IResult RedirectOpdsV1Request(HttpRequest request, string? rest)
+{
+    var suffix = string.IsNullOrWhiteSpace(rest) ? string.Empty : "/" + rest.TrimStart('/');
+    return Results.Redirect(BuildAbsoluteUrl(request, $"/opds{suffix}{request.QueryString}"), permanent: false);
+}
+
+static async Task<IResult> BuildOpdsRootCatalog(HttpRequest request, LibraryCache cache, OpdsSettingsStore opdsStore, DeviceHistoryStore deviceStore)
+{
+    var auth = AuthorizeOpdsRequest(request, opdsStore, deviceStore);
+    if (!auth.Success) return auth.Response!;
+
+    var items = await cache.GetItemsAsync();
+    return OpdsXml(OpdsNavigationCatalog(
+        request,
+        auth.Secret,
+        "Guidevault",
+        "Guidevault OPDS Catalog",
+        "Browse your local Guidevault library through an authenticated OPDS feed.",
+        new[]
+        {
+            OpdsNavEntry("All Items", "Every indexed manual, strategy guide, and magazine.", "/opds/all"),
+            OpdsNavEntry("Recently Added", "Newest indexed items first.", "/opds/recent"),
+            OpdsNavEntry("Manuals", $"{items.Count(i => KindEquals(i, "Manual"))} manual(s).", "/opds/kind/Manual"),
+            OpdsNavEntry("Strategy Guides", $"{items.Count(i => KindEquals(i, "Strategy Guide"))} strategy guide(s).", "/opds/kind/Strategy%20Guide"),
+            OpdsNavEntry("Magazines", $"{items.Count(i => KindEquals(i, "Magazine"))} magazine(s).", "/opds/kind/Magazine"),
+            OpdsNavEntry("Categories", "Browse by detected category or system.", "/opds/categories"),
+            OpdsNavEntry("Series", "Browse by magazine or guide series.", "/opds/series")
+        }),
+        "navigation");
 }
 
 static OpdsAuthResult AuthorizeOpdsRequest(HttpRequest request, OpdsSettingsStore store, DeviceHistoryStore deviceStore)
@@ -1472,32 +1545,83 @@ static XDocument OpdsAcquisitionCatalog(HttpRequest request, string secret, stri
     XNamespace atom = "http://www.w3.org/2005/Atom";
     XNamespace dc = "http://purl.org/dc/terms/";
     XNamespace opds = "http://opds-spec.org/2010/catalog";
-    var itemArray = items.ToArray();
-    var updated = itemArray.Select(i => i.Modified).DefaultIfEmpty(DateTimeOffset.UtcNow).Max().ToString("O");
+    XNamespace openSearch = "http://a9.com/-/spec/opensearch/1.1/";
+    var allItems = items.ToArray();
+    var paging = ResolveOpdsPaging(request, allItems.Length);
+    var itemArray = allItems.Skip(paging.Skip).Take(paging.PageSize).ToArray();
+    var updated = allItems.Select(i => i.Modified).DefaultIfEmpty(DateTimeOffset.UtcNow).Max().ToString("O");
+    var feedPath = request.Path.Value ?? "/opds/all";
+    var rangeText = paging.Total == 0
+        ? "No matching items."
+        : $"Showing {paging.StartIndex}-{paging.EndIndex} of {paging.Total} item(s).";
 
     return new XDocument(
         new XElement(atom + "feed",
             new XAttribute(XNamespace.Xmlns + "atom", atom.NamespaceName),
             new XAttribute(XNamespace.Xmlns + "dc", dc.NamespaceName),
             new XAttribute(XNamespace.Xmlns + "opds", opds.NamespaceName),
-            new XElement(atom + "id", $"urn:guidevault:opds:{request.Path.Value}"),
+            new XAttribute(XNamespace.Xmlns + "openSearch", openSearch.NamespaceName),
+            new XElement(atom + "id", $"urn:guidevault:opds:{feedPath}"),
             new XElement(atom + "title", title),
             new XElement(atom + "updated", updated),
             new XElement(atom + "author", new XElement(atom + "name", "Guidevault")),
-            new XElement(atom + "subtitle", subtitle),
-            new XElement(atom + "link", new XAttribute("rel", "self"), new XAttribute("type", "application/atom+xml;profile=opds-catalog;kind=acquisition"), new XAttribute("href", AppendOpdsAuth(request, request.Path.Value ?? "/opds/all", secret))),
+            new XElement(atom + "subtitle", $"{subtitle} {rangeText} Page size: {paging.PageSize}."),
+            new XElement(openSearch + "totalResults", paging.Total),
+            new XElement(openSearch + "itemsPerPage", paging.PageSize),
+            new XElement(openSearch + "startIndex", paging.StartIndex),
+            new XElement(atom + "link", new XAttribute("rel", "self"), new XAttribute("type", "application/atom+xml;profile=opds-catalog;kind=acquisition"), new XAttribute("href", AppendOpdsAuth(request, BuildOpdsPagedPath(request, paging.Page, paging.PageSize), secret))),
             new XElement(atom + "link", new XAttribute("rel", "start"), new XAttribute("type", "application/atom+xml;profile=opds-catalog;kind=navigation"), new XAttribute("href", AppendOpdsAuth(request, "/opds", secret))),
-            itemArray.Select(item => OpdsItemEntry(request, secret, item))));
+            new XElement(atom + "link", new XAttribute("rel", "first"), new XAttribute("type", "application/atom+xml;profile=opds-catalog;kind=acquisition"), new XAttribute("href", AppendOpdsAuth(request, BuildOpdsPagedPath(request, 1, paging.PageSize), secret))),
+            paging.Page > 1 ? new XElement(atom + "link", new XAttribute("rel", "previous"), new XAttribute("type", "application/atom+xml;profile=opds-catalog;kind=acquisition"), new XAttribute("href", AppendOpdsAuth(request, BuildOpdsPagedPath(request, paging.Page - 1, paging.PageSize), secret))) : null,
+            paging.Page < paging.TotalPages ? new XElement(atom + "link", new XAttribute("rel", "next"), new XAttribute("type", "application/atom+xml;profile=opds-catalog;kind=acquisition"), new XAttribute("href", AppendOpdsAuth(request, BuildOpdsPagedPath(request, paging.Page + 1, paging.PageSize), secret))) : null,
+            new XElement(atom + "link", new XAttribute("rel", "last"), new XAttribute("type", "application/atom+xml;profile=opds-catalog;kind=acquisition"), new XAttribute("href", AppendOpdsAuth(request, BuildOpdsPagedPath(request, paging.TotalPages, paging.PageSize), secret))),
+            OpdsPageSizeLinks(request, secret, paging),
+            itemArray.Select(item => OpdsItemEntry(request, secret, item, includeDetailLink: true, includeAcquisitionLinks: false, includeWebLinks: false, fullDetails: false))));
 }
 
-static XElement OpdsItemEntry(HttpRequest request, string secret, LibraryItem item)
+static XDocument OpdsItemDetailsCatalog(HttpRequest request, string secret, LibraryItem item)
+{
+    XNamespace atom = "http://www.w3.org/2005/Atom";
+    XNamespace dc = "http://purl.org/dc/terms/";
+    XNamespace opds = "http://opds-spec.org/2010/catalog";
+    var title = DisplayItemTitle(item);
+    var updated = item.Modified.ToString("O");
+
+    return new XDocument(
+        new XElement(atom + "feed",
+            new XAttribute(XNamespace.Xmlns + "atom", atom.NamespaceName),
+            new XAttribute(XNamespace.Xmlns + "dc", dc.NamespaceName),
+            new XAttribute(XNamespace.Xmlns + "opds", opds.NamespaceName),
+            new XElement(atom + "id", $"urn:guidevault:opds:item:{item.Id}"),
+            new XElement(atom + "title", title),
+            new XElement(atom + "updated", updated),
+            new XElement(atom + "author", new XElement(atom + "name", "Guidevault")),
+            new XElement(atom + "subtitle", "Item details. Use the available links to read in Guidevault, open the web detail page, or download the file."),
+            new XElement(atom + "link", new XAttribute("rel", "self"), new XAttribute("type", "application/atom+xml;profile=opds-catalog;kind=acquisition"), new XAttribute("href", AppendOpdsAuth(request, $"/opds/items/{Uri.EscapeDataString(item.Id)}", secret))),
+            new XElement(atom + "link", new XAttribute("rel", "start"), new XAttribute("type", "application/atom+xml;profile=opds-catalog;kind=navigation"), new XAttribute("href", AppendOpdsAuth(request, "/opds", secret))),
+            OpdsItemEntry(request, secret, item, includeDetailLink: false, includeAcquisitionLinks: true, includeWebLinks: true, fullDetails: true)));
+}
+
+static XElement OpdsItemEntry(
+    HttpRequest request,
+    string secret,
+    LibraryItem item,
+    bool includeDetailLink = true,
+    bool includeAcquisitionLinks = true,
+    bool includeWebLinks = false,
+    bool fullDetails = false)
 {
     XNamespace atom = "http://www.w3.org/2005/Atom";
     XNamespace dc = "http://purl.org/dc/terms/";
     var title = DisplayItemTitle(item);
     var summary = string.IsNullOrWhiteSpace(item.Summary) ? OpdsItemDescription(item) : item.Summary.Trim();
-    var downloadHref = AppendOpdsAuth(request, $"/opds/items/{Uri.EscapeDataString(item.Id)}/download", secret);
-    var coverHref = AppendOpdsAuth(request, $"/opds/items/{Uri.EscapeDataString(item.Id)}/cover", secret);
+    var encodedId = Uri.EscapeDataString(item.Id);
+    var detailHref = AppendOpdsAuth(request, $"/opds/items/{encodedId}", secret);
+    var htmlDetailHref = AppendOpdsAuth(request, $"/opds/items/{encodedId}/details", secret);
+    var downloadHref = AppendOpdsAuth(request, $"/opds/items/{encodedId}/download", secret);
+    var coverHref = AppendOpdsAuth(request, $"/opds/items/{encodedId}/cover", secret);
+    var webReaderHref = BuildAbsoluteUrl(request, $"/?read={encodedId}");
+    var webDetailHref = BuildAbsoluteUrl(request, $"/?detail={encodedId}");
     var contentType = string.IsNullOrWhiteSpace(item.ContentType) ? "application/octet-stream" : item.ContentType;
 
     return new XElement(atom + "entry",
@@ -1506,14 +1630,207 @@ static XElement OpdsItemEntry(HttpRequest request, string secret, LibraryItem it
         new XElement(atom + "updated", item.Modified.ToString("O")),
         new XElement(atom + "author", new XElement(atom + "name", string.IsNullOrWhiteSpace(item.Publisher) ? "Guidevault" : item.Publisher)),
         new XElement(atom + "summary", summary),
-        new XElement(atom + "content", new XAttribute("type", "text"), OpdsItemDescription(item)),
+        new XElement(atom + "content", new XAttribute("type", "text"), fullDetails ? OpdsItemFullDescription(item) : OpdsItemDescription(item)),
         string.IsNullOrWhiteSpace(item.Year) ? null : new XElement(dc + "issued", item.Year),
         string.IsNullOrWhiteSpace(item.Publisher) ? null : new XElement(dc + "publisher", item.Publisher),
         string.IsNullOrWhiteSpace(item.LanguageTag) ? null : new XElement(dc + "language", item.LanguageTag),
         new XElement(atom + "category", new XAttribute("term", item.Kind), new XAttribute("label", item.Kind)),
-        new XElement(atom + "link", new XAttribute("rel", "http://opds-spec.org/acquisition"), new XAttribute("type", contentType), new XAttribute("href", downloadHref)),
+        includeDetailLink ? new XElement(atom + "link", new XAttribute("rel", "subsection"), new XAttribute("title", "Details"), new XAttribute("type", "application/atom+xml;profile=opds-catalog;kind=acquisition"), new XAttribute("href", detailHref)) : null,
+        includeWebLinks ? new XElement(atom + "link", new XAttribute("rel", "alternate"), new XAttribute("title", "Details page"), new XAttribute("type", "text/html"), new XAttribute("href", htmlDetailHref)) : null,
+        includeWebLinks ? new XElement(atom + "link", new XAttribute("rel", "alternate"), new XAttribute("title", "Open in Guidevault"), new XAttribute("type", "text/html"), new XAttribute("href", webDetailHref)) : null,
+        includeWebLinks ? new XElement(atom + "link", new XAttribute("rel", "alternate"), new XAttribute("title", "Read in Guidevault"), new XAttribute("type", "text/html"), new XAttribute("href", webReaderHref)) : null,
+        includeAcquisitionLinks ? new XElement(atom + "link", new XAttribute("rel", "http://opds-spec.org/acquisition"), new XAttribute("title", "Download"), new XAttribute("type", contentType), new XAttribute("href", downloadHref)) : null,
         new XElement(atom + "link", new XAttribute("rel", "http://opds-spec.org/image"), new XAttribute("type", "image/*"), new XAttribute("href", coverHref)),
         new XElement(atom + "link", new XAttribute("rel", "http://opds-spec.org/image/thumbnail"), new XAttribute("type", "image/*"), new XAttribute("href", coverHref)));
+}
+
+static OpdsPaging ResolveOpdsPaging(HttpRequest request, int total)
+{
+    var requestedPage = FirstPositiveQueryInt(request, "page") ?? 1;
+    var requestedPageSize = FirstPositiveQueryInt(request, "pageSize")
+        ?? FirstPositiveQueryInt(request, "limit")
+        ?? FirstPositiveQueryInt(request, "count")
+        ?? 50;
+    var pageSize = NormalizeOpdsPageSize(requestedPageSize);
+    var totalPages = Math.Max(1, (int)Math.Ceiling(Math.Max(0, total) / (double)pageSize));
+    var page = Math.Clamp(requestedPage, 1, totalPages);
+    var skip = Math.Max(0, (page - 1) * pageSize);
+    var startIndex = total == 0 ? 0 : skip + 1;
+    var endIndex = total == 0 ? 0 : Math.Min(total, skip + pageSize);
+    return new OpdsPaging(page, pageSize, total, totalPages, skip, startIndex, endIndex);
+}
+
+static int NormalizeOpdsPageSize(int value)
+{
+    if (value <= 20) return 20;
+    if (value <= 50) return 50;
+    return 100;
+}
+
+static int? FirstPositiveQueryInt(HttpRequest request, string name)
+{
+    if (!request.Query.TryGetValue(name, out var values)) return null;
+    foreach (var value in values)
+    {
+        if (int.TryParse(value, out var parsed) && parsed > 0) return parsed;
+    }
+    return null;
+}
+
+static string BuildOpdsPagedPath(HttpRequest request, int page, int pageSize)
+{
+    var path = request.Path.Value ?? "/opds/all";
+    var query = new List<string>();
+    foreach (var pair in request.Query)
+    {
+        if (IsOpdsAuthQueryKey(pair.Key) || IsOpdsPagingQueryKey(pair.Key)) continue;
+        foreach (var value in pair.Value)
+        {
+            query.Add($"{Uri.EscapeDataString(pair.Key)}={Uri.EscapeDataString(value ?? string.Empty)}");
+        }
+    }
+
+    query.Add($"page={page}");
+    query.Add($"pageSize={pageSize}");
+    return query.Count == 0 ? path : $"{path}?{string.Join("&", query)}";
+}
+
+static bool IsOpdsAuthQueryKey(string key) =>
+    string.Equals(key, "auth", StringComparison.OrdinalIgnoreCase)
+    || string.Equals(key, "key", StringComparison.OrdinalIgnoreCase)
+    || string.Equals(key, "token", StringComparison.OrdinalIgnoreCase);
+
+static bool IsOpdsPagingQueryKey(string key) =>
+    string.Equals(key, "page", StringComparison.OrdinalIgnoreCase)
+    || string.Equals(key, "pageSize", StringComparison.OrdinalIgnoreCase)
+    || string.Equals(key, "limit", StringComparison.OrdinalIgnoreCase)
+    || string.Equals(key, "count", StringComparison.OrdinalIgnoreCase);
+
+static IEnumerable<XElement> OpdsPageSizeLinks(HttpRequest request, string secret, OpdsPaging paging)
+{
+    XNamespace atom = "http://www.w3.org/2005/Atom";
+    foreach (var size in new[] { 20, 50, 100 })
+    {
+        yield return new XElement(atom + "link",
+            new XAttribute("rel", "alternate"),
+            new XAttribute("title", $"Show {size} items per page"),
+            new XAttribute("type", "application/atom+xml;profile=opds-catalog;kind=acquisition"),
+            new XAttribute("href", AppendOpdsAuth(request, BuildOpdsPagedPath(request, 1, size), secret)));
+    }
+}
+
+static IResult OpdsHtmlItemDetails(HttpRequest request, string secret, LibraryItem item)
+{
+    var encodedId = Uri.EscapeDataString(item.Id);
+    var title = DisplayItemTitle(item);
+    var coverHref = AppendOpdsAuth(request, $"/opds/items/{encodedId}/cover", secret);
+    var downloadHref = AppendOpdsAuth(request, $"/opds/items/{encodedId}/download", secret);
+    var readHref = BuildAbsoluteUrl(request, $"/?read={encodedId}");
+    var webDetailHref = BuildAbsoluteUrl(request, $"/?detail={encodedId}");
+    var rows = string.Join("", OpdsItemDetailRows(item).Select(row => $"<div class=\"gv-opds-row\"><dt>{Html(row.Label)}</dt><dd>{Html(row.Value)}</dd></div>"));
+    var summary = Html(string.IsNullOrWhiteSpace(item.Summary) ? OpdsItemDescription(item) : item.Summary.Trim());
+    var body = $$$"""
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>{{{Html(title)}}} - Guidevault OPDS Details</title>
+  <style>
+    :root{color-scheme:dark;background:#08111f;color:#e8eef9;font-family:Inter,Segoe UI,Arial,sans-serif;}
+    body{margin:0;min-height:100vh;background:radial-gradient(circle at top left,#1f4472 0,#08111f 42%,#040812 100%);}
+    .gv-opds-shell{max-width:1040px;margin:0 auto;padding:32px 20px;}
+    .gv-opds-card{display:grid;grid-template-columns:minmax(180px,260px) 1fr;gap:28px;background:rgba(7,16,31,.82);border:1px solid rgba(129,168,216,.28);border-radius:24px;box-shadow:0 24px 80px rgba(0,0,0,.36);padding:24px;}
+    .gv-opds-cover{width:100%;border-radius:18px;background:#0d1728;box-shadow:0 18px 48px rgba(0,0,0,.4);}
+    h1{margin:0 0 8px;font-size:clamp(1.6rem,4vw,2.6rem);line-height:1.05;}
+    .gv-opds-sub{color:#9fb2ca;margin:0 0 18px;}
+    .gv-opds-actions{display:flex;flex-wrap:wrap;gap:10px;margin:20px 0;}
+    .gv-opds-button{display:inline-flex;align-items:center;justify-content:center;border-radius:999px;padding:10px 16px;text-decoration:none;font-weight:700;background:#2f8df5;color:white;border:1px solid rgba(255,255,255,.16);}
+    .gv-opds-button.secondary{background:rgba(255,255,255,.08);color:#e8eef9;}
+    dl{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin:18px 0 0;}
+    .gv-opds-row{border:1px solid rgba(129,168,216,.18);background:rgba(255,255,255,.045);border-radius:14px;padding:10px 12px;}
+    dt{font-size:.73rem;text-transform:uppercase;letter-spacing:.08em;color:#88a5c9;margin-bottom:5px;}dd{margin:0;color:#f5f8ff;}
+    @media(max-width:720px){.gv-opds-card{grid-template-columns:1fr;}dl{grid-template-columns:1fr}.gv-opds-cover{max-width:260px}}
+  </style>
+</head>
+<body>
+  <main class="gv-opds-shell">
+    <section class="gv-opds-card">
+      <img class="gv-opds-cover" src="{{{Html(coverHref)}}}" alt="{{{Html(title)}}} cover" />
+      <div>
+        <h1>{{{Html(title)}}}</h1>
+        <p class="gv-opds-sub">{{{summary}}}</p>
+        <div class="gv-opds-actions">
+          <a class="gv-opds-button" href="{{{Html(readHref)}}}">Read in Guidevault</a>
+          <a class="gv-opds-button secondary" href="{{{Html(webDetailHref)}}}">Open Guidevault Details</a>
+          <a class="gv-opds-button secondary" href="{{{Html(downloadHref)}}}">Download File</a>
+        </div>
+        <dl>{{{rows}}}</dl>
+      </div>
+    </section>
+  </main>
+</body>
+</html>
+""";
+    return Results.Content(body, "text/html; charset=utf-8", Encoding.UTF8);
+}
+
+static string Html(string? value) => WebUtility.HtmlEncode(value ?? string.Empty);
+
+static IEnumerable<(string Label, string Value)> OpdsItemDetailRows(LibraryItem item)
+{
+    void AddIf(List<(string Label, string Value)> rows, string label, string? value)
+    {
+        var text = (value ?? string.Empty).Trim();
+        if (!string.IsNullOrWhiteSpace(text)) rows.Add((label, text));
+    }
+
+    var rows = new List<(string Label, string Value)>();
+    AddIf(rows, "Type", item.Kind);
+    AddIf(rows, "Format", item.Format);
+    AddIf(rows, "Preferred Platform", CategoryOrSystem(item));
+    AddIf(rows, "Associated Platforms", JoinValues(item.AssociatedPlatforms));
+    AddIf(rows, "Series", item.Series);
+    AddIf(rows, "Issue", item.IssueNumber);
+    AddIf(rows, "Publisher", item.Publisher);
+    AddIf(rows, "Year", item.Year);
+    AddIf(rows, "Language", item.LanguageTag);
+    AddIf(rows, "Region", item.Region);
+    AddIf(rows, "Rating", item.Rating);
+    AddIf(rows, "ISBN-13", item.Isbn13);
+    AddIf(rows, "ISBN-10", item.Isbn10);
+    AddIf(rows, "ISSN / Barcode / UPC", item.BarcodeUpcIssn);
+    AddIf(rows, "Page Count", item.PageCount > 0 ? item.PageCount.ToString() : string.Empty);
+    AddIf(rows, "File", item.FileName);
+    AddIf(rows, "Size", FormatOpdsBytes(item.SizeBytes));
+    AddIf(rows, "Associated Game", item.GameTitle);
+    AddIf(rows, "Guide Type", item.GuideType);
+    AddIf(rows, "Edition", item.Edition);
+    AddIf(rows, "Featured Games", JoinValues(item.FeaturedGames));
+    AddIf(rows, "Featured Platforms", JoinValues(item.FeaturedPlatforms));
+    AddIf(rows, "Covered Games", JoinValues(item.CoveredGames ?? Array.Empty<string>()));
+    AddIf(rows, "Covered Platforms", JoinValues(item.CoveredPlatforms ?? Array.Empty<string>()));
+    return rows;
+}
+
+static string OpdsItemFullDescription(LibraryItem item) =>
+    string.Join(Environment.NewLine, OpdsItemDetailRows(item).Select(row => $"{row.Label}: {row.Value}"));
+
+static string JoinValues(IEnumerable<string>? values) =>
+    string.Join(", ", (values ?? Array.Empty<string>()).Select(v => (v ?? string.Empty).Trim()).Where(v => !string.IsNullOrWhiteSpace(v)).Distinct(StringComparer.OrdinalIgnoreCase));
+
+static string FormatOpdsBytes(long bytes)
+{
+    if (bytes <= 0) return string.Empty;
+    string[] units = ["B", "KB", "MB", "GB", "TB"];
+    var value = (double)bytes;
+    var unit = 0;
+    while (value >= 1024 && unit < units.Length - 1)
+    {
+        value /= 1024;
+        unit++;
+    }
+    return $"{value:0.#} {units[unit]}";
 }
 
 static OpdsNavigationEntry OpdsNavEntry(string title, string description, string href, string kind = "acquisition") => new(title, description, href, kind);
@@ -3103,6 +3420,7 @@ public sealed class GuidevaultTaskScheduleSettings
 
 public sealed record OpdsAuthResult(bool Success, string Secret, OpdsAuthKey? Key, IResult? Response);
 public sealed record OpdsNavigationEntry(string Title, string Description, string Href, string Kind = "acquisition");
+public sealed record OpdsPaging(int Page, int PageSize, int Total, int TotalPages, int Skip, int StartIndex, int EndIndex);
 public sealed record OpdsKeyCreateRequest(string? Name);
 public sealed record OpdsSettingsUpdate(string? ConnectionUrl, string? SelectedKeyId, bool? Enabled);
 
@@ -8320,6 +8638,8 @@ public sealed record IgdbGameMetadataResult(
     string MatchBy,
     string Confidence);
 
+public sealed record IgdbCredentialStatus(bool Ok, string Message, string ClientIdPreview, DateTimeOffset ExpiresAt);
+
 static class IgdbGameMetadataClient
 {
     private static readonly HttpClient Http = CreateHttpClient();
@@ -8337,16 +8657,27 @@ static class IgdbGameMetadataClient
         return client;
     }
 
+    public static async Task<IgdbCredentialStatus> TestCredentialsAsync(string? clientId, string? clientSecret)
+    {
+        var id = CleanCredential(clientId);
+        var secret = CleanCredential(clientSecret);
+        EnsureConfigured(id, secret);
+        await GetAccessTokenAsync(id, secret);
+        return new IgdbCredentialStatus(true, "IGDB credentials verified. Batch IGDB lookup can run.", MaskClientId(id), _accessTokenExpiresAt);
+    }
+
     public static async Task<IReadOnlyList<IgdbGameMetadataResult>> SearchAsync(string? q, string? platform, string? year, int limit, string? clientId, string? clientSecret)
     {
-        EnsureConfigured(clientId, clientSecret);
+        var id = CleanCredential(clientId);
+        var secret = CleanCredential(clientSecret);
+        EnsureConfigured(id, secret);
         var query = CleanSearchText(q);
         if (string.IsNullOrWhiteSpace(query)) throw new InvalidOperationException("Enter a game title to search IGDB.");
         limit = Math.Clamp(limit, 1, 24);
 
-        var results = await QueryGamesAsync(query, platform, year, limit, clientId!, clientSecret!, excludeVersions: true);
+        var results = await QueryGamesAsync(query, platform, year, limit, id, secret, excludeVersions: true);
         if (results.Count == 0)
-            results = await QueryGamesAsync(query, platform, year, limit, clientId!, clientSecret!, excludeVersions: false);
+            results = await QueryGamesAsync(query, platform, year, limit, id, secret, excludeVersions: false);
         var yearHint = ParseYear(year);
         return results
             .OrderByDescending(r => ConfidenceRank(r.Confidence))
@@ -8361,10 +8692,12 @@ static class IgdbGameMetadataClient
     {
         var fallback = FromPayload(payload);
         if (fallback.Id <= 0) return fallback;
-        EnsureConfigured(clientId, clientSecret);
-        var token = await GetAccessTokenAsync(clientId!, clientSecret!);
+        var id = CleanCredential(clientId);
+        var secret = CleanCredential(clientSecret);
+        EnsureConfigured(id, secret);
+        var token = await GetAccessTokenAsync(id, secret);
         var body = $"fields id,name,first_release_date,genres.name,platforms.name,involved_companies.developer,involved_companies.publisher,involved_companies.company.name,franchise.name,franchises.name,collection.name,collections.name,cover.image_id,url,slug; where id = {fallback.Id}; limit 1;";
-        var json = await PostIgdbAsync("games", body, clientId!, token);
+        var json = await PostIgdbAsync("games", body, id, token);
         using var doc = JsonDocument.Parse(json);
         if (doc.RootElement.ValueKind == JsonValueKind.Array)
         {
@@ -8412,6 +8745,8 @@ static class IgdbGameMetadataClient
 
     private static async Task<string> GetAccessTokenAsync(string clientId, string clientSecret)
     {
+        clientId = CleanCredential(clientId);
+        clientSecret = CleanCredential(clientSecret);
         var fingerprint = SecretFingerprint(clientSecret);
         if (!string.IsNullOrWhiteSpace(_accessToken)
             && DateTimeOffset.UtcNow < _accessTokenExpiresAt.AddMinutes(-5)
@@ -8437,7 +8772,10 @@ static class IgdbGameMetadataClient
             using var response = await Http.PostAsync("https://id.twitch.tv/oauth2/token", content);
             var text = await response.Content.ReadAsStringAsync();
             if (!response.IsSuccessStatusCode)
-                throw new InvalidOperationException($"Twitch OAuth token request failed with HTTP {(int)response.StatusCode}: {TrimError(text)}");
+            {
+                ClearAccessTokenCache();
+                throw new InvalidOperationException(DescribeTwitchOAuthError(response.StatusCode, text));
+            }
             using var doc = JsonDocument.Parse(text);
             var token = doc.RootElement.TryGetProperty("access_token", out var access) ? access.GetString() : string.Empty;
             var expiresIn = doc.RootElement.TryGetProperty("expires_in", out var expires) && expires.TryGetInt32(out var seconds) ? seconds : 3600;
@@ -8683,8 +9021,47 @@ static class IgdbGameMetadataClient
 
     private static void EnsureConfigured(string? clientId, string? clientSecret)
     {
-        if (string.IsNullOrWhiteSpace(clientId) || string.IsNullOrWhiteSpace(clientSecret))
-            throw new InvalidOperationException("IGDB credentials are not configured. Add your IGDB/Twitch Client ID and Client Secret in Settings > Server > General > Metadata Sources.");
+        if (string.IsNullOrWhiteSpace(CleanCredential(clientId)) || string.IsNullOrWhiteSpace(CleanCredential(clientSecret)))
+            throw new InvalidOperationException("IGDB credentials are not configured. Add your Twitch Developer Client ID and Client Secret in Settings > Server > General > Metadata Sources.");
+    }
+
+    private static string CleanCredential(string? value)
+    {
+        var text = (value ?? string.Empty).Trim().Trim('"', '\'');
+        text = Regex.Replace(text, @"^\s*(?:igdb\s*)?(?:twitch\s*)?(?:client[_\s-]*id|client[_\s-]*secret|secret)\s*[:=]\s*", string.Empty, RegexOptions.IgnoreCase).Trim();
+        return text.Trim('"', '\'');
+    }
+
+    private static string MaskClientId(string value)
+    {
+        var text = CleanCredential(value);
+        if (text.Length <= 8) return string.IsNullOrWhiteSpace(text) ? string.Empty : "configured";
+        return $"{text[..4]}...{text[^4..]}";
+    }
+
+    private static void ClearAccessTokenCache()
+    {
+        _accessToken = string.Empty;
+        _accessTokenExpiresAt = DateTimeOffset.MinValue;
+        _tokenClientId = string.Empty;
+        _tokenSecretFingerprint = string.Empty;
+    }
+
+    private static string DescribeTwitchOAuthError(HttpStatusCode statusCode, string responseText)
+    {
+        var message = string.Empty;
+        try
+        {
+            using var doc = JsonDocument.Parse(responseText ?? string.Empty);
+            if (doc.RootElement.TryGetProperty("message", out var msg)) message = msg.GetString() ?? string.Empty;
+            if (string.IsNullOrWhiteSpace(message) && doc.RootElement.TryGetProperty("error", out var err)) message = err.GetString() ?? string.Empty;
+        }
+        catch { }
+        message = string.IsNullOrWhiteSpace(message) ? TrimError(responseText) : message.Trim();
+        if (string.IsNullOrWhiteSpace(message)) message = "token request was rejected";
+        if (statusCode is HttpStatusCode.BadRequest or HttpStatusCode.Unauthorized or HttpStatusCode.Forbidden)
+            return $"Twitch rejected the IGDB credentials: {message}. Re-save the Twitch Developer app Client ID and generated Client Secret in Settings > Server > General > Metadata Sources, then use Test IGDB Credentials. Guidevault does not use the OAuth redirect URL for this lookup.";
+        return $"Twitch OAuth token request failed with HTTP {(int)statusCode}: {message}";
     }
 
     private static string SecretFingerprint(string value)
@@ -8693,7 +9070,7 @@ static class IgdbGameMetadataClient
         return Convert.ToHexString(bytes);
     }
 
-    private static string TrimError(string value)
+    private static string TrimError(string? value)
     {
         var text = Regex.Replace(value ?? string.Empty, @"\s+", " ").Trim();
         return text.Length > 260 ? text[..260] + "..." : text;
@@ -9290,6 +9667,5 @@ static class GuidevaultLibraryIoGate
 
 static class GuidevaultBuildInfo
 {
-    public const string Version = "0.9.85";
+    public const string Version = "0.9.102";
 }
-

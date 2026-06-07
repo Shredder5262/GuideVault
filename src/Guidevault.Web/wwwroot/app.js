@@ -16,7 +16,8 @@ const state = {
   readingProfiles: { presets: {}, defaultPresetId: 'default', groupAssignments: {}, entryAssignments: {} },
   opds: { connectionUrl: '', selectedKeyId: '', keys: [], editingUrl: false, revealUrl: false, creatingKey: false },
   devices: { emailDevices: [], clientDevices: [], generatedAt: null, addingEmail: false, editingEmailId: '', editingClientId: '', clientMenuId: '' },
-  metadataManager: { selectedIds: [], dirty: {}, filterKind: '', search: '', missing: '', category: '', visibleColumns: [] },
+  metadataManager: { selectedIds: [], dirty: {}, filterKind: '', search: '', missing: '', category: '', visibleColumns: [], sortKey: '', sortDirection: 'asc', draggedColumnKey: '', renderLimit: 250 },
+  metadataSourceBatch: { results: [], running: false, applied: 0, runId: 0, abortController: null },
   keybinds: { bindings: {}, awaitingId: '' },
   folderBrowser: { targetInputId: '', currentPath: '/app/data/library', roots: [] },
   customize: { activeTab: 'home', homeShelves: [], sideNav: { customItems: [] } },
@@ -52,7 +53,9 @@ const READER_BACKGROUND_KEY = 'guidevault.readerBackground.v1';
 const READER_BACKGROUND_BRIGHTNESS_KEY = 'guidevault.readerBackgroundBrightness.v1';
 const GUIDEVAULT_METADATA_OVERRIDES_KEY = 'guidevault.metadataOverrides.v2';
 const GUIDEVAULT_METADATA_COLUMNS_KEY = 'guidevault.metadataManagerColumns.v1';
-const METADATA_MANAGER_RENDER_LIMIT = 250;
+const GUIDEVAULT_METADATA_COLUMN_SORT_KEY = 'guidevault.metadataManagerColumnSort.v1';
+const METADATA_MANAGER_DEFAULT_RENDER_LIMIT = 250;
+const METADATA_MANAGER_RENDER_STEP = 250;
 const METADATA_MANAGER_SEARCH_DEBOUNCE_MS = 220;
 const GUIDEVAULT_LOGIN_PROFILE_KEY = 'guidevault.localLoginProfile.v1';
 const GUIDEVAULT_READING_PROFILES_KEY = 'guidevault.readingProfiles.v1';
@@ -62,6 +65,7 @@ const GUIDEVAULT_KEYBINDS_KEY = 'guidevault.keybinds.v1';
 const GUIDEVAULT_CUSTOMIZE_KEY = 'guidevault.customize.v1';
 let guidevaultCustomizeSaveTimer = null;
 let guidevaultCustomizeSyncInFlight = false;
+let guidevaultStartupDeepLinkHandled = false;
 const GUIDEVAULT_READING_ACTIVITY_KEY = 'guidevault.readingActivity.v1';
 const GUIDEVAULT_CATEGORY_STRUCTURE_KEY = 'guidevault.categoryStructure.v1';
 const GUIDEVAULT_COVER_SIZE_KEY = 'guidevault.libraryCoverSize.v1';
@@ -69,7 +73,7 @@ const GUIDEVAULT_FAVORITES_KEY = 'guidevault.favorites.v1';
 const GUIDEVAULT_LIBRARY_CACHE_KEY = 'guidevault.libraryCache.v1';
 const GUIDEVAULT_GRID_INITIAL_RENDER = 96;
 const GUIDEVAULT_GRID_CHUNK_SIZE = 96;
-const GUIDEVAULT_APP_VERSION = '0.9.85';
+const GUIDEVAULT_APP_VERSION = '0.9.102';
 const GUIDEVAULT_FILENAME_SCHEMA_KEY = 'guidevault.filenameRename.schema.v1';
 const GUIDEVAULT_DEFAULT_FILENAME_SCHEMA = '{title}';
 const GUIDEVAULT_STABLE_TAG_FEED_URL = 'https://api.github.com/repos/Shredder5262/GuideVault/tags';
@@ -2341,6 +2345,21 @@ async function saveServerSettings(source = 'general') {
     source === 'media' ? setMediaSettingsStatus(msg, 'error') : setServerSettingsStatus(msg, 'error');
   }
 }
+async function testIgdbCredentials() {
+  const payload = collectServerSettings();
+  setServerSettingsStatus('Saving and testing IGDB credentials...', 'info');
+  try {
+    const saveRes = await fetch('/api/server/settings', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+    if (!saveRes.ok) throw new Error(`Save failed: ${saveRes.status}`);
+    state.serverSettings = normalizeServerSettings(await saveRes.json());
+    renderServerSettings();
+    const data = await metadataBatchFetchJson('/api/igdb/status');
+    setServerSettingsStatus(data?.message || 'IGDB credentials verified.', 'success');
+  } catch (err) {
+    console.error('IGDB credential test failed', err);
+    setServerSettingsStatus(`IGDB credential test failed: ${metadataBatchFriendlySourceError('igdb', err?.message || err)}`, 'error');
+  }
+}
 function resetServerDefaults() {
   state.serverSettings = defaultServerSettings();
   renderServerSettings();
@@ -4532,6 +4551,44 @@ function loadLibraryClientCache() {
   }
 }
 
+function getGuidevaultStartupDeepLink() {
+  try {
+    const params = new URLSearchParams(window.location.search || '');
+    const readId = (params.get('read') || params.get('reader') || '').trim();
+    const detailId = (params.get('detail') || params.get('item') || '').trim();
+    if (readId) return { action: 'read', id: readId };
+    if (detailId) return { action: 'detail', id: detailId };
+  } catch {}
+  return null;
+}
+
+function clearGuidevaultStartupDeepLinkUrl() {
+  try {
+    const url = new URL(window.location.href);
+    ['read', 'reader', 'detail', 'item'].forEach(key => url.searchParams.delete(key));
+    const clean = `${url.pathname}${url.search}${url.hash}`;
+    history.replaceState(null, '', clean || '/');
+  } catch {}
+}
+
+function handleGuidevaultStartupDeepLink() {
+  if (guidevaultStartupDeepLinkHandled || !Array.isArray(state.items) || !state.items.length) return false;
+  const link = getGuidevaultStartupDeepLink();
+  if (!link?.id) return false;
+  const wanted = String(link.id || '').trim();
+  const wantedLower = wanted.toLowerCase();
+  const item = state.items.find(i => itemIdOf(i).toLowerCase() === wantedLower);
+  if (!item) return false;
+  guidevaultStartupDeepLinkHandled = true;
+  clearGuidevaultStartupDeepLinkUrl();
+  if (link.action === 'read') {
+    openReader(item);
+  } else {
+    showDetailScreen(item);
+  }
+  return true;
+}
+
 function renderCachedLibraryImmediately() {
   if (Array.isArray(state.items) && state.items.length) return false;
   const cached = loadLibraryClientCache();
@@ -4541,6 +4598,7 @@ function renderCachedLibraryImmediately() {
   applyClientMetadataOverridesToLibrary();
   state.libraryLoadedOnce = true;
   applyFilters();
+  handleGuidevaultStartupDeepLink();
   setStatus('Loaded cached library. Refreshing latest library state in the background...');
   return true;
 }
@@ -4561,6 +4619,7 @@ async function loadLibrary() {
     saveLibraryClientCache(state.items);
     if (state.selected) state.selected = state.items.find(i => i.id === state.selected.id) || null;
     applyFilters();
+    handleGuidevaultStartupDeepLink();
     if (!$('settingsReadingProfilesPanel')?.classList.contains('hidden')) renderReadingProfileSettings();
   } catch (err) {
     console.error(err);
@@ -6337,19 +6396,21 @@ function fileExtensionOf(item) {
 
 function showDetailScreen(item) {
   if (!item) return;
+  const effectiveItem = applyClientMetadataOverride(item);
   cleanupInactiveViewsForNavigation('detail');
   document.body.classList.remove('settings-sidebar-mode', 'reader-page-mode', 'profile-page-mode');
   document.body.classList.add('detail-page-mode');
   document.body.classList.remove('right-collapsed');
-  state.selected = item;
-  recordReadingActivity(item, 'view');
+  state.selected = effectiveItem;
+  resetIndividualMetadataLookupsForItem(effectiveItem);
+  recordReadingActivity(effectiveItem, 'view');
   hideAppView('libraryView');
   hideAppView('settingsView');
   hideAppView('profileView');
   hideAppView('readerView');
   showAppView('detailView');
   activateTab('overview');
-  renderDetails(item);
+  renderDetails(effectiveItem);
   const main = document.querySelector('.main');
   if (main) main.scrollTop = 0;
 }
@@ -6747,6 +6808,8 @@ function updateTypedMetadataFieldVisibility(kind = $('editKind')?.value || '') {
   const extrasLabel = $('editIncludedExtrasLabel');
   if (extrasLabel?.firstChild) extrasLabel.firstChild.nodeValue = isMagazine ? 'Insert Details, comma-separated' : 'Physical Extras, comma-separated';
   if ($('editPlatformMatchLabel')) $('editPlatformMatchLabel').classList.add('hidden');
+  $('metadataPanel')?.classList.toggle('metadata-kind-strategy', isStrategyGuide);
+  $('editGameTitleLabel')?.classList.toggle('strategy-game-context-order', isStrategyGuide);
   if ($('editSeriesLabel')) $('editSeriesLabel').classList.toggle('hidden', isStrategyGuide || isManual || isMagazine);
   if ($('editYearLabel')) $('editYearLabel').classList.toggle('hidden', isManual || isMagazine);
   if ($('editPublicationDateGuideLabel')) $('editPublicationDateGuideLabel').classList.toggle('hidden', !isStrategyGuide);
@@ -7427,6 +7490,66 @@ function normalizeOpenLibraryLanguage(value = '') {
   return raw;
 }
 
+
+const STRATEGY_GUIDE_METADATA_SOURCE_LOOKUPS = new Set(['openLibrary', 'igdb', 'esrb']);
+
+function metadataLookupSelectedItemKey(item = state.selected || {}) {
+  try {
+    return String(itemIdOf(item) || item?.id || item?.Id || item?.relativePath || item?.filePath || item?.path || item?.title || '').trim();
+  } catch {
+    return String(item?.id || item?.Id || item?.relativePath || item?.filePath || item?.path || item?.title || '').trim();
+  }
+}
+
+function resetIndividualMetadataLookupState(sourceKey, item = state.selected || {}, clearResults = true) {
+  const bucket = state[sourceKey];
+  if (!bucket) return;
+  bucket.itemKey = metadataLookupSelectedItemKey(item);
+  bucket.step = 'search';
+  bucket.selectedResult = null;
+  bucket.resolvedResult = null;
+  bucket.forceInitialValues = true;
+  if (clearResults) bucket.results = [];
+}
+
+function resetIndividualMetadataLookupsForItem(item = state.selected || {}) {
+  const itemKey = metadataLookupSelectedItemKey(item);
+  ['openLibrary', 'igdb', 'esrb'].forEach(sourceKey => {
+    const bucket = state[sourceKey];
+    if (!bucket || bucket.itemKey === itemKey) return;
+    resetIndividualMetadataLookupState(sourceKey, item, true);
+  });
+}
+
+function metadataSourceLookupAllowedForSelectedItem(sourceKey = '') {
+  const item = state.selected || {};
+  if (!STRATEGY_GUIDE_METADATA_SOURCE_LOOKUPS.has(sourceKey)) return false;
+  return item.kind === 'Strategy Guide';
+}
+
+function metadataSourceLookupUnavailableMessage(sourceLabel = 'This metadata lookup') {
+  return `${sourceLabel} is currently available for Strategy Guides only. Item-specific lookup flows for Manuals and Magazines can be added later with their own search criteria.`;
+}
+
+function updateMetadataSourceActionVisibility() {
+  const actions = [
+    { id: 'openLibrarySearchBtn', source: 'openLibrary', label: 'Open Library metadata lookup' },
+    { id: 'igdbSearchBtn', source: 'igdb', label: 'IGDB game metadata lookup' },
+    { id: 'esrbSearchBtn', source: 'esrb', label: 'ESRB rating lookup' }
+  ];
+  actions.forEach(action => {
+    const button = $(action.id);
+    if (!button) return;
+    const allowed = metadataSourceLookupAllowedForSelectedItem(action.source);
+    button.classList.toggle('hidden', !allowed);
+    button.disabled = !allowed;
+    button.setAttribute('aria-hidden', allowed ? 'false' : 'true');
+    button.title = allowed
+      ? (button.dataset.defaultTitle || button.title || action.label)
+      : metadataSourceLookupUnavailableMessage(action.label);
+  });
+}
+
 function isOpenLibraryBlank(value, key = '') {
   if (value === null || value === undefined) return true;
   if (key === 'pageCount') return !(Number(value) > 0);
@@ -7470,20 +7593,18 @@ function openLibraryCurrentMetadataForCompare() {
 function openLibraryInitialSearchValues() {
   let form = {};
   try { form = buildCurrentMetadataPayloadFromForm(); } catch { form = {}; }
-  const item = state.selected || {};
+  const item = applyClientMetadataOverride(state.selected || {});
   const title = String(
-    form.strategyGuideTitle || form.manualTitle || form.magazineTitle || form.title ||
-    item.strategyGuideTitle || item.manualTitle || item.magazineTitle || item.title || displayTitle(item) || ''
+    item.strategyGuideTitle || item.manualTitle || item.magazineTitle || item.title || displayTitle(item) ||
+    form.strategyGuideTitle || form.manualTitle || form.magazineTitle || form.title || ''
   ).trim();
-  const gameTitle = String(form.gameTitle || item.gameTitle || item.platformMatchTitle || item.series || '').trim();
-  const publisher = String(form.publisher || item.publisher || '').trim();
-  const year = String(form.year || item.year || '').trim();
-  const rawIsbn = String(form.isbn || combinedIsbnText(item) || `${form.isbn10 || ''} ${form.isbn13 || ''}` || '').trim();
+  const gameTitle = String(item.gameTitle || item.platformMatchTitle || item.series || form.gameTitle || '').trim();
+  const publisher = String(item.publisher || form.publisher || '').trim();
+  const year = String(item.year || item.editionYear || form.year || form.editionYear || '').trim();
+  const rawIsbn = String(combinedIsbnText(item) || form.isbn || `${form.isbn10 || ''} ${form.isbn13 || ''}` || '').trim();
   const isbnParts = splitIsbnInput(rawIsbn);
-  const isbn = isbnParts.isbn10 || isbnParts.isbn13 || '';
-  const secondary = gameTitle && !openLibrarySameText(gameTitle, title)
-    ? gameTitle
-    : [publisher, year].filter(Boolean).join(' ');
+  const isbn = isbnParts.isbn13 || isbnParts.isbn10 || '';
+  const secondary = isbn || year || '';
   return {
     q: title || gameTitle || [publisher, year].filter(Boolean).join(' '),
     secondary,
@@ -7509,7 +7630,7 @@ function ensureOpenLibraryMetadataUi() {
         <header class="openlibrary-modal-head">
           <div>
             <h3>Search Open Library Metadata</h3>
-            <p>Search by strategy guide title first. Use game title, publisher, or year as a secondary hint. Review existing Guidevault values beside Open Library values before importing.</p>
+            <p>Search by strategy guide title first. Use ISBN or year as a secondary hint. Review existing Guidevault values beside Open Library values before importing.</p>
           </div>
           <button type="button" id="openLibraryCloseBtn" class="ghost tiny">Close</button>
         </header>
@@ -7522,6 +7643,8 @@ function ensureOpenLibraryMetadataUi() {
   if (existing) {
     existing.classList.add('ghost', 'openlibrary-action-button');
     existing.type = 'button';
+    existing.dataset.defaultTitle = 'Search Open Library by strategy guide title/game title and review metadata before importing selected fields.';
+    updateMetadataSourceActionVisibility();
     return;
   }
 
@@ -7536,8 +7659,10 @@ function ensureOpenLibraryMetadataUi() {
     btn.type = 'button';
     btn.className = 'ghost openlibrary-action-button';
     btn.textContent = 'Search Open Library Metadata';
-    btn.title = 'Search Open Library by title/game title and review metadata before importing selected fields.';
+    btn.title = 'Search Open Library by strategy guide title/game title and review metadata before importing selected fields.';
+    btn.dataset.defaultTitle = btn.title;
     target.appendChild(btn);
+    updateMetadataSourceActionVisibility();
   }
 }
 
@@ -7550,19 +7675,20 @@ function openLibrarySetStatus(message = '', tone = '') {
 
 function openLibrarySearchPanelHtml() {
   const initial = openLibraryInitialSearchValues();
-  const primaryValue = $('openLibrarySearchInput')?.value || initial.q || '';
-  const secondaryValue = $('openLibrarySecondaryInput')?.value || initial.secondary || '';
+  const forceInitial = state.openLibrary?.forceInitialValues || state.openLibrary?.itemKey !== metadataLookupSelectedItemKey();
+  const primaryValue = forceInitial ? (initial.q || '') : ($('openLibrarySearchInput')?.value || initial.q || '');
+  const secondaryValue = forceInitial ? (initial.secondary || '') : ($('openLibrarySecondaryInput')?.value || initial.secondary || '');
   return `<section class="openlibrary-search-panel">
     <div class="openlibrary-search-fields">
       <label>Title / primary search
         <input id="openLibrarySearchInput" type="search" value="${escapeForAttribute(primaryValue)}" placeholder="Strategy guide title or game title" />
       </label>
       <label>Secondary hint
-        <input id="openLibrarySecondaryInput" type="search" value="${escapeForAttribute(secondaryValue)}" placeholder="Optional: game title, publisher, or year" />
+        <input id="openLibrarySecondaryInput" type="search" value="${escapeForAttribute(secondaryValue)}" placeholder="Optional: ISBN or year" />
       </label>
       <button type="button" id="openLibraryRunSearchBtn" class="primary">Search</button>
     </div>
-    <p class="openlibrary-help">Guidevault searches the title field first, then broadens to the secondary hint and strategy-guide terms. ISBN is only used first when you type or provide an ISBN.</p>
+    <p class="openlibrary-help">Guidevault searches the title field first, then uses only ISBN or year as the secondary hint. Game title and publisher are not prefilled here.</p>
     <p id="openLibraryStatus" class="openlibrary-status"></p>
     <div id="openLibraryResults" class="openlibrary-results"></div>
   </section>`;
@@ -7572,7 +7698,7 @@ function renderOpenLibrarySearchResults(results = state.openLibrary.results || [
   const host = $('openLibraryResults');
   if (!host) return;
   if (!results.length) {
-    host.innerHTML = '<div class="openlibrary-empty">No Open Library results yet. Search by strategy guide title first, or try the game title as the secondary hint.</div>';
+    host.innerHTML = '<div class="openlibrary-empty">No Open Library results yet. Search by strategy guide title first; use only ISBN or year as the secondary hint when available.</div>';
     return;
   }
   host.innerHTML = results.map((result, index) => `
@@ -7603,10 +7729,9 @@ function renderOpenLibraryDialog(step = state.openLibrary.step || 'search') {
 async function openOpenLibraryMetadataDialog() {
   if (!state.selected) return;
   ensureOpenLibraryMetadataUi();
-  state.openLibrary.results = [];
-  state.openLibrary.selectedResult = null;
-  state.openLibrary.resolvedResult = null;
+  resetIndividualMetadataLookupState('openLibrary', state.selected, true);
   renderOpenLibraryDialog('search');
+  state.openLibrary.forceInitialValues = false;
   const dialog = $('openLibraryDialog');
   try {
     if (dialog && !dialog.open) dialog.showModal();
@@ -7630,7 +7755,7 @@ async function runOpenLibraryMetadataSearch(useInitial = false) {
   const primary = String((useInitial ? initial.q : input?.value) || initial.q || '').trim();
   const secondary = String((useInitial ? initial.secondary : secondaryInput?.value) || initial.secondary || '').trim();
   if (!primary && !secondary) {
-    openLibrarySetStatus('Enter a strategy guide title, game title, publisher, year, or ISBN to search Open Library.', 'error');
+    openLibrarySetStatus('Enter a strategy guide title, year, or ISBN to search Open Library.', 'error');
     return;
   }
   if (input && !input.value) input.value = primary;
@@ -7638,8 +7763,8 @@ async function runOpenLibraryMetadataSearch(useInitial = false) {
   openLibrarySetStatus('Searching Open Library...', 'info');
   const params = new URLSearchParams({ q: primary || secondary, limit: '16' });
   if (secondary) params.set('secondary', secondary);
-  const typedIsbn = splitIsbnInput(primary || '');
-  if (typedIsbn.isbn10 || typedIsbn.isbn13) params.set('isbn', typedIsbn.isbn10 || typedIsbn.isbn13);
+  const typedIsbn = splitIsbnInput(`${primary || ''} ${secondary || ''}`);
+  if (typedIsbn.isbn10 || typedIsbn.isbn13) params.set('isbn', typedIsbn.isbn13 || typedIsbn.isbn10);
   if (initial.title) params.set('title', initial.title);
   if (initial.gameTitle) params.set('gameTitle', initial.gameTitle);
   if (initial.publisher) params.set('publisher', initial.publisher);
@@ -7829,9 +7954,9 @@ function esrbCurrentMetadataForCompare() {
 function esrbInitialSearchValues() {
   let form = {};
   try { form = buildCurrentMetadataPayloadFromForm(); } catch { form = {}; }
-  const item = state.selected || {};
-  const gameTitle = String(form.gameTitle || item.gameTitle || item.platformMatchTitle || item.series || form.title || item.title || displayTitle(item) || '').trim();
-  const platform = String(form.category || detailSystemLabelForItem(item) || item.category || item.system || '').trim();
+  const item = applyClientMetadataOverride(state.selected || {});
+  const gameTitle = String(item.gameTitle || item.platformMatchTitle || item.series || item.title || displayTitle(item) || form.gameTitle || form.title || '').trim();
+  const platform = String(preferredPlatformOf(item) || detailSystemLabelForItem(item) || item.category || item.system || form.category || '').trim();
   return { q: gameTitle, platform: platform === MULTI_PLATFORM_LABEL ? '' : platform };
 }
 
@@ -7862,6 +7987,8 @@ function ensureEsrbMetadataUi() {
   if (existing) {
     existing.classList.add('ghost', 'esrb-action-button');
     existing.type = 'button';
+    existing.dataset.defaultTitle = 'Search ESRB.org by strategy-guide game title and review the rating before importing it.';
+    updateMetadataSourceActionVisibility();
     return;
   }
 
@@ -7875,8 +8002,10 @@ function ensureEsrbMetadataUi() {
     btn.type = 'button';
     btn.className = 'ghost esrb-action-button';
     btn.textContent = 'Search ESRB Rating';
-    btn.title = 'Search ESRB.org by game title and review the rating before importing it.';
+    btn.title = 'Search ESRB.org by strategy-guide game title and review the rating before importing it.';
+    btn.dataset.defaultTitle = btn.title;
     target.appendChild(btn);
+    updateMetadataSourceActionVisibility();
   }
 }
 
@@ -7889,8 +8018,9 @@ function esrbSetStatus(message = '', tone = '') {
 
 function esrbSearchPanelHtml() {
   const initial = esrbInitialSearchValues();
-  const primaryValue = $('esrbSearchInput')?.value || initial.q || '';
-  const platformValue = $('esrbPlatformInput')?.value || initial.platform || '';
+  const forceInitial = state.esrb?.forceInitialValues || state.esrb?.itemKey !== metadataLookupSelectedItemKey();
+  const primaryValue = forceInitial ? (initial.q || '') : ($('esrbSearchInput')?.value || initial.q || '');
+  const platformValue = forceInitial ? (initial.platform || '') : ($('esrbPlatformInput')?.value || initial.platform || '');
   return `<section class="openlibrary-search-panel esrb-search-panel">
     <div class="openlibrary-search-fields esrb-search-fields">
       <label>Game title
@@ -7916,12 +8046,23 @@ function renderEsrbSearchResults(results = state.esrb.results || []) {
   }
   host.innerHTML = results.map((result, index) => {
     const rating = result.ratingShort || result.rating || '';
-    return `<article class="openlibrary-result-card esrb-result-card">
+    const platforms = esrbListLabel(result.platforms);
+    const descriptors = esrbListLabel(result.contentDescriptors);
+    const interactive = esrbListLabel(result.interactiveElements);
+    const facts = [
+      metadataLookupFactHtml('Rating', esrbDisplayLabel(rating)),
+      metadataLookupFactHtml('Systems', platforms, 'wide systems'),
+      metadataLookupFactHtml('Publisher', result.publisher),
+      metadataLookupFactHtml('Content', descriptors, 'wide'),
+      metadataLookupFactHtml('Interactive', interactive, 'wide')
+    ].join('');
+    return `<article class="openlibrary-result-card esrb-result-card metadata-lookup-detailed-card">
       <div class="openlibrary-result-cover esrb-result-badge">${rating ? `<img src="${escapeForAttribute(esrbIconUrl(rating))}" alt="${escapeForAttribute(esrbDisplayLabel(rating))}" loading="lazy" />` : '<span>No rating</span>'}</div>
       <div class="openlibrary-result-main esrb-result-main">
         <h4>${escapeHtml(result.title || 'Untitled')}</h4>
-        <p>${escapeHtml([result.publisher, esrbDisplayLabel(rating), esrbListLabel(result.platforms)].filter(Boolean).join(' - ') || 'No extra result details')}</p>
-        <small>${escapeHtml(result.matchBy || 'Game title')} match - ${escapeHtml(result.confidence || 'Unknown')} confidence${esrbListLabel(result.contentDescriptors) ? ` - ${escapeHtml(esrbListLabel(result.contentDescriptors))}` : ''}</small>
+        <p class="metadata-lookup-card-subtitle">${escapeHtml([result.publisher, esrbDisplayLabel(rating)].filter(Boolean).join(' - ') || 'No extra result details')}</p>
+        <div class="metadata-lookup-facts">${facts || metadataLookupFactHtml('Systems', 'No platform list returned', 'wide muted')}</div>
+        <small>${escapeHtml(result.matchBy || 'Game title')} match - ${escapeHtml(result.confidence || 'Unknown')} confidence</small>
       </div>
       <button type="button" class="ghost esrb-select-result" data-result-index="${index}">Select</button>
     </article>`;
@@ -7944,10 +8085,9 @@ function renderEsrbDialog(step = state.esrb.step || 'search') {
 async function openEsrbMetadataDialog() {
   if (!state.selected) return;
   ensureEsrbMetadataUi();
-  state.esrb.results = [];
-  state.esrb.selectedResult = null;
-  state.esrb.resolvedResult = null;
+  resetIndividualMetadataLookupState('esrb', state.selected, true);
   renderEsrbDialog('search');
+  state.esrb.forceInitialValues = false;
   const dialog = $('esrbDialog');
   try {
     if (dialog && !dialog.open) dialog.showModal();
@@ -8021,6 +8161,9 @@ function esrbComparisonHtml(result = {}) {
   const rows = ESRB_IMPORT_FIELDS.map(field => esrbComparisonRowHtml(field, current, { rating: incomingRating })).join('');
   return `<section class="openlibrary-compare-panel esrb-compare-panel">
     <button type="button" id="esrbBackToResultsBtn" class="ghost tiny">Back to results</button>
+    <div class="openlibrary-cover-compare esrb-cover-compare">
+      <figure><figcaption>ESRB Rating Badge</figcaption>${incomingRating ? `<img class="esrb-compare-badge" src="${escapeForAttribute(esrbIconUrl(incomingRating))}" alt="${escapeForAttribute(esrbDisplayLabel(incomingRating))}" />` : '<span>No ESRB rating badge</span>'}</figure>
+    </div>
     <div class="openlibrary-selected-source esrb-selected-source">
       <h4>${escapeHtml(result.title || 'Selected ESRB result')}</h4>
       <p>${escapeHtml([result.publisher, esrbDisplayLabel(incomingRating), esrbListLabel(result.platforms)].filter(Boolean).join(' - ') || 'Review the rating before importing.')}</p>
@@ -8134,6 +8277,15 @@ function igdbListLabel(value) {
   return igdbArray(value).join(', ');
 }
 
+function metadataLookupFactHtml(label, value, extraClass = '') {
+  const text = Array.isArray(value)
+    ? value.map(v => String(v || '').trim()).filter(Boolean).join(', ')
+    : String(value ?? '').trim();
+  if (!text || text === '\u2014') return '';
+  const className = ['metadata-lookup-fact', extraClass].filter(Boolean).join(' ');
+  return `<div class="${escapeForAttribute(className)}"><span>${escapeHtml(label)}</span><strong title="${escapeForAttribute(text)}">${escapeHtml(text)}</strong></div>`;
+}
+
 function isIgdbBlank(value, key = '') {
   if (Array.isArray(value)) return !value.length;
   const text = key === 'associatedPlatforms' ? igdbListLabel(value) : String(value ?? '').trim();
@@ -8170,11 +8322,12 @@ function igdbCurrentMetadataForCompare() {
 function igdbInitialSearchValues() {
   let form = {};
   try { form = buildCurrentMetadataPayloadFromForm(); } catch { form = {}; }
-  const item = state.selected || {};
-  const gameTitle = String(form.gameTitle || item.gameTitle || item.platformMatchTitle || item.series || '').trim();
-  const fallbackTitle = String(form.title || item.title || displayTitle(item) || '').trim();
-  const platform = String(form.category || preferredPlatformOf(item) || categoryOf(item) || '').trim();
-  const year = String(form.gameReleaseYear || item.gameReleaseYear || form.year || item.year || '').trim();
+  const item = applyClientMetadataOverride(state.selected || {});
+  const gameTitle = String(item.gameTitle || item.platformMatchTitle || item.series || form.gameTitle || '').trim();
+  const fallbackTitle = String(item.title || displayTitle(item) || form.title || '').trim();
+  const rawPlatform = String(preferredPlatformOf(item) || categoryOf(item) || form.category || '').trim();
+  const platform = rawPlatform === MULTI_PLATFORM_LABEL ? '' : rawPlatform;
+  const year = String(item.gameReleaseYear || item.year || form.gameReleaseYear || form.year || '').trim();
   return {
     q: gameTitle || fallbackTitle,
     platform,
@@ -8209,6 +8362,8 @@ function ensureIgdbMetadataUi() {
   if (existing) {
     existing.classList.add('ghost', 'igdb-action-button');
     existing.type = 'button';
+    existing.dataset.defaultTitle = 'Search IGDB by strategy-guide game title and review game metadata before importing selected fields.';
+    updateMetadataSourceActionVisibility();
     return;
   }
 
@@ -8222,8 +8377,10 @@ function ensureIgdbMetadataUi() {
     btn.type = 'button';
     btn.className = 'ghost igdb-action-button';
     btn.textContent = 'Search IGDB Game Metadata';
-    btn.title = 'Search IGDB by game title and review game metadata before importing selected fields.';
+    btn.title = 'Search IGDB by strategy-guide game title and review game metadata before importing selected fields.';
+    btn.dataset.defaultTitle = btn.title;
     target.appendChild(btn);
+    updateMetadataSourceActionVisibility();
   }
 }
 
@@ -8236,9 +8393,10 @@ function igdbSetStatus(message = '', tone = '') {
 
 function igdbSearchPanelHtml() {
   const initial = igdbInitialSearchValues();
-  const primaryValue = $('igdbSearchInput')?.value || initial.q || '';
-  const platformValue = $('igdbPlatformInput')?.value || initial.platform || '';
-  const yearValue = $('igdbYearInput')?.value || initial.year || '';
+  const forceInitial = state.igdb?.forceInitialValues || state.igdb?.itemKey !== metadataLookupSelectedItemKey();
+  const primaryValue = forceInitial ? (initial.q || '') : ($('igdbSearchInput')?.value || initial.q || '');
+  const platformValue = forceInitial ? (initial.platform || '') : ($('igdbPlatformInput')?.value || initial.platform || '');
+  const yearValue = forceInitial ? (initial.year || '') : ($('igdbYearInput')?.value || initial.year || '');
   return `<section class="openlibrary-search-panel igdb-search-panel">
     <div class="openlibrary-search-fields igdb-search-fields">
       <label>Game title / primary search
@@ -8265,16 +8423,28 @@ function renderIgdbSearchResults(results = state.igdb.results || []) {
     host.innerHTML = '<div class="openlibrary-empty igdb-empty">No IGDB results yet. Search by the actual game title first, then use platform/year only as hints.</div>';
     return;
   }
-  host.innerHTML = results.map((result, index) => `
-    <article class="openlibrary-result-card igdb-result-card">
+  host.innerHTML = results.map((result, index) => {
+    const systems = igdbListLabel(result.associatedPlatforms || result.platforms);
+    const studios = [igdbListLabel(result.developers), igdbListLabel(result.publishers)].filter(Boolean).join(' / ');
+    const genres = igdbListLabel(result.genres);
+    const facts = [
+      metadataLookupFactHtml('Systems', systems, 'wide systems'),
+      metadataLookupFactHtml('Year', result.gameReleaseYear),
+      metadataLookupFactHtml('Developer / Publisher', studios, 'wide'),
+      metadataLookupFactHtml('Franchise', result.gameFranchise),
+      metadataLookupFactHtml('Genres', genres, 'wide')
+    ].join('');
+    return `<article class="openlibrary-result-card igdb-result-card metadata-lookup-detailed-card">
       <div class="openlibrary-result-cover igdb-result-cover">${result.coverPreviewUrl ? `<img src="${escapeForAttribute(result.coverPreviewUrl)}" alt="" loading="lazy" />` : '<span>No cover</span>'}</div>
       <div class="openlibrary-result-main igdb-result-main">
         <h4>${escapeHtml(result.gameTitle || result.name || 'Untitled game')}</h4>
-        <p>${escapeHtml([igdbListLabel(result.developers), igdbListLabel(result.publishers), result.gameReleaseYear].filter(Boolean).join(' - ') || 'No extra result details')}</p>
-        <small>${escapeHtml(result.matchBy || 'Game title')} match - ${escapeHtml(result.confidence || 'Unknown')} confidence${result.gameFranchise ? ` - ${escapeHtml(result.gameFranchise)}` : ''}${igdbListLabel(result.associatedPlatforms) ? ` - ${escapeHtml(igdbListLabel(result.associatedPlatforms))}` : ''}</small>
+        <p class="metadata-lookup-card-subtitle">${escapeHtml(studios || 'No developer/publisher returned')}</p>
+        <div class="metadata-lookup-facts">${facts || metadataLookupFactHtml('Systems', 'No systems returned', 'wide muted')}</div>
+        <small>${escapeHtml(result.matchBy || 'Game title')} match - ${escapeHtml(result.confidence || 'Unknown')} confidence</small>
       </div>
       <button type="button" class="ghost igdb-select-result" data-result-index="${index}">Select</button>
-    </article>`).join('');
+    </article>`;
+  }).join('');
 }
 
 function renderIgdbDialog(step = state.igdb.step || 'search') {
@@ -8293,10 +8463,9 @@ function renderIgdbDialog(step = state.igdb.step || 'search') {
 async function openIgdbMetadataDialog() {
   if (!state.selected) return;
   ensureIgdbMetadataUi();
-  state.igdb.results = [];
-  state.igdb.selectedResult = null;
-  state.igdb.resolvedResult = null;
+  resetIndividualMetadataLookupState('igdb', state.selected, true);
   renderIgdbDialog('search');
+  state.igdb.forceInitialValues = false;
   const dialog = $('igdbDialog');
   try {
     if (dialog && !dialog.open) dialog.showModal();
@@ -8380,13 +8549,17 @@ function igdbComparisonHtml(result = {}) {
     associatedPlatforms: normalizeGuidevaultPlatformList(result.associatedPlatforms),
     preferredPlatform: igdbCleanValue('preferredPlatform', normalizeGuidevaultPlatformName(result.preferredPlatform))
   };
+  const currentCover = state.selected ? coverUrl(state.selected) : '';
   const rows = IGDB_IMPORT_FIELDS.map(field => igdbComparisonRowHtml(field, current, proposed)).join('');
   return `<section class="openlibrary-compare-panel igdb-compare-panel">
     <button type="button" id="igdbBackToResultsBtn" class="ghost tiny">Back to results</button>
+    <div class="openlibrary-cover-compare igdb-cover-compare">
+      <figure><figcaption>Guidevault Cover</figcaption>${currentCover ? `<img src="${escapeForAttribute(currentCover)}" alt="Current Guidevault cover" />` : '<span>No Guidevault cover</span>'}</figure>
+      <figure><figcaption>IGDB Cover <em>Preview only - not imported</em></figcaption>${result.coverPreviewUrl ? `<img src="${escapeForAttribute(result.coverPreviewUrl)}" alt="IGDB cover preview" />` : '<span>No IGDB cover</span>'}</figure>
+    </div>
     <div class="openlibrary-selected-source igdb-selected-source">
       <h4>${escapeHtml(result.gameTitle || result.name || 'Selected IGDB result')}</h4>
       <p>${escapeHtml([igdbListLabel(result.developers), igdbListLabel(result.publishers), result.gameReleaseYear, igdbListLabel(result.associatedPlatforms)].filter(Boolean).join(' - ') || 'Review fields before importing.')}</p>
-      ${result.coverPreviewUrl ? `<div class="igdb-preview-note"><img src="${escapeForAttribute(result.coverPreviewUrl)}" alt="IGDB cover preview" /><span>IGDB cover preview is only a visual match aid and is not imported.</span></div>` : '<p class="sub">No IGDB cover preview was returned. Covers are not imported from this lookup.</p>'}
     </div>
     <div class="openlibrary-table-wrap igdb-table-wrap">
       <table class="openlibrary-comparison-table igdb-comparison-table">
@@ -8522,6 +8695,7 @@ async function importIgdbMetadata(mode = 'selected') {
 
 function updateMetadataFileMaintenance() {
   ensureEsrbMetadataUi();
+  updateMetadataSourceActionVisibility();
   const panel = $('metadataFileMaintenance');
   if (!panel) return;
   hydrateFileRenameSchema();
@@ -8889,7 +9063,7 @@ function metadataManagerEditableItems() {
   const kind = String(manager.filterKind || '').trim();
   const missing = String(manager.missing || '').trim();
   const category = String(manager.category || '').trim().toLowerCase();
-  return (state.items || []).filter(item => {
+  const filtered = (state.items || []).filter(item => {
     if (!allowed.has(item.kind)) return false;
     if (kind && item.kind !== kind) return false;
     if (category) {
@@ -8905,7 +9079,8 @@ function metadataManagerEditableItems() {
     if (missing === 'multi-platform-strategy-guides' && !metadataManagerIsMultiPlatformStrategyGuide(item)) return false;
     if (q && !metadataManagerSearchText(item).includes(q)) return false;
     return true;
-  }).sort((a, b) => metadataManagerItemName(a).localeCompare(metadataManagerItemName(b), undefined, { sensitivity: 'base' }));
+  });
+  return metadataManagerSortItems(filtered);
 }
 
 function metadataManagerSetStatus(message = '', tone = '') {
@@ -9110,20 +9285,29 @@ function metadataManagerValidColumnKeys() {
   return new Set(METADATA_MANAGER_ALL_COLUMNS.map(column => column.key));
 }
 
+function metadataManagerColumnDefinition(key) {
+  return METADATA_MANAGER_ALL_COLUMNS.find(column => column.key === key) || null;
+}
+
 function metadataManagerLoadVisibleColumns() {
   const valid = metadataManagerValidColumnKeys();
   let saved = [];
   try { saved = JSON.parse(localStorage.getItem(GUIDEVAULT_METADATA_COLUMNS_KEY) || '[]') || []; } catch { saved = []; }
-  const columns = (Array.isArray(state.metadataManager?.visibleColumns) && state.metadataManager.visibleColumns.length ? state.metadataManager.visibleColumns : saved)
+  const requested = (Array.isArray(state.metadataManager?.visibleColumns) && state.metadataManager.visibleColumns.length ? state.metadataManager.visibleColumns : saved)
     .filter(key => valid.has(key));
-  const resolved = columns.length ? columns : METADATA_MANAGER_DEFAULT_COLUMNS.slice();
+  const resolved = requested.length ? requested : METADATA_MANAGER_DEFAULT_COLUMNS.slice();
   state.metadataManager.visibleColumns = resolved;
   return resolved;
 }
 
 function metadataManagerSaveVisibleColumns(columns) {
   const valid = metadataManagerValidColumnKeys();
-  const resolved = (columns || []).filter(key => valid.has(key));
+  const seen = new Set();
+  const resolved = (columns || []).filter(key => {
+    if (!valid.has(key) || seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
   const safe = resolved.length ? resolved : METADATA_MANAGER_DEFAULT_COLUMNS.slice();
   state.metadataManager.visibleColumns = safe;
   try { localStorage.setItem(GUIDEVAULT_METADATA_COLUMNS_KEY, JSON.stringify(safe)); } catch {}
@@ -9131,26 +9315,117 @@ function metadataManagerSaveVisibleColumns(columns) {
 }
 
 function metadataManagerVisibleColumns() {
-  const visible = new Set(metadataManagerLoadVisibleColumns());
-  return METADATA_MANAGER_ALL_COLUMNS.filter(column => visible.has(column.key));
+  return metadataManagerLoadVisibleColumns()
+    .map(metadataManagerColumnDefinition)
+    .filter(Boolean);
 }
 
 function metadataManagerSetColumnVisible(key, visible) {
   const current = metadataManagerLoadVisibleColumns();
   const set = new Set(current);
   if (visible) set.add(key); else set.delete(key);
-  metadataManagerSaveVisibleColumns(Array.from(set));
+  const ordered = [
+    ...current.filter(existing => set.has(existing)),
+    ...METADATA_MANAGER_ALL_COLUMNS.map(column => column.key).filter(existing => set.has(existing) && !current.includes(existing))
+  ];
+  metadataManagerSaveVisibleColumns(ordered);
+  renderMetadataManagerColumnPicker();
   renderMetadataManager();
+}
+
+function metadataManagerMoveColumn(key, direction = 0) {
+  const current = metadataManagerLoadVisibleColumns();
+  const from = current.indexOf(key);
+  if (from < 0) return;
+  const to = Math.max(0, Math.min(current.length - 1, from + Number(direction || 0)));
+  if (from === to) return;
+  const next = current.slice();
+  const [moved] = next.splice(from, 1);
+  next.splice(to, 0, moved);
+  metadataManagerSaveVisibleColumns(next);
+  renderMetadataManagerColumnPicker();
+  renderMetadataManager();
+  metadataManagerSetStatus(`Moved ${metadataManagerColumnDefinition(key)?.label || key} column.`, 'success');
+}
+
+function metadataManagerReorderColumn(sourceKey, targetKey) {
+  if (!sourceKey || !targetKey || sourceKey === targetKey) return;
+  const current = metadataManagerLoadVisibleColumns();
+  const from = current.indexOf(sourceKey);
+  const to = current.indexOf(targetKey);
+  if (from < 0 || to < 0) return;
+  const next = current.slice();
+  const [moved] = next.splice(from, 1);
+  next.splice(to, 0, moved);
+  metadataManagerSaveVisibleColumns(next);
+  renderMetadataManagerColumnPicker();
+  renderMetadataManager();
+  metadataManagerSetStatus(`Moved ${metadataManagerColumnDefinition(sourceKey)?.label || sourceKey} column.`, 'success');
+}
+
+function metadataManagerLoadSort() {
+  const valid = metadataManagerValidColumnKeys();
+  let saved = null;
+  try { saved = JSON.parse(localStorage.getItem(GUIDEVAULT_METADATA_COLUMN_SORT_KEY) || 'null'); } catch { saved = null; }
+  const current = state.metadataManager || {};
+  const currentKey = valid.has(current.sortKey) ? current.sortKey : '';
+  const savedKey = valid.has(saved?.key) ? saved.key : '';
+  const key = currentKey || savedKey || 'name';
+  const direction = current.sortDirection === 'desc' || saved?.direction === 'desc' ? 'desc' : 'asc';
+  state.metadataManager.sortKey = key;
+  state.metadataManager.sortDirection = direction;
+  return { key, direction };
+}
+
+function metadataManagerSaveSort(key, direction = 'asc') {
+  const valid = metadataManagerValidColumnKeys();
+  const safeKey = valid.has(key) ? key : 'name';
+  const safeDirection = direction === 'desc' ? 'desc' : 'asc';
+  state.metadataManager.sortKey = safeKey;
+  state.metadataManager.sortDirection = safeDirection;
+  try { localStorage.setItem(GUIDEVAULT_METADATA_COLUMN_SORT_KEY, JSON.stringify({ key: safeKey, direction: safeDirection })); } catch {}
+  return { key: safeKey, direction: safeDirection };
+}
+
+function metadataManagerSetSort(key) {
+  const current = metadataManagerLoadSort();
+  const direction = current.key === key && current.direction === 'asc' ? 'desc' : 'asc';
+  metadataManagerSaveSort(key, direction);
+  renderMetadataManager();
+}
+
+function metadataManagerSortValue(item, key) {
+  const value = metadataManagerFieldValue(item, key);
+  if (key === 'pageCount' || key === 'metadataPageCount') return Number(value || 0) || 0;
+  const yearMatch = String(value || '').match(/\d{4}/);
+  if (['year','publishYear','gameReleaseYear','coverDate','publicationDate'].includes(key) && yearMatch) return Number(yearMatch[0]);
+  if (Array.isArray(value)) return value.join(', ');
+  return String(value ?? '').trim().toLowerCase();
+}
+
+function metadataManagerSortItems(items) {
+  const sort = metadataManagerLoadSort();
+  const dir = sort.direction === 'desc' ? -1 : 1;
+  return (items || []).slice().sort((a, b) => {
+    const av = metadataManagerSortValue(a, sort.key);
+    const bv = metadataManagerSortValue(b, sort.key);
+    if (typeof av === 'number' || typeof bv === 'number') {
+      return ((Number(av) || 0) - (Number(bv) || 0)) * dir || metadataManagerItemName(a).localeCompare(metadataManagerItemName(b), undefined, { sensitivity: 'base' });
+    }
+    return String(av).localeCompare(String(bv), undefined, { numeric: true, sensitivity: 'base' }) * dir || metadataManagerItemName(a).localeCompare(metadataManagerItemName(b), undefined, { sensitivity: 'base' });
+  });
 }
 
 function metadataManagerResetColumns() {
   metadataManagerSaveVisibleColumns(METADATA_MANAGER_DEFAULT_COLUMNS.slice());
+  renderMetadataManagerColumnPicker();
   renderMetadataManager();
   metadataManagerSetStatus('Metadata columns reset to the default view.', 'success');
 }
 
 function metadataManagerShowAllColumns() {
   metadataManagerSaveVisibleColumns(METADATA_MANAGER_ALL_COLUMNS.map(column => column.key));
+  renderMetadataManagerColumnPicker();
   renderMetadataManager();
   metadataManagerSetStatus('All available metadata columns are visible.', 'success');
 }
@@ -9158,15 +9433,19 @@ function metadataManagerShowAllColumns() {
 function renderMetadataManagerColumnPicker() {
   const picker = $('metadataManagerColumnPicker');
   if (!picker) return;
-  const visible = new Set(metadataManagerLoadVisibleColumns());
-  picker.innerHTML = METADATA_MANAGER_ALL_COLUMNS.map(column => `
-    <label class="metadata-manager-column-option" title="${escapeForAttribute(column.description || '')}">
-      <input type="checkbox" data-column-key="${escapeForAttribute(column.key)}" ${visible.has(column.key) ? 'checked' : ''} />
+  const visible = metadataManagerLoadVisibleColumns();
+  const visibleSet = new Set(visible);
+  picker.innerHTML = METADATA_MANAGER_ALL_COLUMNS.map(column => {
+    const position = visible.indexOf(column.key);
+    const isVisible = visibleSet.has(column.key);
+    return `<label class="metadata-manager-column-option" title="${escapeForAttribute(column.description || '')}">
+      <input type="checkbox" data-column-key="${escapeForAttribute(column.key)}" ${isVisible ? 'checked' : ''} />
       <span>${escapeHtml(column.label)}</span>
-    </label>
-  `).join('');
+      ${isVisible ? `<button class="ghost tiny metadata-column-move" type="button" data-column-move="-1" data-column-key="${escapeForAttribute(column.key)}" ${position <= 0 ? 'disabled' : ''} title="Move left">←</button><button class="ghost tiny metadata-column-move" type="button" data-column-move="1" data-column-key="${escapeForAttribute(column.key)}" ${position === visible.length - 1 ? 'disabled' : ''} title="Move right">→</button>` : ''}
+    </label>`;
+  }).join('');
   const active = $('metadataManagerColumnActiveCount');
-  if (active) active.textContent = `${visible.size} of ${METADATA_MANAGER_ALL_COLUMNS.length} columns shown`;
+  if (active) active.textContent = `${visible.length} of ${METADATA_MANAGER_ALL_COLUMNS.length} columns shown - click headers to sort, drag headers to reorder, or use the Columns panel arrows`;
 }
 
 function metadataManagerSourceTitleCandidate(item) {
@@ -9252,9 +9531,45 @@ function metadataManagerNormalizedPayload(item) {
   return payload;
 }
 
+
+function metadataManagerDefaultRenderLimit() {
+  return METADATA_MANAGER_DEFAULT_RENDER_LIMIT;
+}
+
+function metadataManagerCurrentRenderLimit(total = 0) {
+  state.metadataManager = state.metadataManager || {};
+  const raw = Number(state.metadataManager.renderLimit || 0);
+  const fallback = metadataManagerDefaultRenderLimit();
+  const safe = Number.isFinite(raw) && raw > 0 ? raw : fallback;
+  return Math.max(1, Math.min(Math.max(total, fallback), Math.floor(safe)));
+}
+
+function metadataManagerResetRenderLimit() {
+  state.metadataManager = state.metadataManager || {};
+  state.metadataManager.renderLimit = metadataManagerDefaultRenderLimit();
+}
+
+function metadataManagerLoadMoreRows() {
+  const items = metadataManagerEditableItems();
+  const current = metadataManagerCurrentRenderLimit(items.length);
+  state.metadataManager.renderLimit = Math.min(items.length, current + METADATA_MANAGER_RENDER_STEP);
+  renderMetadataManager();
+}
+
+function metadataManagerShowAllRows() {
+  const items = metadataManagerEditableItems();
+  state.metadataManager.renderLimit = Math.max(items.length, metadataManagerDefaultRenderLimit());
+  renderMetadataManager();
+}
+
+function metadataManagerCollapseRows() {
+  metadataManagerResetRenderLimit();
+  renderMetadataManager();
+}
+
 function renderMetadataManager() {
   if (!$('settingsMetadataManagerPanel')) return;
-  state.metadataManager = state.metadataManager || { selectedIds: [], dirty: {}, filterKind: '', search: '', missing: '', category: '', visibleColumns: [] };
+  state.metadataManager = state.metadataManager || { selectedIds: [], dirty: {}, filterKind: '', search: '', missing: '', category: '', visibleColumns: [], sortKey: '', sortDirection: 'asc', draggedColumnKey: '', renderLimit: METADATA_MANAGER_DEFAULT_RENDER_LIMIT };
   const categorySelect = $('metadataManagerCategory');
   if (categorySelect && !categorySelect.options.length) metadataManagerRenderCategoryFilter();
   const columnPicker = $('metadataManagerColumnPicker');
@@ -9268,17 +9583,19 @@ function renderMetadataManager() {
   const selectedSet = new Set(manager.selectedIds || []);
   const dirty = manager.dirty || {};
   const columns = metadataManagerVisibleColumns();
-  const renderLimit = METADATA_MANAGER_RENDER_LIMIT;
+  const renderLimit = metadataManagerCurrentRenderLimit(items.length);
   const renderedItems = items.slice(0, renderLimit);
+  const hiddenCount = Math.max(0, items.length - renderedItems.length);
   const summary = $('metadataManagerSummary');
   if (summary) {
     summary.innerHTML = metadataManagerSummaryStats(items).map(([label, value]) => `<div class="metadata-manager-stat"><span>${escapeHtml(label)}</span><strong>${escapeHtml(value)}</strong></div>`).join('');
   }
+  const sort = metadataManagerLoadSort();
   const headerRow = $('metadataManagerHeaderRow');
   if (headerRow) {
     headerRow.innerHTML = `
       <th><input id="metadataManagerHeaderCheck" type="checkbox" aria-label="Select visible rows" /></th>
-      ${columns.map(column => `<th>${escapeHtml(column.label)}</th>`).join('')}
+      ${columns.map(column => `<th class="metadata-manager-column-header ${sort.key === column.key ? 'is-sorted' : ''}" draggable="true" data-column-key="${escapeForAttribute(column.key)}" title="Click to sort. Drag this header to reorder columns."><div class="metadata-manager-column-head"><button class="metadata-manager-sort-button" type="button" data-column-sort="${escapeForAttribute(column.key)}" aria-label="Sort by ${escapeForAttribute(column.label)}"><span>${escapeHtml(column.label)}</span><b>${sort.key === column.key ? (sort.direction === 'desc' ? '↓' : '↑') : '↕'}</b></button><span class="metadata-manager-column-drag-handle" aria-hidden="true" title="Drag to reorder">⋮⋮</span></div></th>`).join('')}
     `;
   }
   const body = $('metadataManagerTableBody');
@@ -9300,16 +9617,83 @@ function renderMetadataManager() {
         <td><input class="metadata-manager-row-check" type="checkbox" data-id="${escapeForAttribute(id)}" ${selectedSet.has(id) ? 'checked' : ''} /></td>
         ${columns.map(column => `<td>${cellFor(column)}</td>`).join('')}
       </tr>`;
-    }).join('') + (items.length > renderedItems.length ? `<tr><td colspan="${columns.length + 1}" class="metadata-manager-empty">Showing ${renderedItems.length} of ${items.length} matching entries. Narrow the search or filters to edit a smaller set.</td></tr>` : '') : `<tr><td colspan="${columns.length + 1}" class="metadata-manager-empty">No metadata entries match this filter.</td></tr>`;
+    }).join('') + (hiddenCount ? `<tr><td colspan="${columns.length + 1}" class="metadata-manager-empty metadata-manager-hidden-note">${hiddenCount} more matching entr${hiddenCount === 1 ? 'y is' : 'ies are'} hidden by the current display limit. Use Load More or Show All in the footer to render the rest.</td></tr>` : '') : `<tr><td colspan="${columns.length + 1}" class="metadata-manager-empty">No metadata entries match this filter.</td></tr>`;
   }
-  if ($('metadataManagerCount')) $('metadataManagerCount').textContent = `${renderedItems.length} rendered / ${items.length} matched / ${(state.items || []).filter(i => ['Manual','Strategy Guide','Magazine'].includes(i.kind)).length} editable entries`;
+  if ($('metadataManagerCount')) {
+    const editableTotal = (state.items || []).filter(i => ['Manual','Strategy Guide','Magazine'].includes(i.kind)).length;
+    $('metadataManagerCount').textContent = hiddenCount
+      ? `${renderedItems.length} shown / ${items.length} matched (${hiddenCount} not rendered yet) / ${editableTotal} editable entries total`
+      : `${renderedItems.length} shown / ${items.length} matched / ${editableTotal} editable entries total`;
+  }
+  const loadMoreButton = $('metadataManagerLoadMoreRows');
+  if (loadMoreButton) {
+    loadMoreButton.hidden = !hiddenCount;
+    loadMoreButton.disabled = !hiddenCount;
+    loadMoreButton.textContent = hiddenCount ? `Load ${Math.min(METADATA_MANAGER_RENDER_STEP, hiddenCount)} More` : 'Load More';
+  }
+  const showAllButton = $('metadataManagerShowAllRows');
+  if (showAllButton) {
+    showAllButton.hidden = !hiddenCount;
+    showAllButton.disabled = !hiddenCount;
+    showAllButton.textContent = hiddenCount ? `Show All ${items.length}` : 'Show All';
+  }
+  const collapseButton = $('metadataManagerCollapseRows');
+  if (collapseButton) {
+    const canCollapse = renderedItems.length > metadataManagerDefaultRenderLimit();
+    collapseButton.hidden = !canCollapse;
+    collapseButton.disabled = !canCollapse;
+  }
   if ($('metadataManagerDirtyCount')) $('metadataManagerDirtyCount').textContent = `${Object.keys(dirty).length} edited`;
   const headerCheck = $('metadataManagerHeaderCheck');
   if (headerCheck) {
-    headerCheck.addEventListener('change', e => metadataManagerSelectVisible(!!e.currentTarget.checked));
+    headerCheck.addEventListener('change', e => metadataManagerSelectRendered(!!e.currentTarget.checked));
     const visibleIds = renderedItems.map(metadataManagerItemId).filter(Boolean);
     headerCheck.checked = visibleIds.length > 0 && visibleIds.every(id => selectedSet.has(id));
   }
+}
+
+
+function metadataManagerHandleHeaderClick(event) {
+  const sortButton = event.target.closest?.('[data-column-sort]');
+  if (sortButton) {
+    event.preventDefault();
+    metadataManagerSetSort(sortButton.dataset.columnSort || '');
+    return;
+  }
+  const moveButton = event.target.closest?.('[data-column-move]');
+  if (moveButton) {
+    event.preventDefault();
+    metadataManagerMoveColumn(moveButton.dataset.columnKey || '', Number(moveButton.dataset.columnMove || 0));
+  }
+}
+
+function metadataManagerHandleHeaderDragStart(event) {
+  const header = event.target.closest?.('[data-column-key]');
+  if (!header) return;
+  state.metadataManager.draggedColumnKey = header.dataset.columnKey || '';
+  try { event.dataTransfer.setData('text/plain', state.metadataManager.draggedColumnKey); } catch {}
+  if (event.dataTransfer) event.dataTransfer.effectAllowed = 'move';
+}
+
+function metadataManagerHandleHeaderDragOver(event) {
+  if (!state.metadataManager?.draggedColumnKey) return;
+  const header = event.target.closest?.('[data-column-key]');
+  if (!header) return;
+  event.preventDefault();
+  if (event.dataTransfer) event.dataTransfer.dropEffect = 'move';
+}
+
+function metadataManagerHandleHeaderDrop(event) {
+  const target = event.target.closest?.('[data-column-key]');
+  const sourceKey = state.metadataManager?.draggedColumnKey || '';
+  if (!target || !sourceKey) return;
+  event.preventDefault();
+  metadataManagerReorderColumn(sourceKey, target.dataset.columnKey || '');
+  state.metadataManager.draggedColumnKey = '';
+}
+
+function metadataManagerHandleHeaderDragEnd() {
+  if (state.metadataManager) state.metadataManager.draggedColumnKey = '';
 }
 
 
@@ -9326,12 +9710,14 @@ function metadataManagerUpdateFilter(field, value) {
   state.metadataManager = state.metadataManager || {};
   state.metadataManager[field] = value;
   if (field === 'search') {
+    metadataManagerResetRenderLimit();
     metadataManagerSetStatus(value ? 'Searching metadata...' : '', '');
     metadataManagerScheduleRender();
     return;
   }
   if (field === 'filterKind' || field === 'missing' || field === 'category') {
     state.metadataManager.selectedIds = [];
+    metadataManagerResetRenderLimit();
   }
   renderMetadataManager();
 }
@@ -9348,6 +9734,16 @@ function metadataManagerSelectVisible(select = true) {
   const visibleIds = metadataManagerEditableItems().map(metadataManagerItemId).filter(Boolean);
   const selected = new Set(state.metadataManager.selectedIds || []);
   visibleIds.forEach(id => select ? selected.add(id) : selected.delete(id));
+  state.metadataManager.selectedIds = Array.from(selected);
+  renderMetadataManager();
+}
+
+function metadataManagerSelectRendered(select = true) {
+  const items = metadataManagerEditableItems();
+  const renderLimit = metadataManagerCurrentRenderLimit(items.length);
+  const renderedIds = items.slice(0, renderLimit).map(metadataManagerItemId).filter(Boolean);
+  const selected = new Set(state.metadataManager.selectedIds || []);
+  renderedIds.forEach(id => select ? selected.add(id) : selected.delete(id));
   state.metadataManager.selectedIds = Array.from(selected);
   renderMetadataManager();
 }
@@ -9503,6 +9899,804 @@ async function metadataManagerApplyBatch() {
   state.metadataManager.dirty = {};
   metadataManagerSetStatus(`Applied batch metadata to ${saved} row(s).`, 'success');
   renderMetadataManager();
+}
+
+
+const METADATA_BATCH_SOURCE_FIELDS = {
+  openLibrary: [
+    { key: 'title', label: 'Title' },
+    { key: 'authorWriter', label: 'Author / Writer' },
+    { key: 'publisher', label: 'Guide Publisher' },
+    { key: 'publishYear', label: 'Publish Year' },
+    { key: 'isbn10', label: 'ISBN-10' },
+    { key: 'isbn13', label: 'ISBN-13' },
+    { key: 'language', label: 'Language' },
+    { key: 'summary', label: 'Description / Summary' },
+    { key: 'pageCount', label: 'Page Count' }
+  ],
+  igdb: [
+    { key: 'gameTitle', label: 'Game Title' },
+    { key: 'gameDeveloper', label: 'Game Developer' },
+    { key: 'gamePublisher', label: 'Game Publisher' },
+    { key: 'gameReleaseYear', label: 'Game Release Year' },
+    { key: 'gameFranchise', label: 'Game Franchise / Series' },
+    { key: 'genre', label: 'Genre' },
+    { key: 'associatedPlatforms', label: 'Associated Platforms' },
+    { key: 'preferredPlatform', label: 'Preferred Platform' }
+  ],
+  esrb: [
+    { key: 'rating', label: 'ESRB Rating' }
+  ]
+};
+
+function metadataBatchStrategyItems() {
+  return metadataManagerSelectedItems().filter(item => item?.kind === 'Strategy Guide');
+}
+
+const METADATA_BATCH_SOURCE_ORDER = ['openLibrary', 'igdb', 'esrb'];
+
+function metadataBatchSourceToggles() {
+  return Array.from(document.querySelectorAll('input[data-metadata-batch-source-toggle]'))
+    .filter(input => METADATA_BATCH_SOURCE_ORDER.includes(input.dataset.metadataBatchSource || ''));
+}
+
+function metadataBatchSelectedSources() {
+  const supported = new Set(METADATA_BATCH_SOURCE_ORDER);
+  return metadataBatchSourceToggles()
+    .filter(input => input.checked && !input.disabled)
+    .map(input => input.dataset.metadataBatchSource)
+    .filter(source => supported.has(source))
+    .slice(0, 1);
+}
+
+function metadataBatchActiveSource() {
+  return metadataBatchSelectedSources()[0] || '';
+}
+
+function metadataBatchSyncSourceLocks(changedInput = null) {
+  const toggles = metadataBatchSourceToggles();
+  if (!toggles.length) return;
+  let activeInput = changedInput?.checked ? changedInput : toggles.find(input => input.checked) || null;
+  if (activeInput) {
+    toggles.forEach(input => { if (input !== activeInput) input.checked = false; });
+  }
+  const activeSource = activeInput?.dataset?.metadataBatchSource || '';
+  toggles.forEach(input => {
+    const source = input.dataset.metadataBatchSource || '';
+    const locked = !!activeSource && source !== activeSource;
+    input.disabled = locked;
+    const pill = input.closest('.metadata-source-provider-pill');
+    if (pill) {
+      pill.classList.toggle('is-active', !!activeSource && source === activeSource);
+      pill.classList.toggle('is-disabled', locked);
+      pill.title = locked ? 'Uncheck the active lookup source before selecting this one.' : '';
+    }
+  });
+  document.querySelectorAll('.metadata-source-fields-card').forEach(card => {
+    const source = card.dataset.metadataBatchFieldsCard
+      || card.querySelector('input[data-metadata-batch-field]')?.dataset?.metadataBatchSource
+      || '';
+    if (!source) return;
+    const locked = !!activeSource && source !== activeSource;
+    card.classList.toggle('is-disabled', locked);
+    card.setAttribute('aria-disabled', locked ? 'true' : 'false');
+    card.querySelectorAll('input[data-metadata-batch-field], button[data-metadata-batch-select-fields], button[data-metadata-batch-clear-fields]').forEach(control => {
+      control.disabled = locked;
+    });
+  });
+}
+
+function metadataBatchSelectedFieldMap() {
+  const map = { openLibrary: new Set(), igdb: new Set(), esrb: new Set() };
+  document.querySelectorAll('input[data-metadata-batch-field]:checked').forEach(input => {
+    const source = input.dataset.metadataBatchSource || '';
+    const field = input.dataset.metadataBatchField || '';
+    if (map[source] && field && !input.disabled) map[source].add(field);
+  });
+  return map;
+}
+
+function metadataBatchMode() {
+  return $('metadataBatchSourceImportMode')?.value || 'overwrite';
+}
+
+function metadataBatchIsWeakValue(value, key = '') {
+  if (value === null || value === undefined) return true;
+  if (key === 'pageCount' || key === 'metadataPageCount') return !(Number(value) > 0);
+  const text = Array.isArray(value) ? value.join(', ') : String(value || '').trim();
+  if (!text) return true;
+  const lower = text.toLowerCase();
+  return lower === 'unknown'
+    || lower === 'unsorted'
+    || lower === 'unsorted strategy guides'
+    || lower === 'strategy guide'
+    || lower === 'n/a'
+    || lower === 'na'
+    || lower === 'none'
+    || lower === '0'
+    || lower === '-';
+}
+
+function metadataBatchCurrentFieldValue(item, source, field) {
+  if (!item) return '';
+  if (source === 'openLibrary') {
+    if (field === 'title') return item.title || item.strategyGuideTitle || '';
+    if (field === 'authorWriter') return item.writer || '';
+    if (field === 'publishYear') return item.year || '';
+    if (field === 'language') return item.languageTag || item.language || '';
+    if (field === 'pageCount') return item.pageCount || item.metadataPageCount || '';
+    if (field === 'summary') return item.summary || '';
+    return item[field] || '';
+  }
+  if (source === 'igdb') {
+    if (field === 'gameDeveloper') return item.gameDeveloper || item.developer || '';
+    if (field === 'gamePublisher') return item.gamePublisher || '';
+    if (field === 'gameFranchise') return item.gameFranchise || item.franchise || item.series || '';
+    if (field === 'associatedPlatforms') return associatedPlatformsOf(item).join(', ');
+    if (field === 'preferredPlatform') return metadataManagerCategoryValue(item) || '';
+    return item[field] || '';
+  }
+  if (source === 'esrb') return item.rating || '';
+  return '';
+}
+
+function metadataBatchShouldApplyField(item, source, field, incomingValue, mode) {
+  if (metadataBatchIsWeakValue(incomingValue, field)) return false;
+  if (mode === 'overwrite') return true;
+  const current = metadataBatchCurrentFieldValue(item, source, field);
+  if (mode === 'empty') return metadataBatchIsWeakValue(current, field);
+  return metadataBatchIsWeakValue(current, field);
+}
+
+function metadataBatchItemSearchText(item, keys) {
+  return keys.map(key => String(item?.[key] || '').trim()).find(Boolean) || '';
+}
+
+function metadataBatchCleanLookupText(value = '') {
+  return String(value || '')
+    .replace(/\([^)]*\)/g, ' ')
+    .replace(/\b(official|unofficial|unauthorized|complete|ultimate|prima|bradygames|brady|versus|versus books|strategy guide|guide|walkthrough|secrets?|tips?|codes?|hint book|player'?s guide)\b/gi, ' ')
+    .replace(/[#:\-_/\\]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function metadataBatchNormalizeLookupText(value = '') {
+  return String(value || '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').replace(/\s+/g, ' ').trim();
+}
+
+function metadataBatchLookupTokens(value = '') {
+  const stop = new Set(['the','a','an','and','or','of','for','to','in','on','with','official','unofficial','guide','strategy','complete','unauthorized','secrets','tips','codes','prima','bradygames','brady']);
+  return metadataBatchNormalizeLookupText(value).split(' ').filter(token => token.length > 2 && !stop.has(token));
+}
+
+function metadataBatchTokenCoverage(candidate = '', expected = '') {
+  const tokens = metadataBatchLookupTokens(expected);
+  if (!tokens.length) return 0;
+  const haystack = ` ${metadataBatchNormalizeLookupText(candidate)} `;
+  const matched = tokens.filter(token => haystack.includes(` ${token} `)).length;
+  return matched / tokens.length;
+}
+
+function metadataBatchYearDistance(a, b) {
+  const ay = Number(String(a || '').match(/\d{4}/)?.[0] || 0);
+  const by = Number(String(b || '').match(/\d{4}/)?.[0] || 0);
+  if (!ay || !by) return 999;
+  return Math.abs(ay - by);
+}
+
+function metadataBatchOpenLibrarySearchPlan(item) {
+  const title = metadataBatchItemSearchText(item, ['strategyGuideTitle', 'title', 'name']) || metadataManagerItemName(item);
+  const gameTitle = metadataBatchItemSearchText(item, ['gameTitle', 'platformMatchTitle', 'franchise', 'series']);
+  const publisher = String(item?.publisher || '').trim();
+  const year = String(item?.year || item?.publishYear || '').trim();
+  const isbn = String(item?.isbn10 || item?.isbn13 || item?.isbn || '').trim();
+  const cleanedTitle = metadataBatchCleanLookupText(title);
+  const secondaryParts = [];
+  if (gameTitle && !openLibrarySameText(gameTitle, title)) secondaryParts.push(gameTitle);
+  if (publisher) secondaryParts.push(publisher);
+  if (year) secondaryParts.push(year);
+  const queryCandidates = [
+    isbn,
+    title,
+    cleanedTitle && cleanedTitle !== title ? cleanedTitle : '',
+    gameTitle && !openLibrarySameText(gameTitle, title) ? `${gameTitle} strategy guide` : '',
+    gameTitle && !openLibrarySameText(gameTitle, title) ? gameTitle : '',
+    [cleanedTitle || title, publisher].filter(Boolean).join(' '),
+    [gameTitle, publisher].filter(Boolean).join(' ')
+  ].map(v => String(v || '').trim()).filter(Boolean);
+  const seen = new Set();
+  const queries = queryCandidates.filter(value => {
+    const key = metadataBatchNormalizeLookupText(value);
+    if (!key || seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+  return { q: queries[0] || title || gameTitle || isbn, queries, secondary: secondaryParts.join(' '), isbn, title, cleanedTitle, gameTitle, publisher, year };
+}
+
+function metadataBatchScoreOpenLibraryResult(result, item, plan, query = '') {
+  const candidateTitle = String(result?.title || '').trim();
+  const candidateText = [candidateTitle, result?.authorWriter, result?.publisher, result?.publishYear, result?.description].join(' ');
+  let score = 0;
+  const titleCoverage = Math.max(metadataBatchTokenCoverage(candidateTitle, plan.title), metadataBatchTokenCoverage(candidateText, plan.title));
+  const cleanCoverage = Math.max(metadataBatchTokenCoverage(candidateTitle, plan.cleanedTitle), metadataBatchTokenCoverage(candidateText, plan.cleanedTitle));
+  const gameCoverage = Math.max(metadataBatchTokenCoverage(candidateTitle, plan.gameTitle), metadataBatchTokenCoverage(candidateText, plan.gameTitle));
+  score += Math.round(Math.max(titleCoverage, cleanCoverage) * 55);
+  score += Math.round(gameCoverage * 25);
+  if (plan.isbn) {
+    const wanted = plan.isbn.replace(/[^0-9x]/gi, '').toLowerCase();
+    const have = [result?.isbn10, result?.isbn13, result?.isbn].flat().map(v => String(v || '').replace(/[^0-9x]/gi, '').toLowerCase());
+    if (wanted && have.includes(wanted)) score += 80;
+  }
+  if (plan.publisher && metadataBatchTokenCoverage(result?.publisher || '', plan.publisher) > 0) score += 15;
+  const distance = metadataBatchYearDistance(result?.publishYear || result?.year, plan.year);
+  if (distance === 0) score += 15; else if (distance <= 2) score += 8; else if (distance <= 5) score += 3;
+  if (result?.coverPreviewUrl) score += 4;
+  const confidence = String(result?.confidence || '').toLowerCase();
+  if (confidence.includes('high')) score += 10;
+  if (confidence.includes('medium')) score += 4;
+  if (metadataBatchNormalizeLookupText(candidateTitle) === metadataBatchNormalizeLookupText(plan.title)) score += 35;
+  if (metadataBatchNormalizeLookupText(candidateTitle) === metadataBatchNormalizeLookupText(plan.cleanedTitle)) score += 25;
+  if (query && metadataBatchTokenCoverage(candidateTitle, query) > 0.7) score += 8;
+  return score;
+}
+
+async function metadataBatchSearchOpenLibraryCandidates(plan, item, signal = null) {
+  const candidates = [];
+  const seen = new Set();
+  const queries = plan.queries?.length ? plan.queries : [plan.q];
+  for (const query of queries.slice(0, 6)) {
+    const params = new URLSearchParams({ q: query, limit: '12' });
+    ['secondary','isbn','title','gameTitle','publisher','year'].forEach(key => { if (plan[key]) params.set(key, plan[key]); });
+    metadataBatchEnsureNotCanceled(signal);
+    const data = await metadataBatchFetchJson(`/api/openlibrary/search?${params.toString()}`, { signal });
+    (Array.isArray(data?.results) ? data.results : []).slice(0, 8).forEach(result => {
+      const key = [result.workKey, result.editionKey, result.key, result.title, result.isbn10, result.isbn13].flat().filter(Boolean).join('|').toLowerCase();
+      if (!key || seen.has(key)) return;
+      seen.add(key);
+      candidates.push({ result, query, score: metadataBatchScoreOpenLibraryResult(result, item, plan, query) });
+    });
+    if (candidates.some(candidate => candidate.score >= 85)) break;
+    await metadataBatchDelay(80, signal);
+  }
+  return candidates.sort((a, b) => b.score - a.score);
+}
+
+async function metadataBatchResolveOpenLibrary(item, signal = null) {
+  metadataBatchEnsureNotCanceled(signal);
+  const plan = metadataBatchOpenLibrarySearchPlan(item);
+  if (!plan.q) return { status: 'skipped', message: 'Missing guide title/game title.' };
+  const candidates = await metadataBatchSearchOpenLibraryCandidates(plan, item, signal);
+  const best = candidates[0]?.result || null;
+  if (!best) return { status: 'no-match', message: 'No Open Library match.' };
+  metadataBatchEnsureNotCanceled(signal);
+  const resolved = await metadataBatchFetchJson('/api/openlibrary/resolve', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(best),
+    signal
+  });
+  const score = candidates[0]?.score || 0;
+  const confidence = score >= 85 ? 'High' : score >= 55 ? 'Medium' : 'Review';
+  return { status: 'found', result: resolved, message: openLibraryResultTitle(resolved), confidence: resolved.confidence || best.confidence || confidence, matchBy: `Batch best match (${confidence}, score ${score})` };
+}
+
+function metadataBatchIgdbSearchPlan(item) {
+  const gameTitle = metadataBatchItemSearchText(item, ['gameTitle', 'platformMatchTitle', 'series', 'franchise']) || metadataManagerItemName(item);
+  return {
+    q: gameTitle,
+    platform: metadataManagerCategoryValue(item) || associatedPlatformsOf(item)[0] || '',
+    year: item?.gameReleaseYear || item?.year || ''
+  };
+}
+
+function metadataBatchEsrbSearchPlan(item) {
+  return {
+    q: metadataBatchItemSearchText(item, ['gameTitle', 'platformMatchTitle', 'series', 'franchise']) || metadataManagerItemName(item),
+    platform: metadataManagerCategoryValue(item) || associatedPlatformsOf(item)[0] || ''
+  };
+}
+
+function metadataBatchFriendlySourceError(source, message = '') {
+  const text = String(message || '').replace(/\s+/g, ' ').trim();
+  if (source === 'igdb') {
+    if (/credentials are not configured/i.test(text)) return 'IGDB credentials are not configured. Add your Twitch Client ID and Client Secret in Settings > Server > General > Metadata Sources.';
+    if (/twitch rejected|oauth|client id|client secret|credential|403|401|400/i.test(text)) return 'IGDB credentials were rejected by Twitch. Re-save the Twitch Developer Client ID and generated Client Secret, then use Test IGDB Credentials.';
+    if (/failed to fetch|network|timeout/i.test(text)) return 'IGDB lookup could not reach Twitch/IGDB. Check the server network connection and try again.';
+  }
+  return text || 'Unknown error';
+}
+
+
+function metadataBatchAbortError() {
+  try { return new DOMException('Batch lookup was canceled.', 'AbortError'); }
+  catch { const err = new Error('Batch lookup was canceled.'); err.name = 'AbortError'; return err; }
+}
+
+function metadataBatchIsAbortError(err) {
+  return err?.name === 'AbortError' || /aborted|canceled|cancelled/i.test(String(err?.message || err || ''));
+}
+
+function metadataBatchEnsureNotCanceled(signal) {
+  if (signal?.aborted) throw metadataBatchAbortError();
+}
+
+function metadataBatchDelay(ms, signal = null) {
+  return new Promise((resolve, reject) => {
+    if (signal?.aborted) { reject(metadataBatchAbortError()); return; }
+    const timer = setTimeout(resolve, ms);
+    if (signal) {
+      signal.addEventListener('abort', () => {
+        clearTimeout(timer);
+        reject(metadataBatchAbortError());
+      }, { once: true });
+    }
+  });
+}
+
+function metadataBatchNextRunId() {
+  const current = Number(state.metadataSourceBatch?.runId || 0);
+  return current + 1;
+}
+
+function metadataBatchIsCurrentRun(runId, signal = null) {
+  return Number(state.metadataSourceBatch?.runId || 0) === Number(runId || 0) && !signal?.aborted;
+}
+
+function metadataBatchCancelActiveRun() {
+  const batch = state.metadataSourceBatch;
+  if (batch?.running && batch.abortController) {
+    try { batch.abortController.abort(); } catch {}
+    batch.running = false;
+  }
+}
+
+async function metadataBatchPreflightSelectedSources(sources = [], signal = null) {
+  const blocked = {};
+  if (sources.includes('igdb')) {
+    try {
+      metadataBatchEnsureNotCanceled(signal);
+      await metadataBatchFetchJson('/api/igdb/status', { signal });
+    } catch (err) {
+      blocked.igdb = metadataBatchFriendlySourceError('igdb', err?.message || err);
+    }
+  }
+  return blocked;
+}
+
+function metadataBatchBlockedSourcesHtml(blockedSources = {}) {
+  const entries = Object.entries(blockedSources || {}).filter(([, message]) => message);
+  if (!entries.length) return '';
+  const labels = { openLibrary: 'Open Library', igdb: 'IGDB', esrb: 'ESRB' };
+  return `<div class="metadata-batch-source-warning">${entries.map(([source, message]) => `<strong>${escapeHtml(labels[source] || source)} skipped:</strong> ${escapeHtml(message)}`).join('<br />')}</div>`;
+}
+
+async function metadataBatchFetchJson(url, options = {}) {
+  metadataBatchEnsureNotCanceled(options?.signal);
+  const res = await fetch(url, { cache: 'no-store', ...options });
+  let data = null;
+  try { data = await res.json(); } catch {}
+  if (!res.ok) throw new Error(data?.error || `HTTP ${res.status}`);
+  return data;
+}
+
+async function metadataBatchResolveIgdb(item, signal = null) {
+  metadataBatchEnsureNotCanceled(signal);
+  const plan = metadataBatchIgdbSearchPlan(item);
+  if (!plan.q) return { status: 'skipped', message: 'Missing game title.' };
+  const params = new URLSearchParams({ q: plan.q, limit: '6' });
+  if (plan.platform) params.set('platform', plan.platform);
+  if (plan.year) params.set('year', plan.year);
+  const data = await metadataBatchFetchJson(`/api/igdb/search?${params.toString()}`, { signal });
+  const result = Array.isArray(data?.results) ? data.results[0] : null;
+  if (!result) return { status: 'no-match', message: 'No IGDB match.' };
+  metadataBatchEnsureNotCanceled(signal);
+  const resolved = await metadataBatchFetchJson('/api/igdb/resolve', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(result),
+    signal
+  });
+  return { status: 'found', result: resolved, message: igdbResultTitle(resolved), confidence: resolved.confidence || result.confidence || '' };
+}
+
+async function metadataBatchResolveEsrb(item, signal = null) {
+  metadataBatchEnsureNotCanceled(signal);
+  const plan = metadataBatchEsrbSearchPlan(item);
+  if (!plan.q) return { status: 'skipped', message: 'Missing game title.' };
+  const params = new URLSearchParams({ q: plan.q, limit: '6' });
+  if (plan.platform) params.set('platform', plan.platform);
+  const data = await metadataBatchFetchJson(`/api/esrb/search?${params.toString()}`, { signal });
+  const result = Array.isArray(data?.results) ? data.results[0] : null;
+  if (!result) return { status: 'no-match', message: 'No ESRB match.' };
+  metadataBatchEnsureNotCanceled(signal);
+  const resolved = await metadataBatchFetchJson('/api/esrb/resolve', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(result),
+    signal
+  });
+  return { status: 'found', result: resolved, message: esrbResultTitle(resolved), confidence: resolved.confidence || result.confidence || '' };
+}
+
+function metadataBatchOpenLibraryFieldValue(result, field) {
+  return openLibraryCleanValue(field, result?.[field]);
+}
+
+function metadataBatchIgdbFieldValue(result, field) {
+  if (field === 'associatedPlatforms') return normalizeGuidevaultPlatformList(result?.associatedPlatforms).join(', ');
+  if (field === 'gameDeveloper') return igdbListLabel(result?.developers);
+  if (field === 'gamePublisher') return igdbListLabel(result?.publishers);
+  if (field === 'genre') return igdbListLabel(result?.genres);
+  if (field === 'preferredPlatform') return normalizeGuidevaultPlatformName(result?.preferredPlatform);
+  if (field === 'gameTitle') return result?.gameTitle || result?.name || '';
+  return String(result?.[field] || '').trim();
+}
+
+function metadataBatchEsrbFieldValue(result, field) {
+  return field === 'rating' ? String(result?.ratingShort || result?.rating || '').trim() : '';
+}
+
+function metadataBatchApplyFieldToPayload(payload, source, field, value, result) {
+  if (source === 'openLibrary') {
+    if (field === 'pageCount') { payload.pageCount = Number(value); payload.metadataPageCount = Number(value); return; }
+    if (field === 'language') { payload.languageTag = normalizeOpenLibraryLanguage(value); payload.language = normalizeOpenLibraryLanguage(value); return; }
+    if (field === 'publishYear') { payload.year = value; return; }
+    if (field === 'authorWriter') { payload.writer = value; return; }
+    if (field === 'title') { payload.title = value; return; }
+    payload[field] = value;
+    return;
+  }
+  if (source === 'igdb') {
+    if (field === 'associatedPlatforms') { const platforms = itemArray(value); payload.associatedPlatforms = platforms; payload.coveredPlatforms = platforms; return; }
+    if (field === 'preferredPlatform') { payload.category = value; payload.system = value; payload.preferredPlatform = value; return; }
+    if (field === 'gameTitle') { payload.gameTitle = value; payload.platformMatchTitle = value; return; }
+    if (field === 'gameDeveloper') { payload.developer = value; payload.gameDeveloper = value; return; }
+    if (field === 'gamePublisher') { payload.gamePublisher = value; return; }
+    if (field === 'gameFranchise') { payload.franchise = value; payload.gameFranchise = value; return; }
+    payload[field] = value;
+    return;
+  }
+  if (source === 'esrb' && field === 'rating') {
+    payload.rating = value;
+    if (result?.sourceUrl) payload.esrbUrl = result.sourceUrl;
+    if (result?.id) payload.esrbId = String(result.id);
+  }
+}
+
+function metadataBatchBuildPayload(item, batchResult, fieldMap, mode) {
+  const payload = {};
+  const sourcesUsed = [];
+  const changedLabels = [];
+  const activeSources = new Set(metadataBatchSelectedSources());
+  const addSource = source => { if (!sourcesUsed.includes(source)) sourcesUsed.push(source); };
+  const sourceLabels = { openLibrary: 'Open Library', igdb: 'IGDB', esrb: 'ESRB' };
+  Object.entries(batchResult.sources || {}).forEach(([source, sourceResult]) => {
+    if (!activeSources.has(source)) return;
+    if (sourceResult?.status !== 'found' || !sourceResult.result) return;
+    const selectedFields = Array.from(fieldMap[source] || []);
+    selectedFields.forEach(field => {
+      const value = source === 'openLibrary'
+        ? metadataBatchOpenLibraryFieldValue(sourceResult.result, field)
+        : source === 'igdb'
+          ? metadataBatchIgdbFieldValue(sourceResult.result, field)
+          : metadataBatchEsrbFieldValue(sourceResult.result, field);
+      if (!metadataBatchShouldApplyField(item, source, field, value, mode)) return;
+      metadataBatchApplyFieldToPayload(payload, source, field, value, sourceResult.result);
+      const definition = (METADATA_BATCH_SOURCE_FIELDS[source] || []).find(f => f.key === field);
+      changedLabels.push(definition?.label || field);
+      addSource(sourceLabels[source] || source);
+    });
+    if (source === 'igdb' && selectedFields.length && sourceResult.result?.id) {
+      payload.igdbId = String(sourceResult.result.id);
+      payload.igdbUrl = sourceResult.result.sourceUrl || '';
+      addSource(sourceLabels[source] || source);
+    }
+  });
+  if (Object.keys(payload).length) payload.metadataSource = `Batch lookup: ${sourcesUsed.length ? sourcesUsed.join(', ') : metadataBatchSourceLabels()}`;
+  if (item?.kind === 'Strategy Guide') {
+    const platformSource = payload.associatedPlatforms !== undefined ? itemArray(payload.associatedPlatforms) : associatedPlatformsOf(item);
+    if (hasMultipleAssociatedPlatforms(platformSource)) {
+      payload.category = MULTI_PLATFORM_LABEL;
+      payload.system = MULTI_PLATFORM_LABEL;
+      payload.preferredPlatform = MULTI_PLATFORM_LABEL;
+    }
+  }
+  return { payload, changedLabels };
+}
+
+
+function metadataBatchLookupSourceForRow(row) {
+  const sources = row?.sources || {};
+  const active = row?.activeSource || state.metadataSourceBatch?.activeSource || metadataBatchActiveSource();
+  if (METADATA_BATCH_SOURCE_ORDER.includes(active) && sources[active]) return active;
+  return METADATA_BATCH_SOURCE_ORDER.find(source => sources[source]) || active || 'openLibrary';
+}
+
+function metadataBatchLookupPreviewForSource(source, entry) {
+  const labels = { openLibrary: 'OL', igdb: 'IGDB', esrb: 'ESRB' };
+  if (source === 'esrb') {
+    const rating = entry?.result?.ratingShort || entry?.result?.rating || '';
+    return {
+      label: labels[source],
+      imageUrl: rating ? esrbIconUrl(rating) : '',
+      alt: rating ? esrbDisplayLabel(rating) : 'No ESRB rating',
+      emptyText: 'No rating',
+      kind: 'esrb'
+    };
+  }
+  return {
+    label: labels[source] || 'Lookup',
+    imageUrl: entry?.result?.coverPreviewUrl || '',
+    alt: source === 'igdb' ? 'IGDB cover preview' : 'Open Library cover preview',
+    emptyText: 'No cover',
+    kind: 'cover'
+  };
+}
+
+function metadataBatchCoverCompareHtml(item, row) {
+  const title = metadataManagerItemName(item) || item?.title || 'Strategy Guide';
+  const currentCover = coverUrl(item) || '/assets/missing-cover.svg';
+  const source = metadataBatchLookupSourceForRow(row);
+  const entry = row?.sources?.[source] || null;
+  const preview = metadataBatchLookupPreviewForSource(source, entry);
+  const previewClass = preview.kind === 'esrb' ? ' is-esrb' : '';
+  const previewImg = preview.imageUrl
+    ? `<img class="metadata-batch-lookup-preview-img${previewClass}" src="${escapeForAttribute(preview.imageUrl)}" alt="${escapeForAttribute(preview.alt)}" loading="lazy" onerror="this.onerror=null;this.src='/assets/${preview.kind === 'esrb' ? 'ESRB/RatedNone.png' : 'missing-cover.svg'}';" />`
+    : `<span class="metadata-batch-lookup-preview-empty${previewClass}">${escapeHtml(preview.emptyText)}</span>`;
+  return `<div class="metadata-batch-cover-compare">
+    <figure><img class="metadata-batch-gv-cover" src="${escapeForAttribute(currentCover)}" alt="${escapeForAttribute(title)} cover" loading="lazy" onerror="this.onerror=null;this.src='/assets/missing-cover.svg';" /><figcaption>GV</figcaption></figure>
+    <figure>${previewImg}<figcaption>${escapeHtml(preview.label)}</figcaption></figure>
+  </div>`;
+}
+
+function metadataBatchStatusClass(row) {
+  const applyStatus = String(row?.applyStatus || '').toLowerCase();
+  if (applyStatus.includes('applied')) return 'success';
+  if (applyStatus.includes('failed') || applyStatus.includes('error')) return 'error';
+  if (applyStatus.includes('skipped')) return 'muted';
+  const statuses = Object.values(row?.sources || {}).map(source => String(source?.status || '').toLowerCase()).filter(Boolean);
+  if (!statuses.length) return '';
+  if (statuses.some(status => status === 'found')) return 'success';
+  if (statuses.some(status => status === 'error' || status.includes('failed'))) return 'error';
+  if (statuses.every(status => status === 'no-match' || status === 'skipped')) return 'muted';
+  return '';
+}
+
+function metadataBatchSourceStatusCounts(row) {
+  const counts = { found: 0, error: 0, skipped: 0, noMatch: 0, total: 0 };
+  Object.values(row?.sources || {}).forEach(source => {
+    const status = String(source?.status || '').toLowerCase();
+    if (!status) return;
+    counts.total += 1;
+    if (status === 'found') counts.found += 1;
+    else if (status === 'error' || status.includes('failed')) counts.error += 1;
+    else if (status === 'skipped') counts.skipped += 1;
+    else counts.noMatch += 1;
+  });
+  return counts;
+}
+
+function metadataBatchRowStatus(row, built) {
+  if (row?.applyStatus) return row.applyStatus;
+  const counts = metadataBatchSourceStatusCounts(row);
+  if (!counts.total) return 'Not run';
+  if (built?.changedLabels?.length) return 'Ready to apply';
+  if (counts.found) return 'Found - no selected field changes';
+  if (counts.error && counts.error === counts.total) return 'Lookup failed';
+  if (counts.error) return 'Partial lookup error';
+  return 'No match';
+}
+
+function metadataBatchResultSummary(sourceKey, entry) {
+  if (!entry) return 'Not run';
+  const label = sourceKey === 'openLibrary' ? 'Open Library' : sourceKey === 'igdb' ? 'IGDB' : 'ESRB';
+  if (entry.status === 'found') return `${label}: ${entry.message || 'Found'}${entry.confidence ? ` (${entry.confidence})` : ''}`;
+  if (entry.status === 'error') return `${label}: Error - ${entry.message || 'Unknown error'}`;
+  return `${label}: ${entry.message || entry.status || 'No match'}`;
+}
+
+function metadataBatchResultDetail(sourceKey, entry) {
+  const result = entry?.result || {};
+  if (!result) return '';
+  if (sourceKey === 'openLibrary') {
+    return [result.authorWriter, result.publisher, result.publishYear].filter(Boolean).join(' - ');
+  }
+  if (sourceKey === 'igdb') {
+    return [igdbListLabel(result.developers), igdbListLabel(result.publishers), result.gameReleaseYear, igdbListLabel(result.associatedPlatforms)].filter(Boolean).join(' - ');
+  }
+  if (sourceKey === 'esrb') {
+    return [result.ratingShort || result.rating, result.platform].filter(Boolean).join(' - ');
+  }
+  return '';
+}
+
+function metadataBatchSourceSummaryHtml(row) {
+  const order = ['openLibrary', 'igdb', 'esrb'];
+  return order
+    .filter(source => row?.sources?.[source])
+    .map(source => {
+      const entry = row.sources[source];
+      const status = String(entry?.status || '').toLowerCase();
+      const detail = metadataBatchResultDetail(source, entry);
+      const statusClass = status === 'found' ? 'is-found' : status === 'error' ? 'is-error' : 'is-muted';
+      return `<div class="metadata-batch-source-summary ${statusClass}"><strong>${escapeHtml(metadataBatchResultSummary(source, entry))}</strong>${detail ? `<small>${escapeHtml(detail)}</small>` : ''}</div>`;
+    }).join('');
+}
+
+function metadataBatchGuideCellHtml(item, row) {
+  const title = row?.title || metadataManagerItemName(item) || 'Strategy Guide';
+  const platform = metadataManagerCategoryValue(item) || item?.primarySystem || item?.system || item?.category || '';
+  return `<div class="metadata-batch-guide-cell"><strong>${escapeHtml(title)}</strong>${platform ? `<small>${escapeHtml(platform)}</small>` : ''}</div>`;
+}
+
+function metadataBatchSourceLabels(sources = metadataBatchSelectedSources()) {
+  const labels = { openLibrary: 'Open Library', igdb: 'IGDB', esrb: 'ESRB' };
+  return sources.map(source => labels[source] || source).join(', ');
+}
+
+function renderMetadataBatchSourceResults() {
+  const host = $('metadataBatchSourceResults');
+  if (!host) return;
+  const results = state.metadataSourceBatch?.results || [];
+  const blockedSources = state.metadataSourceBatch?.blockedSources || {};
+  const blockedHtml = metadataBatchBlockedSourcesHtml(blockedSources);
+  if (!results.length) {
+    const running = !!state.metadataSourceBatch?.running;
+    const emptyMessage = running
+      ? `Batch lookup is running for ${escapeHtml(metadataBatchSourceLabels([state.metadataSourceBatch?.activeSource || metadataBatchActiveSource()].filter(Boolean)) || 'selected source')}...`
+      : 'No batch lookup results yet. Select Strategy Guide rows, choose lookup sources, then run the lookup.';
+    host.innerHTML = `${blockedHtml}<p class="sub">${emptyMessage}</p>`;
+    return;
+  }
+  host.innerHTML = `
+    ${blockedHtml}
+    <div class="metadata-batch-source-results-head">
+      <strong>${results.length} result row(s)</strong>
+      <span>Review matches and covers where available, uncheck bad matches, then apply checked rows.</span>
+    </div>
+    <div class="metadata-manager-table-wrap metadata-batch-source-table-wrap">
+      <table class="metadata-manager-table metadata-batch-source-table metadata-batch-source-table-compact">
+        <thead><tr><th>Apply</th><th>Covers</th><th>Strategy Guide</th><th>Lookup Matches</th><th>Fields Ready</th><th>Status</th></tr></thead>
+        <tbody>${results.map(row => {
+          const item = row.item || {};
+          const idRaw = row.id || '';
+          const id = escapeForAttribute(idRaw);
+          const fieldMap = metadataBatchSelectedFieldMap();
+          const built = metadataBatchBuildPayload(item, row, fieldMap, metadataBatchMode());
+          const hasFound = Object.values(row.sources || {}).some(source => source?.status === 'found');
+          const statusClass = metadataBatchStatusClass(row);
+          return `<tr data-batch-id="${id}" class="${row.error ? 'metadata-batch-row-error' : ''} ${statusClass ? `metadata-batch-status-${statusClass}` : ''}">
+            <td><input type="checkbox" class="metadata-batch-row-check" data-batch-id="${id}" ${row.checked === false ? '' : 'checked'} ${hasFound ? '' : 'disabled'} /></td>
+            <td>${metadataBatchCoverCompareHtml(item, row)}</td>
+            <td>${metadataBatchGuideCellHtml(item, row)}</td>
+            <td class="metadata-batch-match-cell">${metadataBatchSourceSummaryHtml(row) || '<small>No lookups selected</small>'}</td>
+            <td class="metadata-batch-fields-cell">${escapeHtml(built.changedLabels.length ? built.changedLabels.join(', ') : 'No selected changes')}</td>
+            <td><span class="metadata-batch-row-status">${escapeHtml(metadataBatchRowStatus(row, built))}</span></td>
+          </tr>`;
+        }).join('')}</tbody>
+      </table>
+    </div>`;
+}
+
+async function metadataManagerRunBatchSourceLookup() {
+  const items = metadataBatchStrategyItems();
+  if (!items.length) { metadataManagerSetStatus('Select one or more Strategy Guide rows first.', 'error'); return; }
+  const selectedSources = metadataBatchSelectedSources();
+  if (!selectedSources.length) { metadataManagerSetStatus('Select one lookup source: Open Library, IGDB, or ESRB.', 'error'); return; }
+  const previousWasRunning = !!state.metadataSourceBatch?.running;
+  metadataBatchCancelActiveRun();
+  const runId = metadataBatchNextRunId();
+  const abortController = new AbortController();
+  const signal = abortController.signal;
+  const resolvers = { openLibrary: metadataBatchResolveOpenLibrary, igdb: metadataBatchResolveIgdb, esrb: metadataBatchResolveEsrb };
+  state.metadataSourceBatch = { results: [], running: true, applied: 0, blockedSources: {}, activeSource: selectedSources[0] || '', runId, abortController };
+  renderMetadataBatchSourceResults();
+  metadataManagerSetStatus(`${previousWasRunning ? 'Canceled the previous batch lookup. ' : ''}Checking ${metadataBatchSourceLabels(selectedSources)} batch lookup source...`, '');
+  let activeSources = [];
+  try {
+    const blockedSources = await metadataBatchPreflightSelectedSources(selectedSources, signal);
+    if (!metadataBatchIsCurrentRun(runId, signal)) return;
+    activeSources = selectedSources.filter(source => !blockedSources[source]);
+    state.metadataSourceBatch.blockedSources = blockedSources;
+    if (!activeSources.length) {
+      state.metadataSourceBatch.running = false;
+      state.metadataSourceBatch.abortController = null;
+      metadataManagerSetStatus(`Batch lookup stopped. ${Object.values(blockedSources).join(' ')}`, 'error');
+      renderMetadataBatchSourceResults();
+      return;
+    }
+    renderMetadataBatchSourceResults();
+    const blockedSourceEntries = Object.fromEntries(Object.entries(blockedSources).map(([source, message]) => [source, { status: 'error', message }]));
+    const skippedLabel = Object.keys(blockedSources).length ? ` Skipped ${metadataBatchSourceLabels(Object.keys(blockedSources))}.` : '';
+    metadataManagerSetStatus(`Running ${metadataBatchSourceLabels(activeSources)} batch lookup for ${items.length} Strategy Guide row(s)...${skippedLabel}`, '');
+    let completed = 0;
+    for (const item of items) {
+      metadataBatchEnsureNotCanceled(signal);
+      if (!metadataBatchIsCurrentRun(runId, signal)) return;
+      const row = { id: metadataManagerItemId(item), title: metadataManagerItemName(item), item, checked: true, sources: { ...blockedSourceEntries }, applyStatus: '', activeSource: activeSources[0] || state.metadataSourceBatch?.activeSource || '', runId };
+      for (const source of activeSources) {
+        metadataBatchEnsureNotCanceled(signal);
+        if (!metadataBatchIsCurrentRun(runId, signal)) return;
+        const resolver = resolvers[source];
+        if (!resolver) continue;
+        try {
+          row.sources[source] = await resolver(item, signal);
+        } catch (err) {
+          if (metadataBatchIsAbortError(err) || !metadataBatchIsCurrentRun(runId, signal)) return;
+          row.sources[source] = { status: 'error', message: metadataBatchFriendlySourceError(source, err?.message || String(err)) };
+        }
+        await metadataBatchDelay(90, signal);
+      }
+      if (!metadataBatchIsCurrentRun(runId, signal)) return;
+      if (!Object.values(row.sources).some(source => source?.status === 'found')) row.checked = false;
+      state.metadataSourceBatch.results.push(row);
+      completed += 1;
+      metadataManagerSetStatus(`Batch lookup ${completed}/${items.length} complete...`, '');
+      renderMetadataBatchSourceResults();
+      await metadataBatchDelay(180, signal);
+    }
+    if (!metadataBatchIsCurrentRun(runId, signal)) return;
+    state.metadataSourceBatch.running = false;
+    state.metadataSourceBatch.abortController = null;
+    const skippedDoneLabel = Object.keys(state.metadataSourceBatch.blockedSources || {}).length ? ` Skipped ${metadataBatchSourceLabels(Object.keys(state.metadataSourceBatch.blockedSources))}.` : '';
+    metadataManagerSetStatus(`Batch lookup complete.${skippedDoneLabel} Review matches, then apply checked rows.`, 'success');
+    renderMetadataBatchSourceResults();
+  } catch (err) {
+    if (metadataBatchIsAbortError(err) || !metadataBatchIsCurrentRun(runId, signal)) return;
+    state.metadataSourceBatch.running = false;
+    state.metadataSourceBatch.abortController = null;
+    metadataManagerSetStatus(`Batch source lookup failed: ${err?.message || err}`, 'error');
+    renderMetadataBatchSourceResults();
+  }
+}
+
+async function metadataManagerApplyBatchSourceResults() {
+  if (state.metadataSourceBatch?.running) { metadataManagerSetStatus('Wait for the active batch lookup to finish before applying results.', 'error'); return; }
+  const results = state.metadataSourceBatch?.results || [];
+  if (!results.length) { metadataManagerSetStatus('Run a batch lookup first.', 'error'); return; }
+  const fieldMap = metadataBatchSelectedFieldMap();
+  const mode = metadataBatchMode();
+  let saved = 0;
+  let skipped = 0;
+  let failed = 0;
+  metadataManagerSetStatus('Applying checked batch lookup results...', '');
+  for (const row of results) {
+    const checked = document.querySelector(`.metadata-batch-row-check[data-batch-id="${CSS.escape(row.id || '')}"]`)?.checked ?? row.checked !== false;
+    if (!checked) { row.applyStatus = 'Skipped'; skipped += 1; continue; }
+    const item = (state.items || []).find(i => metadataManagerItemId(i) === row.id) || row.item;
+    const built = metadataBatchBuildPayload(item, row, fieldMap, mode);
+    if (!Object.keys(built.payload).length) {
+      row.applyStatus = 'Skipped - no selected changes';
+      skipped += 1;
+      renderMetadataBatchSourceResults();
+      continue;
+    }
+    try {
+      await metadataManagerPersist(row.id, item, built.payload);
+      const updatedItem = (state.items || []).find(i => metadataManagerItemId(i) === row.id) || { ...item, ...built.payload };
+      row.item = updatedItem;
+      row.applyStatus = `Applied ${built.changedLabels.length} field(s)`;
+      row.checked = false;
+      saved += 1;
+    } catch (err) {
+      row.applyStatus = `Save failed: ${err?.message || err}`;
+      row.checked = true;
+      failed += 1;
+    }
+    renderMetadataBatchSourceResults();
+    await metadataBatchDelay(80);
+  }
+  state.metadataManager.dirty = {};
+  metadataManagerSetStatus(`Applied batch metadata to ${saved} row(s). Skipped ${skipped}. Failed ${failed}.`, failed ? 'error' : 'success');
+  renderMetadataManager();
+  renderMetadataBatchSourceResults();
+}
+
+function metadataBatchSelectAllFields(source, checked = true) {
+  document.querySelectorAll(`input[data-metadata-batch-source="${source}"][data-metadata-batch-field]`).forEach(input => { input.checked = checked; });
+  renderMetadataBatchSourceResults();
 }
 
 async function metadataManagerNormalizeSelected() {
@@ -9852,6 +11046,7 @@ function manualOverviewHtml(item) {
       <div class="manual-context-stack">
         <section class="overview-card manual-game-card">
           <div class="manual-field-grid">
+            ${magazineOverviewField('Associated Game', gameTitle, 'wide')}
             ${magazineOverviewField('Game Franchise / Series', item.franchise || item.series)}
             ${magazineOverviewField('Game Developer', item.developer)}
             ${magazineOverviewField('Game Publisher', item.gamePublisher)}
@@ -9902,7 +11097,6 @@ function strategyOverviewHtml(item) {
     <div class="strategy-overview-board">
       <section class="overview-card strategy-quick-card">
         <div class="strategy-snapshot-grid">
-          ${magazineOverviewField('Game Title', gameTitle, 'wide')}
           ${magazineOverviewField('System', systemLabel)}
           ${magazineOverviewField('Publisher', item.publisher)}
           ${magazineOverviewField('Author', item.writer)}
@@ -10320,6 +11514,8 @@ function renderDetails(item) {
   updateMetadataExportButtonLabel(item.kind || '');
   ensureOpenLibraryMetadataUi();
   ensureIgdbMetadataUi();
+  ensureEsrbMetadataUi();
+  updateMetadataSourceActionVisibility();
   updateMetadataFileMaintenance();
 }
 
@@ -14086,7 +15282,12 @@ if ($('file-namePanel')) {
 
 document.addEventListener('click', e => {
   const openLibrary = e.target.closest?.('#openLibrarySearchBtn');
-  if (openLibrary) { e.preventDefault(); openOpenLibraryMetadataDialog(); return; }
+  if (openLibrary) {
+    e.preventDefault();
+    if (!metadataSourceLookupAllowedForSelectedItem('openLibrary')) { setStatus(metadataSourceLookupUnavailableMessage('Open Library metadata lookup')); return; }
+    openOpenLibraryMetadataDialog();
+    return;
+  }
   const close = e.target.closest?.('#openLibraryCloseBtn, #openLibraryCancelBtn');
   if (close) { e.preventDefault(); closeOpenLibraryDialog(); return; }
   const run = e.target.closest?.('#openLibraryRunSearchBtn');
@@ -14105,7 +15306,12 @@ document.addEventListener('click', e => {
 
 document.addEventListener('click', e => {
   const esrb = e.target.closest?.('#esrbSearchBtn');
-  if (esrb) { e.preventDefault(); openEsrbMetadataDialog(); return; }
+  if (esrb) {
+    e.preventDefault();
+    if (!metadataSourceLookupAllowedForSelectedItem('esrb')) { setStatus(metadataSourceLookupUnavailableMessage('ESRB rating lookup')); return; }
+    openEsrbMetadataDialog();
+    return;
+  }
   const close = e.target.closest?.('#esrbCloseBtn, #esrbCancelBtn');
   if (close) { e.preventDefault(); closeEsrbDialog(); return; }
   const run = e.target.closest?.('#esrbRunSearchBtn');
@@ -14123,7 +15329,12 @@ document.addEventListener('click', e => {
 });
 document.addEventListener('click', e => {
   const igdb = e.target.closest?.('#igdbSearchBtn');
-  if (igdb) { e.preventDefault(); openIgdbMetadataDialog(); return; }
+  if (igdb) {
+    e.preventDefault();
+    if (!metadataSourceLookupAllowedForSelectedItem('igdb')) { setStatus(metadataSourceLookupUnavailableMessage('IGDB game metadata lookup')); return; }
+    openIgdbMetadataDialog();
+    return;
+  }
   const close = e.target.closest?.('#igdbCloseBtn, #igdbCancelBtn');
   if (close) { e.preventDefault(); closeIgdbDialog(); return; }
   const run = e.target.closest?.('#igdbRunSearchBtn');
@@ -14230,6 +15441,7 @@ if ($('customSideNavItems')) $('customSideNavItems').addEventListener('click', e
   applyCustomSideNavItem(btn.dataset.customNavId || '');
 });
 if ($('serverSaveSettings')) $('serverSaveSettings').addEventListener('click', e => { e.preventDefault(); saveServerSettings('general'); });
+if ($('igdbTestCredentials')) $('igdbTestCredentials').addEventListener('click', e => { e.preventDefault(); testIgdbCredentials(); });
 if ($('serverResetDefaults')) $('serverResetDefaults').addEventListener('click', e => { e.preventDefault(); resetServerDefaults(); });
 if ($('serverCreateBackup')) $('serverCreateBackup').addEventListener('click', e => { e.preventDefault(); createServerBackup(); });
 if ($('mediaSaveSettings')) $('mediaSaveSettings').addEventListener('click', e => { e.preventDefault(); saveServerSettings('media'); });
@@ -14255,7 +15467,10 @@ if ($('metadataManagerSearch')) $('metadataManagerSearch').addEventListener('inp
 if ($('metadataManagerKind')) $('metadataManagerKind').addEventListener('change', e => metadataManagerUpdateFilter('filterKind', e.currentTarget.value));
 if ($('metadataManagerMissing')) $('metadataManagerMissing').addEventListener('change', e => metadataManagerUpdateFilter('missing', e.currentTarget.value));
 if ($('metadataManagerCategory')) $('metadataManagerCategory').addEventListener('change', e => metadataManagerUpdateFilter('category', e.currentTarget.value));
-if ($('metadataManagerRefresh')) $('metadataManagerRefresh').addEventListener('click', () => { const picker = $('metadataManagerColumnPicker'); if (picker) picker.innerHTML = ''; const cat = $('metadataManagerCategory'); if (cat) cat.innerHTML = ''; renderMetadataManager(); metadataManagerSetStatus('Metadata grid refreshed.', 'success'); });
+if ($('metadataManagerRefresh')) $('metadataManagerRefresh').addEventListener('click', () => { const picker = $('metadataManagerColumnPicker'); if (picker) picker.innerHTML = ''; const cat = $('metadataManagerCategory'); if (cat) cat.innerHTML = ''; metadataManagerResetRenderLimit(); renderMetadataManager(); metadataManagerSetStatus('Metadata grid refreshed.', 'success'); });
+if ($('metadataManagerLoadMoreRows')) $('metadataManagerLoadMoreRows').addEventListener('click', metadataManagerLoadMoreRows);
+if ($('metadataManagerShowAllRows')) $('metadataManagerShowAllRows').addEventListener('click', metadataManagerShowAllRows);
+if ($('metadataManagerCollapseRows')) $('metadataManagerCollapseRows').addEventListener('click', metadataManagerCollapseRows);
 if ($('metadataManagerSelectAll')) $('metadataManagerSelectAll').addEventListener('click', () => metadataManagerSelectVisible(true));
 if ($('metadataManagerClearSelection')) $('metadataManagerClearSelection').addEventListener('click', () => { state.metadataManager.selectedIds = []; renderMetadataManager(); });
 if ($('metadataManagerApplyBatch')) $('metadataManagerApplyBatch').addEventListener('click', async () => { try { await metadataManagerApplyBatch(); } catch (err) { console.error(err); metadataManagerSetStatus(`Batch apply failed: ${err?.message || err}`, 'error'); } });
@@ -14265,10 +15480,29 @@ if ($('metadataManagerExportCsv')) $('metadataManagerExportCsv').addEventListene
 if ($('metadataManagerImportJson')) $('metadataManagerImportJson').addEventListener('click', () => $('metadataManagerImportFile')?.click());
 if ($('metadataManagerImportFile')) $('metadataManagerImportFile').addEventListener('change', e => metadataManagerImportJsonFile(e.currentTarget.files?.[0]));
 if ($('metadataManagerScrape')) $('metadataManagerScrape').addEventListener('click', metadataManagerScrapePlaceholder);
+if ($('metadataManagerRunSourceLookup')) $('metadataManagerRunSourceLookup').addEventListener('click', async e => { e.preventDefault(); try { await metadataManagerRunBatchSourceLookup(); } catch (err) { console.error(err); metadataManagerSetStatus(`Batch source lookup failed: ${err?.message || err}`, 'error'); } });
+if ($('metadataManagerApplySourceLookup')) $('metadataManagerApplySourceLookup').addEventListener('click', async e => { e.preventDefault(); try { await metadataManagerApplyBatchSourceResults(); } catch (err) { console.error(err); metadataManagerSetStatus(`Apply batch lookup failed: ${err?.message || err}`, 'error'); } });
+document.querySelectorAll('[data-metadata-batch-select-fields]').forEach(btn => btn.addEventListener('click', e => { e.preventDefault(); metadataBatchSelectAllFields(btn.dataset.metadataBatchSelectFields || '', true); }));
+document.querySelectorAll('[data-metadata-batch-clear-fields]').forEach(btn => btn.addEventListener('click', e => { e.preventDefault(); metadataBatchSelectAllFields(btn.dataset.metadataBatchClearFields || '', false); }));
+if ($('metadataBatchSourceResults')) $('metadataBatchSourceResults').addEventListener('change', e => { if (e.target?.classList?.contains('metadata-batch-row-check')) { const row = (state.metadataSourceBatch?.results || []).find(r => r.id === e.target.dataset.batchId); if (row) row.checked = !!e.target.checked; } });
+document.querySelectorAll('input[data-metadata-batch-source-toggle]').forEach(el => el.addEventListener('change', e => { metadataBatchSyncSourceLocks(e.currentTarget); renderMetadataBatchSourceResults(); }));
+document.querySelectorAll('input[data-metadata-batch-field], #metadataBatchSourceImportMode').forEach(el => el.addEventListener('change', renderMetadataBatchSourceResults));
+metadataBatchSyncSourceLocks();
 if ($('metadataManagerColumnPicker')) $('metadataManagerColumnPicker').addEventListener('change', e => {
   const target = e.target;
   if (target?.matches?.('input[data-column-key]')) metadataManagerSetColumnVisible(target.dataset.columnKey || '', !!target.checked);
 });
+if ($('metadataManagerColumnPicker')) $('metadataManagerColumnPicker').addEventListener('click', e => {
+  const btn = e.target.closest?.('[data-column-move]');
+  if (btn) { e.preventDefault(); metadataManagerMoveColumn(btn.dataset.columnKey || '', Number(btn.dataset.columnMove || 0)); }
+});
+if ($('metadataManagerHeaderRow')) {
+  $('metadataManagerHeaderRow').addEventListener('click', metadataManagerHandleHeaderClick);
+  $('metadataManagerHeaderRow').addEventListener('dragstart', metadataManagerHandleHeaderDragStart);
+  $('metadataManagerHeaderRow').addEventListener('dragover', metadataManagerHandleHeaderDragOver);
+  $('metadataManagerHeaderRow').addEventListener('drop', metadataManagerHandleHeaderDrop);
+  $('metadataManagerHeaderRow').addEventListener('dragend', metadataManagerHandleHeaderDragEnd);
+}
 if ($('metadataManagerColumnsReset')) $('metadataManagerColumnsReset').addEventListener('click', e => { e.preventDefault(); metadataManagerResetColumns(); });
 if ($('metadataManagerColumnsShowAll')) $('metadataManagerColumnsShowAll').addEventListener('click', e => { e.preventDefault(); metadataManagerShowAllColumns(); });
 if ($('metadataManagerTableBody')) $('metadataManagerTableBody').addEventListener('change', e => {

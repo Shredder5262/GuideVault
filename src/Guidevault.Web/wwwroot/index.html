@@ -4,7 +4,7 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Guidevault</title>
-  <link rel="stylesheet" href="/styles.css?v=0.9.85-encoding-hotfix" />
+  <link rel="stylesheet" href="/styles.css?v=0.9.102-opds-v1-pagesize-fix" />
 </head>
 <body class="right-collapsed auth-locked">
   <section id="loginView" class="login-view" aria-labelledby="loginTitle">
@@ -321,9 +321,9 @@
                         <button id="saveMetadataBtn" class="primary" type="button">Save Metadata</button>
                         <button id="exportGuideMetadataBtn" class="ghost" type="button">Export Guide Metadata</button>
                         <button id="enrichCurrentFileMetadataBtn" class="ghost" type="button">Import Guidevault metadata JSON</button>
-                        <button id="openLibrarySearchBtn" class="ghost openlibrary-action-button" type="button">Search Open Library Metadata</button>
-                        <button id="igdbSearchBtn" class="ghost igdb-action-button" type="button">Search IGDB Game Metadata</button>
-                        <button id="esrbSearchBtn" class="ghost esrb-action-button" type="button">Search ESRB Rating</button>
+                        <button id="openLibrarySearchBtn" class="ghost openlibrary-action-button hidden" type="button">Search Open Library Metadata</button>
+                        <button id="igdbSearchBtn" class="ghost igdb-action-button hidden" type="button">Search IGDB Game Metadata</button>
+                        <button id="esrbSearchBtn" class="ghost esrb-action-button hidden" type="button">Search ESRB Rating</button>
                       </div>
                       <p id="metadataExportStatus" class="sub metadata-export-status" aria-live="polite"></p>
                     </section>
@@ -1034,6 +1034,86 @@
                 <button id="metadataManagerScrape" class="ghost" type="button">Scrape / Import Metadata</button>
               </div>
                             </details>
+              <details class="metadata-manager-batch-panel metadata-manager-source-batch-panel">
+                <summary>
+                  <span>Batch metadata lookup for Strategy Guides</span>
+                  <em>Run, review covers, then apply checked rows</em>
+                </summary>
+                <div class="metadata-source-batch-shell">
+                  <div class="metadata-source-batch-topline">
+                    <div class="metadata-source-provider-strip" aria-label="Batch lookup sources">
+                      <label class="metadata-source-provider-pill"><input type="checkbox" data-metadata-batch-source-toggle="openLibrary" data-metadata-batch-source="openLibrary" checked /> <span>Open Library</span><small>guide/book metadata</small></label>
+                      <label class="metadata-source-provider-pill"><input type="checkbox" data-metadata-batch-source-toggle="igdb" data-metadata-batch-source="igdb" /> <span>IGDB</span><small>game metadata scraper</small></label>
+                      <label class="metadata-source-provider-pill"><input type="checkbox" data-metadata-batch-source-toggle="esrb" data-metadata-batch-source="esrb" /> <span>ESRB</span><small>rating scraper</small></label>
+                    </div>
+                    <label class="metadata-source-import-mode" for="metadataBatchSourceImportMode"><span>Import mode</span>
+                      <select id="metadataBatchSourceImportMode">
+                        <option value="overwrite" selected>Overwrite selected fields</option>
+                        <option value="weak">Replace weak / inferred fields</option>
+                        <option value="empty">Fill empty fields only</option>
+                      </select>
+                    </label>
+                    <div class="settings-actions inline-actions metadata-source-batch-actions">
+                      <button id="metadataManagerRunSourceLookup" class="primary" type="button">Run Selected Lookups</button>
+                      <button id="metadataManagerApplySourceLookup" class="ghost" type="button">Apply Checked Results</button>
+                    </div>
+                  </div>
+                  <div class="metadata-source-fields-stack">
+                    <div class="metadata-source-fields-card" data-metadata-batch-fields-card="openLibrary">
+                      <div class="metadata-source-fields-head">
+                        <div>
+                          <strong>Open Library fields</strong>
+                          <span>Guide/book data.</span>
+                        </div>
+                        <div class="settings-actions inline-actions metadata-source-fields-actions"><button class="ghost tiny" type="button" data-metadata-batch-select-fields="openLibrary">All</button><button class="ghost tiny" type="button" data-metadata-batch-clear-fields="openLibrary">Clear</button></div>
+                      </div>
+                      <div class="metadata-source-field-chip-grid">
+                        <label><input type="checkbox" data-metadata-batch-source="openLibrary" data-metadata-batch-field="title" checked /> Title</label>
+                        <label><input type="checkbox" data-metadata-batch-source="openLibrary" data-metadata-batch-field="authorWriter" checked /> Author / Writer</label>
+                        <label><input type="checkbox" data-metadata-batch-source="openLibrary" data-metadata-batch-field="publisher" checked /> Publisher</label>
+                        <label><input type="checkbox" data-metadata-batch-source="openLibrary" data-metadata-batch-field="publishYear" checked /> Publish Year</label>
+                        <label><input type="checkbox" data-metadata-batch-source="openLibrary" data-metadata-batch-field="isbn10" checked /> ISBN-10</label>
+                        <label><input type="checkbox" data-metadata-batch-source="openLibrary" data-metadata-batch-field="isbn13" checked /> ISBN-13</label>
+                        <label><input type="checkbox" data-metadata-batch-source="openLibrary" data-metadata-batch-field="language" checked /> Language</label>
+                        <label><input type="checkbox" data-metadata-batch-source="openLibrary" data-metadata-batch-field="summary" checked /> Summary</label>
+                        <label><input type="checkbox" data-metadata-batch-source="openLibrary" data-metadata-batch-field="pageCount" checked /> Page Count</label>
+                      </div>
+                    </div>
+                    <div class="metadata-source-fields-card" data-metadata-batch-fields-card="igdb">
+                      <div class="metadata-source-fields-head">
+                        <div>
+                          <strong>IGDB fields</strong>
+                          <span>Game-side data.</span>
+                        </div>
+                        <div class="settings-actions inline-actions metadata-source-fields-actions"><button class="ghost tiny" type="button" data-metadata-batch-select-fields="igdb">All</button><button class="ghost tiny" type="button" data-metadata-batch-clear-fields="igdb">Clear</button></div>
+                      </div>
+                      <div class="metadata-source-field-chip-grid compact">
+                        <label><input type="checkbox" data-metadata-batch-source="igdb" data-metadata-batch-field="gameTitle" checked /> Game Title</label>
+                        <label><input type="checkbox" data-metadata-batch-source="igdb" data-metadata-batch-field="gameDeveloper" checked /> Developer</label>
+                        <label><input type="checkbox" data-metadata-batch-source="igdb" data-metadata-batch-field="gamePublisher" checked /> Publisher</label>
+                        <label><input type="checkbox" data-metadata-batch-source="igdb" data-metadata-batch-field="gameReleaseYear" checked /> Release Year</label>
+                        <label><input type="checkbox" data-metadata-batch-source="igdb" data-metadata-batch-field="gameFranchise" checked /> Franchise</label>
+                        <label><input type="checkbox" data-metadata-batch-source="igdb" data-metadata-batch-field="genre" checked /> Genre</label>
+                        <label><input type="checkbox" data-metadata-batch-source="igdb" data-metadata-batch-field="associatedPlatforms" checked /> Platforms</label>
+                        <label><input type="checkbox" data-metadata-batch-source="igdb" data-metadata-batch-field="preferredPlatform" checked /> Preferred</label>
+                      </div>
+                    </div>
+                    <div class="metadata-source-fields-card" data-metadata-batch-fields-card="esrb">
+                      <div class="metadata-source-fields-head">
+                        <div>
+                          <strong>ESRB fields</strong>
+                          <span>Rating only.</span>
+                        </div>
+                        <div class="settings-actions inline-actions metadata-source-fields-actions"><button class="ghost tiny" type="button" data-metadata-batch-select-fields="esrb">All</button><button class="ghost tiny" type="button" data-metadata-batch-clear-fields="esrb">Clear</button></div>
+                      </div>
+                      <div class="metadata-source-field-chip-grid compact">
+                        <label><input type="checkbox" data-metadata-batch-source="esrb" data-metadata-batch-field="rating" checked /> ESRB Rating</label>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+                <div id="metadataBatchSourceResults" class="metadata-batch-source-results"><p class="sub">No batch lookup results yet.</p></div>
+              </details>
               <p id="metadataManagerStatus" class="sub account-status" aria-live="polite"></p>
             </article>
 
@@ -1060,6 +1140,11 @@
               </div>
               <div class="metadata-manager-table-footer">
                 <span id="metadataManagerCount">0 entries</span>
+                <div class="metadata-manager-render-actions" aria-label="Metadata row rendering controls">
+                  <button id="metadataManagerLoadMoreRows" class="ghost tiny" type="button" hidden>Load More</button>
+                  <button id="metadataManagerShowAllRows" class="ghost tiny" type="button" hidden>Show All</button>
+                  <button id="metadataManagerCollapseRows" class="ghost tiny" type="button" hidden>Collapse to 250</button>
+                </div>
                 <span id="metadataManagerDirtyCount">0 edited</span>
               </div>
             </article>
@@ -1115,15 +1200,17 @@
                   <div>
                     <h2>Metadata Sources</h2>
                     <p class="sub">Configure external lookup providers. Open Library does not require a key; IGDB uses Twitch application credentials for game metadata lookups.</p>
+                    <p class="field-help metadata-source-note">For IGDB, paste the Twitch Developer app Client ID and generated Client Secret. Guidevault uses server-to-server client credentials, so the OAuth redirect URL is not used by the lookup.</p>
                   </div>
                 </div>
                 <div class="server-settings-grid server-metadata-source-grid">
-                  <label for="igdbClientId">IGDB Client ID<input id="igdbClientId" type="text" autocomplete="off" placeholder="Twitch Developer Client ID" /><span class="field-help">Used only by the Guidevault backend when searching IGDB.</span></label>
-                  <label for="igdbClientSecret">IGDB Client Secret<input id="igdbClientSecret" type="password" autocomplete="new-password" placeholder="Twitch Developer Client Secret" /><span class="field-help">Stored locally in Guidevault config. Treat this like a password.</span></label>
+                  <label for="igdbClientId">IGDB Client ID<input id="igdbClientId" type="text" autocomplete="off" placeholder="Twitch Developer Client ID" /><span class="field-help">Use the Client ID from your Twitch Developer application.</span></label>
+                  <label for="igdbClientSecret">IGDB Client Secret<input id="igdbClientSecret" type="password" autocomplete="new-password" placeholder="Twitch Developer Client Secret" /><span class="field-help">Use the generated Client Secret value. Stored locally in Guidevault config; treat it like a password.</span></label>
                 </div>
               </section>
               <div class="settings-actions inline-actions server-general-actions">
                 <button id="serverSaveSettings" class="primary" type="button">Save General Settings</button>
+                <button id="igdbTestCredentials" class="ghost" type="button">Test IGDB Credentials</button>
               </div>
               <p id="serverSettingsStatus" class="sub account-status" aria-live="polite"></p>
             </article>
@@ -1430,6 +1517,194 @@
 
             <h2>Update History</h2>
             <div class="system-update-list">
+              <details class="system-update-entry" open>
+                <summary>
+                  <span>Guidevault 0.9.102 - OPDS Connection Page Size Fix</span>
+                  <em>Installed</em>
+                </summary>
+                <ul>
+                  <li>Added compatibility for OPDS connection URLs that use /opds/v1.</li>
+                  <li>Preserved pageSize=20, 50, or 100 when navigating from the OPDS root catalog into item feeds.</li>
+                  <li>Prevented /opds/v1 connection URLs from falling through to the browser login page.</li>
+                </ul>
+              </details>
+              <details class="system-update-entry" open>
+                <summary>
+                  <span>Guidevault 0.9.101 - OPDS Detail Build Fix</span>
+                  <em>Installed</em>
+                </summary>
+                <ul>
+                  <li>Fixed the OPDS browser detail page raw string interpolation so CSS media-query braces no longer break the C# build.</li>
+                  <li>Kept the 20, 50, and 100 item OPDS catalog paging behavior from the previous update.</li>
+                </ul>
+              </details>
+              <details class="system-update-entry" open>
+                <summary>
+                  <span>Guidevault 0.9.100 - OPDS Paging and Item Details</span>
+                  <em>Installed</em>
+                </summary>
+                <ul>
+                  <li>Added OPDS catalog paging with 20, 50, and 100 item page sizes instead of returning very large feeds all at once.</li>
+                  <li>Added first, previous, next, and last OPDS navigation links so large catalogs continue across pages instead of silently capping results.</li>
+                  <li>Added formal OPDS item detail feeds and an authenticated web detail page with Read in Guidevault, Open Details, and Download File actions.</li>
+                  <li>Added Guidevault deep links for OPDS read/detail actions so browser links can open the active item directly after login.</li>
+                </ul>
+              </details>
+              <details class="system-update-entry" open>
+                <summary>
+                  <span>Guidevault 0.9.99 - Metadata Manager Row Cap Controls</span>
+                  <em>Installed</em>
+                </summary>
+                <ul>
+                  <li>Clarified the Metadata Manager count so matched rows that are not yet rendered are no longer confusing.</li>
+                  <li>Added Load More, Show All, and Collapse to 250 controls for large filtered metadata sets.</li>
+                  <li>Kept the default 250-row render cap for performance while making the remaining matched rows accessible on demand.</li>
+                    <li>Updated the header checkbox to select only the rendered rows while the Select Filtered button still selects the full matched set.</li>
+                </ul>
+              </details>
+              <details class="system-update-entry" open>
+                <summary>
+                  <span>Guidevault 0.9.98 - Lookup Prepopulate Current Item</span>
+                  <em>Installed</em>
+                </summary>
+                <ul>
+                  <li>Reset individual Open Library, IGDB, and ESRB lookup dialogs when Details Previous/Next changes the active guide.</li>
+                  <li>Forced lookup search fields to seed from the currently active item instead of stale dialog/form values from the previous guide.</li>
+                  <li>Limited the Open Library secondary hint prefill to ISBN, year, or blank.</li>
+                </ul>
+              </details>
+              <details class="system-update-entry">
+                <summary>
+                  <span>Guidevault 0.9.97 - Lookup Result Detail Cards</span>
+                  <em>Installed</em>
+                </summary>
+                <ul>
+                  <li>Expanded individual IGDB result cards so platform/system lists are readable before selecting a match.</li>
+                  <li>Expanded individual ESRB result cards so rating, platform/system, publisher, and descriptor details are visible in the result card.</li>
+                  <li>Removed Game Title from the Strategy Guide identity snapshot and moved it into the game-context section as Associated Game.</li>
+                </ul>
+              </details>
+              <details class="system-update-entry" open>
+                <summary>
+                  <span>Guidevault 0.9.96 - Individual Lookup Dialog Layout</span>
+                  <em>Installed</em>
+                </summary>
+                <ul>
+                  <li>Restored the compact themed layout for individual Open Library, IGDB, and ESRB lookup dialogs.</li>
+                  <li>Rebuilt lookup search fields and result cards so they use horizontal space instead of stacking into a tall plain dialog.</li>
+                  <li>Added consistent preview areas for Open Library covers, IGDB covers, and ESRB rating badges in individual lookup comparison screens.</li>
+                </ul>
+              </details>
+              <details class="system-update-entry" open>
+                <summary>
+                  <span>Guidevault 0.9.95 - Batch Lookup Run Isolation</span>
+                  <em>Installed</em>
+                </summary>
+                <ul>
+                  <li>Added run isolation for Metadata Manager batch lookups so results from an older lookup cannot be appended into a newer lookup table.</li>
+                  <li>Starting a new batch lookup now cancels the previous active lookup before clearing and rebuilding the result list.</li>
+                  <li>Added fetch cancellation and stale-run guards around Open Library, IGDB, and ESRB batch requests.</li>
+                </ul>
+              </details>
+              <details class="system-update-entry" open>
+                <summary>
+                  <span>Guidevault 0.9.94 - Single Batch Lookup Source</span>
+                  <em>Installed</em>
+                </summary>
+                <ul>
+                  <li>Changed Strategy Guide batch lookup to allow only one active source at a time; inactive Open Library, IGDB, and ESRB options are locked until the active source is unchecked.</li>
+                  <li>Updated the batch result comparison column so it shows the active provider preview: Open Library cover, IGDB cover, or ESRB rating badge.</li>
+                  <li>Dimmed inactive provider field cards so only fields for the selected lookup source are editable and apply-ready.</li>
+                </ul>
+              </details>
+              <details class="system-update-entry" open>
+                <summary>
+                  <span>Guidevault 0.9.93 - Build Warning Cleanup</span>
+                  <em>Installed</em>
+                </summary>
+                <ul>
+                  <li>Fixed the nullable warning in IGDB OAuth error formatting by allowing the local TrimError helper to accept nullable response text.</li>
+                </ul>
+              </details>
+              <details class="system-update-entry" open>
+                <summary>
+                  <span>Guidevault 0.9.92 - IGDB Credential Guardrails</span>
+                  <em>Installed</em>
+                </summary>
+                <ul>
+                  <li>Added an IGDB credential test button in Server &gt; General &gt; Metadata Sources.</li>
+                  <li>Added a batch lookup preflight so invalid IGDB credentials are reported once instead of repeating a Twitch OAuth failure on every row.</li>
+                  <li>Improved IGDB credential cleanup and error messages for pasted Client ID / Client Secret values.</li>
+                  <li>Constrained batch result table wrapping so provider errors no longer stretch the lookup results horizontally.</li>
+                </ul>
+              </details>
+              <details class="system-update-entry" open>
+                <summary>
+                  <span>Guidevault 0.9.91 - Batch Lookup Sources & Detail Icon Polish</span>
+                  <em>Installed</em>
+                </summary>
+                <ul>
+                  <li>Enabled IGDB and ESRB.org batch lookup toggles again for Strategy Guide metadata testing.</li>
+                  <li>Changed batch result rows so the preferred platform wraps under the strategy guide title instead of running inline.</li>
+                  <li>Restored styled metadata info icons and popovers on guide, magazine, and manual detail pages.</li>
+                </ul>
+              </details>
+              <details class="system-update-entry" open>
+                <summary>
+                  <span>Guidevault 0.9.90 - Open Library Batch Layout Cleanup</span>
+                  <em>Installed</em>
+                </summary>
+                <ul>
+                  <li>Reworked the Open Library Strategy Guide batch lookup panel into a compact source strip, import-mode control, and horizontal field chips.</li>
+                  <li>Removed the oversized disabled IGDB/ESRB field sections from the active batch workflow so the panel no longer wastes vertical space.</li>
+                  <li>Moved run/apply actions into the compact lookup header so the workflow is visible without excessive scrolling.</li>
+                </ul>
+              </details>
+              <details class="system-update-entry" open>
+                <summary>
+                  <span>Guidevault 0.9.89 - Metadata Manager Sorting & Open Library Match Tuning</span>
+                  <em>Installed</em>
+                </summary>
+                <ul>
+                  <li>Added ascending/descending sorting from Metadata Manager column headers.</li>
+                  <li>Added column reordering with header arrows, drag/drop headers, and column-picker move controls.</li>
+                  <li>Improved Open Library batch matching by trying multiple guide/game/title query variants and selecting the best-scored result instead of always taking the first result.</li>
+                  <li>Kept IGDB and ESRB batch options disabled while Open Library batch lookup is refined.</li>
+                </ul>
+              </details>
+              <details class="system-update-entry">
+                <summary>
+                  <span>Guidevault 0.9.88 - Open Library Batch Apply Fix</span>
+                  <em>Installed</em>
+                </summary>
+                <ul>
+                  <li>Focused Metadata Manager batch source lookup on Open Library while IGDB and ESRB batch modes remain disabled for follow-up fixes.</li>
+                  <li>Added Guidevault and Open Library cover thumbnails to each batch result row for visual match confirmation.</li>
+                  <li>Improved Open Library batch search hints and added per-row apply/save status after applying checked results.</li>
+                </ul>
+              </details>
+              <details class="system-update-entry" open>
+                <summary>
+                  <span>Guidevault 0.9.87 - Batch Strategy Guide Source Lookup</span>
+                  <em>Installed</em>
+                </summary>
+                <ul>
+                  <li>Added a Metadata Manager batch source lookup workflow for selected Strategy Guide rows.</li>
+                  <li>Added review/apply modes for source lookup results.</li>
+                  <li>Kept batch lookup scoped to Strategy Guides.</li>
+                </ul>
+              </details>
+              <details class="system-update-entry" open>
+                <summary>
+                  <span>Guidevault 0.9.86 - Strategy Guide Source Lookup Scope</span>
+                  <em>Installed</em>
+                </summary>
+                <ul>
+                  <li>Limited the current Open Library, IGDB, and ESRB lookup buttons to Strategy Guide items only.</li>
+                  <li>Kept the lookup flows separated so future Manual- and Magazine-specific source searches can use their own criteria.</li>
+                  <li>Hid and disabled source lookup buttons outside their supported item scope instead of exposing generic searches on every item type.</li>
+                </ul>
+              </details>
               <details class="system-update-entry" open>
                 <summary>
                   <span>Guidevault 0.9.85 - Display Encoding Hotfix</span>
@@ -2985,6 +3260,6 @@
   </dialog>
 
 
-  <script src="/app.js?v=0.9.85-encoding-hotfix"></script>
+  <script src="/app.js?v=0.9.102-opds-v1-pagesize-fix"></script>
 </body>
 </html>
