@@ -15293,3 +15293,198 @@ button.metadata-manager-sort-button:focus-visible {
   gap: 0.75rem;
   flex-wrap: wrap;
 }
+
+.metadata-lock-button{
+  display:inline-flex!important;
+  align-items:center;
+  justify-content:center;
+  width:22px!important;
+  height:22px!important;
+  min-width:22px!important;
+  min-height:22px!important;
+  margin:0 0 0 6px!important;
+  padding:0!important;
+  border:1px solid rgba(148,163,184,.38)!important;
+  border-radius:999px!important;
+  background:linear-gradient(180deg,rgba(25,37,54,.96),rgba(12,20,32,.96))!important;
+  color:rgba(226,241,255,.86)!important;
+  box-shadow:0 0 0 1px rgba(255,255,255,.04) inset,0 5px 14px rgba(0,0,0,.2)!important;
+  font-size:12px!important;
+  line-height:1!important;
+  vertical-align:middle!important;
+  cursor:pointer!important;
+  transform:translateY(-1px);
+}
+.metadata-lock-button.locked{
+  border-color:rgba(248,204,92,.72)!important;
+  background:linear-gradient(180deg,rgba(107,78,24,.96),rgba(54,38,13,.96))!important;
+  color:#ffe8a3!important;
+}
+.metadata-lock-button:hover,
+.metadata-lock-button:focus-visible{
+  border-color:rgba(176,222,255,.82)!important;
+  box-shadow:0 0 0 3px rgba(78,164,242,.16),0 8px 18px rgba(0,0,0,.26)!important;
+  outline:none!important;
+}
+.metadata-lock-inline{
+  display:inline-flex;
+  align-items:center;
+  justify-content:center;
+  margin-right:4px;
+  color:#ffe8a3;
+  font-size:.82rem;
+}
+.openlibrary-comparison-table tr.locked-field,
+.igdb-comparison-table tr.locked-field,
+.esrb-comparison-table tr.locked-field{
+  opacity:.82;
+}
+.openlibrary-comparison-table tr.locked-field td,
+.igdb-comparison-table tr.locked-field td,
+.esrb-comparison-table tr.locked-field td{
+  background:rgba(248,204,92,.06);
+}
+
+/* Guidevault metadata locks: locked editor fields are protected from manual edits until unlocked. */
+#metadataPanel input.metadata-lock-readonly,
+#metadataPanel textarea.metadata-lock-readonly,
+#metadataPanel select.metadata-lock-readonly,
+.meta-multi-select.metadata-lock-readonly .meta-multi-button{
+  opacity:.78;
+  cursor:not-allowed!important;
+  border-color:rgba(248,204,92,.46)!important;
+  background:linear-gradient(180deg,rgba(42,36,24,.96),rgba(22,20,17,.96))!important;
+  color:rgba(255,239,194,.88)!important;
+  box-shadow:inset 0 0 0 1px rgba(248,204,92,.12),0 8px 20px rgba(0,0,0,.22)!important;
+}
+
+#metadataPanel input.metadata-lock-readonly:focus,
+#metadataPanel textarea.metadata-lock-readonly:focus,
+#metadataPanel select.metadata-lock-readonly:focus,
+.meta-multi-select.metadata-lock-readonly .meta-multi-button:focus{
+  outline:none!important;
+  box-shadow:inset 0 0 0 1px rgba(248,204,92,.28),0 0 0 3px rgba(248,204,92,.12)!important;
+}
+
+.meta-multi-select.metadata-lock-readonly.open .meta-multi-panel{
+  display:none!important;
+}
+
+/* Guidevault metadata review status */
+.metadata-status-select {
+  min-width: 150px;
+}
+
+.metadata-status-pill {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 24px;
+  padding: 3px 9px;
+  border-radius: 999px;
+  border: 1px solid rgba(125, 194, 255, 0.22);
+  background: rgba(60, 130, 190, 0.17);
+  color: #dff1ff;
+  white-space: nowrap;
+  font-size: 0.78rem;
+  font-weight: 800;
+}
+
+.metadata-status-needs-review {
+  border-color: rgba(248, 204, 92, 0.48);
+  background: rgba(154, 105, 18, 0.22);
+  color: #ffe8a3;
+}
+
+.metadata-status-reviewed {
+  border-color: rgba(90, 220, 160, 0.42);
+  background: rgba(22, 128, 88, 0.2);
+  color: #c7ffe4;
+}
+
+.metadata-status-locked {
+  border-color: rgba(248, 204, 92, 0.62);
+  background: rgba(107, 78, 24, 0.26);
+  color: #ffe8a3;
+}
+
+.metadata-status-failed-lookup {
+  border-color: rgba(255, 120, 120, 0.48);
+  background: rgba(145, 38, 38, 0.2);
+  color: #ffd0d0;
+}
+
+.metadata-status-manual-only {
+  border-color: rgba(180, 150, 255, 0.45);
+  background: rgba(92, 65, 180, 0.2);
+  color: #e4dbff;
+}
+
+/* v0.9.104 — Metadata Manager summary cards: keep desktop counters on one row. */
+.metadata-manager-summary{
+  grid-template-columns:repeat(10,minmax(0,1fr))!important;
+  gap:8px!important;
+  align-items:stretch!important;
+}
+.metadata-manager-summary-card,
+.metadata-manager-stat,
+.metadata-manager-summary > *{
+  min-width:0!important;
+  padding:9px 10px!important;
+  min-height:58px!important;
+}
+.metadata-manager-summary-card span,
+.metadata-manager-stat span,
+.metadata-manager-summary > * span{
+  font-size:.62rem!important;
+  letter-spacing:.105em!important;
+  line-height:1.05!important;
+  overflow-wrap:anywhere!important;
+}
+.metadata-manager-summary-card strong,
+.metadata-manager-stat strong,
+.metadata-manager-summary > * strong,
+.metadata-manager-summary-card b,
+.metadata-manager-stat b,
+.metadata-manager-summary > * b{
+  font-size:1.12rem!important;
+  line-height:1.05!important;
+}
+@media(max-width:1180px){
+  .metadata-manager-summary{
+    grid-template-columns:repeat(4,minmax(110px,1fr))!important;
+  }
+}
+@media(max-width:720px){
+  .metadata-manager-summary{
+    grid-template-columns:repeat(2,minmax(120px,1fr))!important;
+  }
+}
+@media(max-width:460px){
+  .metadata-manager-summary{
+    grid-template-columns:1fr!important;
+  }
+}
+
+/* v0.9.105 — Metadata Manager filters: keep all primary filters on one desktop row. */
+.metadata-manager-filter-grid{
+  grid-template-columns:minmax(170px,.9fr) minmax(185px,1fr) minmax(130px,.7fr) minmax(180px,.95fr) minmax(200px,1.05fr)!important;
+  gap:8px!important;
+  align-items:end!important;
+}
+.metadata-manager-filter-grid label[for="metadataManagerSearch"] input{
+  min-width:0!important;
+}
+.metadata-manager-filter-grid label[for="metadataManagerStatusFilter"]{
+  min-width:0!important;
+}
+@media(max-width:1180px){
+  .metadata-manager-filter-grid{
+    grid-template-columns:repeat(2,minmax(180px,1fr))!important;
+  }
+}
+@media(max-width:720px){
+  .metadata-manager-filter-grid{
+    grid-template-columns:1fr!important;
+  }
+}

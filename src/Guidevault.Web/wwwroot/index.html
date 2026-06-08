@@ -4,7 +4,7 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Guidevault</title>
-  <link rel="stylesheet" href="/styles.css?v=0.9.102-opds-v1-pagesize-fix" />
+  <link rel="stylesheet" href="/styles.css?v=0.9.106-opds-magazine-series" />
 </head>
 <body class="right-collapsed auth-locked">
   <section id="loginView" class="login-view" aria-labelledby="loginTitle">
@@ -172,6 +172,14 @@
                 <div class="edit-grid">
                   <label id="editTitleLabel">Title<input id="editTitle" /></label>
                   <label>Type<select id="editKind"><option>Manual</option><option>Strategy Guide</option><option>Magazine</option></select></label>
+                  <label id="editMetadataStatusLabel">Metadata Status<select id="editMetadataStatus">
+                    <option value="Unreviewed">Unreviewed</option>
+                    <option value="Needs Review">Needs Review</option>
+                    <option value="Reviewed">Reviewed</option>
+                    <option value="Locked">Locked</option>
+                    <option value="Failed Lookup">Failed Lookup</option>
+                    <option value="Manual Only">Manual Only</option>
+                  </select></label>
                   <label id="editCategoryLabel">Preferred Platform<input id="editCategory" /></label>
                   <label id="editEsrbRatingLabel" class="esrb-metadata-field hidden">ESRB Rating<select id="editEsrbRating">
                     <option value="">Not Rated / Unspecified</option>
@@ -959,7 +967,7 @@
             <article class="settings-card metadata-manager-toolbar">
               <div class="metadata-manager-filter-grid">
                 <label for="metadataManagerSearch">Search
-                  <input id="metadataManagerSearch" type="search" placeholder="Title, system, publisher, topic, tag..." />
+                  <input id="metadataManagerSearch" type="search" placeholder="Title, platform, publisher..." />
                 </label>
                 <label for="metadataManagerKind">Type
                   <select id="metadataManagerKind">
@@ -967,6 +975,17 @@
                     <option value="Manual">Manuals</option>
                     <option value="Strategy Guide">Strategy Guides</option>
                     <option value="Magazine">Magazines</option>
+                  </select>
+                </label>
+                <label for="metadataManagerStatusFilter">Status
+                  <select id="metadataManagerStatusFilter">
+                    <option value="">All statuses</option>
+                    <option value="Unreviewed">Unreviewed</option>
+                    <option value="Needs Review">Needs Review</option>
+                    <option value="Reviewed">Reviewed</option>
+                    <option value="Locked">Locked</option>
+                    <option value="Failed Lookup">Failed Lookup</option>
+                    <option value="Manual Only">Manual Only</option>
                   </select>
                 </label>
                 <label for="metadataManagerMissing">Focus
@@ -1013,6 +1032,17 @@
                 </label>
                 <label for="metadataBatchPublisher">Publisher
                   <input id="metadataBatchPublisher" type="text" placeholder="Nintendo Power, Prima..." />
+                </label>
+                <label for="metadataBatchStatus">Metadata Status
+                  <select id="metadataBatchStatus">
+                    <option value="">Do not change</option>
+                    <option value="Unreviewed">Unreviewed</option>
+                    <option value="Needs Review">Needs Review</option>
+                    <option value="Reviewed">Reviewed</option>
+                    <option value="Locked">Locked</option>
+                    <option value="Failed Lookup">Failed Lookup</option>
+                    <option value="Manual Only">Manual Only</option>
+                  </select>
                 </label>
                 <label for="metadataBatchTagsMode">Tags / Topics Mode
                   <select id="metadataBatchTagsMode">
@@ -1517,6 +1547,49 @@
 
             <h2>Update History</h2>
             <div class="system-update-list">
+              <details class="system-update-entry" open>
+                <summary>
+                  <span>Guidevault 0.9.106 - OPDS Magazine Series Navigation</span>
+                  <em>Installed</em>
+                </summary>
+                <ul>
+                  <li>Changed OPDS Magazines navigation so the catalog now displays magazine series first instead of every individual issue.</li>
+                  <li>Added a magazine-series OPDS feed that shows the individual issues after selecting a series.</li>
+                  <li>Kept the older /opds/kind/Magazine route compatible by redirecting its behavior to the new series-first magazine catalog.</li>
+                </ul>
+              </details>
+              <details class="system-update-entry" open>
+                <summary>
+                  <span>Guidevault 0.9.105 - Metadata Manager Filter Layout</span>
+                  <em>Installed</em>
+                </summary>
+                <ul>
+                  <li>Shortened the Metadata Manager search placeholder and status label.</li>
+                  <li>Compressed the Metadata Manager filter grid so Search, Type, Status, Focus, and Preferred Platform / Series fit on one desktop row.</li>
+                </ul>
+              </details>
+              <details class="system-update-entry" open>
+                <summary>
+                  <span>Guidevault 0.9.104 - Metadata Manager Summary Layout</span>
+                  <em>Installed</em>
+                </summary>
+                <ul>
+                  <li>Compressed the Metadata Manager summary cards so the visible, review, missing-field, platform, and edited-row counts fit on a single row on desktop-width screens.</li>
+                  <li>Reduced summary card spacing, padding, and label sizing while keeping the existing wrapped layout for smaller screens.</li>
+                </ul>
+              </details>
+              <details class="system-update-entry" open>
+                <summary>
+                  <span>Guidevault 0.9.103 - Metadata Status Workflow</span>
+                  <em>Installed</em>
+                </summary>
+                <ul>
+                  <li>Added item-level metadata status values: Unreviewed, Needs Review, Reviewed, Locked, Failed Lookup, and Manual Only.</li>
+                  <li>Added Metadata Status to the item metadata editor, Guidevault JSON export/import, and the Library Data panel.</li>
+                  <li>Added Metadata Manager status filtering, a status column, and batch status updates for selected rows.</li>
+                  <li>External lookup imports now mark updated items as Needs Review so curated metadata can be reviewed and locked afterward.</li>
+                </ul>
+              </details>
               <details class="system-update-entry" open>
                 <summary>
                   <span>Guidevault 0.9.102 - OPDS Connection Page Size Fix</span>
@@ -3260,6 +3333,6 @@
   </dialog>
 
 
-  <script src="/app.js?v=0.9.102-opds-v1-pagesize-fix"></script>
+  <script src="/app.js?v=0.9.106-opds-magazine-series"></script>
 </body>
 </html>

@@ -13,7 +13,7 @@ using System.Net.Http.Headers;
 using SharpCompress.Readers;
 
 var builder = WebApplication.CreateBuilder(args);
-const string GuidevaultVersion = "0.9.102";
+const string GuidevaultVersion = "0.9.106";
 var app = builder.Build();
 var metadataJsonOptions = new JsonSerializerOptions(JsonSerializerDefaults.Web) { PropertyNameCaseInsensitive = true };
 var options = app.Configuration.GetSection("Guidevault").Get<GuidevaultOptions>() ?? new GuidevaultOptions();
@@ -837,7 +837,8 @@ app.MapPut("/api/items/{id}/metadata", (string id, JsonElement payload) =>
     // here: that can wait behind a scan/cleanup task or trigger a cold library
     // rebuild, making a simple metadata save feel like it is hanging.
     var update = ItemMetadataJsonReader.Read(payload);
-    metadataStore.MergeOverride(id, update);
+    var effectiveUpdate = metadataStore.PrepareIncomingOverride(id, update, MetadataPayloadOptions.OverwriteLockedFields(payload));
+    metadataStore.MergeOverride(id, effectiveUpdate);
 
     // If the item is already loaded, update the active/persisted cache immediately
     // and return the full updated item. If it is not loaded, still return success;
@@ -846,7 +847,7 @@ app.MapPut("/api/items/{id}/metadata", (string id, JsonElement payload) =>
     if (cached is not null)
     {
         var updated = metadataStore.ApplyOverride(cached);
-        updated = MetadataStore.ApplyUpdateSnapshot(updated, update);
+        updated = MetadataStore.ApplyUpdateSnapshot(updated, effectiveUpdate);
         cache.ReplaceCachedItem(updated, persist: false);
         return Results.Ok(updated);
     }
@@ -865,7 +866,8 @@ app.MapPost("/api/items/{id}/metadata/native-export", async (string id, JsonElem
         return Results.BadRequest(new { error = "Item id is required." });
 
     var update = ItemMetadataJsonReader.Read(payload);
-    metadataStore.MergeOverride(id, update);
+    var effectiveUpdate = metadataStore.PrepareIncomingOverride(id, update, true);
+    metadataStore.MergeOverride(id, effectiveUpdate);
 
     var cached = cache.TryGetCachedItem(id);
     if (cached is null)
@@ -885,10 +887,10 @@ app.MapPost("/api/items/{id}/metadata/native-export", async (string id, JsonElem
     try
     {
         var updated = metadataStore.ApplyOverride(cached);
-        updated = MetadataStore.ApplyUpdateSnapshot(updated, update);
+        updated = MetadataStore.ApplyUpdateSnapshot(updated, effectiveUpdate);
         cache.ReplaceCachedItem(updated, persist: false);
 
-        var exportDocument = GuidevaultNativeMetadata.BuildExport(updated, update, payload);
+        var exportDocument = GuidevaultNativeMetadata.BuildExport(updated, effectiveUpdate, payload);
         var exportJson = JsonSerializer.Serialize(exportDocument, GuidevaultNativeMetadata.JsonOptions);
         var writeResult = await ArchiveReader.WriteGuidevaultMetadataAsync(updated.Path, updated.Kind, exportJson);
         if (!writeResult.Success)
@@ -949,9 +951,10 @@ app.MapPost("/api/items/{id}/metadata/enrich-native", async (string id) =>
             MetadataSource = string.IsNullOrWhiteSpace(nativeUpdate.MetadataSource) ? "Guidevault JSON" : nativeUpdate.MetadataSource
         };
 
-        metadataStore.MergeOverride(id, normalizedUpdate);
+        var effectiveUpdate = metadataStore.PrepareIncomingOverride(id, normalizedUpdate, false);
+        metadataStore.MergeOverride(id, effectiveUpdate);
         var updated = metadataStore.ApplyOverride(cached);
-        updated = MetadataStore.ApplyUpdateSnapshot(updated, normalizedUpdate);
+        updated = MetadataStore.ApplyUpdateSnapshot(updated, effectiveUpdate);
         cache.ReplaceCachedItem(updated, persist: true);
 
         return Results.Ok(new
@@ -972,7 +975,8 @@ app.MapPost("/api/items/{id}/file/rename-to-suggested", async (string id, JsonEl
         return Results.BadRequest(new { error = "Item id is required." });
 
     var update = ItemMetadataJsonReader.Read(payload);
-    metadataStore.MergeOverride(id, update);
+    var effectiveUpdate = metadataStore.PrepareIncomingOverride(id, update, true);
+    metadataStore.MergeOverride(id, effectiveUpdate);
 
     var cached = cache.TryGetCachedItem(id);
     if (cached is null)
@@ -990,9 +994,9 @@ app.MapPost("/api/items/{id}/file/rename-to-suggested", async (string id, JsonEl
         return Results.BadRequest(new { error = "The source file could not be found. Refresh the library before renaming." });
 
     var updated = metadataStore.ApplyOverride(cached);
-    updated = MetadataStore.ApplyUpdateSnapshot(updated, update);
+    updated = MetadataStore.ApplyUpdateSnapshot(updated, effectiveUpdate);
 
-    var suggestedFileName = GuidevaultNativeMetadata.BuildSuggestedFileName(updated, update, payload);
+    var suggestedFileName = GuidevaultNativeMetadata.BuildSuggestedFileName(updated, effectiveUpdate, payload);
     var safeFileName = GuidevaultNativeMetadata.SanitizeSuggestedFileName(suggestedFileName, updated.FileName);
     if (string.IsNullOrWhiteSpace(safeFileName))
         return Results.BadRequest(new { error = "Unable to generate a safe suggested filename from this metadata." });
@@ -1088,7 +1092,7 @@ app.MapPost("/api/items/{id}/strategy-platforms/resolve", async (string id) =>
         .Distinct(StringComparer.OrdinalIgnoreCase)
         .ToArray();
 
-    metadataStore.MergeOverride(id, new ItemMetadataUpdate(
+    var platformUpdate = new ItemMetadataUpdate(
         System: detected,
         Category: detected,
         Tags: tags,
@@ -1100,7 +1104,9 @@ app.MapPost("/api/items/{id}/strategy-platforms/resolve", async (string id) =>
         AssociatedPlatforms: associated,
         PlatformMatchTitle: BlankToNull(resolution.CandidateGameTitle),
         PlatformResolverSource: resolution.Source,
-        PlatformResolverConfidence: resolution.Confidence));
+        PlatformResolverConfidence: resolution.Confidence,
+        MetadataSource: "Strategy platform resolver");
+    metadataStore.MergeOverride(id, metadataStore.PrepareIncomingOverride(id, platformUpdate, false));
 
     cache.Invalidate();
     var updated = (await cache.GetItemsAsync()).FirstOrDefault(i => i.Id == id);
@@ -1255,11 +1261,40 @@ app.MapGet("/opds/kind/{kind}", async (HttpRequest request, string kind) =>
     var auth = AuthorizeOpdsRequest(request, opdsStore, deviceStore);
     if (!auth.Success) return auth.Response!;
     var normalizedKind = Uri.UnescapeDataString(kind ?? string.Empty);
+    if (string.Equals(normalizedKind, "Magazine", StringComparison.OrdinalIgnoreCase)
+        || string.Equals(normalizedKind, "Magazines", StringComparison.OrdinalIgnoreCase))
+    {
+        return OpdsXml(await BuildOpdsMagazineSeriesCatalog(request, auth.Secret, cache), "navigation");
+    }
+
     var items = (await cache.GetItemsAsync())
         .Where(i => KindEquals(i, normalizedKind))
         .OrderBy(i => DisplayItemTitle(i), StringComparer.OrdinalIgnoreCase)
         .ToArray();
     return OpdsXml(OpdsAcquisitionCatalog(request, auth.Secret, $"Guidevault - {normalizedKind}", $"Items marked as {normalizedKind}.", items));
+});
+
+app.MapGet("/opds/magazines", async (HttpRequest request) =>
+{
+    var auth = AuthorizeOpdsRequest(request, opdsStore, deviceStore);
+    if (!auth.Success) return auth.Response!;
+    return OpdsXml(await BuildOpdsMagazineSeriesCatalog(request, auth.Secret, cache), "navigation");
+});
+
+app.MapGet("/opds/magazines/{series}", async (HttpRequest request, string series) =>
+{
+    var auth = AuthorizeOpdsRequest(request, opdsStore, deviceStore);
+    if (!auth.Success) return auth.Response!;
+    var decoded = Uri.UnescapeDataString(series ?? string.Empty);
+    var normalizedSeries = NormalizeMagazineSeriesName(decoded);
+    var items = (await cache.GetItemsAsync())
+        .Where(i => KindEquals(i, "Magazine"))
+        .Where(i => string.Equals(MagazineSeriesName(i), normalizedSeries, StringComparison.OrdinalIgnoreCase))
+        .OrderBy(i => MagazineIssueSortValue(i))
+        .ThenBy(i => MagazinePublicationSortValue(i))
+        .ThenBy(i => DisplayItemTitle(i), StringComparer.OrdinalIgnoreCase)
+        .ToArray();
+    return OpdsXml(OpdsAcquisitionCatalog(request, auth.Secret, $"Guidevault - {normalizedSeries}", $"Magazine issues in the {normalizedSeries} series.", items));
 });
 
 app.MapGet("/opds/categories", async (HttpRequest request) =>
@@ -1426,6 +1461,31 @@ static IResult RedirectOpdsV1Request(HttpRequest request, string? rest)
     return Results.Redirect(BuildAbsoluteUrl(request, $"/opds{suffix}{request.QueryString}"), permanent: false);
 }
 
+static async Task<XDocument> BuildOpdsMagazineSeriesCatalog(HttpRequest request, string secret, LibraryCache cache)
+{
+    var magazineItems = (await cache.GetItemsAsync())
+        .Where(i => KindEquals(i, "Magazine"))
+        .ToArray();
+
+    var entries = magazineItems
+        .GroupBy(MagazineSeriesName, StringComparer.OrdinalIgnoreCase)
+        .OrderBy(g => g.Key, StringComparer.OrdinalIgnoreCase)
+        .Select(g => OpdsNavEntry(
+            g.Key,
+            $"{g.Count()} issue(s).",
+            $"/opds/magazines/{Uri.EscapeDataString(g.Key)}",
+            "acquisition"))
+        .ToArray();
+
+    return OpdsNavigationCatalog(
+        request,
+        secret,
+        "Guidevault Magazine Series",
+        "Guidevault - Magazine Series",
+        "Browse magazines by series first. Select a series to view its individual issues.",
+        entries);
+}
+
 static async Task<IResult> BuildOpdsRootCatalog(HttpRequest request, LibraryCache cache, OpdsSettingsStore opdsStore, DeviceHistoryStore deviceStore)
 {
     var auth = AuthorizeOpdsRequest(request, opdsStore, deviceStore);
@@ -1444,7 +1504,7 @@ static async Task<IResult> BuildOpdsRootCatalog(HttpRequest request, LibraryCach
             OpdsNavEntry("Recently Added", "Newest indexed items first.", "/opds/recent"),
             OpdsNavEntry("Manuals", $"{items.Count(i => KindEquals(i, "Manual"))} manual(s).", "/opds/kind/Manual"),
             OpdsNavEntry("Strategy Guides", $"{items.Count(i => KindEquals(i, "Strategy Guide"))} strategy guide(s).", "/opds/kind/Strategy%20Guide"),
-            OpdsNavEntry("Magazines", $"{items.Count(i => KindEquals(i, "Magazine"))} magazine(s).", "/opds/kind/Magazine"),
+            OpdsNavEntry("Magazines", $"{items.Count(i => KindEquals(i, "Magazine"))} magazine issue(s).", "/opds/magazines", "navigation"),
             OpdsNavEntry("Categories", "Browse by detected category or system.", "/opds/categories"),
             OpdsNavEntry("Series", "Browse by magazine or guide series.", "/opds/series")
         }),
@@ -1836,6 +1896,64 @@ static string FormatOpdsBytes(long bytes)
 static OpdsNavigationEntry OpdsNavEntry(string title, string description, string href, string kind = "acquisition") => new(title, description, href, kind);
 
 static bool KindEquals(LibraryItem item, string kind) => string.Equals(item.Kind ?? string.Empty, kind ?? string.Empty, StringComparison.OrdinalIgnoreCase);
+
+static string MagazineSeriesName(LibraryItem item)
+{
+    var candidate = FirstNonBlank(
+        item.MagazineTitle,
+        item.Series,
+        item.Category,
+        item.System,
+        item.Title,
+        item.FileName);
+    return NormalizeMagazineSeriesName(candidate);
+}
+
+static string NormalizeMagazineSeriesName(string? value)
+{
+    var title = (value ?? string.Empty).Trim();
+    if (string.IsNullOrWhiteSpace(title)) return "Unknown Series";
+
+    title = Regex.Replace(title, @"\.(?:cbz|cbr|pdf|zip|rar)$", string.Empty, RegexOptions.IgnoreCase).Trim();
+    title = !title.Contains(' ') && Regex.IsMatch(title, @"[._-]")
+        ? Regex.Replace(title, @"[._-]+", " ").Trim()
+        : Regex.Replace(title, @"_+|\s{2,}", " ").Trim();
+    title = Regex.Replace(title, @"\s+(?:issue|no\.?|number|num\.?|#)\s*#?\d{1,4}\b.*$", string.Empty, RegexOptions.IgnoreCase).Trim();
+    title = Regex.Replace(title, @"\s+#\s*\d{1,4}\b.*$", string.Empty, RegexOptions.IgnoreCase).Trim();
+    title = Regex.Replace(title, @"\s+vol(?:ume)?\.?\s*\d+\b.*$", string.Empty, RegexOptions.IgnoreCase).Trim();
+    title = Regex.Replace(title, @"\s+\d{4}[\s-]*(?:0?[1-9]|1[0-2])?\b.*$", string.Empty, RegexOptions.IgnoreCase).Trim();
+    title = Regex.Replace(title, @"\s+\((?:jan|feb|mar|apr|may|jun|jul|aug|sep|sept|oct|nov|dec)[a-z]*\s+\d{4}\).*$", string.Empty, RegexOptions.IgnoreCase).Trim();
+    title = Regex.Replace(title, @"\s+(?:jan|feb|mar|apr|may|jun|jul|aug|sep|sept|oct|nov|dec)[a-z]*\s+\d{4}\b.*$", string.Empty, RegexOptions.IgnoreCase).Trim();
+
+    return string.IsNullOrWhiteSpace(title) ? "Unknown Series" : title;
+}
+
+static string FirstNonBlank(params string?[] values)
+{
+    foreach (var value in values)
+    {
+        if (!string.IsNullOrWhiteSpace(value)) return value.Trim();
+    }
+    return string.Empty;
+}
+
+static double MagazineIssueSortValue(LibraryItem item)
+{
+    var raw = FirstNonBlank(item.IssueNumber, item.Title, item.FileName);
+    var match = Regex.Match(raw, @"\d+(?:\.\d+)?");
+    return match.Success && double.TryParse(match.Value, out var value) ? value : double.MaxValue;
+}
+
+static DateTimeOffset MagazinePublicationSortValue(LibraryItem item)
+{
+    foreach (var value in new[] { item.PublicationDate, item.CoverDate, item.Year })
+    {
+        if (string.IsNullOrWhiteSpace(value)) continue;
+        if (DateTimeOffset.TryParse(value, out var parsed)) return parsed;
+        if (int.TryParse(value.Trim(), out var year) && year > 0) return new DateTimeOffset(year, 1, 1, 0, 0, 0, TimeSpan.Zero);
+    }
+    return DateTimeOffset.MaxValue;
+}
 
 static string CategoryOrSystem(LibraryItem item)
 {
@@ -4115,7 +4233,16 @@ public sealed record LibraryItem(
     string[]? ItemsCovered = null,
     string WarrantySupport = "",
     string MetadataSource = "",
-    string BarcodeUpcIssn = "");
+    string BarcodeUpcIssn = "",
+    string MetadataStatus = "Unreviewed",
+    Dictionary<string, MetadataFieldLock>? MetadataLocks = null);
+
+public sealed record MetadataFieldLock(
+    bool Locked = true,
+    DateTimeOffset? LockedAt = null,
+    string? LockedBy = null,
+    string? Reason = null,
+    string? Source = null);
 
 
 public sealed record ItemMetadataUpdate(
@@ -4175,8 +4302,10 @@ public sealed record ItemMetadataUpdate(
     string? WarrantySupport = null,
     int? PageCount = null,
     string? MetadataSource = null,
+    string? MetadataStatus = null,
     string? Notes = null,
-    bool? Removed = null);
+    bool? Removed = null,
+    Dictionary<string, MetadataFieldLock>? MetadataLocks = null);
 
 public static class ItemMetadataJsonReader
 {
@@ -4257,8 +4386,64 @@ public static class ItemMetadataJsonReader
             WarrantySupport: GetString(payload, "warrantySupport"),
             PageCount: FirstInt(GetInt(payload, "pageCount"), GetInt(payload, "metadataPageCount")),
             MetadataSource: GetString(payload, "metadataSource"),
+            MetadataStatus: MetadataStatusHelper.NormalizeOrNull(FirstText(GetString(payload, "metadataStatus"), GetString(payload, "metadataReviewStatus"), GetString(payload, "reviewStatus"))),
             Notes: GetString(payload, "notes"),
-            Removed: GetBool(payload, "removed"));
+            Removed: GetBool(payload, "removed"),
+            MetadataLocks: GetMetadataLocks(payload, "metadataLocks"));
+    }
+
+    private static Dictionary<string, MetadataFieldLock>? GetMetadataLocks(JsonElement json, string camelName)
+    {
+        if (!TryGetProperty(json, camelName, out var value)) return null;
+        var locks = new Dictionary<string, MetadataFieldLock>(StringComparer.OrdinalIgnoreCase);
+        if (value.ValueKind != JsonValueKind.Object) return locks;
+
+        foreach (var property in value.EnumerateObject())
+        {
+            var key = property.Name?.Trim();
+            if (string.IsNullOrWhiteSpace(key)) continue;
+            var entry = property.Value;
+            if (entry.ValueKind == JsonValueKind.False)
+            {
+                locks[key] = new MetadataFieldLock(Locked: false);
+                continue;
+            }
+            if (entry.ValueKind == JsonValueKind.True)
+            {
+                locks[key] = new MetadataFieldLock(Locked: true, LockedAt: DateTimeOffset.UtcNow, Source: "import");
+                continue;
+            }
+            if (entry.ValueKind != JsonValueKind.Object) continue;
+
+            var locked = true;
+            if (TryGetProperty(entry, "locked", out var lockedElement))
+            {
+                locked = lockedElement.ValueKind switch
+                {
+                    JsonValueKind.True => true,
+                    JsonValueKind.False => false,
+                    JsonValueKind.String when bool.TryParse(lockedElement.GetString(), out var parsed) => parsed,
+                    _ => true
+                };
+            }
+
+            DateTimeOffset? lockedAt = null;
+            if (TryGetProperty(entry, "lockedAt", out var lockedAtElement)
+                && lockedAtElement.ValueKind == JsonValueKind.String
+                && DateTimeOffset.TryParse(lockedAtElement.GetString(), out var parsedDate))
+            {
+                lockedAt = parsedDate;
+            }
+
+            locks[key] = new MetadataFieldLock(
+                Locked: locked,
+                LockedAt: lockedAt ?? (locked ? DateTimeOffset.UtcNow : null),
+                LockedBy: GetString(entry, "lockedBy"),
+                Reason: GetString(entry, "reason"),
+                Source: GetString(entry, "source"));
+        }
+
+        return locks;
     }
 
     private static string? GetString(JsonElement json, string camelName)
@@ -4452,6 +4637,226 @@ public sealed class FileIdentityStore
     }
 }
 
+
+
+
+public static class MetadataStatusHelper
+{
+    public const string Unreviewed = "Unreviewed";
+    public const string NeedsReview = "Needs Review";
+    public const string Reviewed = "Reviewed";
+    public const string Locked = "Locked";
+    public const string FailedLookup = "Failed Lookup";
+    public const string ManualOnly = "Manual Only";
+
+    private static readonly Dictionary<string, string> Aliases = new(StringComparer.OrdinalIgnoreCase)
+    {
+        ["unreviewed"] = Unreviewed,
+        ["unscanned"] = Unreviewed,
+        ["new"] = Unreviewed,
+        ["needsreview"] = NeedsReview,
+        ["needs review"] = NeedsReview,
+        ["review"] = NeedsReview,
+        ["needs-review"] = NeedsReview,
+        ["partial"] = NeedsReview,
+        ["partial match"] = NeedsReview,
+        ["reviewed"] = Reviewed,
+        ["verified"] = Reviewed,
+        ["complete"] = Reviewed,
+        ["locked"] = Locked,
+        ["protected"] = Locked,
+        ["failedlookup"] = FailedLookup,
+        ["failed lookup"] = FailedLookup,
+        ["lookup failed"] = FailedLookup,
+        ["no match"] = FailedLookup,
+        ["no-match"] = FailedLookup,
+        ["manualonly"] = ManualOnly,
+        ["manual only"] = ManualOnly,
+        ["manual-only"] = ManualOnly,
+        ["manual"] = ManualOnly
+    };
+
+    public static string Normalize(string? value, string fallback = Unreviewed)
+        => NormalizeOrNull(value) ?? (string.IsNullOrWhiteSpace(fallback) ? Unreviewed : fallback.Trim());
+
+    public static string? NormalizeOrNull(string? value)
+    {
+        var text = value?.Trim();
+        if (string.IsNullOrWhiteSpace(text)) return null;
+        if (Aliases.TryGetValue(text, out var match)) return match;
+        var compact = Regex.Replace(text.ToLowerInvariant(), @"[^a-z0-9]+", string.Empty);
+        return Aliases.TryGetValue(compact, out match) ? match : text;
+    }
+}
+
+public static class MetadataPayloadOptions
+{
+    public static bool OverwriteLockedFields(JsonElement payload)
+    {
+        if (payload.ValueKind != JsonValueKind.Object) return false;
+        if (!TryGet(payload, "overwriteLockedFields", out var value)) return false;
+        return value.ValueKind switch
+        {
+            JsonValueKind.True => true,
+            JsonValueKind.False => false,
+            JsonValueKind.String when bool.TryParse(value.GetString(), out var parsed) => parsed,
+            _ => false
+        };
+    }
+
+    private static bool TryGet(JsonElement json, string name, out JsonElement value)
+    {
+        if (json.TryGetProperty(name, out value)) return true;
+        var pascal = char.ToUpperInvariant(name[0]) + name[1..];
+        if (json.TryGetProperty(pascal, out value)) return true;
+        foreach (var property in json.EnumerateObject())
+        {
+            if (property.Name.Equals(name, StringComparison.OrdinalIgnoreCase))
+            {
+                value = property.Value;
+                return true;
+            }
+        }
+        value = default;
+        return false;
+    }
+}
+
+public static class MetadataLockHelper
+{
+    public static Dictionary<string, MetadataFieldLock>? NormalizeLocks(Dictionary<string, MetadataFieldLock>? locks)
+    {
+        if (locks is null) return null;
+        var normalized = new Dictionary<string, MetadataFieldLock>(StringComparer.OrdinalIgnoreCase);
+        foreach (var pair in locks)
+        {
+            var key = pair.Key?.Trim();
+            if (string.IsNullOrWhiteSpace(key)) continue;
+            var entry = pair.Value;
+            if (!entry.Locked) continue;
+            normalized[key] = entry with
+            {
+                Locked = true,
+                LockedAt = entry.LockedAt ?? DateTimeOffset.UtcNow,
+                Source = string.IsNullOrWhiteSpace(entry.Source) ? "manual" : entry.Source
+            };
+        }
+        return normalized;
+    }
+
+    public static Dictionary<string, MetadataFieldLock>? MergeLocks(Dictionary<string, MetadataFieldLock>? existing, Dictionary<string, MetadataFieldLock>? incoming)
+    {
+        if (incoming is null) return NormalizeLocks(existing);
+        var merged = NormalizeLocks(existing) ?? new Dictionary<string, MetadataFieldLock>(StringComparer.OrdinalIgnoreCase);
+        foreach (var pair in incoming)
+        {
+            var key = pair.Key?.Trim();
+            if (string.IsNullOrWhiteSpace(key)) continue;
+            if (!pair.Value.Locked)
+            {
+                merged.Remove(key);
+                continue;
+            }
+            merged[key] = pair.Value with
+            {
+                Locked = true,
+                LockedAt = pair.Value.LockedAt ?? DateTimeOffset.UtcNow,
+                Source = string.IsNullOrWhiteSpace(pair.Value.Source) ? "manual" : pair.Value.Source
+            };
+        }
+        return merged;
+    }
+
+    public static bool IsLocked(Dictionary<string, MetadataFieldLock>? locks, params string[] keys)
+    {
+        if (locks is null || locks.Count == 0) return false;
+        foreach (var key in keys)
+        {
+            if (string.IsNullOrWhiteSpace(key)) continue;
+            if (locks.TryGetValue(key, out var fieldLock) && fieldLock.Locked) return true;
+        }
+        return false;
+    }
+
+    public static bool ShouldRespectLocks(ItemMetadataUpdate update)
+    {
+        var source = update.MetadataSource?.Trim() ?? string.Empty;
+        if (string.IsNullOrWhiteSpace(source)) return false;
+        return !source.Contains("Manual edit", StringComparison.OrdinalIgnoreCase);
+    }
+
+    public static ItemMetadataUpdate FilterLockedFields(ItemMetadataUpdate update, Dictionary<string, MetadataFieldLock>? locks)
+    {
+        if (locks is null || locks.Count == 0) return update;
+        string? S(string key, string? value, params string[] aliases) => value is null || !IsLocked(locks, new[] { key }.Concat(aliases).ToArray()) ? value : null;
+        string[]? A(string key, string[]? value, params string[] aliases) => value is null || !IsLocked(locks, new[] { key }.Concat(aliases).ToArray()) ? value : null;
+        int? I(string key, int? value, params string[] aliases) => value is null || !IsLocked(locks, new[] { key }.Concat(aliases).ToArray()) ? value : null;
+        double? D(string key, double? value, params string[] aliases) => value is null || !IsLocked(locks, new[] { key }.Concat(aliases).ToArray()) ? value : null;
+
+        return new ItemMetadataUpdate(
+            Title: S("title", update.Title, "strategyGuideTitle", "manualTitle", "magazineTitle", "name"),
+            Kind: S("kind", update.Kind),
+            System: S("preferredPlatform", update.System, "system", "category"),
+            Category: S("preferredPlatform", update.Category, "category", "system"),
+            Publisher: S("publisher", update.Publisher),
+            Year: S("year", update.Year, "publishYear"),
+            Tags: A("tags", update.Tags),
+            Summary: S("summary", update.Summary, "description"),
+            Series: S("series", update.Series, "franchise", "gameFranchise", "magazineTitle"),
+            Writer: S("writer", update.Writer, "authorWriter", "editor"),
+            IssueNumber: S("issueNumber", update.IssueNumber, "issue"),
+            Rating: S("rating", update.Rating, "esrb"),
+            WebLink: S("webLink", update.WebLink),
+            Asin: S("asin", update.Asin),
+            Isbn10: S("isbn10", update.Isbn10, "isbn"),
+            Isbn13: S("isbn13", update.Isbn13, "isbn"),
+            LanguageTag: S("languageTag", update.LanguageTag, "language"),
+            AssociatedPlatforms: A("associatedPlatforms", update.AssociatedPlatforms),
+            PlatformMatchTitle: S("platformMatchTitle", update.PlatformMatchTitle, "gameTitle"),
+            PlatformResolverSource: S("platformResolverSource", update.PlatformResolverSource),
+            PlatformResolverConfidence: D("platformResolverConfidence", update.PlatformResolverConfidence),
+            MagazineTitle: S("magazineTitle", update.MagazineTitle, "series"),
+            Volume: S("volume", update.Volume),
+            CoverDate: S("coverDate", update.CoverDate),
+            PublicationDate: S("publicationDate", update.PublicationDate),
+            Region: S("region", update.Region),
+            PlatformFocus: S("platformFocus", update.PlatformFocus),
+            PrimarySystem: S("primarySystem", update.PrimarySystem, "preferredPlatform"),
+            MagazineCategory: S("magazineCategory", update.MagazineCategory),
+            CoverSubject: S("coverSubject", update.CoverSubject, "coverStory"),
+            BarcodeUpcIssn: S("barcodeUpcIssn", update.BarcodeUpcIssn, "barcode", "upc", "issn"),
+            FeaturedGames: A("featuredGames", update.FeaturedGames),
+            FeaturedPlatforms: A("featuredPlatforms", update.FeaturedPlatforms),
+            SpecialFeatures: A("specialFeatures", update.SpecialFeatures, "sections"),
+            IncludedExtras: A("includedExtras", update.IncludedExtras, "physicalExtras", "insertDetails"),
+            GameTitle: S("gameTitle", update.GameTitle, "platformMatchTitle"),
+            GuideType: S("guideType", update.GuideType),
+            Edition: S("edition", update.Edition, "editionType"),
+            Franchise: S("franchise", update.Franchise, "gameFranchise", "series"),
+            Developer: S("developer", update.Developer, "gameDeveloper"),
+            GamePublisher: S("gamePublisher", update.GamePublisher),
+            GameReleaseYear: S("gameReleaseYear", update.GameReleaseYear),
+            Genre: S("genre", update.Genre),
+            CoveredGames: A("coveredGames", update.CoveredGames),
+            CoveredPlatforms: A("coveredPlatforms", update.CoveredPlatforms),
+            GuideTopics: A("guideTopics", update.GuideTopics),
+            CharactersCovered: A("charactersCovered", update.CharactersCovered),
+            LocationsCovered: A("locationsCovered", update.LocationsCovered),
+            ManualTitle: S("manualTitle", update.ManualTitle, "title"),
+            ManualType: S("manualType", update.ManualType),
+            IncludedSections: A("includedSections", update.IncludedSections),
+            ControlScheme: S("controlScheme", update.ControlScheme),
+            ItemsCovered: A("itemsCovered", update.ItemsCovered),
+            WarrantySupport: S("warrantySupport", update.WarrantySupport),
+            PageCount: I("pageCount", update.PageCount, "metadataPageCount"),
+            MetadataSource: update.MetadataSource,
+            MetadataStatus: update.MetadataStatus,
+            Notes: S("notes", update.Notes),
+            Removed: update.Removed,
+            MetadataLocks: update.MetadataLocks);
+    }
+}
+
 public sealed class MetadataStore
 {
     private readonly string _path;
@@ -4532,7 +4937,9 @@ public sealed class MetadataStore
                 WarrantySupport = kind == "Manual" ? First(o.WarrantySupport, item.WarrantySupport) : string.Empty,
                 PageCount = o.PageCount.HasValue && o.PageCount.Value > 0 ? o.PageCount.Value : item.PageCount,
                 MetadataSource = First(o.MetadataSource, item.MetadataSource),
-                Notes = First(o.Notes, item.Notes)
+                MetadataStatus = MetadataStatusHelper.Normalize(o.MetadataStatus, item.MetadataStatus),
+                Notes = First(o.Notes, item.Notes),
+                MetadataLocks = MetadataLockHelper.NormalizeLocks(o.MetadataLocks ?? item.MetadataLocks)
             };
         }
     }
@@ -4600,8 +5007,21 @@ public sealed class MetadataStore
             WarrantySupport = kind == "Manual" ? Keep(update.WarrantySupport, item.WarrantySupport) : item.WarrantySupport,
             PageCount = update.PageCount.HasValue && update.PageCount.Value > 0 ? update.PageCount.Value : item.PageCount,
             MetadataSource = Keep(update.MetadataSource, item.MetadataSource),
-            Notes = Keep(update.Notes, item.Notes)
+            MetadataStatus = MetadataStatusHelper.Normalize(update.MetadataStatus, item.MetadataStatus),
+            Notes = Keep(update.Notes, item.Notes),
+            MetadataLocks = MetadataLockHelper.MergeLocks(item.MetadataLocks, update.MetadataLocks)
         };
+    }
+
+    public ItemMetadataUpdate PrepareIncomingOverride(string id, ItemMetadataUpdate update, bool overwriteLockedFields = false)
+    {
+        lock (_gate)
+        {
+            _overrides.TryGetValue(id, out var existing);
+            if (!overwriteLockedFields && MetadataLockHelper.ShouldRespectLocks(update))
+                return MetadataLockHelper.FilterLockedFields(update, existing?.MetadataLocks);
+            return update;
+        }
     }
 
     private static string Keep(string? candidate, string fallback) => string.IsNullOrWhiteSpace(candidate) ? fallback : candidate.Trim();
@@ -4717,8 +5137,10 @@ public sealed class MetadataStore
                 WarrantySupport: update.WarrantySupport ?? existing?.WarrantySupport,
                 PageCount: update.PageCount ?? existing?.PageCount,
                 MetadataSource: update.MetadataSource ?? existing?.MetadataSource,
+                MetadataStatus: update.MetadataStatus ?? existing?.MetadataStatus,
                 Notes: update.Notes ?? existing?.Notes,
-                Removed: update.Removed ?? existing?.Removed);
+                Removed: update.Removed ?? existing?.Removed,
+                MetadataLocks: MetadataLockHelper.MergeLocks(existing?.MetadataLocks, update.MetadataLocks));
             Persist();
         }
     }
@@ -5391,7 +5813,8 @@ public sealed class LibraryCache
                     GuideTopics: merged.GuideTopics ?? [],
                     CharactersCovered: merged.CharactersCovered ?? [],
                     LocationsCovered: merged.LocationsCovered ?? [],
-                    MetadataSource: merged.MetadataSource);
+                    MetadataSource: merged.MetadataSource,
+                    MetadataStatus: MetadataStatusHelper.Unreviewed);
                 if (guidevaultMetadata is not null)
                 {
                     item = MetadataStore.ApplyUpdateSnapshot(item, guidevaultMetadata with
@@ -6780,8 +7203,12 @@ public static class GuidevaultNativeMetadata
             ["summary"] = First(update.Summary, item.Summary),
             ["tags"] = update.Tags ?? item.Tags,
             ["notes"] = First(update.Notes, item.Notes),
+            ["metadataStatus"] = MetadataStatusHelper.Normalize(update.MetadataStatus, item.MetadataStatus),
             ["metadataSource"] = "Guidevault JSON"
         };
+        var exportLocks = MetadataLockHelper.MergeLocks(item.MetadataLocks, update.MetadataLocks);
+        if (exportLocks is not null && exportLocks.Count > 0)
+            metadata["metadataLocks"] = exportLocks;
 
         var kind = First(update.Kind, item.Kind);
         if (kind.Equals("Magazine", StringComparison.OrdinalIgnoreCase))
@@ -6857,6 +7284,7 @@ public static class GuidevaultNativeMetadata
             ["fileSizeBytes"] = fileSizeBytes,
             ["format"] = item.Format,
             ["kind"] = kind,
+            ["metadataStatus"] = metadata.TryGetValue("metadataStatus", out var ms) ? ms : MetadataStatusHelper.Normalize(update.MetadataStatus, item.MetadataStatus),
             ["pageCount"] = metadata.TryGetValue("pageCount", out var pc) ? pc : item.PageCount,
             ["metadata"] = metadata
         };
@@ -6894,6 +7322,7 @@ public static class GuidevaultNativeMetadata
         PutIfMissing("publisher", First(update.Publisher, item.Publisher));
         PutIfMissing("year", First(update.Year, item.Year));
         PutIfMissing("languageTag", First(update.LanguageTag, item.LanguageTag));
+        PutIfMissing("metadataStatus", MetadataStatusHelper.Normalize(update.MetadataStatus, item.MetadataStatus));
         PutIfMissing("tags", update.Tags ?? item.Tags);
         if (pageCount > 0)
         {
@@ -6901,6 +7330,9 @@ public static class GuidevaultNativeMetadata
             metadata["metadataPageCount"] = pageCount;
         }
         metadata["metadataSource"] = "Guidevault JSON";
+        var exportLocks = MetadataLockHelper.MergeLocks(item.MetadataLocks, update.MetadataLocks);
+        if (exportLocks is not null && exportLocks.Count > 0 && !metadata.ContainsKey("metadataLocks"))
+            metadata["metadataLocks"] = exportLocks;
         PutIfMissing("gameFranchise", First(update.Franchise, item.Franchise));
         PutIfMissing("franchise", First(update.Franchise, item.Franchise));
         PutIfMissing("gameDeveloper", First(update.Developer, item.Developer));
@@ -6917,6 +7349,7 @@ public static class GuidevaultNativeMetadata
             ["fileSizeBytes"] = item.SizeBytes,
             ["format"] = item.Format,
             ["kind"] = kind,
+            ["metadataStatus"] = metadata.TryGetValue("metadataStatus", out var ms2) ? ms2 : MetadataStatusHelper.Normalize(update.MetadataStatus, item.MetadataStatus),
             ["metadata"] = metadata
         };
         if (pageCount > 0) exportedItem["pageCount"] = pageCount;
@@ -9667,5 +10100,5 @@ static class GuidevaultLibraryIoGate
 
 static class GuidevaultBuildInfo
 {
-    public const string Version = "0.9.102";
+    public const string Version = "0.9.106";
 }

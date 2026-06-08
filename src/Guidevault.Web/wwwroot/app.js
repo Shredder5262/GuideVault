@@ -16,7 +16,7 @@ const state = {
   readingProfiles: { presets: {}, defaultPresetId: 'default', groupAssignments: {}, entryAssignments: {} },
   opds: { connectionUrl: '', selectedKeyId: '', keys: [], editingUrl: false, revealUrl: false, creatingKey: false },
   devices: { emailDevices: [], clientDevices: [], generatedAt: null, addingEmail: false, editingEmailId: '', editingClientId: '', clientMenuId: '' },
-  metadataManager: { selectedIds: [], dirty: {}, filterKind: '', search: '', missing: '', category: '', visibleColumns: [], sortKey: '', sortDirection: 'asc', draggedColumnKey: '', renderLimit: 250 },
+  metadataManager: { selectedIds: [], dirty: {}, filterKind: '', statusFilter: '', search: '', missing: '', category: '', visibleColumns: [], sortKey: '', sortDirection: 'asc', draggedColumnKey: '', renderLimit: 250 },
   metadataSourceBatch: { results: [], running: false, applied: 0, runId: 0, abortController: null },
   keybinds: { bindings: {}, awaitingId: '' },
   folderBrowser: { targetInputId: '', currentPath: '/app/data/library', roots: [] },
@@ -73,13 +73,47 @@ const GUIDEVAULT_FAVORITES_KEY = 'guidevault.favorites.v1';
 const GUIDEVAULT_LIBRARY_CACHE_KEY = 'guidevault.libraryCache.v1';
 const GUIDEVAULT_GRID_INITIAL_RENDER = 96;
 const GUIDEVAULT_GRID_CHUNK_SIZE = 96;
-const GUIDEVAULT_APP_VERSION = '0.9.102';
+const GUIDEVAULT_APP_VERSION = '0.9.106';
 const GUIDEVAULT_FILENAME_SCHEMA_KEY = 'guidevault.filenameRename.schema.v1';
 const GUIDEVAULT_DEFAULT_FILENAME_SCHEMA = '{title}';
 const GUIDEVAULT_STABLE_TAG_FEED_URL = 'https://api.github.com/repos/Shredder5262/GuideVault/tags';
 const GUIDEVAULT_RELEASES_URL = 'https://github.com/Shredder5262/GuideVault/releases';
 const GUIDEVAULT_PACKAGE_URL = 'https://github.com/Shredder5262/GuideVault/pkgs/container/guidevault';
 const GUIDEVAULT_CURRENT_IMAGE = 'ghcr.io/shredder5262/guidevault:latest';
+
+const METADATA_STATUS_OPTIONS = ['Unreviewed', 'Needs Review', 'Reviewed', 'Locked', 'Failed Lookup', 'Manual Only'];
+const METADATA_STATUS_ALIASES = new Map([
+  ['unreviewed', 'Unreviewed'], ['unscanned', 'Unreviewed'], ['new', 'Unreviewed'],
+  ['needsreview', 'Needs Review'], ['needs review', 'Needs Review'], ['needs-review', 'Needs Review'], ['review', 'Needs Review'], ['partial', 'Needs Review'], ['partial match', 'Needs Review'],
+  ['reviewed', 'Reviewed'], ['verified', 'Reviewed'], ['complete', 'Reviewed'],
+  ['locked', 'Locked'], ['protected', 'Locked'],
+  ['failedlookup', 'Failed Lookup'], ['failed lookup', 'Failed Lookup'], ['lookup failed', 'Failed Lookup'], ['no match', 'Failed Lookup'], ['no-match', 'Failed Lookup'],
+  ['manualonly', 'Manual Only'], ['manual only', 'Manual Only'], ['manual-only', 'Manual Only'], ['manual', 'Manual Only']
+]);
+
+function normalizeMetadataStatus(value, fallback = 'Unreviewed') {
+  const text = String(value ?? '').trim();
+  if (!text) return fallback;
+  const lower = text.toLowerCase();
+  const compact = lower.replace(/[^a-z0-9]+/g, '');
+  return METADATA_STATUS_ALIASES.get(lower) || METADATA_STATUS_ALIASES.get(compact) || text;
+}
+
+function metadataStatusOf(item = {}) {
+  return normalizeMetadataStatus(item?.metadataStatus || item?.MetadataStatus || item?.metadataReviewStatus || item?.reviewStatus || 'Unreviewed');
+}
+
+function metadataStatusOptionsHtml(selected = '') {
+  const value = normalizeMetadataStatus(selected || 'Unreviewed');
+  return METADATA_STATUS_OPTIONS.map(option => `<option value="${escapeForAttribute(option)}" ${option === value ? 'selected' : ''}>${escapeHtml(option)}</option>`).join('');
+}
+
+function metadataStatusPillHtml(status = 'Unreviewed') {
+  const normalized = normalizeMetadataStatus(status || 'Unreviewed');
+  const slug = normalized.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'unreviewed';
+  return `<span class="metadata-status-pill metadata-status-${escapeForAttribute(slug)}">${escapeHtml(normalized)}</span>`;
+}
+
 
 const EMAIL_TEMPLATE_PRESETS = [
   {
@@ -6638,6 +6672,319 @@ function updateEditionControls() {
   if (volumeLabel) volumeLabel.classList.toggle('hidden', !(showStrategy && types.includes('Volume Edition')));
 }
 
+
+const METADATA_LOCKABLE_FIELDS = {
+  editTitle: 'title',
+  editCategory: 'preferredPlatform',
+  editEsrbRating: 'rating',
+  editAssociatedPlatforms: 'associatedPlatforms',
+  editPlatformMatchTitle: 'platformMatchTitle',
+  editGameTitle: 'gameTitle',
+  editManualType: 'manualType',
+  editIsbn: 'isbn',
+  editGuideType: 'guideType',
+  editEditionType: 'edition',
+  editEditionYear: 'editionYear',
+  editEditionVolume: 'editionVolume',
+  editFranchise: 'franchise',
+  editSeries: 'series',
+  editMagazineTitle: 'magazineTitle',
+  editIssue: 'issueNumber',
+  editVolume: 'volume',
+  editCoverDate: 'coverDate',
+  editBarcodeUpcIssn: 'barcodeUpcIssn',
+  editPublicationDate: 'publicationDate',
+  editPublisher: 'publisher',
+  editRegion: 'region',
+  editLanguageTag: 'languageTag',
+  editPlatformFocus: 'platformFocus',
+  editPrimarySystem: 'primarySystem',
+  editMagazineCategory: 'magazineCategory',
+  editCoverSubject: 'coverSubject',
+  editYear: 'year',
+  editPageCount: 'pageCount',
+  editPublicationDateGuide: 'publicationDate',
+  editWriter: 'writer',
+  editDeveloper: 'developer',
+  editGamePublisher: 'gamePublisher',
+  editGameReleaseYear: 'gameReleaseYear',
+  editGenre: 'genre',
+  editSummary: 'summary',
+  editFeaturedGames: 'featuredGames',
+  editFeaturedPlatforms: 'featuredPlatforms',
+  editSpecialFeatures: 'specialFeatures',
+  editIncludedExtras: 'includedExtras',
+  editIncludedSections: 'includedSections',
+  editControlScheme: 'controlScheme',
+  editItemsCovered: 'itemsCovered',
+  editWarrantySupport: 'warrantySupport',
+  editCoveredGames: 'coveredGames',
+  editCoveredPlatforms: 'coveredPlatforms',
+  editGuideTopics: 'guideTopics',
+  editStrategySpecialFeatures: 'specialFeatures',
+  editCharactersCovered: 'charactersCovered',
+  editLocationsCovered: 'locationsCovered',
+  editTags: 'tags'
+};
+
+const METADATA_PAYLOAD_LOCK_ALIASES = {
+  title: ['title', 'strategyGuideTitle', 'manualTitle', 'magazineTitle', 'name'],
+  strategyGuideTitle: ['title', 'strategyGuideTitle'],
+  manualTitle: ['title', 'manualTitle'],
+  magazineTitle: ['magazineTitle', 'title', 'series'],
+  name: ['title', 'name'],
+  category: ['preferredPlatform', 'category', 'system'],
+  system: ['preferredPlatform', 'system', 'category'],
+  preferredPlatform: ['preferredPlatform', 'category', 'system'],
+  primarySystem: ['primarySystem', 'preferredPlatform'],
+  language: ['languageTag', 'language'],
+  languageTag: ['languageTag', 'language'],
+  rating: ['rating', 'esrb'],
+  esrb: ['rating', 'esrb'],
+  writer: ['writer', 'authorWriter', 'editor'],
+  authorWriter: ['writer', 'authorWriter'],
+  publishYear: ['year', 'publishYear'],
+  year: ['year', 'publishYear'],
+  isbn: ['isbn', 'isbn10', 'isbn13'],
+  isbn10: ['isbn10', 'isbn'],
+  isbn13: ['isbn13', 'isbn'],
+  barcode: ['barcodeUpcIssn', 'barcode'],
+  upc: ['barcodeUpcIssn', 'upc'],
+  issn: ['barcodeUpcIssn', 'issn'],
+  barcodeUpcIssn: ['barcodeUpcIssn', 'barcode', 'upc', 'issn'],
+  pageCount: ['pageCount', 'metadataPageCount'],
+  metadataPageCount: ['pageCount', 'metadataPageCount'],
+  gameDeveloper: ['developer', 'gameDeveloper'],
+  developer: ['developer', 'gameDeveloper'],
+  gameFranchise: ['franchise', 'gameFranchise', 'series'],
+  franchise: ['franchise', 'gameFranchise', 'series'],
+  editionType: ['edition', 'editionType'],
+  edition: ['edition', 'editionType'],
+  physicalExtras: ['includedExtras', 'physicalExtras'],
+  includedExtras: ['includedExtras', 'physicalExtras'],
+  coverStory: ['coverSubject', 'coverStory'],
+  coverSubject: ['coverSubject', 'coverStory'],
+  description: ['summary', 'description'],
+  summary: ['summary', 'description']
+};
+
+function normalizeMetadataLocks(locks = {}) {
+  const normalized = {};
+  Object.entries(locks || {}).forEach(([key, value]) => {
+    const lockKey = String(key || '').trim();
+    if (!lockKey) return;
+    if (value === true) {
+      normalized[lockKey] = { locked: true, lockedAt: new Date().toISOString(), source: 'manual' };
+      return;
+    }
+    if (!value || value === false) return;
+    const entry = { ...(typeof value === 'object' ? value : {}) };
+    if (entry.locked === false) return;
+    normalized[lockKey] = {
+      locked: true,
+      lockedAt: entry.lockedAt || new Date().toISOString(),
+      lockedBy: entry.lockedBy || '',
+      reason: entry.reason || '',
+      source: entry.source || 'manual'
+    };
+  });
+  return normalized;
+}
+
+function metadataLocksOf(item = state.selected || {}) {
+  return normalizeMetadataLocks(item?.metadataLocks || item?.MetadataLocks || {});
+}
+
+function metadataLockKeysForPayloadKey(key = '') {
+  const normalized = String(key || '').trim();
+  return METADATA_PAYLOAD_LOCK_ALIASES[normalized] || [normalized];
+}
+
+function isMetadataFieldLocked(item = state.selected || {}, key = '') {
+  const locks = metadataLocksOf(item);
+  return metadataLockKeysForPayloadKey(key).some(lockKey => locks[lockKey]?.locked !== false && !!locks[lockKey]);
+}
+
+function metadataPayloadShouldRespectLocks(payload = {}) {
+  const source = String(payload?.metadataSource || '').trim();
+  return !!source && !/manual edit/i.test(source) && payload?.overwriteLockedFields !== true;
+}
+
+function filterLockedMetadataPayload(item, payload = {}) {
+  if (!metadataPayloadShouldRespectLocks(payload)) return { payload, skipped: [] };
+  const filtered = {};
+  const skipped = [];
+  const alwaysKeep = new Set(['metadataSource','metadataStatus','metadataLocks','overwriteLockedFields','igdbId','igdbUrl','esrbId','esrbUrl','sourceUrl','savedAt']);
+  Object.entries(payload || {}).forEach(([key, value]) => {
+    if (alwaysKeep.has(key)) { filtered[key] = value; return; }
+    const keys = metadataLockKeysForPayloadKey(key);
+    const locked = keys.some(lockKey => isMetadataFieldLocked(item, lockKey));
+    if (locked) { skipped.push(key); return; }
+    filtered[key] = value;
+  });
+  return { payload: filtered, skipped };
+}
+
+function currentMetadataLocksPayload() {
+  return metadataLocksOf(state.selected || {});
+}
+
+function rememberMetadataControlTitle(el) {
+  if (!el || el.dataset.metadataLockOriginalTitle !== undefined) return;
+  el.dataset.metadataLockOriginalTitle = el.getAttribute('title') || '';
+}
+
+function restoreMetadataControlTitle(el) {
+  if (!el || el.dataset.metadataLockOriginalTitle === undefined) return;
+  const original = el.dataset.metadataLockOriginalTitle || '';
+  if (original) el.setAttribute('title', original);
+  else el.removeAttribute('title');
+  delete el.dataset.metadataLockOriginalTitle;
+}
+
+function setMetadataFieldEditorLocked(fieldId = '', locked = false) {
+  if (!fieldId) return;
+  const control = $(fieldId);
+  const shell = document.querySelector(`.meta-multi-select[data-multi-select="${CSS.escape(fieldId)}"]`);
+  const lockedTitle = 'This field is locked. Unlock it before editing.';
+
+  if (control) {
+    const tag = String(control.tagName || '').toLowerCase();
+    const usesDisabled = tag === 'select' || control.type === 'checkbox' || control.type === 'radio';
+    control.classList.toggle('metadata-lock-readonly', locked);
+    control.dataset.metadataLocked = locked ? 'true' : 'false';
+
+    if (locked) {
+      rememberMetadataControlTitle(control);
+      if (usesDisabled) control.disabled = true;
+      else control.readOnly = true;
+      control.setAttribute('aria-readonly', 'true');
+      control.title = lockedTitle;
+    } else {
+      restoreMetadataControlTitle(control);
+      if (usesDisabled) control.disabled = false;
+      else control.readOnly = control.classList.contains('metadata-derived-readonly');
+      if (control.readOnly) control.setAttribute('aria-readonly', 'true');
+      else control.removeAttribute('aria-readonly');
+      delete control.dataset.metadataLocked;
+    }
+  }
+
+  if (shell) {
+    shell.classList.toggle('metadata-lock-readonly', locked);
+    shell.dataset.metadataLocked = locked ? 'true' : 'false';
+    if (locked) shell.classList.remove('open');
+    const button = shell.querySelector('.meta-multi-button');
+    if (button) {
+      if (locked) {
+        rememberMetadataControlTitle(button);
+        button.disabled = true;
+        button.setAttribute('aria-disabled', 'true');
+        button.setAttribute('aria-expanded', 'false');
+        button.title = lockedTitle;
+      } else {
+        restoreMetadataControlTitle(button);
+        button.disabled = false;
+        button.removeAttribute('aria-disabled');
+      }
+    }
+    shell.querySelectorAll('.meta-multi-option-input').forEach(input => {
+      input.disabled = locked;
+    });
+    if (!locked) delete shell.dataset.metadataLocked;
+  }
+}
+
+function refreshMetadataLockButtons() {
+  document.querySelectorAll('.metadata-lock-button[data-metadata-lock-key]').forEach(button => {
+    const key = button.dataset.metadataLockKey || '';
+    const locked = isMetadataFieldLocked(state.selected || {}, key);
+    button.classList.toggle('locked', locked);
+    button.textContent = locked ? '🔒' : '🔓';
+    button.setAttribute('aria-pressed', locked ? 'true' : 'false');
+    button.title = locked
+      ? 'Locked: this field is read-only and scraper, import, batch, and normalize actions cannot overwrite it.'
+      : 'Unlocked: this field can be edited and scraper, import, batch, and normalize actions may update it.';
+    button.setAttribute('aria-label', `${locked ? 'Unlock' : 'Lock'} ${button.dataset.metadataLockLabel || 'field'}`);
+    setMetadataFieldEditorLocked(button.dataset.metadataLockFor || '', locked);
+  });
+}
+
+function addMetadataFieldLockButtons() {
+  const panel = $('metadataPanel');
+  if (!panel || panel.dataset.lockButtonsReady === 'true') { refreshMetadataLockButtons(); return; }
+  const labels = [...panel.querySelectorAll('label')].filter(label => !label.closest('.meta-multi-panel'));
+  labels.forEach(label => {
+    if (label.querySelector(':scope > .metadata-lock-button')) return;
+    const fieldId = metadataHelpFieldIdForLabel(label);
+    const lockKey = METADATA_LOCKABLE_FIELDS[fieldId];
+    if (!fieldId || !lockKey) return;
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = 'metadata-lock-button';
+    button.dataset.metadataLockFor = fieldId;
+    button.dataset.metadataLockKey = lockKey;
+    button.dataset.metadataLockLabel = label.firstChild?.textContent?.trim() || 'field';
+    const anchor = label.querySelector(':scope > input, :scope > select, :scope > textarea, :scope > .meta-multi-select') || null;
+    label.insertBefore(button, anchor);
+  });
+  panel.dataset.lockButtonsReady = 'true';
+  refreshMetadataLockButtons();
+}
+
+async function persistSelectedMetadataLocks(lockMap, serverLockPayload = null) {
+  const selectedId = String(state.selected?.id || state.selected?.Id || '').trim();
+  if (!selectedId) return;
+  const normalized = normalizeMetadataLocks(lockMap);
+  const locksForServer = serverLockPayload || normalized;
+  const applyToItem = item => {
+    if (!item) return item;
+    item.metadataLocks = normalized;
+    item.MetadataLocks = normalized;
+    return item;
+  };
+  applyToItem(state.selected);
+  const idx = (state.items || []).findIndex(i => String(i.id || i.Id || '') === selectedId);
+  if (idx >= 0) applyToItem(state.items[idx]);
+  rememberClientMetadataOverride(selectedId, { metadataLocks: normalized });
+  refreshMetadataLockButtons();
+  try {
+    const res = await fetch(`/api/items/${encodeURIComponent(selectedId)}/metadata`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ metadataLocks: locksForServer })
+    });
+    if (!res.ok) {
+      let message = `HTTP ${res.status}`;
+      try { message = (await res.json()).error || message; } catch {}
+      throw new Error(message);
+    }
+    let updated = null;
+    try { updated = await res.json(); } catch {}
+    if (updated?.id || updated?.Id) {
+      replaceItemInState(mergeSavedMetadataClientSide(state.selected, updated, { metadataLocks: normalized }));
+      refreshMetadataLockButtons();
+    }
+    setStatus('Metadata field lock updated.');
+  } catch (err) {
+    console.error('Metadata lock save failed', err);
+    setStatus(`Unable to save metadata lock: ${err?.message || err}`);
+  }
+}
+
+function toggleSelectedMetadataLock(lockKey = '') {
+  if (!state.selected || !lockKey) return;
+  const locks = metadataLocksOf(state.selected);
+  if (locks[lockKey]) {
+    const serverPatch = { ...locks, [lockKey]: { locked: false, source: 'manual' } };
+    delete locks[lockKey];
+    persistSelectedMetadataLocks(locks, serverPatch);
+    return;
+  }
+  locks[lockKey] = { locked: true, lockedAt: new Date().toISOString(), source: 'manual', reason: 'Manually locked in Guidevault' };
+  persistSelectedMetadataLocks(locks);
+}
+
 const METADATA_FIELD_HELP = {
   editTitle: {
     default: 'Guidevault display title for this item. For manuals, use the manual-facing title; for strategy guides, use the guide title; for magazines, use the issue entry title.',
@@ -6646,6 +6993,7 @@ const METADATA_FIELD_HELP = {
     Magazine: 'Issue-level display title. Use the Magazine Title field for the publication name; use this only when the issue needs a distinct entry title.'
   },
   editKind: 'Content type. This controls which metadata fields are shown and how the item is grouped.',
+  editMetadataStatus: 'Workflow state for this item. Use Reviewed when you have checked the metadata; use Manual Only when scraper results should no longer matter; use Failed Lookup when external lookup did not find a usable match.',
   editCategory: {
     default: 'Preferred platform used as the primary platform/category for this item. Strategy guides with multiple associated platforms display as Multi-Platform.',
     Magazine: 'Magazine grouping or publication shelf. Usually the publication name, such as Nintendo Power, EGM, or GamePro.'
@@ -7281,6 +7629,8 @@ function buildCurrentMetadataPayloadFromForm(extra = {}) {
     summary: $('editSummary')?.value || '',
     tags,
     notes: $('notesText')?.value || '',
+    metadataLocks: currentMetadataLocksPayload(),
+    metadataStatus: normalizeMetadataStatus($('editMetadataStatus')?.value || state.selected?.metadataStatus || 'Unreviewed'),
     ...magazinePayload,
     ...strategyPayload,
     ...manualPayload,
@@ -7852,11 +8202,12 @@ function openLibraryComparisonRowHtml(field, current, proposed) {
   const hasIncoming = !isOpenLibraryBlank(incoming, field.key);
   const existingBlank = isOpenLibraryBlank(existing, field.key);
   const differs = hasIncoming && String(existing || '').trim() !== String(incoming || '').trim();
-  const checked = hasIncoming && existingBlank ? 'checked' : '';
-  const disabled = hasIncoming ? '' : 'disabled';
-  return `<tr class="${differs ? 'different' : ''} ${!hasIncoming ? 'missing-incoming' : ''}">
+  const locked = isMetadataFieldLocked(state.selected || {}, field.payloadKey || field.key);
+  const checked = hasIncoming && existingBlank && !locked ? 'checked' : '';
+  const disabled = hasIncoming && !locked ? '' : 'disabled';
+  return `<tr class="${differs ? 'different' : ''} ${!hasIncoming ? 'missing-incoming' : ''} ${locked ? 'locked-field' : ''}">
     <td><input type="checkbox" data-openlibrary-field="${escapeForAttribute(field.key)}" ${checked} ${disabled} /></td>
-    <td>${escapeHtml(field.label)}</td>
+    <td>${locked ? '<span class="metadata-lock-inline" title="Locked field - skipped by imports">🔒</span> ' : ''}${escapeHtml(field.label)}</td>
     <td>${escapeHtml(existing || '\u2014')}</td>
     <td>${escapeHtml(incoming || '\u2014')}</td>
   </tr>`;
@@ -7869,6 +8220,7 @@ function openLibrarySelectedFieldsForMode(mode = 'selected') {
   OPEN_LIBRARY_IMPORT_FIELDS.forEach(field => {
     const incoming = openLibraryCleanValue(field.key, result[field.key]);
     if (isOpenLibraryBlank(incoming, field.key)) return;
+    if (isMetadataFieldLocked(state.selected || {}, field.payloadKey || field.key)) return;
     if (mode === 'all') { fields.push(field.key); return; }
     if (mode === 'empty') {
       if (isOpenLibraryBlank(current[field.key], field.key)) fields.push(field.key);
@@ -7882,7 +8234,7 @@ function openLibrarySelectedFieldsForMode(mode = 'selected') {
 
 function openLibraryPayloadFromFields(fieldKeys = []) {
   const result = state.openLibrary.resolvedResult || {};
-  const payload = { metadataSource: 'Open Library' };
+  const payload = { metadataSource: 'Open Library', metadataStatus: 'Needs Review' };
   fieldKeys.forEach(key => {
     const field = OPEN_LIBRARY_IMPORT_FIELDS.find(f => f.key === key);
     if (!field) return;
@@ -8197,11 +8549,12 @@ function esrbComparisonRowHtml(field, current, proposed) {
   const existingDisplay = existing ? esrbDisplayLabel(existing) : '\u2014';
   const incomingDisplay = incoming ? esrbDisplayLabel(incoming) : '\u2014';
   const differs = hasIncoming && normalizeEsrbRating(existing) !== normalizeEsrbRating(incoming);
-  const checked = hasIncoming && existingBlank ? 'checked' : '';
-  const disabled = hasIncoming ? '' : 'disabled';
-  return `<tr class="${differs ? 'different' : ''} ${!hasIncoming ? 'missing-incoming' : ''}">
+  const locked = isMetadataFieldLocked(state.selected || {}, field.payloadKey || field.key);
+  const checked = hasIncoming && existingBlank && !locked ? 'checked' : '';
+  const disabled = hasIncoming && !locked ? '' : 'disabled';
+  return `<tr class="${differs ? 'different' : ''} ${!hasIncoming ? 'missing-incoming' : ''} ${locked ? 'locked-field' : ''}">
     <td><input type="checkbox" data-esrb-field="${escapeForAttribute(field.key)}" ${checked} ${disabled} /></td>
-    <td>${escapeHtml(field.label)}</td>
+    <td>${locked ? '<span class="metadata-lock-inline" title="Locked field - skipped by imports">🔒</span> ' : ''}${escapeHtml(field.label)}</td>
     <td>${escapeHtml(existingDisplay)}</td>
     <td>${escapeHtml(incomingDisplay)}</td>
   </tr>`;
@@ -8214,6 +8567,7 @@ function esrbSelectedFieldsForMode(mode = 'selected') {
   const fields = [];
   ESRB_IMPORT_FIELDS.forEach(field => {
     if (!incoming) return;
+    if (isMetadataFieldLocked(state.selected || {}, field.payloadKey || field.key)) return;
     if (mode === 'all') { fields.push(field.key); return; }
     if (mode === 'empty') {
       if (!String(current[field.key] || '').trim()) fields.push(field.key);
@@ -8227,7 +8581,7 @@ function esrbSelectedFieldsForMode(mode = 'selected') {
 
 function esrbPayloadFromFields(fieldKeys = []) {
   const result = state.esrb.resolvedResult || {};
-  const payload = { metadataSource: 'ESRB' };
+  const payload = { metadataSource: 'ESRB', metadataStatus: 'Needs Review' };
   const rating = String(result.ratingShort || result.rating || '').trim();
   if (fieldKeys.includes('rating') && rating) payload.rating = rating;
   if (result.sourceUrl) payload.esrbUrl = result.sourceUrl;
@@ -8585,11 +8939,12 @@ function igdbComparisonRowHtml(field, current, proposed) {
   const existingDisplay = igdbDisplayValue(field.key, existing);
   const incomingDisplay = igdbDisplayValue(field.key, incoming);
   const differs = hasIncoming && String(existingDisplay || '').trim() !== String(incomingDisplay || '').trim();
-  const checked = hasIncoming && existingBlank ? 'checked' : '';
-  const disabled = hasIncoming ? '' : 'disabled';
-  return `<tr class="${differs ? 'different' : ''} ${!hasIncoming ? 'missing-incoming' : ''}">
+  const locked = isMetadataFieldLocked(state.selected || {}, field.payloadKey || field.key);
+  const checked = hasIncoming && existingBlank && !locked ? 'checked' : '';
+  const disabled = hasIncoming && !locked ? '' : 'disabled';
+  return `<tr class="${differs ? 'different' : ''} ${!hasIncoming ? 'missing-incoming' : ''} ${locked ? 'locked-field' : ''}">
     <td><input type="checkbox" data-igdb-field="${escapeForAttribute(field.key)}" ${checked} ${disabled} /></td>
-    <td>${escapeHtml(field.label)}</td>
+    <td>${locked ? '<span class="metadata-lock-inline" title="Locked field - skipped by imports">🔒</span> ' : ''}${escapeHtml(field.label)}</td>
     <td>${escapeHtml(existingDisplay || '\u2014')}</td>
     <td>${escapeHtml(incomingDisplay || '\u2014')}</td>
   </tr>`;
@@ -8612,6 +8967,7 @@ function igdbSelectedFieldsForMode(mode = 'selected') {
   IGDB_IMPORT_FIELDS.forEach(field => {
     const incoming = igdbCleanValue(field.key, proposed[field.key]);
     if (isIgdbBlank(incoming, field.key)) return;
+    if (isMetadataFieldLocked(state.selected || {}, field.payloadKey || field.key)) return;
     if (mode === 'all') { fields.push(field.key); return; }
     if (mode === 'empty') {
       if (isIgdbBlank(current[field.key], field.key)) fields.push(field.key);
@@ -8625,7 +8981,7 @@ function igdbSelectedFieldsForMode(mode = 'selected') {
 
 function igdbPayloadFromFields(fieldKeys = []) {
   const result = state.igdb.resolvedResult || {};
-  const payload = { metadataSource: 'IGDB' };
+  const payload = { metadataSource: 'IGDB', metadataStatus: 'Needs Review' };
   fieldKeys.forEach(key => {
     const value = key === 'associatedPlatforms'
       ? normalizeGuidevaultPlatformList(result.associatedPlatforms)
@@ -8844,6 +9200,7 @@ function writeClientMetadataOverrides(map) {
 
 function normalizeClientMetadataPayload(payload) {
   const clone = { ...(payload || {}) };
+  if (clone.metadataStatus !== undefined) clone.metadataStatus = normalizeMetadataStatus(clone.metadataStatus);
   ['tags','associatedPlatforms','featuredGames','featuredPlatforms','specialFeatures','includedExtras','coveredGames','coveredPlatforms','guideTopics','charactersCovered','locationsCovered','includedSections','itemsCovered'].forEach(key => {
     if (clone[key] !== undefined && !Array.isArray(clone[key])) clone[key] = itemArray(clone[key]);
   });
@@ -8886,7 +9243,7 @@ function applyClientMetadataOverridesToLibrary() {
 }
 
 
-const METADATA_MANAGER_DEFAULT_COLUMNS = ['kind','name','category','associatedPlatforms','series','languageTag','region','year','publisher','topics','metadataSource'];
+const METADATA_MANAGER_DEFAULT_COLUMNS = ['kind','metadataStatus','name','category','associatedPlatforms','series','languageTag','region','year','publisher','topics','metadataSource'];
 const METADATA_MANAGER_ARRAY_FIELDS = new Set([
   'tags','associatedPlatforms','featuredGames','featuredPlatforms','specialFeatures','includedExtras',
   'coveredGames','coveredPlatforms','guideTopics','charactersCovered','locationsCovered','includedSections','itemsCovered'
@@ -8895,6 +9252,7 @@ const METADATA_MANAGER_READONLY_COLUMNS = new Set(['kind','metadataSource']);
 const METADATA_MANAGER_WIDE_COLUMNS = new Set(['name','category','series','publisher','topics','summary','notes','webLink','associatedPlatforms','featuredGames','featuredPlatforms','specialFeatures','includedExtras','coveredGames','coveredPlatforms','guideTopics','charactersCovered','locationsCovered','includedSections','itemsCovered','platformMatchTitle','platformResolverSource','coverSubject','barcodeUpcIssn']);
 const METADATA_MANAGER_ALL_COLUMNS = [
   { key:'kind', label:'Type', description:'Manual, Strategy Guide, or Magazine.' },
+  { key:'metadataStatus', label:'Status', description:'Metadata review workflow state.' },
   { key:'name', label:'Title / Name', description:'Guidevault display title for the item.' },
   { key:'category', label:'Preferred Platform', description:'Primary/preferred platform used when no associated-platform override is present.' },
   { key:'series', label:'Series / Publication', description:'Series, franchise, or magazine publication name.' },
@@ -9015,9 +9373,9 @@ function metadataManagerIsUnsortedStrategyGuide(item) {
 function metadataManagerSearchText(item) {
   if (!item) return '';
   const cacheKey = [
-    item.id, item.Id, item.updatedAt, item.modified, item.metadataSource,
+    item.id, item.Id, item.updatedAt, item.modified, item.metadataSource, item.metadataStatus,
     item.title, item.manualTitle, item.gameTitle, item.magazineTitle,
-    item.kind, item.publisher, item.gamePublisher, item.year,
+    item.kind, metadataStatusOf(item), item.publisher, item.gamePublisher, item.year,
     item.languageTag, item.region, item.series, item.franchise,
     item.category, item.system, item.primarySystem,
     item.summary
@@ -9031,6 +9389,7 @@ function metadataManagerSearchText(item) {
     metadataManagerItemName(item),
     item.title,
     item.kind,
+    metadataStatusOf(item),
     metadataManagerCategoryValue(item),
     metadataManagerSeriesValue(item),
     item.publisher,
@@ -9061,11 +9420,13 @@ function metadataManagerEditableItems() {
   const manager = state.metadataManager || {};
   const q = String(manager.search || '').trim().toLowerCase();
   const kind = String(manager.filterKind || '').trim();
+  const statusFilter = normalizeMetadataStatus(manager.statusFilter || '', '');
   const missing = String(manager.missing || '').trim();
   const category = String(manager.category || '').trim().toLowerCase();
   const filtered = (state.items || []).filter(item => {
     if (!allowed.has(item.kind)) return false;
     if (kind && item.kind !== kind) return false;
+    if (statusFilter && metadataStatusOf(item) !== statusFilter) return false;
     if (category) {
       const cats = [metadataManagerCategoryValue(item), metadataManagerSeriesValue(item), item.magazineTitle, item.series, ...associatedPlatformsOf(item)]
         .map(v => String(v || '').trim().toLowerCase()).filter(Boolean);
@@ -9118,9 +9479,15 @@ function metadataManagerSummaryStats(items) {
   const missingTopics = items.filter(i => !metadataManagerTopicValue(i).trim()).length;
   const unsortedGuides = items.filter(metadataManagerIsUnsortedStrategyGuide).length;
   const multiPlatformGuides = items.filter(metadataManagerIsMultiPlatformStrategyGuide).length;
+  const reviewed = items.filter(i => metadataStatusOf(i) === 'Reviewed').length;
+  const needsReview = items.filter(i => metadataStatusOf(i) === 'Needs Review').length;
+  const failedLookup = items.filter(i => metadataStatusOf(i) === 'Failed Lookup').length;
   const edited = Object.keys(state.metadataManager.dirty || {}).length;
   return [
     ['Visible', total],
+    ['Reviewed', reviewed],
+    ['Needs review', needsReview],
+    ['Failed lookup', failedLookup],
     ['Missing language', missingLanguage],
     ['Missing region', missingRegion],
     ['Missing topics', missingTopics],
@@ -9131,6 +9498,7 @@ function metadataManagerSummaryStats(items) {
 }
 
 function metadataManagerFieldValue(item, field) {
+  if (field === 'metadataStatus') return metadataStatusOf(item);
   if (field === 'name') return metadataManagerItemName(item);
   if (field === 'category') return metadataManagerCategoryValue(item);
   if (field === 'series') return metadataManagerSeriesValue(item);
@@ -9569,7 +9937,7 @@ function metadataManagerCollapseRows() {
 
 function renderMetadataManager() {
   if (!$('settingsMetadataManagerPanel')) return;
-  state.metadataManager = state.metadataManager || { selectedIds: [], dirty: {}, filterKind: '', search: '', missing: '', category: '', visibleColumns: [], sortKey: '', sortDirection: 'asc', draggedColumnKey: '', renderLimit: METADATA_MANAGER_DEFAULT_RENDER_LIMIT };
+  state.metadataManager = state.metadataManager || { selectedIds: [], dirty: {}, filterKind: '', statusFilter: '', search: '', missing: '', category: '', visibleColumns: [], sortKey: '', sortDirection: 'asc', draggedColumnKey: '', renderLimit: METADATA_MANAGER_DEFAULT_RENDER_LIMIT };
   const categorySelect = $('metadataManagerCategory');
   if (categorySelect && !categorySelect.options.length) metadataManagerRenderCategoryFilter();
   const columnPicker = $('metadataManagerColumnPicker');
@@ -9577,6 +9945,7 @@ function renderMetadataManager() {
   const manager = state.metadataManager;
   if ($('metadataManagerSearch')) $('metadataManagerSearch').value = manager.search || '';
   if ($('metadataManagerKind')) $('metadataManagerKind').value = manager.filterKind || '';
+  if ($('metadataManagerStatusFilter')) $('metadataManagerStatusFilter').value = normalizeMetadataStatus(manager.statusFilter || '', '');
   if ($('metadataManagerMissing')) $('metadataManagerMissing').value = manager.missing || '';
   if ($('metadataManagerCategory')) $('metadataManagerCategory').value = manager.category || '';
   const items = metadataManagerEditableItems();
@@ -9608,6 +9977,10 @@ function renderMetadataManager() {
       const preferredPlatformReadOnly = item.kind === 'Strategy Guide' && hasMultipleAssociatedPlatforms(rowAssociatedPlatforms);
       const inputField = (name, value, readOnly = false, title = '') => `<input class="metadata-manager-input ${METADATA_MANAGER_WIDE_COLUMNS.has(name) ? 'wide' : ''} ${readOnly ? 'readonly' : ''}" data-id="${escapeForAttribute(id)}" data-field="${escapeForAttribute(name)}" value="${escapeForAttribute(rowDirty[name] ?? value ?? '')}" ${readOnly ? 'readonly aria-readonly="true"' : ''} ${title ? `title="${escapeForAttribute(title)}"` : ''} />`;
       const cellFor = column => {
+        if (column.key === 'metadataStatus') {
+          const currentStatus = normalizeMetadataStatus(rowDirty.metadataStatus ?? metadataStatusOf(item));
+          return `<select class="metadata-manager-input metadata-status-select" data-id="${escapeForAttribute(id)}" data-field="metadataStatus">${metadataStatusOptionsHtml(currentStatus)}</select>`;
+        }
         if (column.key === 'kind') return `<span class="metadata-kind-pill metadata-kind-preview-trigger" data-metadata-preview-id="${escapeForAttribute(metadataManagerItemId(item))}" title="Click and hold to preview cover">${escapeHtml(item.kind || '\u2014')}</span>`;
         if (column.key === 'metadataSource') return `<span class="metadata-source-text">${escapeHtml(item.metadataSource || '\u2014')}</span>`;
         if (column.key === 'category' && preferredPlatformReadOnly) return `<input class="metadata-manager-input ${METADATA_MANAGER_WIDE_COLUMNS.has('category') ? 'wide' : ''} readonly" data-id="${escapeForAttribute(id)}" data-field="category" value="${escapeForAttribute(MULTI_PLATFORM_LABEL)}" readonly aria-readonly="true" title="Preferred Platform is read-only when Associated Platforms contains multiple systems." />`;
@@ -9715,7 +10088,7 @@ function metadataManagerUpdateFilter(field, value) {
     metadataManagerScheduleRender();
     return;
   }
-  if (field === 'filterKind' || field === 'missing' || field === 'category') {
+  if (field === 'filterKind' || field === 'statusFilter' || field === 'missing' || field === 'category') {
     state.metadataManager.selectedIds = [];
     metadataManagerResetRenderLimit();
   }
@@ -9822,11 +10195,13 @@ function mergeTokenLists(existing, tokens, mode = 'add') {
 }
 
 async function metadataManagerPersist(id, item, payload) {
-  metadataManagerUpdateItemLocal(id, payload);
+  const lockFiltered = filterLockedMetadataPayload(item, payload);
+  const safePayload = normalizeClientMetadataPayload(lockFiltered.payload);
+  metadataManagerUpdateItemLocal(id, safePayload);
   const res = await fetch(`/api/items/${encodeURIComponent(id)}/metadata`, {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(payload)
+    body: JSON.stringify(safePayload)
   });
   if (!res.ok) {
     let message = `HTTP ${res.status}`;
@@ -9836,9 +10211,10 @@ async function metadataManagerPersist(id, item, payload) {
   let updated = null;
   try { updated = await res.json(); } catch {}
   if (updated) {
-    const merged = mergeSavedMetadataClientSide((state.items || []).find(i => metadataManagerItemId(i) === id) || item, updated, payload);
+    const merged = mergeSavedMetadataClientSide((state.items || []).find(i => metadataManagerItemId(i) === id) || item, updated, safePayload);
     replaceItemInState(merged);
   }
+  return { skippedLockedFields: lockFiltered.skipped || [] };
 }
 
 async function metadataManagerSaveDirtyRows() {
@@ -9873,10 +10249,11 @@ async function metadataManagerApplyBatch() {
   const region = $('metadataBatchRegion')?.value.trim() || '';
   const category = $('metadataBatchCategory')?.value.trim() || '';
   const publisher = $('metadataBatchPublisher')?.value.trim() || '';
+  const batchStatus = normalizeMetadataStatus($('metadataBatchStatus')?.value || '', '');
   const tagText = $('metadataBatchTags')?.value || '';
   const tagMode = $('metadataBatchTagsMode')?.value || 'add';
   const hasTags = itemArray(tagText).length > 0;
-  if (!lang && !region && !category && !publisher && !hasTags) {
+  if (!lang && !region && !category && !publisher && !batchStatus && !hasTags) {
     metadataManagerSetStatus('Enter at least one batch value to apply.', 'error');
     return;
   }
@@ -9889,6 +10266,7 @@ async function metadataManagerApplyBatch() {
     if (region) payload.region = region;
     if (category) { payload.category = category; payload.system = category; if (item.kind === 'Magazine') payload.primarySystem = category; }
     if (publisher) { payload.publisher = publisher; if (item.kind === 'Manual' || item.kind === 'Strategy Guide') payload.gamePublisher = publisher; }
+    if (batchStatus) payload.metadataStatus = batchStatus;
     if (hasTags) {
       const topicField = metadataManagerTopicField(item);
       payload[topicField] = mergeTokenLists(item[topicField] || item.tags || [], tagText, tagMode);
@@ -10338,6 +10716,18 @@ function metadataBatchEsrbFieldValue(result, field) {
   return field === 'rating' ? String(result?.ratingShort || result?.rating || '').trim() : '';
 }
 
+
+function metadataBatchLockKeyForSourceField(source, field) {
+  if (source === 'openLibrary') {
+    return ({ title: 'title', authorWriter: 'writer', publisher: 'publisher', publishYear: 'year', isbn10: 'isbn10', isbn13: 'isbn13', language: 'languageTag', summary: 'summary', pageCount: 'pageCount' })[field] || field;
+  }
+  if (source === 'igdb') {
+    return ({ gameTitle: 'gameTitle', gameDeveloper: 'developer', gamePublisher: 'gamePublisher', gameReleaseYear: 'gameReleaseYear', gameFranchise: 'franchise', associatedPlatforms: 'associatedPlatforms', preferredPlatform: 'preferredPlatform' })[field] || field;
+  }
+  if (source === 'esrb') return 'rating';
+  return field;
+}
+
 function metadataBatchApplyFieldToPayload(payload, source, field, value, result) {
   if (source === 'openLibrary') {
     if (field === 'pageCount') { payload.pageCount = Number(value); payload.metadataPageCount = Number(value); return; }
@@ -10383,6 +10773,7 @@ function metadataBatchBuildPayload(item, batchResult, fieldMap, mode) {
           ? metadataBatchIgdbFieldValue(sourceResult.result, field)
           : metadataBatchEsrbFieldValue(sourceResult.result, field);
       if (!metadataBatchShouldApplyField(item, source, field, value, mode)) return;
+      if (isMetadataFieldLocked(item, metadataBatchLockKeyForSourceField(source, field))) return;
       metadataBatchApplyFieldToPayload(payload, source, field, value, sourceResult.result);
       const definition = (METADATA_BATCH_SOURCE_FIELDS[source] || []).find(f => f.key === field);
       changedLabels.push(definition?.label || field);
@@ -10394,7 +10785,10 @@ function metadataBatchBuildPayload(item, batchResult, fieldMap, mode) {
       addSource(sourceLabels[source] || source);
     }
   });
-  if (Object.keys(payload).length) payload.metadataSource = `Batch lookup: ${sourcesUsed.length ? sourcesUsed.join(', ') : metadataBatchSourceLabels()}`;
+  if (Object.keys(payload).length) {
+    payload.metadataSource = `Batch lookup: ${sourcesUsed.length ? sourcesUsed.join(', ') : metadataBatchSourceLabels()}`;
+    payload.metadataStatus = 'Needs Review';
+  }
   if (item?.kind === 'Strategy Guide') {
     const platformSource = payload.associatedPlatforms !== undefined ? itemArray(payload.associatedPlatforms) : associatedPlatformsOf(item);
     if (hasMultipleAssociatedPlatforms(platformSource)) {
@@ -10759,7 +11153,7 @@ function metadataManagerImportJsonFile(file) {
         const item = (state.items || []).find(i => metadataManagerItemId(i) === id);
         if (!id || !item) return;
         const changes = {};
-        ['languageTag','region','year'].forEach(field => { if (entry[field] !== undefined) changes[field] = String(entry[field] ?? ''); });
+        ['languageTag','region','year','metadataStatus'].forEach(field => { if (entry[field] !== undefined) changes[field] = field === 'metadataStatus' ? normalizeMetadataStatus(entry[field]) : String(entry[field] ?? ''); });
         if (entry.title !== undefined || entry.name !== undefined) changes.name = String(entry.title ?? entry.name ?? '');
         if (entry.category !== undefined || entry.system !== undefined) changes.category = String(entry.category ?? entry.system ?? '');
         if (entry.series !== undefined) changes.series = String(entry.series ?? '');
@@ -11151,6 +11545,7 @@ function magazineTechnicalRows(item) {
     ['File Size', fileSize],
     ['Modified Date', modified],
     ['Scan Status', scanStatus],
+    ['Metadata Status', metadataStatusOf(item)],
     ...(item.validationMessage ? [['Validation Message', item.validationMessage]] : []),
     ...(item.metadataSource ? [['Metadata Source', item.metadataSource]] : [])
   ];
@@ -11450,6 +11845,7 @@ function renderDetails(item) {
   updateMetadataTechnicalInfo(item);
   $('editTitle').value = item.title || '';
   $('editKind').value = item.kind || 'Manual';
+  if ($('editMetadataStatus')) $('editMetadataStatus').value = metadataStatusOf(item);
   $('editCategory').value = preferredPlatformOf(item) || categoryOf(item) || '';
   if ($('editAssociatedPlatforms')) $('editAssociatedPlatforms').value = platformListText(item);
   syncPreferredPlatformEditorState();
@@ -11515,6 +11911,8 @@ function renderDetails(item) {
   ensureOpenLibraryMetadataUi();
   ensureIgdbMetadataUi();
   ensureEsrbMetadataUi();
+  addMetadataFieldLockButtons();
+  refreshMetadataLockButtons();
   updateMetadataSourceActionVisibility();
   updateMetadataFileMaintenance();
 }
@@ -11610,6 +12008,7 @@ async function saveSelectedMetadata(extra = {}, options = {}) {
     const payload = {
       title: $('editTitle').value,
       kind: selectedKind,
+      metadataStatus: normalizeMetadataStatus($('editMetadataStatus')?.value || state.selected?.metadataStatus || 'Unreviewed'),
       category: preferredPlatform,
       system: preferredPlatform,
       associatedPlatforms: selectedKind === 'Strategy Guide' ? associatedPlatforms : [],
@@ -11625,6 +12024,7 @@ async function saveSelectedMetadata(extra = {}, options = {}) {
       summary: $('editSummary').value,
       tags,
       notes: $('notesText').value,
+      metadataLocks: currentMetadataLocksPayload(),
       languageTag: ($('editLanguageTag')?.value || ''),
       ...magazinePayload,
       ...strategyPayload,
@@ -11635,7 +12035,9 @@ async function saveSelectedMetadata(extra = {}, options = {}) {
     // Keep an exact client-side snapshot of what the user submitted. The server
     // response can still contain derived scan metadata, but it should never be
     // allowed to immediately overwrite the just-entered form values.
-    const submitted = normalizeClientMetadataPayload(payload);
+    const lockFiltered = filterLockedMetadataPayload(state.selected, payload);
+    const submitted = normalizeClientMetadataPayload(lockFiltered.payload);
+    if (lockFiltered.skipped.length) setStatus(`Skipped ${lockFiltered.skipped.length} locked metadata field(s).`);
     const optimistic = mergeSavedMetadataClientSide(state.selected, {}, submitted);
     if (selectedId) {
       optimistic.id = optimistic.id || selectedId;
@@ -15210,7 +15612,14 @@ if ($('editKind')) $('editKind').addEventListener('change', e => {
 if ($('editAssociatedPlatforms')) $('editAssociatedPlatforms').addEventListener('input', syncPreferredPlatformEditorState);
 initMetadataMultiSelectControls();
 addMetadataFieldInfoIcons();
+addMetadataFieldLockButtons();
 document.addEventListener('click', e => {
+  const lockButton = e.target.closest?.('.metadata-lock-button');
+  if (lockButton) {
+    e.preventDefault();
+    toggleSelectedMetadataLock(lockButton.dataset.metadataLockKey || '');
+    return;
+  }
   const infoButton = e.target.closest?.('.metadata-info-button');
   if (infoButton) {
     e.preventDefault();
@@ -15229,6 +15638,10 @@ document.addEventListener('click', e => {
   if (button) {
     e.preventDefault();
     const shell = button.closest('.meta-multi-select');
+    if (button.disabled || shell?.dataset?.metadataLocked === 'true') {
+      closeMetadataMultiSelects();
+      return;
+    }
     const willOpen = !shell.classList.contains('open');
     closeMetadataMultiSelects(willOpen ? shell : null);
     shell.classList.toggle('open', willOpen);
@@ -15244,6 +15657,10 @@ document.addEventListener('change', e => {
   const id = shell?.dataset.multiSelect || '';
   const select = $(id);
   if (!select) return;
+  if (input.disabled || shell?.dataset?.metadataLocked === 'true') {
+    syncMetadataMultiSelectControl(id);
+    return;
+  }
   const value = String(input.dataset.value || '').trim().toLowerCase();
   [...select.options].forEach(option => {
     if (optionValueOf(option).toLowerCase() === value) option.selected = input.checked;
@@ -15465,6 +15882,7 @@ if ($('taskRunTrim')) $('taskRunTrim').addEventListener('click', e => { e.preven
 
 if ($('metadataManagerSearch')) $('metadataManagerSearch').addEventListener('input', e => metadataManagerUpdateFilter('search', e.currentTarget.value));
 if ($('metadataManagerKind')) $('metadataManagerKind').addEventListener('change', e => metadataManagerUpdateFilter('filterKind', e.currentTarget.value));
+if ($('metadataManagerStatusFilter')) $('metadataManagerStatusFilter').addEventListener('change', e => metadataManagerUpdateFilter('statusFilter', e.currentTarget.value));
 if ($('metadataManagerMissing')) $('metadataManagerMissing').addEventListener('change', e => metadataManagerUpdateFilter('missing', e.currentTarget.value));
 if ($('metadataManagerCategory')) $('metadataManagerCategory').addEventListener('change', e => metadataManagerUpdateFilter('category', e.currentTarget.value));
 if ($('metadataManagerRefresh')) $('metadataManagerRefresh').addEventListener('click', () => { const picker = $('metadataManagerColumnPicker'); if (picker) picker.innerHTML = ''; const cat = $('metadataManagerCategory'); if (cat) cat.innerHTML = ''; metadataManagerResetRenderLimit(); renderMetadataManager(); metadataManagerSetStatus('Metadata grid refreshed.', 'success'); });
@@ -15508,6 +15926,7 @@ if ($('metadataManagerColumnsShowAll')) $('metadataManagerColumnsShowAll').addEv
 if ($('metadataManagerTableBody')) $('metadataManagerTableBody').addEventListener('change', e => {
   const target = e.target;
   if (target?.classList?.contains('metadata-manager-row-check')) metadataManagerToggleSelection(target.dataset.id || '', target.checked);
+  if (target?.classList?.contains('metadata-manager-input')) metadataManagerMarkDirty(target.dataset.id || '', target.dataset.field || '', target.value);
 });
 if ($('metadataManagerTableBody')) $('metadataManagerTableBody').addEventListener('input', e => {
   const target = e.target;
