@@ -12,7 +12,7 @@ Guidevault is built for people who keep local collections of scanned game litera
 
 Guidevault is currently in active pre-release development.
 
-Current working version: **0.9.102**
+Current working version: **0.9.106**
 
 The app is usable for local/self-hosted testing, but some advanced admin areas are still being refined.
 
