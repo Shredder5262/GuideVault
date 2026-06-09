@@ -12,6 +12,7 @@ const state = {
   taskPanelVisible: false,
   taskPollTimer: null,
   libraryLoadedOnce: false,
+  virtualGrid: null,
   auth: { profile: null, authenticated: false, editing: false, appStarted: false },
   readingProfiles: { presets: {}, defaultPresetId: 'default', groupAssignments: {}, entryAssignments: {} },
   opds: { connectionUrl: '', selectedKeyId: '', keys: [], editingUrl: false, revealUrl: false, creatingKey: false },
@@ -71,15 +72,23 @@ const GUIDEVAULT_CATEGORY_STRUCTURE_KEY = 'guidevault.categoryStructure.v1';
 const GUIDEVAULT_COVER_SIZE_KEY = 'guidevault.libraryCoverSize.v1';
 const GUIDEVAULT_FAVORITES_KEY = 'guidevault.favorites.v1';
 const GUIDEVAULT_LIBRARY_CACHE_KEY = 'guidevault.libraryCache.v1';
-const GUIDEVAULT_GRID_INITIAL_RENDER = 96;
-const GUIDEVAULT_GRID_CHUNK_SIZE = 96;
-const GUIDEVAULT_APP_VERSION = '0.9.106';
+const GUIDEVAULT_GRID_INITIAL_RENDER = 56;
+const GUIDEVAULT_GRID_CHUNK_SIZE = 72;
+const GUIDEVAULT_GRID_VIRTUAL_THRESHOLD = 180;
+const GUIDEVAULT_GRID_VIRTUAL_BUFFER_ROWS = 4;
+const GUIDEVAULT_GRID_VIRTUAL_MAX_CARDS = 160;
+const GUIDEVAULT_LIBRARY_SEARCH_DEBOUNCE_MS = 140;
+const GUIDEVAULT_APP_VERSION = '0.9.116';
 const GUIDEVAULT_FILENAME_SCHEMA_KEY = 'guidevault.filenameRename.schema.v1';
 const GUIDEVAULT_DEFAULT_FILENAME_SCHEMA = '{title}';
 const GUIDEVAULT_STABLE_TAG_FEED_URL = 'https://api.github.com/repos/Shredder5262/GuideVault/tags';
 const GUIDEVAULT_RELEASES_URL = 'https://github.com/Shredder5262/GuideVault/releases';
 const GUIDEVAULT_PACKAGE_URL = 'https://github.com/Shredder5262/GuideVault/pkgs/container/guidevault';
 const GUIDEVAULT_CURRENT_IMAGE = 'ghcr.io/shredder5262/guidevault:latest';
+
+let guidevaultLibrarySearchTimer = null;
+let guidevaultVirtualResizeAttached = false;
+let guidevaultLibrarySearchCache = typeof WeakMap === 'function' ? new WeakMap() : null;
 
 const METADATA_STATUS_OPTIONS = ['Unreviewed', 'Needs Review', 'Reviewed', 'Locked', 'Failed Lookup', 'Manual Only'];
 const METADATA_STATUS_ALIASES = new Map([
@@ -218,7 +227,10 @@ function normalizeGuidevaultPlatformList(value) {
   parts.forEach(platform => pushUniquePlatformBucket(normalized, normalizeGuidevaultPlatformName(platform)));
   return normalized;
 }
-const categoryOf = item => normalizeGuidevaultPlatformName(item.category || item.system || 'Unsorted') || 'Unsorted';
+const categoryOf = item => {
+  if (item?.kind === 'Magazine') return String(item.magazineTitle || item.series || 'Unsorted Magazines').trim() || 'Unsorted Magazines';
+  return normalizeGuidevaultPlatformName(item?.category || item?.system || 'Unsorted') || 'Unsorted';
+};
 const associatedPlatformsOf = item => normalizeGuidevaultPlatformList(item?.associatedPlatforms || []);
 const platformListText = item => associatedPlatformsOf(item).join(', ');
 function platformNamesEqual(a, b) {
@@ -231,6 +243,7 @@ function hasMultipleAssociatedPlatforms(itemOrPlatforms) {
   return unique.length > 1;
 }
 function preferredPlatformOf(item) {
+  if (item?.kind === 'Magazine') return '';
   if (item?.kind === 'Strategy Guide' && hasMultipleAssociatedPlatforms(item)) return MULTI_PLATFORM_LABEL;
   return item?.category || item?.system || item?.primarySystem || '';
 }
@@ -239,8 +252,13 @@ function activeLibraryPlatformForItem(item) {
   const parts = String(state.categoryFilter).split('::');
   const kind = parts.shift() || '';
   const category = parts.join('::');
-  if (kind && item.kind !== kind) return '';
   if (!category) return '';
+  const mode = sidebarCategoryModeConfig(kind);
+  if (mode) {
+    if (mode.kind && item.kind !== mode.kind) return '';
+    return sidebarCategoryValuesForItem(item, kind).some(value => platformNamesEqual(value, category)) ? category : '';
+  }
+  if (kind && item.kind !== kind) return '';
   return libraryCategoryKeysForItem(item).some(value => platformNamesEqual(value, category)) ? category : '';
 }
 function detailSystemLabelForItem(item) {
@@ -321,6 +339,10 @@ function pushUniquePlatformBucket(values, value) {
 function libraryCategoryKeysForItem(item) {
   const values = [];
   if (!item) return ['Unsorted'];
+  if (item.kind === 'Magazine') {
+    pushUniquePlatformBucket(values, item.magazineTitle || item.series || '');
+    return values.length ? values : ['Unsorted Magazines'];
+  }
   const preferred = item.category || item.system || item.primarySystem || '';
   if (item.kind === 'Strategy Guide') {
     associatedPlatformsOf(item).forEach(platform => pushUniquePlatformBucket(values, platform));
@@ -328,7 +350,6 @@ function libraryCategoryKeysForItem(item) {
     return values.length ? values : ['Unsorted Strategy Guides'];
   }
   pushUniquePlatformBucket(values, preferred);
-  if (!values.length && item.kind === 'Magazine') pushUniquePlatformBucket(values, item.magazineTitle || item.series || '');
   return values.length ? values : ['Unsorted'];
 }
 function itemMatchesCategoryFilter(item, categoryFilter = state.categoryFilter) {
@@ -337,6 +358,11 @@ function itemMatchesCategoryFilter(item, categoryFilter = state.categoryFilter) 
   const filterKind = parts.shift() || '';
   const category = parts.join('::');
   if (!category) return true;
+  const mode = sidebarCategoryModeConfig(filterKind);
+  if (mode?.valueForItem) {
+    if (mode.kind && item?.kind !== mode.kind) return false;
+    return sidebarCategoryValuesForItem(item, filterKind).some(value => value.localeCompare(category, undefined, { sensitivity: 'accent' }) === 0);
+  }
   if (filterKind === 'Publisher') return String(item?.publisher || 'Unsorted Publisher').trim().localeCompare(category, undefined, { sensitivity: 'accent' }) === 0;
   if (filterKind === 'Decade') return decadeLabelForItem(item).localeCompare(category, undefined, { sensitivity: 'accent' }) === 0;
   if (filterKind && filterKind !== 'Any' && item?.kind !== filterKind) return false;
@@ -347,7 +373,17 @@ function decadeLabelForItem(item) {
   if (!Number.isFinite(year) || year <= 0) return 'Unknown Decade';
   return `${Math.floor(year / 10) * 10}s`;
 }
-const displayTitle = item => item.series && item.kind === 'Magazine' && item.issueNumber ? `${item.series} #${item.issueNumber}` : item.title;
+const displayTitle = item => {
+  if (!item) return '';
+  const title = String(item.title || item.name || '').trim();
+  if (title) return title;
+  if (item.kind === 'Magazine') {
+    const publication = String(item.magazineTitle || item.series || '').trim();
+    const issue = String(item.issueNumber || '').trim();
+    return publication && issue ? `${publication} #${issue}` : (publication || 'Untitled Magazine Issue');
+  }
+  return item.title || '';
+};
 const hasSequence = item => item.kind === 'Magazine' && !!String(item.issueNumber || '').trim();
 const issueValue = item => Number.parseFloat(String(item.issueNumber || '').replace(/[^0-9.]/g, '')) || 0;
 
@@ -4560,6 +4596,29 @@ function normalizeLibraryPayload(data) {
   return Array.isArray(data) ? data : (Array.isArray(data?.items) ? data.items : []);
 }
 
+function libraryItemRenderFingerprint(item) {
+  if (!item) return '';
+  return [
+    item.id || item.Id || '',
+    item.modified || item.Modified || '',
+    item.sizeBytes || item.SizeBytes || '',
+    item.title || item.name || '',
+    item.kind || '',
+    item.category || item.system || '',
+    item.metadataStatus || '',
+    item.publisher || '',
+    item.year || '',
+    item.languageTag || '',
+    item.region || '',
+    item.pageCount || item.metadataPageCount || ''
+  ].map(value => String(value ?? '').trim()).join('¦');
+}
+
+function libraryPayloadFingerprint(items = []) {
+  const list = Array.isArray(items) ? items : [];
+  return `${list.length}::${list.map(libraryItemRenderFingerprint).join('§')}`;
+}
+
 function saveLibraryClientCache(items = state.items) {
   try {
     const list = Array.isArray(items) ? items : [];
@@ -4629,8 +4688,10 @@ function renderCachedLibraryImmediately() {
   if (!cached.length) return false;
   state.items = cached;
   state._countCache = null;
+  clearLibrarySearchCaches();
   applyClientMetadataOverridesToLibrary();
   state.libraryLoadedOnce = true;
+  state.libraryLastRenderedFingerprint = libraryPayloadFingerprint(state.items);
   applyFilters();
   handleGuidevaultStartupDeepLink();
   setStatus('Loaded cached library. Refreshing latest library state in the background...');
@@ -4646,13 +4707,23 @@ async function loadLibrary() {
     const res = await libraryPromise;
     if (!res.ok) throw new Error(await res.text());
     const data = await res.json();
-    state.items = normalizeLibraryPayload(data);
+    const nextItems = normalizeLibraryPayload(data);
+    state.items = nextItems;
     state._countCache = null;
+    clearLibrarySearchCaches();
     applyClientMetadataOverridesToLibrary();
     state.libraryLoadedOnce = true;
     saveLibraryClientCache(state.items);
     if (state.selected) state.selected = state.items.find(i => i.id === state.selected.id) || null;
-    applyFilters();
+    const nextFingerprint = libraryPayloadFingerprint(state.items);
+    const canSkipRender = state.libraryLastRenderedFingerprint && state.libraryLastRenderedFingerprint === nextFingerprint;
+    if (!canSkipRender) {
+      state.libraryLastRenderedFingerprint = nextFingerprint;
+      applyFilters();
+    } else {
+      updateSettingsInsights();
+      setStatus('Library is up to date.');
+    }
     handleGuidevaultStartupDeepLink();
     if (!$('settingsReadingProfilesPanel')?.classList.contains('hidden')) renderReadingProfileSettings();
   } catch (err) {
@@ -5179,11 +5250,15 @@ function compareItemsForLibrarySort(a, b, sort = $('sort')?.value || 'recent') {
 function sortGroupNamesForCurrentSort(kind, groups, allItems) {
   const sort = $('sort')?.value || 'recent';
   const summary = new Map();
-  groups.forEach(name => summary.set(name, { latest: 0, count: 0 }));
+  const groupLookup = new Map();
+  groups.forEach(name => {
+    summary.set(name, { latest: 0, count: 0 });
+    groupLookup.set(sidebarCategoryCountKey(name), name);
+  });
   allItems.forEach(item => {
     const seen = new Set();
     libraryCategoryKeysForItem(item).forEach(name => {
-      const match = groups.find(g => g.localeCompare(name, undefined, { sensitivity: 'accent' }) === 0);
+      const match = groupLookup.get(sidebarCategoryCountKey(name));
       if (!match || seen.has(match)) return;
       seen.add(match);
       const bucket = summary.get(match) || { latest: 0, count: 0 };
@@ -5200,14 +5275,37 @@ function sortGroupNamesForCurrentSort(kind, groups, allItems) {
   });
 }
 
+function libraryItemSearchHaystack(item) {
+  if (!item) return '';
+  if (guidevaultLibrarySearchCache) {
+    const cached = guidevaultLibrarySearchCache.get(item);
+    if (cached) return cached;
+  }
+  const value = [
+    item.title, item.kind, item.system, categoryOf(item), item.publisher, item.year, item.series,
+    item.writer, item.issueNumber, item.asin, item.isbn10, item.isbn13, item.languageTag,
+    platformListText(item), item.platformMatchTitle, item.platformResolverSource, item.summary,
+    item.notes, item.relativePath, item.manualTitle, item.manualType, item.controlScheme,
+    item.warrantySupport, ...(item.includedSections || []), ...(item.itemsCovered || []), ...(item.tags || [])
+  ].join(' ').toLowerCase();
+  if (guidevaultLibrarySearchCache) guidevaultLibrarySearchCache.set(item, value);
+  return value;
+}
+
+function clearLibrarySearchCaches() {
+  guidevaultLibrarySearchCache = typeof WeakMap === 'function' ? new WeakMap() : null;
+}
+
 function applyFilters() {
   const q = ($('search')?.value || '').trim().toLowerCase();
   state.filtered = state.items.filter(item => {
     const matchesFilter = state.filter === 'All Content' || (state.filter === 'Favorites' ? isFavoriteItem(item) : item.kind === state.filter);
+    if (!matchesFilter) return false;
     const matchesCategory = itemMatchesCategoryFilter(item);
-    const haystack = [item.title, item.kind, item.system, categoryOf(item), item.publisher, item.year, item.series, item.writer, item.issueNumber, item.asin, item.isbn10, item.isbn13, item.languageTag, platformListText(item), item.platformMatchTitle, item.platformResolverSource, item.summary, item.notes, item.relativePath, item.manualTitle, item.manualType, item.controlScheme, item.warrantySupport, ...(item.includedSections || []), ...(item.itemsCovered || []), ...(item.tags || [])].join(' ').toLowerCase();
+    if (!matchesCategory) return false;
     const matchesCustom = !state.customFilter || customSideNavItemMatches(item, state.customFilter);
-    return matchesFilter && matchesCategory && matchesCustom && (!q || haystack.includes(q));
+    if (!matchesCustom) return false;
+    return !q || libraryItemSearchHaystack(item).includes(q);
   });
 
   const sort = $('sort')?.value || 'recent';
@@ -5408,11 +5506,24 @@ function jumpToAlpha(key) {
   const scroller = libraryScrollElement();
   if (!grid || !scroller) return;
   const target = [...grid.querySelectorAll('[data-alpha]')].find(el => el.dataset.alpha === key);
-  if (!target) return;
-  const scrollerRect = scroller.getBoundingClientRect();
-  const targetRect = target.getBoundingClientRect();
-  const top = targetRect.top - scrollerRect.top + scroller.scrollTop - 10;
-  scroller.scrollTo({ top: Math.max(0, top), behavior: 'smooth' });
+  if (target) {
+    const scrollerRect = scroller.getBoundingClientRect();
+    const targetRect = target.getBoundingClientRect();
+    const top = targetRect.top - scrollerRect.top + scroller.scrollTop - 10;
+    scroller.scrollTo({ top: Math.max(0, top), behavior: 'smooth' });
+    return;
+  }
+  const vgrid = state.virtualGrid;
+  if (vgrid?.items?.length && vgrid.host === grid) {
+    const index = vgrid.items.findIndex(item => alphaKey(displayTitle(item)) === key);
+    if (index >= 0) {
+      const columns = Math.max(1, Number(vgrid.columns || estimateGridColumns(grid)));
+      const row = Math.floor(index / columns);
+      const rowHeight = Math.max(160, Number(vgrid.rowHeight || 300));
+      scroller.scrollTo({ top: Math.max(0, grid.offsetTop + row * rowHeight - 10), behavior: 'smooth' });
+      requestAnimationFrame(() => renderVirtualGridWindow(true));
+    }
+  }
 }
 
 function render() {
@@ -5512,10 +5623,24 @@ function categoryPreviewCovers(items, name) {
   return covers.map((item, index) => `<img decoding="async" loading="lazy" data-cover-src="${coverUrl(item)}" src="/assets/missing-cover.svg" alt="${escapeHtml(displayTitle(item))} cover" style="--slot:${index}" />`).join('');
 }
 function renderGroupGrid(id, viewMode) {
+  clearVirtualGridIfHost(id);
   const def = groupDefinition(viewMode);
   const axis = groupAxisLabelForKind(def.kind);
   const allKindItems = state.items.filter(i => i.kind === def.kind);
-  const groups = sortGroupNamesForCurrentSort(def.kind, sortCategoriesForKind(def.kind, [...new Set(allKindItems.flatMap(libraryCategoryKeysForItem))]), allKindItems);
+  const groupMap = new Map();
+  allKindItems.forEach(item => {
+    const seen = new Set();
+    libraryCategoryKeysForItem(item).forEach(name => {
+      const label = String(name || '').trim();
+      const key = sidebarCategoryCountKey(label);
+      if (!key || seen.has(key)) return;
+      seen.add(key);
+      if (!groupMap.has(key)) groupMap.set(key, { name: label, items: [] });
+      groupMap.get(key).items.push(item);
+    });
+  });
+  const groupNames = [...groupMap.values()].map(group => group.name);
+  const groups = sortGroupNamesForCurrentSort(def.kind, sortCategoriesForKind(def.kind, groupNames), allKindItems);
   renderAlphaRail(groups);
   const overview = groups.length ? `<section class="group-hub-panel">
       <div class="group-hub-copy">
@@ -5527,7 +5652,8 @@ function renderGroupGrid(id, viewMode) {
       </div>
     </section>` : '';
   const cards = groups.map(name => {
-    const items = allKindItems.filter(i => libraryCategoryKeysForItem(i).some(c => c.localeCompare(name, undefined, { sensitivity: 'accent' }) === 0)).sort(def.kind === 'Manual' ? ((a,b)=>a.title.localeCompare(b.title)) : itemSequenceThenTitle);
+    const bucket = groupMap.get(sidebarCategoryCountKey(name));
+    const items = [...(bucket?.items || [])].sort(def.kind === 'Manual' ? ((a,b)=>displayTitle(a).localeCompare(displayTitle(b))) : itemSequenceThenTitle);
     const issueHint = def.kind === 'Magazine' ? sequenceRange(items) : `${items.length} ${items.length === 1 ? 'entry' : 'entries'}`;
     const specialCategoryClass = def.kind === 'Manual' && isNintendoEntertainmentSystemName(name) ? ' nes-manual-category' : '';
     const latest = groupCardLatestLabel(items);
@@ -5571,8 +5697,129 @@ function sequenceRange(items) {
   const first = values[0]; const last = values[values.length - 1];
   return first === last ? `Issue #${first}` : `Issues #${first}\u2013${last}`;
 }
+function sidebarSplitValues(value) {
+  const rawValues = Array.isArray(value) ? value : String(value || '').split(/[;,|]/);
+  const result = [];
+  rawValues.forEach(raw => {
+    const text = String(raw || '').trim();
+    if (!text || text === '\u2014' || /^unknown$/i.test(text)) return;
+    if (!result.some(existing => existing.localeCompare(text, undefined, { sensitivity: 'accent' }) === 0)) result.push(text);
+  });
+  return result;
+}
+
+function sidebarPushCategory(values, value) {
+  const text = String(value || '').trim();
+  if (!text || text === '\u2014' || /^unknown$/i.test(text)) return;
+  if (!values.some(existing => existing.localeCompare(text, undefined, { sensitivity: 'accent' }) === 0)) values.push(text);
+}
+
+function sidebarYearLabelForItem(item) {
+  const raw = item?.magazineYear || item?.year || item?.coverDate || item?.releaseDate || '';
+  const year = String(raw || '').match(/\d{4}/)?.[0] || '';
+  return year || 'Unknown Year';
+}
+
+function sidebarGuideTypeValues(item) {
+  const values = sidebarSplitValues(item?.guideType || item?.guideTypes || item?.strategyGuideType || item?.type);
+  return values.length ? values : ['Unsorted Guide Type'];
+}
+
+function sidebarCategoryModeConfig(mode) {
+  return SIDEBAR_CATEGORY_MODE_CONFIGS[mode] || null;
+}
+
+function sidebarCategoryValuesForItem(item, mode) {
+  const config = sidebarCategoryModeConfig(mode);
+  if (!item || !config?.valueForItem) return [];
+  const values = [];
+  const raw = config.valueForItem(item);
+  (Array.isArray(raw) ? raw : [raw]).forEach(value => sidebarPushCategory(values, value));
+  if (!values.length && config.fallback) values.push(config.fallback);
+  return values;
+}
+
+const SIDEBAR_CATEGORY_MODE_CONFIGS = {
+  'manual-system': {
+    kind: 'Manual',
+    label: 'Manual Systems',
+    empty: 'No manual systems found yet.',
+    fallback: 'Unsorted Manuals',
+    iconFor: category => platformIconHtml(category),
+    valueForItem: item => normalizeGuidevaultPlatformName(item?.category || item?.system || item?.primarySystem || '')
+  },
+  'manual-series': {
+    kind: 'Manual',
+    label: 'Manual Series',
+    empty: 'No manual series or franchise values found yet.',
+    fallback: 'Unsorted Manual Series',
+    iconFor: () => '<span class="category-mini-icon" aria-hidden="true">◦</span>',
+    valueForItem: item => item?.franchise || item?.gameFranchise || item?.series || ''
+  },
+  'strategy-platform': {
+    kind: 'Strategy Guide',
+    label: 'Strategy Platforms',
+    empty: 'No strategy guide platform values found yet.',
+    fallback: 'Unsorted Strategy Guides',
+    iconFor: category => platformIconHtml(category),
+    valueForItem: item => {
+      const platforms = associatedPlatformsOf(item);
+      if (platforms.length) return platforms;
+      return normalizeGuidevaultPlatformName(item?.category || item?.system || item?.primarySystem || '');
+    }
+  },
+  'strategy-guide-type': {
+    kind: 'Strategy Guide',
+    label: 'Strategy Guide Types',
+    empty: 'No strategy guide types found yet.',
+    fallback: 'Unsorted Guide Type',
+    iconFor: () => '<span class="category-mini-icon" aria-hidden="true">◈</span>',
+    valueForItem: item => sidebarGuideTypeValues(item)
+  },
+  'strategy-series': {
+    kind: 'Strategy Guide',
+    label: 'Strategy Game Series',
+    empty: 'No strategy guide series or franchise values found yet.',
+    fallback: 'Unsorted Strategy Series',
+    iconFor: () => '<span class="category-mini-icon" aria-hidden="true">◦</span>',
+    valueForItem: item => item?.franchise || item?.gameFranchise || item?.series || ''
+  },
+  'magazine-title': {
+    kind: 'Magazine',
+    label: 'Magazine Titles',
+    empty: 'No magazine titles found yet.',
+    fallback: 'Unsorted Magazines',
+    iconFor: () => '<span class="category-mini-icon" aria-hidden="true">▦</span>',
+    valueForItem: item => item?.magazineTitle || item?.series || ''
+  },
+  'magazine-primary-system': {
+    kind: 'Magazine',
+    label: 'Magazine Primary Systems',
+    empty: 'No magazine primary systems found yet.',
+    fallback: 'Unsorted Primary System',
+    iconFor: category => platformIconHtml(category),
+    valueForItem: item => normalizeGuidevaultPlatformName(item?.primarySystem || '')
+  },
+  'magazine-year': {
+    kind: 'Magazine',
+    label: 'Magazine Years',
+    empty: 'No magazine years found yet.',
+    fallback: 'Unknown Year',
+    iconFor: () => '<span class="category-mini-icon" aria-hidden="true">◷</span>',
+    valueForItem: item => sidebarYearLabelForItem(item)
+  },
+  'metadata-status': {
+    label: 'Metadata Status',
+    empty: 'No metadata status values found yet.',
+    fallback: 'Unreviewed',
+    iconFor: () => '<span class="category-mini-icon" aria-hidden="true">◆</span>',
+    valueForItem: item => metadataStatusOf(item)
+  }
+};
+
 function normalizeCategoryStructure(value) {
-  return ['content-type', 'platform', 'publisher', 'decade'].includes(value) ? value : 'content-type';
+  const allowed = new Set(['content-type', 'platform', 'publisher', 'decade', ...Object.keys(SIDEBAR_CATEGORY_MODE_CONFIGS)]);
+  return allowed.has(value) ? value : 'content-type';
 }
 function loadCategoryStructure() {
   try { state.categoryStructure = normalizeCategoryStructure(localStorage.getItem(GUIDEVAULT_CATEGORY_STRUCTURE_KEY) || state.categoryStructure || 'content-type'); } catch { state.categoryStructure = normalizeCategoryStructure(state.categoryStructure); }
@@ -5584,24 +5831,53 @@ function saveCategoryStructure(value) {
   try { localStorage.setItem(GUIDEVAULT_CATEGORY_STRUCTURE_KEY, state.categoryStructure); } catch {}
   if ($('categoryStructureSelect')) $('categoryStructureSelect').value = state.categoryStructure;
 }
-function isCategoryGroupCollapsed(key) {
-  return state.collapsedCategoryGroups?.[key] !== false;
+function isCategoryGroupCollapsed(key, defaultCollapsed = true) {
+  const stored = state.collapsedCategoryGroups?.[key];
+  return typeof stored === 'boolean' ? stored : defaultCollapsed;
 }
+
+function sidebarCategoryCountKey(value = '') {
+  return String(value || '').trim().toLocaleLowerCase();
+}
+
+function buildSidebarCategoryCountMap(items = [], valueSelector = () => []) {
+  const counts = new Map();
+  (Array.isArray(items) ? items : []).forEach(item => {
+    const raw = valueSelector(item);
+    const values = Array.isArray(raw) ? raw : [raw];
+    const seen = new Set();
+    values.map(value => String(value || '').trim()).filter(Boolean).forEach(value => {
+      const key = sidebarCategoryCountKey(value);
+      if (!key || seen.has(key)) return;
+      seen.add(key);
+      counts.set(key, (counts.get(key) || 0) + 1);
+    });
+  });
+  return counts;
+}
+
+function sidebarCategoryCount(counts, category) {
+  return counts?.get?.(sidebarCategoryCountKey(category)) || 0;
+}
+
 function categoryGroupMarkup(key, label, items, categories, options = {}) {
-  const collapsed = isCategoryGroupCollapsed(key);
+  const defaultCollapsed = options.defaultCollapsed !== undefined ? !!options.defaultCollapsed : true;
+  const collapsed = isCategoryGroupCollapsed(key, defaultCollapsed);
   const groupKind = options.groupKind || key;
   const countFor = options.countFor || ((category) => items.filter(i => libraryCategoryKeysForItem(i).some(name => name.localeCompare(category, undefined, { sensitivity: 'accent' }) === 0)).length);
   const iconFor = options.iconFor || ((category) => platformIconHtml(category));
   const empty = options.empty || '';
-  const body = categories.length ? categories.map(c => {
-    const category = String(c || '').trim();
-    const filterKey = `${groupKind}::${category}`;
-    const active = state.categoryFilter === filterKey ? ' active' : '';
-    const countForCategory = countFor(category);
-    return `<button class="system-btn${active}" data-kind="${escapeHtml(groupKind)}" data-category="${escapeHtml(category)}" title="${escapeHtml(label)}: ${escapeHtml(category)}"><span class="system-label">${iconFor(category)}<span>${escapeHtml(category)}</span></span><em>${countForCategory}</em></button>`;
-  }).join('') : `<p class="sub small-pad">${escapeHtml(empty || 'No categories found yet.')}</p>`;
+  const body = collapsed
+    ? ''
+    : (categories.length ? categories.map(c => {
+      const category = String(c || '').trim();
+      const filterKey = `${groupKind}::${category}`;
+      const active = state.categoryFilter === filterKey ? ' active' : '';
+      const countForCategory = countFor(category);
+      return `<button class="system-btn${active}" data-kind="${escapeHtml(groupKind)}" data-category="${escapeHtml(category)}" title="${escapeHtml(label)}: ${escapeHtml(category)}"><span class="system-label">${iconFor(category)}<span>${escapeHtml(category)}</span></span><em>${countForCategory}</em></button>`;
+    }).join('') : `<p class="sub small-pad">${escapeHtml(empty || 'No categories found yet.')}</p>`);
   return `<div class="category-group${collapsed ? ' collapsed' : ''}" data-group-kind="${escapeHtml(key)}">
-      <button type="button" class="category-group-toggle" data-kind="${escapeHtml(key)}" aria-expanded="${collapsed ? 'false' : 'true'}" title="${collapsed ? 'Expand' : 'Collapse'} ${escapeHtml(label)}">
+      <button type="button" class="category-group-toggle" data-kind="${escapeHtml(key)}" data-default-collapsed="${defaultCollapsed ? 'true' : 'false'}" aria-expanded="${collapsed ? 'false' : 'true'}" title="${collapsed ? 'Expand' : 'Collapse'} ${escapeHtml(label)}">
         <span class="collapse-mark" aria-hidden="true">${collapsed ? '\u25B8' : '\u25BE'}</span>
         <span class="category-group-label">${escapeHtml(label)}</span>
         <em>${items.length}</em>
@@ -5618,26 +5894,37 @@ function renderCategories() {
   if (structure === 'content-type') {
     markup = groups.map(([kind, label]) => {
       const items = state.items.filter(i => i.kind === kind);
+      const counts = buildSidebarCategoryCountMap(items, libraryCategoryKeysForItem);
       const categories = sortCategoriesForKind(kind, [...new Set(items.flatMap(libraryCategoryKeysForItem))]);
       if (!categories.length) return '';
-      return categoryGroupMarkup(kind, label, items, categories, { groupKind: kind, empty: `No ${label.toLowerCase()} categories found yet.` });
+      return categoryGroupMarkup(kind, label, items, categories, {
+        groupKind: kind,
+        countFor: category => sidebarCategoryCount(counts, category),
+        empty: `No ${label.toLowerCase()} categories found yet.`
+      });
     }).join('');
   } else if (structure === 'platform') {
+    const counts = buildSidebarCategoryCountMap(state.items, libraryCategoryKeysForItem);
     const categories = sortCategoriesForKind('Any', [...new Set(state.items.flatMap(libraryCategoryKeysForItem))]);
     markup = categoryGroupMarkup('Any', 'Platforms / Publications', state.items, categories, {
       groupKind: 'Any',
-      countFor: category => state.items.filter(i => libraryCategoryKeysForItem(i).some(name => name.localeCompare(category, undefined, { sensitivity: 'accent' }) === 0)).length,
-      empty: 'No platforms or publications found yet.'
+      countFor: category => sidebarCategoryCount(counts, category),
+      empty: 'No platforms or publications found yet.',
+      defaultCollapsed: false
     });
   } else if (structure === 'publisher') {
-    const publishers = [...new Set(state.items.map(i => String(i.publisher || 'Unsorted Publisher').trim()).filter(Boolean))].sort((a,b)=>a.localeCompare(b));
+    const publisherValue = item => String(item.publisher || 'Unsorted Publisher').trim() || 'Unsorted Publisher';
+    const publisherCounts = buildSidebarCategoryCountMap(state.items, publisherValue);
+    const publishers = [...new Set(state.items.map(publisherValue).filter(Boolean))].sort((a,b)=>a.localeCompare(b));
     markup = categoryGroupMarkup('Publisher', 'Publishers', state.items, publishers, {
       groupKind: 'Publisher',
-      iconFor: () => '<span class="category-mini-icon" aria-hidden="true">\u25A6</span>',
-      countFor: publisher => state.items.filter(i => String(i.publisher || 'Unsorted Publisher').trim().localeCompare(publisher, undefined, { sensitivity: 'accent' }) === 0).length,
-      empty: 'No publisher values found yet.'
+      iconFor: () => '<span class="category-mini-icon" aria-hidden="true">◦</span>',
+      countFor: publisher => sidebarCategoryCount(publisherCounts, publisher),
+      empty: 'No publisher values found yet.',
+      defaultCollapsed: false
     });
   } else if (structure === 'decade') {
+    const decadeCounts = buildSidebarCategoryCountMap(state.items, decadeLabelForItem);
     const decades = [...new Set(state.items.map(decadeLabelForItem))].sort((a,b) => {
       if (a === 'Unknown Decade') return 1;
       if (b === 'Unknown Decade') return -1;
@@ -5645,21 +5932,38 @@ function renderCategories() {
     });
     markup = categoryGroupMarkup('Decade', 'Decades', state.items, decades, {
       groupKind: 'Decade',
-      iconFor: () => '<span class="category-mini-icon" aria-hidden="true">\u25F7</span>',
-      countFor: decade => state.items.filter(i => decadeLabelForItem(i).localeCompare(decade, undefined, { sensitivity: 'accent' }) === 0).length,
-      empty: 'No dated entries found yet.'
+      iconFor: () => '<span class="category-mini-icon" aria-hidden="true">◷</span>',
+      countFor: decade => sidebarCategoryCount(decadeCounts, decade),
+      empty: 'No dated entries found yet.',
+      defaultCollapsed: false
     });
+  } else {
+    const config = sidebarCategoryModeConfig(structure);
+    if (config) {
+      const items = config.kind ? state.items.filter(i => i.kind === config.kind) : state.items;
+      const counts = buildSidebarCategoryCountMap(items, item => sidebarCategoryValuesForItem(item, structure));
+      const categories = sortCategoriesForKind(config.kind || 'Any', [...new Set(items.flatMap(item => sidebarCategoryValuesForItem(item, structure)))]);
+      markup = categoryGroupMarkup(structure, config.label, items, categories, {
+        groupKind: structure,
+        iconFor: config.iconFor,
+        countFor: category => sidebarCategoryCount(counts, category),
+        empty: config.empty,
+        defaultCollapsed: false
+      });
+    }
   }
   host.innerHTML = markup || '<p class="sub small-pad">Scan a library root to build categories.</p>';
   host.querySelectorAll('.category-group-toggle').forEach(btn => btn.addEventListener('click', () => {
     const kind = btn.dataset.kind;
-    state.collapsedCategoryGroups[kind] = !isCategoryGroupCollapsed(kind);
+    const defaultCollapsed = btn.dataset.defaultCollapsed !== 'false';
+    state.collapsedCategoryGroups[kind] = !isCategoryGroupCollapsed(kind, defaultCollapsed);
     renderCategories();
   }));
   host.querySelectorAll('.system-btn').forEach(btn => btn.addEventListener('click', () => {
     showLibraryScreen();
     const kind = btn.dataset.kind || 'Any';
-    state.filter = ['Any', 'Publisher', 'Decade'].includes(kind) ? 'All Content' : kind;
+    const mode = sidebarCategoryModeConfig(kind);
+    state.filter = mode?.kind || (['Any', 'Publisher', 'Decade'].includes(kind) ? 'All Content' : kind);
     state.categoryFilter = `${kind}::${btn.dataset.category}`;
     state.customFilter = null;
     state.viewMode = 'category';
@@ -5672,17 +5976,142 @@ function renderCategories() {
 }
 
 
+function shouldVirtualizeLibraryGrid(list) {
+  return Array.isArray(list) && list.length >= GUIDEVAULT_GRID_VIRTUAL_THRESHOLD;
+}
+
+function estimateGridColumns(host) {
+  if (!host) return 1;
+  const computed = window.getComputedStyle(host);
+  const columns = String(computed.gridTemplateColumns || '').split(' ').filter(Boolean).length;
+  if (columns > 0) return columns;
+  const min = Math.max(120, Number.parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--gv-card-min')) || 150);
+  const gap = Number.parseFloat(computed.columnGap || computed.gap || '16') || 16;
+  return Math.max(1, Math.floor((host.clientWidth + gap) / (min + gap)));
+}
+
+function measureVirtualGrid(host, current = {}) {
+  const computed = window.getComputedStyle(host);
+  const rowGap = Number.parseFloat(computed.rowGap || computed.gap || '16') || 16;
+  const card = host.querySelector('.card');
+  const cardHeight = card?.getBoundingClientRect?.().height || Number(current.cardHeight || 300) || 300;
+  return {
+    columns: estimateGridColumns(host),
+    rowHeight: Math.max(160, Math.ceil(cardHeight + rowGap)),
+    cardHeight: Math.max(120, Math.ceil(cardHeight))
+  };
+}
+
+function virtualGridWindowFor(vgrid) {
+  const scroller = libraryScrollElement();
+  const host = vgrid?.host;
+  const list = vgrid?.items || [];
+  if (!scroller || !host || !list.length) return { startIndex: 0, endIndex: Math.min(list.length, GUIDEVAULT_GRID_INITIAL_RENDER), topHeight: 0, bottomHeight: 0 };
+  const columns = Math.max(1, Number(vgrid.columns || 1));
+  const rowHeight = Math.max(160, Number(vgrid.rowHeight || 300));
+  const topWithinGrid = Math.max(0, scroller.scrollTop - host.offsetTop - 12);
+  const firstRow = Math.max(0, Math.floor(topWithinGrid / rowHeight) - GUIDEVAULT_GRID_VIRTUAL_BUFFER_ROWS);
+  const visibleRows = Math.ceil((scroller.clientHeight || window.innerHeight || 800) / rowHeight) + GUIDEVAULT_GRID_VIRTUAL_BUFFER_ROWS * 2;
+  const maxRowsByCards = Math.max(visibleRows, Math.floor(GUIDEVAULT_GRID_VIRTUAL_MAX_CARDS / columns));
+  const startIndex = Math.min(list.length, firstRow * columns);
+  const endRow = Math.ceil(startIndex / columns) + maxRowsByCards;
+  const endIndex = Math.min(list.length, Math.max(startIndex + columns, endRow * columns));
+  const totalRows = Math.ceil(list.length / columns);
+  const renderedRows = Math.ceil((endIndex - startIndex) / columns);
+  const topHeight = firstRow * rowHeight;
+  const bottomRows = Math.max(0, totalRows - firstRow - renderedRows);
+  const bottomHeight = bottomRows * rowHeight;
+  return { startIndex, endIndex, topHeight, bottomHeight };
+}
+
+function renderVirtualGridWindow(force = false) {
+  const vgrid = state.virtualGrid;
+  if (!vgrid?.host || !vgrid.host.isConnected) return;
+  const host = vgrid.host;
+  const measured = measureVirtualGrid(host, vgrid);
+  const columnsChanged = measured.columns !== vgrid.columns || Math.abs(measured.rowHeight - Number(vgrid.rowHeight || 0)) > 6;
+  vgrid.columns = measured.columns;
+  vgrid.rowHeight = measured.rowHeight;
+  vgrid.cardHeight = measured.cardHeight;
+  const win = virtualGridWindowFor(vgrid);
+  if (!force && !columnsChanged && win.startIndex === vgrid.startIndex && win.endIndex === vgrid.endIndex) return;
+  vgrid.startIndex = win.startIndex;
+  vgrid.endIndex = win.endIndex;
+  const slice = vgrid.items.slice(win.startIndex, win.endIndex);
+  host.innerHTML = `${win.topHeight > 0 ? `<div class="gv-virtual-spacer gv-virtual-spacer-top" style="height:${Math.round(win.topHeight)}px"></div>` : ''}${slice.map(item => cardMarkupForItem(item)).join('')}${win.bottomHeight > 0 ? `<div class="gv-virtual-spacer gv-virtual-spacer-bottom" style="height:${Math.round(win.bottomHeight)}px"></div>` : ''}`;
+  initializeCoverImages(host);
+  attachCoverPrimeScrollHandler();
+}
+
+function attachVirtualGridHandlers() {
+  const scroller = libraryScrollElement();
+  if (scroller && scroller.dataset.virtualGridScroll !== '1') {
+    scroller.dataset.virtualGridScroll = '1';
+    let queued = false;
+    scroller.addEventListener('scroll', () => {
+      if (!state.virtualGrid || queued) return;
+      queued = true;
+      requestAnimationFrame(() => {
+        queued = false;
+        renderVirtualGridWindow(false);
+      });
+    }, { passive: true });
+  }
+  if (!guidevaultVirtualResizeAttached) {
+    guidevaultVirtualResizeAttached = true;
+    window.addEventListener('resize', () => {
+      if (!state.virtualGrid) return;
+      requestAnimationFrame(() => renderVirtualGridWindow(true));
+    }, { passive: true });
+  }
+}
+
+function renderVirtualGrid(id, list) {
+  const host = $(id);
+  if (!host) return;
+  state.libraryRenderToken = (Number(state.libraryRenderToken || 0) + 1) % 1000000;
+  state.virtualGrid = {
+    id,
+    host,
+    items: list,
+    columns: estimateGridColumns(host),
+    rowHeight: 300,
+    cardHeight: 280,
+    startIndex: -1,
+    endIndex: -1
+  };
+  host.classList.add('virtualized-grid');
+  host.innerHTML = list.slice(0, Math.min(list.length, GUIDEVAULT_GRID_INITIAL_RENDER)).map(item => cardMarkupForItem(item)).join('');
+  initializeCoverImages(host);
+  attachCoverPrimeScrollHandler();
+  attachVirtualGridHandlers();
+  requestAnimationFrame(() => renderVirtualGridWindow(true));
+}
+
+function clearVirtualGridIfHost(id) {
+  if (state.virtualGrid?.id === id) state.virtualGrid = null;
+  const host = $(id);
+  if (host) host.classList.remove('virtualized-grid');
+}
+
 function renderGrid(id, items) {
   const host = $(id);
   if (!host) return;
   const list = Array.isArray(items) ? items : [];
-  state.libraryRenderToken = (Number(state.libraryRenderToken || 0) + 1) % 1000000;
-  const token = state.libraryRenderToken;
   if (!list.length) {
+    clearVirtualGridIfHost(id);
     host.innerHTML = `<div class="empty-message">No content found. Set a Library Root folder in Settings and scan for CBZ, CBR, or PDF files.</div>`;
     return;
   }
 
+  if (shouldVirtualizeLibraryGrid(list)) {
+    renderVirtualGrid(id, list);
+    return;
+  }
+
+  clearVirtualGridIfHost(id);
+  state.libraryRenderToken = (Number(state.libraryRenderToken || 0) + 1) % 1000000;
+  const token = state.libraryRenderToken;
   const firstCount = Math.min(list.length, GUIDEVAULT_GRID_INITIAL_RENDER);
   host.innerHTML = list.slice(0, firstCount).map(item => cardMarkupForItem(item)).join('');
   initializeCoverImages(host);
@@ -6728,15 +7157,15 @@ const METADATA_LOCKABLE_FIELDS = {
 };
 
 const METADATA_PAYLOAD_LOCK_ALIASES = {
-  title: ['title', 'strategyGuideTitle', 'manualTitle', 'magazineTitle', 'name'],
+  title: ['title', 'strategyGuideTitle', 'name'],
   strategyGuideTitle: ['title', 'strategyGuideTitle'],
-  manualTitle: ['title', 'manualTitle'],
-  magazineTitle: ['magazineTitle', 'title', 'series'],
+  manualTitle: ['manualTitle'],
+  magazineTitle: ['magazineTitle'],
   name: ['title', 'name'],
   category: ['preferredPlatform', 'category', 'system'],
   system: ['preferredPlatform', 'system', 'category'],
   preferredPlatform: ['preferredPlatform', 'category', 'system'],
-  primarySystem: ['primarySystem', 'preferredPlatform'],
+  primarySystem: ['primarySystem'],
   language: ['languageTag', 'language'],
   languageTag: ['languageTag', 'language'],
   rating: ['rating', 'esrb'],
@@ -6756,8 +7185,9 @@ const METADATA_PAYLOAD_LOCK_ALIASES = {
   metadataPageCount: ['pageCount', 'metadataPageCount'],
   gameDeveloper: ['developer', 'gameDeveloper'],
   developer: ['developer', 'gameDeveloper'],
-  gameFranchise: ['franchise', 'gameFranchise', 'series'],
-  franchise: ['franchise', 'gameFranchise', 'series'],
+  series: ['series'],
+  gameFranchise: ['franchise', 'gameFranchise'],
+  franchise: ['franchise', 'gameFranchise'],
   editionType: ['edition', 'editionType'],
   edition: ['edition', 'editionType'],
   physicalExtras: ['includedExtras', 'physicalExtras'],
@@ -7147,8 +7577,9 @@ function updateTypedMetadataFieldVisibility(kind = $('editKind')?.value || '') {
   }
   const categoryLabel = $('editCategoryLabel');
   if (categoryLabel?.firstChild) {
-    categoryLabel.firstChild.nodeValue = isMagazine ? 'Magazine Group' : 'Preferred Platform';
+    categoryLabel.firstChild.nodeValue = 'Preferred Platform';
   }
+  categoryLabel?.classList.toggle('hidden', isMagazine);
   const regionLabel = $('editRegionLabel');
   if (regionLabel?.firstChild) regionLabel.firstChild.nodeValue = isMagazine ? 'Country of publication' : 'Region';
   const writerLabel = $('editWriterLabel');
@@ -7539,9 +7970,11 @@ function buildCurrentMetadataPayloadFromForm(extra = {}) {
   const selectedKind = $('editKind')?.value || state.selected?.kind || 'Strategy Guide';
   const tags = $('editTags') ? $('editTags').value.split(',').map(t => t.trim()).filter(Boolean) : [];
   const associatedPlatforms = $('editAssociatedPlatforms') ? $('editAssociatedPlatforms').value.split(',').map(p => p.trim()).filter(Boolean) : [];
-  const preferredPlatform = selectedKind === 'Strategy Guide' && hasMultipleAssociatedPlatforms(associatedPlatforms)
-    ? MULTI_PLATFORM_LABEL
-    : ($('editCategory')?.value || '');
+  const preferredPlatform = selectedKind === 'Magazine'
+    ? ''
+    : (selectedKind === 'Strategy Guide' && hasMultipleAssociatedPlatforms(associatedPlatforms)
+      ? MULTI_PLATFORM_LABEL
+      : ($('editCategory')?.value || ''));
 
   const magazineTitleValue = selectedKind === 'Magazine' ? ($('editMagazineTitle')?.value || $('editSeries')?.value || $('editTitle')?.value || '') : '';
   const magazinePayload = selectedKind === 'Magazine' ? {
@@ -9253,12 +9686,13 @@ const METADATA_MANAGER_WIDE_COLUMNS = new Set(['name','category','series','publi
 const METADATA_MANAGER_ALL_COLUMNS = [
   { key:'kind', label:'Type', description:'Manual, Strategy Guide, or Magazine.' },
   { key:'metadataStatus', label:'Status', description:'Metadata review workflow state.' },
-  { key:'name', label:'Title / Name', description:'Guidevault display title for the item.' },
-  { key:'category', label:'Preferred Platform', description:'Primary/preferred platform used when no associated-platform override is present.' },
+  { key:'name', label:'Entry Title / Name', description:'Display title for the item. For magazines, this is the entry title shown on the issue/cover.' },
+  { key:'category', label:'Preferred Platform', description:'Primary/preferred platform used for manuals and strategy guides. Magazine rows leave this blank; use Magazine Title for publication sorting and Primary System for issue platform focus.' },
   { key:'series', label:'Series / Publication', description:'Series, franchise, or magazine publication name.' },
   { key:'languageTag', label:'Language', description:'Full language value, such as English.' },
   { key:'region', label:'Region', description:'Region code such as US, JP, or EU.' },
   { key:'year', label:'Year', description:'Release or publication year.' },
+  { key:'pageCount', label:'Page Count', description:'Page count entered for the item.' },
   { key:'publisher', label:'Publisher', description:'Publisher or game publisher.' },
   { key:'topics', label:'Topics / Games', description:'Main topic list used by the entry type.' },
   { key:'metadataSource', label:'Source', description:'Where the current metadata came from.' },
@@ -9272,14 +9706,14 @@ const METADATA_MANAGER_ALL_COLUMNS = [
   { key:'associatedPlatforms', label:'Associated Platforms', description:'Platforms where this item should appear in the library. Strategy guides can appear under each listed platform.' },
   { key:'platformMatchTitle', label:'Platform Match Title', description:'Title used during platform matching.' },
   { key:'platformResolverSource', label:'Platform Resolver Source', description:'Where platform resolution came from.' },
-  { key:'magazineTitle', label:'Magazine Title', description:'Magazine publication title.' },
+  { key:'magazineTitle', label:'Magazine Title', description:'Official magazine publication title. Used to group/sort magazine issues by publication.' },
   { key:'issueNumber', label:'Issue Number', description:'Magazine issue number.' },
   { key:'volume', label:'Volume', description:'Magazine volume value.' },
   { key:'coverDate', label:'Cover Date', description:'Cover date printed on the issue.' },
   { key:'barcodeUpcIssn', label:'Barcode / UPC / ISSN', description:'Magazine barcode, UPC, or ISSN when known.' },
   { key:'publicationDate', label:'Publication Date', description:'Publication/release date.' },
   { key:'platformFocus', label:'Platform / Audience Focus', description:'Magazine platform or audience focus.' },
-  { key:'primarySystem', label:'Primary System', description:'Primary platform/system for magazines.' },
+  { key:'primarySystem', label:'Primary System', description:'Main platform/system this magazine issue is focused on.' },
   { key:'magazineCategory', label:'Magazine Category', description:'Magazine category/classification.' },
   { key:'coverSubject', label:'Cover Subject', description:'Main cover subject or feature.' },
   { key:'featuredGames', label:'Featured Games', description:'Magazine featured games.' },
@@ -9329,24 +9763,27 @@ function metadataManagerTopicValue(item) {
 
 function metadataManagerItemName(item) {
   if (!item) return '';
+  const title = String(item.title || item.Title || '').trim();
+  if (title) return title;
   if (item.kind === 'Magazine') {
-    const base = item.magazineTitle || item.series || item.title || '';
+    const base = item.magazineTitle || item.series || '';
     const issue = String(item.issueNumber || '').trim();
-    return issue ? `${base} #${issue}` : base;
+    return issue && base ? `${base} #${issue}` : base;
   }
-  if (item.kind === 'Manual') return item.manualTitle || item.gameTitle || item.title || '';
-  if (item.kind === 'Strategy Guide') return item.gameTitle || item.title || '';
-  return item.title || '';
+  if (item.kind === 'Manual') return item.manualTitle || item.gameTitle || '';
+  if (item.kind === 'Strategy Guide') return item.gameTitle || '';
+  return '';
 }
 
 function metadataManagerCategoryValue(item) {
+  if (item?.kind === 'Magazine') return '';
   return preferredPlatformOf(item);
 }
 
 function metadataManagerSeriesValue(item) {
-  if (item?.kind === 'Magazine') return item.magazineTitle || item.series || '';
-  if (item?.kind === 'Strategy Guide') return item.franchise || item.series || '';
-  return item?.series || item?.franchise || '';
+  if (item?.kind === 'Magazine') return item.series || item.magazineTitle || '';
+  if (item?.kind === 'Strategy Guide' || item?.kind === 'Manual') return item.series || item.franchise || '';
+  return item?.series || '';
 }
 
 function metadataManagerIsMultiPlatformStrategyGuide(item) {
@@ -9500,9 +9937,9 @@ function metadataManagerSummaryStats(items) {
 function metadataManagerFieldValue(item, field) {
   if (field === 'metadataStatus') return metadataStatusOf(item);
   if (field === 'name') return metadataManagerItemName(item);
-  if (field === 'category') return metadataManagerCategoryValue(item);
+  if (field === 'category') return item?.kind === 'Magazine' ? '' : metadataManagerCategoryValue(item);
   if (field === 'series') return metadataManagerSeriesValue(item);
-  if (field === 'publisher') return item.publisher || item.gamePublisher || '';
+  if (field === 'publisher') return item.publisher || '';
   if (field === 'topics') return metadataManagerTopicValue(item);
   const value = item?.[field];
   if (Array.isArray(value)) return value.join(', ');
@@ -9604,20 +10041,19 @@ function metadataManagerRowPayload(item, changes = {}) {
     if (METADATA_MANAGER_READONLY_COLUMNS.has(field)) return;
     if (field === 'name') {
       payload.title = value;
-      if (item.kind === 'Manual') payload.manualTitle = value;
-      if (item.kind === 'Strategy Guide') payload.gameTitle = value;
-      if (item.kind === 'Magazine') payload.magazineTitle = value;
     } else if (field === 'category') {
-      payload.category = value;
-      payload.system = value;
-      if (item.kind === 'Magazine') payload.primarySystem = value;
+      if (item.kind !== 'Magazine') {
+        payload.category = value;
+        payload.system = value;
+      }
     } else if (field === 'series') {
       payload.series = value;
-      if (item.kind === 'Magazine') payload.magazineTitle = value;
-      if (item.kind === 'Strategy Guide' || item.kind === 'Manual') payload.franchise = value;
     } else if (field === 'publisher') {
       payload.publisher = value;
-      if (item.kind === 'Strategy Guide' || item.kind === 'Manual') payload.gamePublisher = value;
+    } else if (field === 'pageCount') {
+      const count = Number(value || 0) || 0;
+      payload.pageCount = count;
+      payload.metadataPageCount = count;
     } else if (field === 'topics') {
       payload[metadataManagerTopicField(item)] = itemArray(value);
     } else if (METADATA_MANAGER_ARRAY_FIELDS.has(field)) {
@@ -9798,22 +10234,58 @@ function metadataManagerShowAllColumns() {
   metadataManagerSetStatus('All available metadata columns are visible.', 'success');
 }
 
+const METADATA_MANAGER_COLUMN_GROUPS = [
+  { key: 'core', label: 'Core / All content' },
+  { key: 'book', label: 'Book identifiers / publishing' },
+  { key: 'strategy', label: 'Strategy Guide / Game fields' },
+  { key: 'manual', label: 'Manual fields' },
+  { key: 'magazine', label: 'Magazine fields' },
+  { key: 'lookup', label: 'Lookup / source fields' },
+  { key: 'notes', label: 'Notes / extras' }
+];
+
+function metadataManagerColumnGroupKey(column) {
+  const key = String(column?.key || '');
+  if (['kind','metadataStatus','name','category','series','languageTag','region','year','publisher','topics','rating'].includes(key)) return 'core';
+  if (['asin','isbn10','isbn13','writer','webLink','publicationDate','pageCount'].includes(key)) return 'book';
+  if (['gameTitle','guideType','edition','franchise','developer','gamePublisher','gameReleaseYear','genre','associatedPlatforms','coveredGames','coveredPlatforms','guideTopics','charactersCovered','locationsCovered'].includes(key)) return 'strategy';
+  if (['manualTitle','manualType','includedSections','controlScheme','itemsCovered','warrantySupport'].includes(key)) return 'manual';
+  if (['magazineTitle','issueNumber','volume','coverDate','barcodeUpcIssn','platformFocus','primarySystem','magazineCategory','coverSubject','featuredGames','featuredPlatforms','specialFeatures'].includes(key)) return 'magazine';
+  if (['metadataSource','platformMatchTitle','platformResolverSource'].includes(key)) return 'lookup';
+  return 'notes';
+}
+
 function renderMetadataManagerColumnPicker() {
   const picker = $('metadataManagerColumnPicker');
   if (!picker) return;
   const visible = metadataManagerLoadVisibleColumns();
   const visibleSet = new Set(visible);
-  picker.innerHTML = METADATA_MANAGER_ALL_COLUMNS.map(column => {
-    const position = visible.indexOf(column.key);
-    const isVisible = visibleSet.has(column.key);
-    return `<label class="metadata-manager-column-option" title="${escapeForAttribute(column.description || '')}">
-      <input type="checkbox" data-column-key="${escapeForAttribute(column.key)}" ${isVisible ? 'checked' : ''} />
-      <span>${escapeHtml(column.label)}</span>
-      ${isVisible ? `<button class="ghost tiny metadata-column-move" type="button" data-column-move="-1" data-column-key="${escapeForAttribute(column.key)}" ${position <= 0 ? 'disabled' : ''} title="Move left">←</button><button class="ghost tiny metadata-column-move" type="button" data-column-move="1" data-column-key="${escapeForAttribute(column.key)}" ${position === visible.length - 1 ? 'disabled' : ''} title="Move right">→</button>` : ''}
-    </label>`;
+  const columnsByGroup = new Map(METADATA_MANAGER_COLUMN_GROUPS.map(group => [group.key, []]));
+  METADATA_MANAGER_ALL_COLUMNS.forEach(column => {
+    const groupKey = metadataManagerColumnGroupKey(column);
+    if (!columnsByGroup.has(groupKey)) columnsByGroup.set(groupKey, []);
+    columnsByGroup.get(groupKey).push(column);
+  });
+  picker.innerHTML = METADATA_MANAGER_COLUMN_GROUPS.map(group => {
+    const columns = columnsByGroup.get(group.key) || [];
+    if (!columns.length) return '';
+    return `<section class="metadata-manager-column-group" aria-label="${escapeForAttribute(group.label)}">
+      <h4>${escapeHtml(group.label)}</h4>
+      <div class="metadata-manager-column-group-grid">
+        ${columns.map(column => {
+          const position = visible.indexOf(column.key);
+          const isVisible = visibleSet.has(column.key);
+          return `<label class="metadata-manager-column-option" title="${escapeForAttribute(column.description || '')}">
+            <input type="checkbox" data-column-key="${escapeForAttribute(column.key)}" ${isVisible ? 'checked' : ''} />
+            <span>${escapeHtml(column.label)}</span>
+            ${isVisible ? `<button class="ghost tiny metadata-column-move" type="button" data-column-move="-1" data-column-key="${escapeForAttribute(column.key)}" ${position <= 0 ? 'disabled' : ''} title="Move left">←</button><button class="ghost tiny metadata-column-move" type="button" data-column-move="1" data-column-key="${escapeForAttribute(column.key)}" ${position === visible.length - 1 ? 'disabled' : ''} title="Move right">→</button>` : ''}
+          </label>`;
+        }).join('')}
+      </div>
+    </section>`;
   }).join('');
   const active = $('metadataManagerColumnActiveCount');
-  if (active) active.textContent = `${visible.length} of ${METADATA_MANAGER_ALL_COLUMNS.length} columns shown - click headers to sort, drag headers to reorder, or use the Columns panel arrows`;
+  if (active) active.textContent = `${visible.length} of ${METADATA_MANAGER_ALL_COLUMNS.length} columns shown - grouped by context; click table headers to sort or drag headers to reorder`;
 }
 
 function metadataManagerSourceTitleCandidate(item) {
@@ -9935,6 +10407,119 @@ function metadataManagerCollapseRows() {
   renderMetadataManager();
 }
 
+function metadataManagerBatchEditableColumns() {
+  return metadataManagerVisibleColumns()
+    .filter(column => column && !METADATA_MANAGER_READONLY_COLUMNS.has(column.key));
+}
+
+function metadataManagerBatchInputId(key) {
+  return `metadataBatchField_${String(key || '').replace(/[^A-Za-z0-9_-]/g, '_')}`;
+}
+
+function metadataManagerBatchPlaceholder(column) {
+  const key = column?.key || '';
+  if (key === 'metadataStatus') return '';
+  if (key === 'languageTag') return 'English';
+  if (key === 'region') return 'US, JP, EU...';
+  if (key === 'category') return 'PlayStation 2';
+  if (key === 'publisher') return 'Prima Games, Nintendo...';
+  if (key === 'year' || key === 'gameReleaseYear') return '1998';
+  if (key === 'publicationDate' || key === 'coverDate') return 'Jul/Aug 1988';
+  if (key === 'rating') return 'Everyone, Teen, Not Rated...';
+  if (key === 'webLink') return 'https://...';
+  if (key === 'pageCount') return '144';
+  if (key === 'topics' || METADATA_MANAGER_ARRAY_FIELDS.has(key)) return 'Comma-separated values';
+  return column?.label || key;
+}
+
+function metadataManagerBatchControlHtml(column) {
+  const key = column?.key || '';
+  const id = metadataManagerBatchInputId(key);
+  const label = column?.label || key;
+  const title = column?.description || `Apply ${label} to selected rows.`;
+  if (key === 'metadataStatus') {
+    return `<label for="${escapeForAttribute(id)}" title="${escapeForAttribute(title)}">${escapeHtml(label)}
+      <select id="${escapeForAttribute(id)}" data-metadata-batch-field-control="${escapeForAttribute(key)}">
+        <option value="">Do not change</option>
+        <option value="Unreviewed">Unreviewed</option>
+        <option value="Needs Review">Needs Review</option>
+        <option value="Reviewed">Reviewed</option>
+        <option value="Locked">Locked</option>
+        <option value="Failed Lookup">Failed Lookup</option>
+        <option value="Manual Only">Manual Only</option>
+      </select>
+    </label>`;
+  }
+  return `<label for="${escapeForAttribute(id)}" title="${escapeForAttribute(title)}">${escapeHtml(label)}
+    <input id="${escapeForAttribute(id)}" type="text" data-metadata-batch-field-control="${escapeForAttribute(key)}" placeholder="${escapeForAttribute(metadataManagerBatchPlaceholder(column))}" />
+  </label>`;
+}
+
+function metadataManagerRenderBatchEditor() {
+  const grid = $('metadataManagerBatchGrid');
+  if (!grid) return;
+  const columns = metadataManagerBatchEditableColumns();
+  const activeKeys = columns.map(column => column.key).join('|');
+  if (grid.dataset.activeColumnKeys === activeKeys && grid.childElementCount) return;
+  const previousValues = {};
+  grid.querySelectorAll('[data-metadata-batch-field-control]').forEach(control => {
+    previousValues[control.dataset.metadataBatchFieldControl || ''] = control.value;
+  });
+  const topicModeValue = $('metadataBatchTopicsMode')?.value || 'add';
+  grid.dataset.activeColumnKeys = activeKeys;
+  if (!columns.length) {
+    grid.innerHTML = '<p class="metadata-manager-batch-empty">Show at least one editable column to make it available for batch editing.</p>';
+    return;
+  }
+  grid.innerHTML = columns.map(metadataManagerBatchControlHtml).join('')
+    + (columns.some(column => column.key === 'topics')
+      ? `<label for="metadataBatchTopicsMode" class="metadata-manager-batch-mode-field">Topics Mode
+          <select id="metadataBatchTopicsMode" data-metadata-batch-mode="topics">
+            <option value="add">Add to existing</option>
+            <option value="replace">Replace existing</option>
+            <option value="remove">Remove from existing</option>
+          </select>
+        </label>`
+      : '');
+  grid.querySelectorAll('[data-metadata-batch-field-control]').forEach(control => {
+    const key = control.dataset.metadataBatchFieldControl || '';
+    if (previousValues[key] !== undefined) control.value = previousValues[key];
+  });
+  const topicMode = $('metadataBatchTopicsMode');
+  if (topicMode) topicMode.value = topicModeValue;
+}
+
+function metadataManagerBatchEntries() {
+  const entries = [];
+  document.querySelectorAll('[data-metadata-batch-field-control]').forEach(control => {
+    const field = control.dataset.metadataBatchFieldControl || '';
+    if (!field || METADATA_MANAGER_READONLY_COLUMNS.has(field)) return;
+    let value = control.value;
+    if (field === 'metadataStatus') value = normalizeMetadataStatus(value || '', '');
+    else value = String(value ?? '').trim();
+    if (!value) return;
+    entries.push({ field, value });
+  });
+  return entries;
+}
+
+function metadataManagerBatchPayloadForItem(item, entries) {
+  const changes = {};
+  const payload = { metadataSource: 'Bulk metadata manager' };
+  const topicsMode = $('metadataBatchTopicsMode')?.value || 'add';
+  entries.forEach(entry => {
+    if (!entry?.field) return;
+    if (entry.field === 'topics') {
+      const topicField = metadataManagerTopicField(item);
+      payload[topicField] = mergeTokenLists(item[topicField] || item.tags || [], entry.value, topicsMode);
+      return;
+    }
+    changes[entry.field] = entry.value;
+  });
+  return { ...metadataManagerRowPayload(item, changes), ...payload };
+}
+
+
 function renderMetadataManager() {
   if (!$('settingsMetadataManagerPanel')) return;
   state.metadataManager = state.metadataManager || { selectedIds: [], dirty: {}, filterKind: '', statusFilter: '', search: '', missing: '', category: '', visibleColumns: [], sortKey: '', sortDirection: 'asc', draggedColumnKey: '', renderLimit: METADATA_MANAGER_DEFAULT_RENDER_LIMIT };
@@ -9952,6 +10537,7 @@ function renderMetadataManager() {
   const selectedSet = new Set(manager.selectedIds || []);
   const dirty = manager.dirty || {};
   const columns = metadataManagerVisibleColumns();
+  metadataManagerRenderBatchEditor();
   const renderLimit = metadataManagerCurrentRenderLimit(items.length);
   const renderedItems = items.slice(0, renderLimit);
   const hiddenCount = Math.max(0, items.length - renderedItems.length);
@@ -10244,40 +10830,29 @@ async function metadataManagerApplyBatch() {
     metadataManagerSetStatus('Select one or more rows first.', 'error');
     return;
   }
-  const langRaw = $('metadataBatchLanguage')?.value.trim() || '';
-  const lang = /^en(?:glish)?$/i.test(langRaw) ? 'English' : langRaw;
-  const region = $('metadataBatchRegion')?.value.trim() || '';
-  const category = $('metadataBatchCategory')?.value.trim() || '';
-  const publisher = $('metadataBatchPublisher')?.value.trim() || '';
-  const batchStatus = normalizeMetadataStatus($('metadataBatchStatus')?.value || '', '');
-  const tagText = $('metadataBatchTags')?.value || '';
-  const tagMode = $('metadataBatchTagsMode')?.value || 'add';
-  const hasTags = itemArray(tagText).length > 0;
-  if (!lang && !region && !category && !publisher && !batchStatus && !hasTags) {
-    metadataManagerSetStatus('Enter at least one batch value to apply.', 'error');
+  metadataManagerRenderBatchEditor();
+  const entries = metadataManagerBatchEntries();
+  if (!entries.length) {
+    metadataManagerSetStatus('Enter at least one visible-column batch value to apply.', 'error');
     return;
   }
-  metadataManagerSetStatus(`Applying batch metadata to ${items.length} selected row(s)...`);
+  const fieldLabels = entries.map(entry => metadataManagerColumnDefinition(entry.field)?.label || entry.field).join(', ');
+  metadataManagerSetStatus(`Applying ${fieldLabels} to ${items.length} selected row(s)...`);
   let saved = 0;
+  let skippedLocked = 0;
   for (const item of items) {
     const id = metadataManagerItemId(item);
-    const payload = { metadataSource: 'Bulk metadata manager' };
-    if (lang) payload.languageTag = lang;
-    if (region) payload.region = region;
-    if (category) { payload.category = category; payload.system = category; if (item.kind === 'Magazine') payload.primarySystem = category; }
-    if (publisher) { payload.publisher = publisher; if (item.kind === 'Manual' || item.kind === 'Strategy Guide') payload.gamePublisher = publisher; }
-    if (batchStatus) payload.metadataStatus = batchStatus;
-    if (hasTags) {
-      const topicField = metadataManagerTopicField(item);
-      payload[topicField] = mergeTokenLists(item[topicField] || item.tags || [], tagText, tagMode);
-    }
-    await metadataManagerPersist(id, item, payload);
+    const payload = metadataManagerBatchPayloadForItem(item, entries);
+    const result = await metadataManagerPersist(id, item, payload);
+    skippedLocked += result?.skippedLockedFields?.length || 0;
     saved += 1;
   }
   state.metadataManager.dirty = {};
-  metadataManagerSetStatus(`Applied batch metadata to ${saved} row(s).`, 'success');
+  const skippedText = skippedLocked ? ` ${skippedLocked} locked field value(s) were skipped.` : '';
+  metadataManagerSetStatus(`Applied batch metadata to ${saved} row(s).${skippedText}`, 'success');
   renderMetadataManager();
 }
+
 
 
 const METADATA_BATCH_SOURCE_FIELDS = {
@@ -11117,7 +11692,7 @@ async function metadataManagerNormalizeSelected() {
 
 function metadataManagerCsvValue(value) {
   const text = String(value ?? '');
-  return /[",\n]/.test(text) ? `"${text.replace(/"/g, '""')}"` : text;
+  return /[",\r\n]/.test(text) ? `"${text.replace(/"/g, '""')}"` : text;
 }
 
 function metadataManagerExportCsv() {
@@ -11129,7 +11704,10 @@ function metadataManagerExportCsv() {
     const values = [metadataManagerItemId(item), ...columns.map(column => metadataManagerFieldValue(item, column.key))];
     lines.push(values.map(metadataManagerCsvValue).join(','));
   });
-  const blob = new Blob([lines.join('\n')], { type: 'text/csv;charset=utf-8' });
+  const csvText = lines.join('\r\n');
+  // Prefix UTF-8 CSV exports with a BOM so Excel opens em dashes, degree symbols,
+  // accented titles, and curly punctuation without mojibake.
+  const blob = new Blob([new Uint8Array([0xEF, 0xBB, 0xBF]), csvText], { type: 'text/csv;charset=utf-8' });
   const link = document.createElement('a');
   link.href = URL.createObjectURL(blob);
   link.download = `guidevault-metadata-${new Date().toISOString().slice(0,10)}.csv`;
@@ -11147,24 +11725,41 @@ function metadataManagerImportJsonFile(file) {
     try {
       const parsed = JSON.parse(String(reader.result || '[]'));
       const entries = Array.isArray(parsed) ? parsed : (Array.isArray(parsed.items) ? parsed.items : []);
+      const validFields = metadataManagerValidColumnKeys();
+      const importAliases = {
+        title: 'name',
+        Name: 'name',
+        system: 'category',
+        primarySystem: 'category',
+        tags: 'topics',
+        language: 'languageTag',
+        metadataPageCount: 'pageCount'
+      };
       let staged = 0;
+      let changedFields = 0;
       entries.forEach(entry => {
         const id = String(entry.id || entry.Id || '').trim();
         const item = (state.items || []).find(i => metadataManagerItemId(i) === id);
         if (!id || !item) return;
         const changes = {};
-        ['languageTag','region','year','metadataStatus'].forEach(field => { if (entry[field] !== undefined) changes[field] = field === 'metadataStatus' ? normalizeMetadataStatus(entry[field]) : String(entry[field] ?? ''); });
-        if (entry.title !== undefined || entry.name !== undefined) changes.name = String(entry.title ?? entry.name ?? '');
-        if (entry.category !== undefined || entry.system !== undefined) changes.category = String(entry.category ?? entry.system ?? '');
-        if (entry.series !== undefined) changes.series = String(entry.series ?? '');
-        if (entry.publisher !== undefined) changes.publisher = String(entry.publisher ?? '');
-        if (entry.topics !== undefined || entry.tags !== undefined) changes.topics = Array.isArray(entry.topics || entry.tags) ? (entry.topics || entry.tags).join(', ') : String(entry.topics ?? entry.tags ?? '');
+        Object.entries(entry || {}).forEach(([rawField, rawValue]) => {
+          if (['id','Id','schema','generatedAt'].includes(rawField)) return;
+          const field = importAliases[rawField] || rawField;
+          if (!validFields.has(field) || METADATA_MANAGER_READONLY_COLUMNS.has(field)) return;
+          let value = rawValue;
+          if (field === 'metadataStatus') value = normalizeMetadataStatus(rawValue);
+          else if (METADATA_MANAGER_ARRAY_FIELDS.has(field) || field === 'topics') value = Array.isArray(rawValue) ? rawValue.join(', ') : String(rawValue ?? '');
+          else value = String(rawValue ?? '');
+          if (String(metadataManagerFieldValue(item, field) ?? '').trim() === String(value ?? '').trim()) return;
+          changes[field] = value;
+        });
         if (Object.keys(changes).length) {
           state.metadataManager.dirty[id] = { ...(state.metadataManager.dirty[id] || {}), ...changes };
           staged += 1;
+          changedFields += Object.keys(changes).length;
         }
       });
-      metadataManagerSetStatus(`Imported ${staged} matching metadata row(s). Review and click Save Edited Rows.`, 'success');
+      metadataManagerSetStatus(`Imported ${staged} matching metadata row(s) with ${changedFields} field change(s). Review and click Save Edited Rows.`, 'success');
       renderMetadataManager();
     } catch (err) {
       metadataManagerSetStatus(`Import failed: ${err?.message || err}`, 'error');
@@ -11495,6 +12090,7 @@ function strategyOverviewHtml(item) {
           ${magazineOverviewField('Publisher', item.publisher)}
           ${magazineOverviewField('Author', item.writer)}
           ${magazineOverviewField('Year', item.year)}
+          ${magazineOverviewField('Page Count', itemPageCountLabel(item))}
           ${magazineOverviewField('Edition', item.edition)}
           ${magazineOverviewField('Region', item.region)}
           ${magazineOverviewField('Language', item.languageTag)}
@@ -11679,24 +12275,35 @@ function compareDetailSequence(a, b) {
   return itemSequenceThenTitle(a, b);
 }
 
-function detailNavigationIdsFromContainer(card) {
-  const root = card?.closest?.('#grid, #recentGrid, .home-shelf, .home-shelf-row, .collection-row, #libraryView, .library-grid-scroll') || $('libraryView') || document;
-  const ids = [...root.querySelectorAll('article.card[data-id], .card[data-id]')]
-    .map(el => String(el.dataset.id || '').trim())
-    .filter(Boolean);
-
+function uniqueItemIds(ids = []) {
   const seen = new Set();
-  return ids.filter(id => {
-    if (seen.has(id)) return false;
+  return ids.map(id => String(id || '').trim()).filter(id => {
+    if (!id || seen.has(id)) return false;
     seen.add(id);
     return true;
   });
 }
 
+function detailNavigationIdsFromContainer(card, item = null) {
+  const currentId = String(card?.dataset?.id || itemIdOf(item) || '').trim();
+
+  // Virtualized grids only keep the visible card window in the DOM.  When a
+  // Details page is opened from the main grid, use the full filtered library
+  // order so Previous/Next can navigate beyond the currently rendered card slice.
+  if (card?.closest?.('#grid') && Array.isArray(state.filtered) && state.filtered.length) {
+    const filteredIds = uniqueItemIds(state.filtered.map(itemIdOf));
+    if (!currentId || filteredIds.includes(currentId)) return filteredIds;
+  }
+
+  const root = card?.closest?.('#recentGrid, .home-shelf, .home-shelf-row, .collection-row, #libraryView, .library-grid-scroll') || $('libraryView') || document;
+  return uniqueItemIds([...root.querySelectorAll('article.card[data-id], .card[data-id]')]
+    .map(el => el.dataset.id));
+}
+
 function setDetailNavigationContextFromCard(card, item = null) {
   const id = String(card?.dataset?.id || itemIdOf(item) || '').trim();
   if (!id) return;
-  const ids = detailNavigationIdsFromContainer(card);
+  const ids = detailNavigationIdsFromContainer(card, item);
   if (ids.includes(id)) {
     state.detailNavigationIds = ids;
   }
@@ -11846,7 +12453,7 @@ function renderDetails(item) {
   $('editTitle').value = item.title || '';
   $('editKind').value = item.kind || 'Manual';
   if ($('editMetadataStatus')) $('editMetadataStatus').value = metadataStatusOf(item);
-  $('editCategory').value = preferredPlatformOf(item) || categoryOf(item) || '';
+  $('editCategory').value = item.kind === 'Magazine' ? '' : (preferredPlatformOf(item) || categoryOf(item) || '');
   if ($('editAssociatedPlatforms')) $('editAssociatedPlatforms').value = platformListText(item);
   syncPreferredPlatformEditorState();
   if ($('editPlatformMatchTitle')) $('editPlatformMatchTitle').value = item.platformMatchTitle || '';
@@ -11938,11 +12545,15 @@ async function saveSelectedMetadata(extra = {}, options = {}) {
     const tags = $('editTags').value.split(',').map(t => t.trim()).filter(Boolean);
     const selectedKind = $('editKind').value;
     const associatedPlatforms = $('editAssociatedPlatforms') ? $('editAssociatedPlatforms').value.split(',').map(p => p.trim()).filter(Boolean) : [];
-    const preferredPlatform = selectedKind === 'Strategy Guide' && hasMultipleAssociatedPlatforms(associatedPlatforms)
-      ? MULTI_PLATFORM_LABEL
-      : ($('editCategory').value || '');
+    const preferredPlatform = selectedKind === 'Magazine'
+      ? ''
+      : (selectedKind === 'Strategy Guide' && hasMultipleAssociatedPlatforms(associatedPlatforms)
+        ? MULTI_PLATFORM_LABEL
+        : ($('editCategory').value || ''));
+    const magazineTitleValue = selectedKind === 'Magazine' ? ($('editMagazineTitle')?.value || $('editSeries').value || $('editTitle').value || '') : '';
     const magazinePayload = selectedKind === 'Magazine' ? {
-      magazineTitle: $('editMagazineTitle')?.value || $('editSeries').value || '',
+      magazineTitle: magazineTitleValue,
+      series: magazineTitleValue,
       volume: $('editVolume')?.value || '',
       coverDate: $('editCoverDate')?.value || '',
       barcodeUpcIssn: $('editBarcodeUpcIssn')?.value || '',
@@ -12058,9 +12669,8 @@ async function saveSelectedMetadata(extra = {}, options = {}) {
       state.filtered = state.items.filter(item => {
         const matchesFilter = state.filter === 'All Content' || (state.filter === 'Favorites' ? isFavoriteItem(item) : item.kind === state.filter);
         const matchesCategory = itemMatchesCategoryFilter(item);
-        const haystack = [item.title, item.kind, item.system, categoryOf(item), item.publisher, item.year, item.series, item.writer, item.issueNumber, item.asin, item.isbn, item.isbn10, item.isbn13, item.languageTag, platformListText(item), item.platformMatchTitle, item.platformResolverSource, item.summary, item.notes, item.relativePath, item.manualTitle, item.manualType, item.controlScheme, item.warrantySupport, ...(item.includedSections || []), ...(item.itemsCovered || []), ...(item.tags || [])].join(' ').toLowerCase();
         const matchesCustom = !state.customFilter || customSideNavItemMatches(item, state.customFilter);
-    return matchesFilter && matchesCategory && matchesCustom && (!q || haystack.includes(q));
+        return matchesFilter && matchesCategory && matchesCustom && (!q || libraryItemSearchHaystack(item).includes(q));
       });
     };
     updateFilteredListOnly();
@@ -15338,7 +15948,10 @@ loadLibraryCoverScale();
 if ($('leftToggle')) $('leftToggle').addEventListener('click', () => runPanelTransition(() => document.body.classList.toggle('left-collapsed')));
 if ($('rightToggleTop')) $('rightToggleTop').addEventListener('click', () => toggleRightPanel());
 if ($('rightToggle')) $('rightToggle').addEventListener('click', () => toggleRightPanel(false));
-if ($('search')) $('search').addEventListener('input', applyFilters);
+if ($('search')) $('search').addEventListener('input', () => {
+  window.clearTimeout(guidevaultLibrarySearchTimer);
+  guidevaultLibrarySearchTimer = window.setTimeout(applyFilters, GUIDEVAULT_LIBRARY_SEARCH_DEBOUNCE_MS);
+});
 if ($('sort')) $('sort').addEventListener('change', applyFilters);
 if ($('coverSizeSlider')) $('coverSizeSlider').addEventListener('input', e => setLibraryCoverScale(e.currentTarget.value));
 if ($('categoryStructureSelect')) $('categoryStructureSelect').addEventListener('change', e => { saveCategoryStructure(e.currentTarget.value); state.categoryFilter = ''; state.customFilter = null; state.filter = 'All Content'; state.viewMode = 'all'; updateNavActive(); applyFilters(); });
@@ -15357,7 +15970,7 @@ document.querySelectorAll('.nav').forEach(btn => btn.addEventListener('click', (
 document.querySelectorAll('.chip').forEach(btn => btn.addEventListener('click', () => {
   showLibraryScreen();
   state.filter = btn.dataset.kind;
-  state.viewMode = state.filter === 'All Content' ? 'all' : state.filter === 'Manual' ? 'manuals' : state.filter === 'Strategy Guide' ? 'strategy-guides' : 'magazines';
+  state.viewMode = state.filter === 'All Content' ? 'all' : state.filter === 'Manual' ? 'manuals' : state.filter === 'Strategy Guide' ? 'strategy-guides' : 'magazine-series';
   state.categoryFilter = '';
   state.customFilter = null;
   document.querySelectorAll('.chip').forEach(c => c.classList.toggle('active', c === btn));

@@ -13,7 +13,7 @@ using System.Net.Http.Headers;
 using SharpCompress.Readers;
 
 var builder = WebApplication.CreateBuilder(args);
-const string GuidevaultVersion = "0.9.106";
+const string GuidevaultVersion = "0.9.116";
 var app = builder.Build();
 var metadataJsonOptions = new JsonSerializerOptions(JsonSerializerDefaults.Web) { PropertyNameCaseInsensitive = true };
 var options = app.Configuration.GetSection("Guidevault").Get<GuidevaultOptions>() ?? new GuidevaultOptions();
@@ -69,6 +69,7 @@ var updateChecker = new StableUpdateChecker(options.Updates, GuidevaultVersion);
 // Creating missing folders can hide typo/path mistakes and make libraries appear empty.
 app.UseDefaultFiles();
 app.UseStaticFiles();
+app.MapGet("/favicon.ico", () => Results.Redirect("/assets/favicon.ico", permanent: false));
 
 app.MapGet("/api/health", () => Results.Ok(new
 {
@@ -1261,40 +1262,11 @@ app.MapGet("/opds/kind/{kind}", async (HttpRequest request, string kind) =>
     var auth = AuthorizeOpdsRequest(request, opdsStore, deviceStore);
     if (!auth.Success) return auth.Response!;
     var normalizedKind = Uri.UnescapeDataString(kind ?? string.Empty);
-    if (string.Equals(normalizedKind, "Magazine", StringComparison.OrdinalIgnoreCase)
-        || string.Equals(normalizedKind, "Magazines", StringComparison.OrdinalIgnoreCase))
-    {
-        return OpdsXml(await BuildOpdsMagazineSeriesCatalog(request, auth.Secret, cache), "navigation");
-    }
-
     var items = (await cache.GetItemsAsync())
         .Where(i => KindEquals(i, normalizedKind))
         .OrderBy(i => DisplayItemTitle(i), StringComparer.OrdinalIgnoreCase)
         .ToArray();
     return OpdsXml(OpdsAcquisitionCatalog(request, auth.Secret, $"Guidevault - {normalizedKind}", $"Items marked as {normalizedKind}.", items));
-});
-
-app.MapGet("/opds/magazines", async (HttpRequest request) =>
-{
-    var auth = AuthorizeOpdsRequest(request, opdsStore, deviceStore);
-    if (!auth.Success) return auth.Response!;
-    return OpdsXml(await BuildOpdsMagazineSeriesCatalog(request, auth.Secret, cache), "navigation");
-});
-
-app.MapGet("/opds/magazines/{series}", async (HttpRequest request, string series) =>
-{
-    var auth = AuthorizeOpdsRequest(request, opdsStore, deviceStore);
-    if (!auth.Success) return auth.Response!;
-    var decoded = Uri.UnescapeDataString(series ?? string.Empty);
-    var normalizedSeries = NormalizeMagazineSeriesName(decoded);
-    var items = (await cache.GetItemsAsync())
-        .Where(i => KindEquals(i, "Magazine"))
-        .Where(i => string.Equals(MagazineSeriesName(i), normalizedSeries, StringComparison.OrdinalIgnoreCase))
-        .OrderBy(i => MagazineIssueSortValue(i))
-        .ThenBy(i => MagazinePublicationSortValue(i))
-        .ThenBy(i => DisplayItemTitle(i), StringComparer.OrdinalIgnoreCase)
-        .ToArray();
-    return OpdsXml(OpdsAcquisitionCatalog(request, auth.Secret, $"Guidevault - {normalizedSeries}", $"Magazine issues in the {normalizedSeries} series.", items));
 });
 
 app.MapGet("/opds/categories", async (HttpRequest request) =>
@@ -1461,31 +1433,6 @@ static IResult RedirectOpdsV1Request(HttpRequest request, string? rest)
     return Results.Redirect(BuildAbsoluteUrl(request, $"/opds{suffix}{request.QueryString}"), permanent: false);
 }
 
-static async Task<XDocument> BuildOpdsMagazineSeriesCatalog(HttpRequest request, string secret, LibraryCache cache)
-{
-    var magazineItems = (await cache.GetItemsAsync())
-        .Where(i => KindEquals(i, "Magazine"))
-        .ToArray();
-
-    var entries = magazineItems
-        .GroupBy(MagazineSeriesName, StringComparer.OrdinalIgnoreCase)
-        .OrderBy(g => g.Key, StringComparer.OrdinalIgnoreCase)
-        .Select(g => OpdsNavEntry(
-            g.Key,
-            $"{g.Count()} issue(s).",
-            $"/opds/magazines/{Uri.EscapeDataString(g.Key)}",
-            "acquisition"))
-        .ToArray();
-
-    return OpdsNavigationCatalog(
-        request,
-        secret,
-        "Guidevault Magazine Series",
-        "Guidevault - Magazine Series",
-        "Browse magazines by series first. Select a series to view its individual issues.",
-        entries);
-}
-
 static async Task<IResult> BuildOpdsRootCatalog(HttpRequest request, LibraryCache cache, OpdsSettingsStore opdsStore, DeviceHistoryStore deviceStore)
 {
     var auth = AuthorizeOpdsRequest(request, opdsStore, deviceStore);
@@ -1504,7 +1451,7 @@ static async Task<IResult> BuildOpdsRootCatalog(HttpRequest request, LibraryCach
             OpdsNavEntry("Recently Added", "Newest indexed items first.", "/opds/recent"),
             OpdsNavEntry("Manuals", $"{items.Count(i => KindEquals(i, "Manual"))} manual(s).", "/opds/kind/Manual"),
             OpdsNavEntry("Strategy Guides", $"{items.Count(i => KindEquals(i, "Strategy Guide"))} strategy guide(s).", "/opds/kind/Strategy%20Guide"),
-            OpdsNavEntry("Magazines", $"{items.Count(i => KindEquals(i, "Magazine"))} magazine issue(s).", "/opds/magazines", "navigation"),
+            OpdsNavEntry("Magazines", $"{items.Count(i => KindEquals(i, "Magazine"))} magazine(s).", "/opds/kind/Magazine"),
             OpdsNavEntry("Categories", "Browse by detected category or system.", "/opds/categories"),
             OpdsNavEntry("Series", "Browse by magazine or guide series.", "/opds/series")
         }),
@@ -1896,64 +1843,6 @@ static string FormatOpdsBytes(long bytes)
 static OpdsNavigationEntry OpdsNavEntry(string title, string description, string href, string kind = "acquisition") => new(title, description, href, kind);
 
 static bool KindEquals(LibraryItem item, string kind) => string.Equals(item.Kind ?? string.Empty, kind ?? string.Empty, StringComparison.OrdinalIgnoreCase);
-
-static string MagazineSeriesName(LibraryItem item)
-{
-    var candidate = FirstNonBlank(
-        item.MagazineTitle,
-        item.Series,
-        item.Category,
-        item.System,
-        item.Title,
-        item.FileName);
-    return NormalizeMagazineSeriesName(candidate);
-}
-
-static string NormalizeMagazineSeriesName(string? value)
-{
-    var title = (value ?? string.Empty).Trim();
-    if (string.IsNullOrWhiteSpace(title)) return "Unknown Series";
-
-    title = Regex.Replace(title, @"\.(?:cbz|cbr|pdf|zip|rar)$", string.Empty, RegexOptions.IgnoreCase).Trim();
-    title = !title.Contains(' ') && Regex.IsMatch(title, @"[._-]")
-        ? Regex.Replace(title, @"[._-]+", " ").Trim()
-        : Regex.Replace(title, @"_+|\s{2,}", " ").Trim();
-    title = Regex.Replace(title, @"\s+(?:issue|no\.?|number|num\.?|#)\s*#?\d{1,4}\b.*$", string.Empty, RegexOptions.IgnoreCase).Trim();
-    title = Regex.Replace(title, @"\s+#\s*\d{1,4}\b.*$", string.Empty, RegexOptions.IgnoreCase).Trim();
-    title = Regex.Replace(title, @"\s+vol(?:ume)?\.?\s*\d+\b.*$", string.Empty, RegexOptions.IgnoreCase).Trim();
-    title = Regex.Replace(title, @"\s+\d{4}[\s-]*(?:0?[1-9]|1[0-2])?\b.*$", string.Empty, RegexOptions.IgnoreCase).Trim();
-    title = Regex.Replace(title, @"\s+\((?:jan|feb|mar|apr|may|jun|jul|aug|sep|sept|oct|nov|dec)[a-z]*\s+\d{4}\).*$", string.Empty, RegexOptions.IgnoreCase).Trim();
-    title = Regex.Replace(title, @"\s+(?:jan|feb|mar|apr|may|jun|jul|aug|sep|sept|oct|nov|dec)[a-z]*\s+\d{4}\b.*$", string.Empty, RegexOptions.IgnoreCase).Trim();
-
-    return string.IsNullOrWhiteSpace(title) ? "Unknown Series" : title;
-}
-
-static string FirstNonBlank(params string?[] values)
-{
-    foreach (var value in values)
-    {
-        if (!string.IsNullOrWhiteSpace(value)) return value.Trim();
-    }
-    return string.Empty;
-}
-
-static double MagazineIssueSortValue(LibraryItem item)
-{
-    var raw = FirstNonBlank(item.IssueNumber, item.Title, item.FileName);
-    var match = Regex.Match(raw, @"\d+(?:\.\d+)?");
-    return match.Success && double.TryParse(match.Value, out var value) ? value : double.MaxValue;
-}
-
-static DateTimeOffset MagazinePublicationSortValue(LibraryItem item)
-{
-    foreach (var value in new[] { item.PublicationDate, item.CoverDate, item.Year })
-    {
-        if (string.IsNullOrWhiteSpace(value)) continue;
-        if (DateTimeOffset.TryParse(value, out var parsed)) return parsed;
-        if (int.TryParse(value.Trim(), out var year) && year > 0) return new DateTimeOffset(year, 1, 1, 0, 0, 0, TimeSpan.Zero);
-    }
-    return DateTimeOffset.MaxValue;
-}
 
 static string CategoryOrSystem(LibraryItem item)
 {
@@ -4321,7 +4210,7 @@ public static class ItemMetadataJsonReader
             if (!HasText(isbn13)) isbn13 = split.Isbn13;
         }
 
-        var title = FirstText(GetString(payload, "title"), GetString(payload, "strategyGuideTitle"), GetString(payload, "manualTitle"), GetString(payload, "magazineTitle"));
+        var title = FirstText(GetString(payload, "title"), GetString(payload, "strategyGuideTitle"), GetString(payload, "name"));
         var language = FirstText(GetString(payload, "languageTag"), GetString(payload, "language"));
         var edition = FirstText(GetString(payload, "edition"), GetString(payload, "editionType"));
         var franchise = FirstText(GetString(payload, "franchise"), GetString(payload, "gameFranchise"));
@@ -4370,7 +4259,7 @@ public static class ItemMetadataJsonReader
             Edition: edition,
             Franchise: franchise,
             Developer: developer,
-            GamePublisher: FirstText(GetString(payload, "gamePublisher"), GetString(payload, "publisher")),
+            GamePublisher: GetString(payload, "gamePublisher"),
             GameReleaseYear: GetString(payload, "gameReleaseYear"),
             Genre: GetString(payload, "genre"),
             CoveredGames: GetStringArray(payload, "coveredGames"),
@@ -4802,7 +4691,7 @@ public static class MetadataLockHelper
             Year: S("year", update.Year, "publishYear"),
             Tags: A("tags", update.Tags),
             Summary: S("summary", update.Summary, "description"),
-            Series: S("series", update.Series, "franchise", "gameFranchise", "magazineTitle"),
+            Series: S("series", update.Series),
             Writer: S("writer", update.Writer, "authorWriter", "editor"),
             IssueNumber: S("issueNumber", update.IssueNumber, "issue"),
             Rating: S("rating", update.Rating, "esrb"),
@@ -4812,16 +4701,16 @@ public static class MetadataLockHelper
             Isbn13: S("isbn13", update.Isbn13, "isbn"),
             LanguageTag: S("languageTag", update.LanguageTag, "language"),
             AssociatedPlatforms: A("associatedPlatforms", update.AssociatedPlatforms),
-            PlatformMatchTitle: S("platformMatchTitle", update.PlatformMatchTitle, "gameTitle"),
+            PlatformMatchTitle: S("platformMatchTitle", update.PlatformMatchTitle),
             PlatformResolverSource: S("platformResolverSource", update.PlatformResolverSource),
             PlatformResolverConfidence: D("platformResolverConfidence", update.PlatformResolverConfidence),
-            MagazineTitle: S("magazineTitle", update.MagazineTitle, "series"),
+            MagazineTitle: S("magazineTitle", update.MagazineTitle),
             Volume: S("volume", update.Volume),
             CoverDate: S("coverDate", update.CoverDate),
             PublicationDate: S("publicationDate", update.PublicationDate),
             Region: S("region", update.Region),
             PlatformFocus: S("platformFocus", update.PlatformFocus),
-            PrimarySystem: S("primarySystem", update.PrimarySystem, "preferredPlatform"),
+            PrimarySystem: S("primarySystem", update.PrimarySystem),
             MagazineCategory: S("magazineCategory", update.MagazineCategory),
             CoverSubject: S("coverSubject", update.CoverSubject, "coverStory"),
             BarcodeUpcIssn: S("barcodeUpcIssn", update.BarcodeUpcIssn, "barcode", "upc", "issn"),
@@ -4829,10 +4718,10 @@ public static class MetadataLockHelper
             FeaturedPlatforms: A("featuredPlatforms", update.FeaturedPlatforms),
             SpecialFeatures: A("specialFeatures", update.SpecialFeatures, "sections"),
             IncludedExtras: A("includedExtras", update.IncludedExtras, "physicalExtras", "insertDetails"),
-            GameTitle: S("gameTitle", update.GameTitle, "platformMatchTitle"),
+            GameTitle: S("gameTitle", update.GameTitle),
             GuideType: S("guideType", update.GuideType),
             Edition: S("edition", update.Edition, "editionType"),
-            Franchise: S("franchise", update.Franchise, "gameFranchise", "series"),
+            Franchise: S("franchise", update.Franchise, "gameFranchise"),
             Developer: S("developer", update.Developer, "gameDeveloper"),
             GamePublisher: S("gamePublisher", update.GamePublisher),
             GameReleaseYear: S("gameReleaseYear", update.GameReleaseYear),
@@ -4842,7 +4731,7 @@ public static class MetadataLockHelper
             GuideTopics: A("guideTopics", update.GuideTopics),
             CharactersCovered: A("charactersCovered", update.CharactersCovered),
             LocationsCovered: A("locationsCovered", update.LocationsCovered),
-            ManualTitle: S("manualTitle", update.ManualTitle, "title"),
+            ManualTitle: S("manualTitle", update.ManualTitle),
             ManualType: S("manualType", update.ManualType),
             IncludedSections: A("includedSections", update.IncludedSections),
             ControlScheme: S("controlScheme", update.ControlScheme),
@@ -10100,5 +9989,5 @@ static class GuidevaultLibraryIoGate
 
 static class GuidevaultBuildInfo
 {
-    public const string Version = "0.9.106";
+    public const string Version = "0.9.116";
 }

@@ -15488,3 +15488,114 @@ button.metadata-manager-sort-button:focus-visible {
     grid-template-columns:1fr!important;
   }
 }
+
+/* v0.9.106 — Metadata Manager columns grouped by content context. */
+.metadata-manager-column-picker{
+  display:block!important;
+  max-height:300px;
+  padding:10px 10px 4px!important;
+  border-top:1px solid rgba(255,255,255,.06);
+}
+.metadata-manager-column-group{
+  margin:0 0 14px;
+  padding:0 0 12px;
+  border-bottom:1px solid rgba(108,184,255,.10);
+}
+.metadata-manager-column-group:last-child{
+  border-bottom:0;
+  margin-bottom:0;
+  padding-bottom:0;
+}
+.metadata-manager-column-group h4{
+  margin:0 0 8px;
+  color:#9ed6ff;
+  font-size:.74rem;
+  font-weight:900;
+  text-transform:uppercase;
+  letter-spacing:.11em;
+}
+.metadata-manager-column-group-grid{
+  display:grid;
+  grid-template-columns:repeat(4,minmax(185px,1fr));
+  gap:8px;
+}
+.metadata-manager-column-option span{
+  flex:1;
+  min-width:0;
+  overflow:hidden;
+  text-overflow:ellipsis;
+  white-space:nowrap;
+}
+@media(max-width:1100px){
+  .metadata-manager-column-group-grid{grid-template-columns:repeat(3,minmax(170px,1fr));}
+}
+@media(max-width:900px){
+  .metadata-manager-column-group-grid{grid-template-columns:repeat(2,minmax(160px,1fr));}
+}
+@media(max-width:640px){
+  .metadata-manager-column-group-grid{grid-template-columns:1fr;}
+}
+
+
+/* v0.9.108 — large-library performance pass.
+   Large item grids now window rendered, so the browser only keeps the visible card
+   slice in the DOM while preserving scroll height with lightweight spacers. */
+.grid.virtualized-grid{
+  align-items:start;
+}
+.gv-virtual-spacer{
+  grid-column:1 / -1;
+  pointer-events:none;
+  min-height:0;
+}
+.library-progressive-render-note{
+  grid-column:1 / -1;
+  color:#9eb8d1;
+  border:1px dashed rgba(92,166,255,.28);
+  border-radius:12px;
+  padding:12px 14px;
+  text-align:center;
+  background:rgba(10,18,27,.72);
+}
+
+
+/* v0.9.109 — Metadata Manager batch editor follows the visible editable columns. */
+.metadata-manager-batch-empty{
+  grid-column:1 / -1;
+  margin:0;
+  color:#9db3cc;
+  font-size:.82rem;
+  border:1px dashed rgba(124,184,255,.22);
+  border-radius:10px;
+  padding:10px 12px;
+  background:rgba(8,15,25,.45);
+}
+.metadata-manager-batch-mode-field{
+  border-left:1px solid rgba(113,174,235,.18);
+  padding-left:10px;
+}
+
+/* v0.9.112 — Magazine grouping now uses Magazine Title/series; removed redundant Magazine Group editing surface. */
+
+/* v0.9.114 — clearer sidebar category-mode section headings inside the native select popup. */
+.category-structure-select optgroup,
+.category-structure-select option.category-structure-heading,
+.category-structure-select option[disabled].category-structure-heading{
+  background-color:#17324d!important;
+  color:#9fd8ff!important;
+  font-weight:900!important;
+  letter-spacing:.08em;
+  text-transform:uppercase;
+}
+.category-structure-select option{
+  background-color:#0b1622!important;
+  color:#f2f8ff!important;
+}
+.category-structure-select option:not(.category-structure-heading){
+  padding-left:14px;
+}
+.category-structure-select option:checked{
+  background-color:#1d63d8!important;
+  color:#ffffff!important;
+}
+

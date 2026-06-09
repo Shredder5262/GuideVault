@@ -4,7 +4,9 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Guidevault</title>
-  <link rel="stylesheet" href="/styles.css?v=0.9.106-opds-magazine-series" />
+  <link rel="icon" type="image/x-icon" href="/assets/favicon.ico?v=0.9.116" />
+  <link rel="shortcut icon" type="image/x-icon" href="/assets/favicon.ico?v=0.9.116" />
+  <link rel="stylesheet" href="/styles.css?v=0.9.116-stability" />
 </head>
 <body class="right-collapsed auth-locked">
   <section id="loginView" class="login-view" aria-labelledby="loginTitle">
@@ -81,9 +83,22 @@
         <div class="category-side-heading">
           <select id="categoryStructureSelect" class="category-structure-select" aria-label="Category browsing mode">
             <option value="content-type">Categories: Content Type</option>
-            <option value="platform">Categories: Platform / Publication</option>
-            <option value="publisher">Categories: Publisher</option>
-            <option value="decade">Categories: Decade</option>
+            <option value="__manuals" class="category-structure-heading" disabled>Manuals</option>
+            <option value="manual-system">Manuals: System</option>
+            <option value="manual-series">Manuals: Series / Franchise</option>
+            <option value="__strategy-guides" class="category-structure-heading" disabled>Strategy Guides</option>
+            <option value="strategy-platform">Guides: Platform</option>
+            <option value="strategy-guide-type">Guides: Guide Type</option>
+            <option value="strategy-series">Guides: Game Series</option>
+            <option value="__magazines" class="category-structure-heading" disabled>Magazines</option>
+            <option value="magazine-title">Magazines: Magazine Title</option>
+            <option value="magazine-primary-system">Magazines: Primary System</option>
+            <option value="magazine-year">Magazines: Year</option>
+            <option value="__shared" class="category-structure-heading" disabled>Shared</option>
+            <option value="metadata-status">Categories: Metadata Status</option>
+            <option value="platform">All: Platform / Publication</option>
+            <option value="publisher">All: Publisher</option>
+            <option value="decade">All: Decade</option>
           </select>
         </div>
         <div id="categories"></div>
@@ -1018,43 +1033,9 @@
               <details class="metadata-manager-batch-panel">
                 <summary>
                   <span>Batch edit selected rows</span>
-                  <em>Language, region, platform, publisher, and tags</em>
+                  <em>Uses the currently visible editable columns</em>
                 </summary>
-                <div class="metadata-manager-batch-grid">
-                <label for="metadataBatchLanguage">Language
-                  <input id="metadataBatchLanguage" type="text" placeholder="English" />
-                </label>
-                <label for="metadataBatchRegion">Region
-                  <input id="metadataBatchRegion" type="text" placeholder="US, JP, EU..." />
-                </label>
-                <label for="metadataBatchCategory">Preferred Platform
-                  <input id="metadataBatchCategory" type="text" placeholder="PlayStation 2" />
-                </label>
-                <label for="metadataBatchPublisher">Publisher
-                  <input id="metadataBatchPublisher" type="text" placeholder="Nintendo Power, Prima..." />
-                </label>
-                <label for="metadataBatchStatus">Metadata Status
-                  <select id="metadataBatchStatus">
-                    <option value="">Do not change</option>
-                    <option value="Unreviewed">Unreviewed</option>
-                    <option value="Needs Review">Needs Review</option>
-                    <option value="Reviewed">Reviewed</option>
-                    <option value="Locked">Locked</option>
-                    <option value="Failed Lookup">Failed Lookup</option>
-                    <option value="Manual Only">Manual Only</option>
-                  </select>
-                </label>
-                <label for="metadataBatchTagsMode">Tags / Topics Mode
-                  <select id="metadataBatchTagsMode">
-                    <option value="add">Add to existing</option>
-                    <option value="replace">Replace existing</option>
-                    <option value="remove">Remove from existing</option>
-                  </select>
-                </label>
-                <label for="metadataBatchTags">Tags / Topics
-                  <input id="metadataBatchTags" type="text" placeholder="Strategy, Maps, Secrets" />
-                </label>
-              </div>
+                <div id="metadataManagerBatchGrid" class="metadata-manager-batch-grid"></div>
               <div class="settings-actions inline-actions metadata-manager-batch-actions">
                 <button id="metadataManagerSelectAll" class="ghost" type="button">Select Filtered</button>
                 <button id="metadataManagerClearSelection" class="ghost" type="button">Clear Selection</button>
@@ -1549,16 +1530,84 @@
             <div class="system-update-list">
               <details class="system-update-entry" open>
                 <summary>
-                  <span>Guidevault 0.9.106 - OPDS Magazine Series Navigation</span>
+                  <span>Guidevault 0.9.116 - Stabilization and Performance Polish</span>
                   <em>Installed</em>
                 </summary>
                 <ul>
-                  <li>Changed OPDS Magazines navigation so the catalog now displays magazine series first instead of every individual issue.</li>
-                  <li>Added a magazine-series OPDS feed that shows the individual issues after selecting a series.</li>
-                  <li>Kept the older /opds/kind/Magazine route compatible by redirecting its behavior to the new series-first magazine catalog.</li>
+                  <li>Optimized left sidebar category-mode counting so large libraries do not repeatedly rescan every item for every category heading.</li>
+                  <li>Improved Details previous/next navigation from virtualized library grids so it uses the full filtered result order instead of only the cards currently rendered on screen.</li>
+                  <li>Reused the shared library search cache after metadata saves and avoided rebuilding search text when no search term is active.</li>
+                  <li>Cleaned up minor confirmation-dialog duplication and refreshed cache-busting for this stabilization build.</li>
                 </ul>
               </details>
-              <details class="system-update-entry" open>
+              <details class="system-update-entry">
+                <summary>
+                  <span>Guidevault 0.9.113 - Sidebar Category Modes</span>
+                  <em>Installed</em>
+                </summary>
+                <ul>
+                  <li>Changed the left sidebar category selector into a context-aware category mode picker.</li>
+                  <li>Added Manual, Strategy Guide, Magazine, and shared category modes without adding extra permanent sidebar controls.</li>
+                  <li>Magazine category browsing now supports Magazine Title, Primary System, and Year using existing magazine metadata fields.</li>
+                </ul>
+              </details>
+              <details class="system-update-entry">
+                <summary>
+                  <span>Guidevault 0.9.111 - Magazine Group Metadata Manager Column</span>
+                  <em>Installed</em>
+                </summary>
+                <ul>
+                  <li>Added a dedicated Magazine Group column under the Metadata Manager Magazine fields group.</li>
+                  <li>Made Magazine Group available in Batch edit selected rows whenever that column is visible.</li>
+                  <li>Kept Preferred Platform from applying to magazine rows so magazine grouping and primary system values do not get mixed together.</li>
+                </ul>
+              </details>
+              <details class="system-update-entry">
+                <summary>
+                  <span>Guidevault 0.9.109 - Visible Column Batch Editing</span>
+                  <em>Installed</em>
+                </summary>
+                <ul>
+                  <li>Changed Metadata Manager batch editing so it automatically shows the currently visible editable columns.</li>
+                  <li>Kept Type and Source out of batch edit because they are display/read-only columns.</li>
+                  <li>Preserved the Topics add/replace/remove mode when the Topics / Games column is visible.</li>
+                </ul>
+              </details>
+              <details class="system-update-entry">
+                <summary>
+                  <span>Guidevault 0.9.108 - Large Library Performance Pass</span>
+                  <em>Installed</em>
+                </summary>
+                <ul>
+                  <li>Added windowed rendering for large library grids so only the visible card slice stays in the DOM while scrolling.</li>
+                  <li>Changed the Magazines chip to open the magazine-series hub instead of immediately rendering every issue.</li>
+                  <li>Debounced library search input and avoided building search haystacks when no search text is active.</li>
+                  <li>Stopped collapsed sidebar category groups from rendering all hidden category buttons until expanded.</li>
+                  <li>Kept lazy/async cover loading active inside the virtualized card window.</li>
+                </ul>
+              </details>
+              <details class="system-update-entry">
+                <summary>
+                  <span>Guidevault 0.9.107 - Metadata Cleanup and Initial Load Polish</span>
+                  <em>Installed</em>
+                </summary>
+                <ul>
+                  <li>Added Page Count to the Strategy Guide identity card so guide page totals are visible in the main guide details overview.</li>
+                  <li>Expanded Metadata Manager JSON import so reviewed cleanup files can update all editable metadata fields, not just the small core subset.</li>
+                  <li>Reduced initial library grid render pressure and skipped a duplicate re-render when the refreshed server library matches the cached library already shown on startup.</li>
+                </ul>
+              </details>
+              <details class="system-update-entry">
+                <summary>
+                  <span>Guidevault 0.9.106 - Metadata Manager Column Groups</span>
+                  <em>Installed</em>
+                </summary>
+                <ul>
+                  <li>Grouped the Metadata Manager column selector by content context so shared, book, strategy guide, manual, magazine, lookup, and notes fields are easier to identify.</li>
+                  <li>Kept the existing column visibility and table reorder behavior while making the picker easier to scan.</li>
+                </ul>
+              </details>
+              <details class="system-update-entry">
                 <summary>
                   <span>Guidevault 0.9.105 - Metadata Manager Filter Layout</span>
                   <em>Installed</em>
@@ -3333,6 +3382,6 @@
   </dialog>
 
 
-  <script src="/app.js?v=0.9.106-opds-magazine-series"></script>
+  <script src="/app.js?v=0.9.116-stability"></script>
 </body>
 </html>
