@@ -1927,6 +1927,9 @@ static bool ShouldOpdsGroupKind(string? kind) =>
     string.Equals(kind, "Magazine", StringComparison.OrdinalIgnoreCase)
     || string.Equals(kind, "Manual", StringComparison.OrdinalIgnoreCase);
 
+static string OpdsFirstNonEmpty(params string?[] values) =>
+    values.FirstOrDefault(value => !string.IsNullOrWhiteSpace(value))?.Trim() ?? string.Empty;
+
 static string OpdsKindPluralTitle(string? kind)
 {
     if (string.Equals(kind, "Magazine", StringComparison.OrdinalIgnoreCase)) return "Magazines";
@@ -1948,7 +1951,7 @@ static string OpdsKindGroupBucket(LibraryItem item, string? kind)
 {
     if (string.Equals(kind, "Magazine", StringComparison.OrdinalIgnoreCase))
     {
-        var title = FirstNonEmpty(item.MagazineTitle, item.Series);
+        var title = OpdsFirstNonEmpty(item.MagazineTitle, item.Series);
         if (!string.IsNullOrWhiteSpace(title)) return title.Trim();
         return "Unsorted Magazines";
     }
@@ -1960,7 +1963,7 @@ static string OpdsKindGroupBucket(LibraryItem item, string? kind)
             if (!string.IsNullOrWhiteSpace(platform) && !IsMultiPlatformBucket(platform)) return platform.Trim();
         }
 
-        var system = FirstNonEmpty(item.PrimarySystem, item.Category, item.System);
+        var system = OpdsFirstNonEmpty(item.PrimarySystem, item.Category, item.System);
         if (!string.IsNullOrWhiteSpace(system) && !IsMultiPlatformBucket(system)) return system.Trim();
         return "Unsorted Manuals";
     }
@@ -1984,7 +1987,7 @@ static string DisplayItemTitle(LibraryItem item)
 {
     if (string.Equals(item.Kind, "Magazine", StringComparison.OrdinalIgnoreCase) && !string.IsNullOrWhiteSpace(item.IssueNumber))
     {
-        var publicationTitle = FirstNonEmpty(item.MagazineTitle, item.Series);
+        var publicationTitle = OpdsFirstNonEmpty(item.MagazineTitle, item.Series);
         if (!string.IsNullOrWhiteSpace(publicationTitle)) return $"{publicationTitle.Trim()} #{item.IssueNumber.Trim()}";
     }
 
