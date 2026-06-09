@@ -78,7 +78,7 @@ const GUIDEVAULT_GRID_VIRTUAL_THRESHOLD = 180;
 const GUIDEVAULT_GRID_VIRTUAL_BUFFER_ROWS = 4;
 const GUIDEVAULT_GRID_VIRTUAL_MAX_CARDS = 160;
 const GUIDEVAULT_LIBRARY_SEARCH_DEBOUNCE_MS = 140;
-const GUIDEVAULT_APP_VERSION = '0.9.116';
+const GUIDEVAULT_APP_VERSION = '0.9.117';
 const GUIDEVAULT_FILENAME_SCHEMA_KEY = 'guidevault.filenameRename.schema.v1';
 const GUIDEVAULT_DEFAULT_FILENAME_SCHEMA = '{title}';
 const GUIDEVAULT_STABLE_TAG_FEED_URL = 'https://api.github.com/repos/Shredder5262/GuideVault/tags';
@@ -11718,6 +11718,83 @@ function metadataManagerExportCsv() {
   metadataManagerSetStatus(`Exported ${rows.length} visible row(s) with ${columns.length} visible column(s) to CSV.`, 'success');
 }
 
+function metadataManagerImportNormalizeKey(value) {
+  return String(value || '')
+    .toLowerCase()
+    .replace(/&/g, ' and ')
+    .replace(/[^a-z0-9]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function metadataManagerImportIssueKey(value) {
+  const text = String(value || '').trim();
+  if (!text) return '';
+  const match = text.match(/(?:issue\s*#?|#)\s*0*([0-9]+[A-Za-z]?)/i) || text.match(/^0*([0-9]+[A-Za-z]?)$/);
+  if (!match) return metadataManagerImportNormalizeKey(text);
+  return String(match[1] || '').toLowerCase();
+}
+
+function metadataManagerImportMagazineTitleKey(itemOrEntry) {
+  const candidates = [
+    itemOrEntry?.magazineTitle,
+    itemOrEntry?.series,
+    itemOrEntry?.publication,
+    itemOrEntry?.name,
+    itemOrEntry?.title
+  ];
+  const raw = candidates.find(value => String(value || '').trim()) || '';
+  return metadataManagerImportNormalizeKey(String(raw)
+    .replace(/[‒–—-]\s*Issue\s*#?\s*\d+.*$/i, '')
+    .replace(/\s*#\s*\d+.*$/i, '')
+    .replace(/\s*Issue\s*#?\s*\d+.*$/i, ''));
+}
+
+function metadataManagerImportMagazineIssueKey(itemOrEntry) {
+  const direct = metadataManagerImportIssueKey(itemOrEntry?.issueNumber || itemOrEntry?.magazineIssueNumber || itemOrEntry?.number);
+  if (direct) return direct;
+  return metadataManagerImportIssueKey(itemOrEntry?.name || itemOrEntry?.title || itemOrEntry?.fileName || itemOrEntry?.path);
+}
+
+function metadataManagerImportTitleKey(itemOrEntry) {
+  const value = itemOrEntry?.manualTitle || itemOrEntry?.gameTitle || itemOrEntry?.magazineTitle || itemOrEntry?.title || itemOrEntry?.name || itemOrEntry?.fileName || itemOrEntry?.path || '';
+  return metadataManagerImportNormalizeKey(value);
+}
+
+function metadataManagerFindImportItem(entry) {
+  const items = state.items || [];
+  const id = String(entry?.id || entry?.Id || '').trim();
+  if (id) {
+    const byId = items.find(i => metadataManagerItemId(i) === id);
+    if (byId) return byId;
+  }
+
+  const entryKind = String(entry?.kind || entry?.type || '').trim().toLowerCase();
+  const entryMagazineKey = metadataManagerImportMagazineTitleKey(entry);
+  const entryIssueKey = metadataManagerImportMagazineIssueKey(entry);
+  if (entryIssueKey && entryMagazineKey) {
+    const magazineMatch = items.find(item => {
+      if (String(item?.kind || '').toLowerCase() !== 'magazine') return false;
+      const itemIssueKey = metadataManagerImportMagazineIssueKey(item);
+      if (!itemIssueKey || itemIssueKey !== entryIssueKey) return false;
+      const itemMagazineKey = metadataManagerImportMagazineTitleKey(item);
+      return itemMagazineKey === entryMagazineKey || itemMagazineKey.includes(entryMagazineKey) || entryMagazineKey.includes(itemMagazineKey);
+    });
+    if (magazineMatch) return magazineMatch;
+  }
+
+  const entryTitleKey = metadataManagerImportTitleKey(entry);
+  if (entryTitleKey) {
+    const titleMatches = items.filter(item => {
+      if (entryKind && String(item?.kind || '').toLowerCase() !== entryKind) return false;
+      return metadataManagerImportTitleKey(item) === entryTitleKey;
+    });
+    if (titleMatches.length === 1) return titleMatches[0];
+  }
+
+  return null;
+}
+
 function metadataManagerImportJsonFile(file) {
   if (!file) return;
   const reader = new FileReader();
@@ -11735,15 +11812,18 @@ function metadataManagerImportJsonFile(file) {
         language: 'languageTag',
         metadataPageCount: 'pageCount'
       };
+      let matched = 0;
       let staged = 0;
       let changedFields = 0;
       entries.forEach(entry => {
-        const id = String(entry.id || entry.Id || '').trim();
-        const item = (state.items || []).find(i => metadataManagerItemId(i) === id);
-        if (!id || !item) return;
+        const item = metadataManagerFindImportItem(entry);
+        if (!item) return;
+        const id = metadataManagerItemId(item);
+        if (!id) return;
+        matched += 1;
         const changes = {};
         Object.entries(entry || {}).forEach(([rawField, rawValue]) => {
-          if (['id','Id','schema','generatedAt'].includes(rawField)) return;
+          if (['id','Id','schema','generatedAt','items','matchName','sourceName','originalName'].includes(rawField)) return;
           const field = importAliases[rawField] || rawField;
           if (!validFields.has(field) || METADATA_MANAGER_READONLY_COLUMNS.has(field)) return;
           let value = rawValue;
@@ -11759,7 +11839,8 @@ function metadataManagerImportJsonFile(file) {
           changedFields += Object.keys(changes).length;
         }
       });
-      metadataManagerSetStatus(`Imported ${staged} matching metadata row(s) with ${changedFields} field change(s). Review and click Save Edited Rows.`, 'success');
+      const unmatched = Math.max(0, entries.length - matched);
+      metadataManagerSetStatus(`Imported ${staged} row(s) with ${changedFields} field change(s). Matched ${matched} of ${entries.length} import record(s)${unmatched ? `; ${unmatched} unmatched` : ''}. Review and click Save Edited Rows.`, staged || matched ? 'success' : 'error');
       renderMetadataManager();
     } catch (err) {
       metadataManagerSetStatus(`Import failed: ${err?.message || err}`, 'error');
