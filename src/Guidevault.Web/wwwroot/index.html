@@ -4,9 +4,9 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Guidevault</title>
-  <link rel="icon" type="image/x-icon" href="/assets/favicon.ico?v=0.9.117" />
-  <link rel="shortcut icon" type="image/x-icon" href="/assets/favicon.ico?v=0.9.117" />
-  <link rel="stylesheet" href="/styles.css?v=0.9.117-import-fallback" />
+  <link rel="icon" type="image/x-icon" href="/assets/favicon.ico?v=0.9.118" />
+  <link rel="shortcut icon" type="image/x-icon" href="/assets/favicon.ico?v=0.9.118" />
+  <link rel="stylesheet" href="/styles.css?v=0.9.118-opds-grouping" />
 </head>
 <body class="right-collapsed auth-locked">
   <section id="loginView" class="login-view" aria-labelledby="loginTitle">
@@ -1530,14 +1530,14 @@
             <div class="system-update-list">
               <details class="system-update-entry" open>
                 <summary>
-                  <span>Guidevault 0.9.117 - Stabilization and Performance Polish</span>
+                  <span>Guidevault 0.9.118 - OPDS Grouping Restoration</span>
                   <em>Installed</em>
                 </summary>
                 <ul>
-                  <li>Optimized left sidebar category-mode counting so large libraries do not repeatedly rescan every item for every category heading.</li>
-                  <li>Improved Details previous/next navigation from virtualized library grids so it uses the full filtered result order instead of only the cards currently rendered on screen.</li>
-                  <li>Reused the shared library search cache after metadata saves and avoided rebuilding search text when no search term is active.</li>
-                  <li>Cleaned up minor confirmation-dialog duplication and refreshed cache-busting for this stabilization build.</li>
+                  <li>Restored the OPDS magazine structure so Magazines opens to official magazine titles before issue lists.</li>
+                  <li>Restored the OPDS manual structure so Manuals opens to system/platform groups before manual lists.</li>
+                  <li>Kept Strategy Guides as the direct guide list and preserved the existing all-items, recent, category, series, and search feeds.</li>
+                  <li>Updated magazine OPDS item titles to prefer Magazine Title plus issue number when available.</li>
                 </ul>
               </details>
               <details class="system-update-entry">
@@ -3382,6 +3382,6 @@
   </dialog>
 
 
-  <script src="/app.js?v=0.9.117-import-fallback"></script>
+  <script src="/app.js?v=0.9.118-opds-grouping"></script>
 </body>
 </html>

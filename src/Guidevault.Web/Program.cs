@@ -13,7 +13,7 @@ using System.Net.Http.Headers;
 using SharpCompress.Readers;
 
 var builder = WebApplication.CreateBuilder(args);
-const string GuidevaultVersion = "0.9.117";
+const string GuidevaultVersion = "0.9.118";
 var app = builder.Build();
 var metadataJsonOptions = new JsonSerializerOptions(JsonSerializerDefaults.Web) { PropertyNameCaseInsensitive = true };
 var options = app.Configuration.GetSection("Guidevault").Get<GuidevaultOptions>() ?? new GuidevaultOptions();
@@ -1264,9 +1264,56 @@ app.MapGet("/opds/kind/{kind}", async (HttpRequest request, string kind) =>
     var normalizedKind = Uri.UnescapeDataString(kind ?? string.Empty);
     var items = (await cache.GetItemsAsync())
         .Where(i => KindEquals(i, normalizedKind))
+        .ToArray();
+
+    if (ShouldOpdsGroupKind(normalizedKind))
+    {
+        var entries = items
+            .GroupBy(i => OpdsKindGroupBucket(i, normalizedKind), StringComparer.OrdinalIgnoreCase)
+            .OrderBy(g => OpdsGroupSortKey(g.Key, normalizedKind), StringComparer.OrdinalIgnoreCase)
+            .ThenBy(g => g.Key, StringComparer.OrdinalIgnoreCase)
+            .Select(g => OpdsNavEntry(
+                g.Key,
+                $"{g.Count()} item(s).",
+                $"/opds/kind/{Uri.EscapeDataString(normalizedKind)}/{Uri.EscapeDataString(g.Key)}",
+                "navigation"))
+            .ToArray();
+
+        return OpdsXml(OpdsNavigationCatalog(
+            request,
+            auth.Secret,
+            $"Guidevault - {OpdsKindPluralTitle(normalizedKind)}",
+            $"Guidevault - {OpdsKindPluralTitle(normalizedKind)}",
+            OpdsKindGroupedDescription(normalizedKind),
+            entries),
+            "navigation");
+    }
+
+    var ordered = items
         .OrderBy(i => DisplayItemTitle(i), StringComparer.OrdinalIgnoreCase)
         .ToArray();
-    return OpdsXml(OpdsAcquisitionCatalog(request, auth.Secret, $"Guidevault - {normalizedKind}", $"Items marked as {normalizedKind}.", items));
+    return OpdsXml(OpdsAcquisitionCatalog(request, auth.Secret, $"Guidevault - {normalizedKind}", $"Items marked as {normalizedKind}.", ordered));
+});
+
+app.MapGet("/opds/kind/{kind}/{group}", async (HttpRequest request, string kind, string group) =>
+{
+    var auth = AuthorizeOpdsRequest(request, opdsStore, deviceStore);
+    if (!auth.Success) return auth.Response!;
+    var normalizedKind = Uri.UnescapeDataString(kind ?? string.Empty);
+    var decodedGroup = Uri.UnescapeDataString(group ?? string.Empty);
+    var items = (await cache.GetItemsAsync())
+        .Where(i => KindEquals(i, normalizedKind))
+        .Where(i => string.Equals(OpdsKindGroupBucket(i, normalizedKind), decodedGroup, StringComparison.OrdinalIgnoreCase))
+        .OrderBy(i => OpdsKindItemSortValue(i, normalizedKind))
+        .ThenBy(i => DisplayItemTitle(i), StringComparer.OrdinalIgnoreCase)
+        .ToArray();
+
+    return OpdsXml(OpdsAcquisitionCatalog(
+        request,
+        auth.Secret,
+        $"Guidevault - {decodedGroup}",
+        $"{OpdsKindPluralTitle(normalizedKind)} in {decodedGroup}.",
+        items));
 });
 
 app.MapGet("/opds/categories", async (HttpRequest request) =>
@@ -1876,10 +1923,71 @@ static string[] CategoryBuckets(LibraryItem item)
 static bool IsMultiPlatformBucket(string? value) =>
     Regex.IsMatch(value ?? string.Empty, @"^multi[-\s]*platform(?: strategy guides?)?$", RegexOptions.IgnoreCase);
 
+static bool ShouldOpdsGroupKind(string? kind) =>
+    string.Equals(kind, "Magazine", StringComparison.OrdinalIgnoreCase)
+    || string.Equals(kind, "Manual", StringComparison.OrdinalIgnoreCase);
+
+static string OpdsKindPluralTitle(string? kind)
+{
+    if (string.Equals(kind, "Magazine", StringComparison.OrdinalIgnoreCase)) return "Magazines";
+    if (string.Equals(kind, "Manual", StringComparison.OrdinalIgnoreCase)) return "Manuals";
+    if (string.Equals(kind, "Strategy Guide", StringComparison.OrdinalIgnoreCase)) return "Strategy Guides";
+    return string.IsNullOrWhiteSpace(kind) ? "Items" : kind.Trim();
+}
+
+static string OpdsKindGroupedDescription(string? kind)
+{
+    if (string.Equals(kind, "Magazine", StringComparison.OrdinalIgnoreCase))
+        return "Browse magazine issues by official magazine title before opening an issue list.";
+    if (string.Equals(kind, "Manual", StringComparison.OrdinalIgnoreCase))
+        return "Browse manuals by system or platform before opening a manual list.";
+    return "Browse grouped Guidevault items.";
+}
+
+static string OpdsKindGroupBucket(LibraryItem item, string? kind)
+{
+    if (string.Equals(kind, "Magazine", StringComparison.OrdinalIgnoreCase))
+    {
+        var title = FirstNonEmpty(item.MagazineTitle, item.Series);
+        if (!string.IsNullOrWhiteSpace(title)) return title.Trim();
+        return "Unsorted Magazines";
+    }
+
+    if (string.Equals(kind, "Manual", StringComparison.OrdinalIgnoreCase))
+    {
+        foreach (var platform in item.AssociatedPlatforms ?? Array.Empty<string>())
+        {
+            if (!string.IsNullOrWhiteSpace(platform) && !IsMultiPlatformBucket(platform)) return platform.Trim();
+        }
+
+        var system = FirstNonEmpty(item.PrimarySystem, item.Category, item.System);
+        if (!string.IsNullOrWhiteSpace(system) && !IsMultiPlatformBucket(system)) return system.Trim();
+        return "Unsorted Manuals";
+    }
+
+    return CategoryOrSystem(item);
+}
+
+static string OpdsGroupSortKey(string group, string? kind)
+{
+    if (group.StartsWith("Unsorted", StringComparison.OrdinalIgnoreCase)) return "zzzzzz " + group;
+    return group;
+}
+
+static double OpdsKindItemSortValue(LibraryItem item, string? kind)
+{
+    if (string.Equals(kind, "Magazine", StringComparison.OrdinalIgnoreCase)) return IssueSortValue(item);
+    return 0;
+}
+
 static string DisplayItemTitle(LibraryItem item)
 {
-    if (string.Equals(item.Kind, "Magazine", StringComparison.OrdinalIgnoreCase) && !string.IsNullOrWhiteSpace(item.Series) && !string.IsNullOrWhiteSpace(item.IssueNumber))
-        return $"{item.Series.Trim()} #{item.IssueNumber.Trim()}";
+    if (string.Equals(item.Kind, "Magazine", StringComparison.OrdinalIgnoreCase) && !string.IsNullOrWhiteSpace(item.IssueNumber))
+    {
+        var publicationTitle = FirstNonEmpty(item.MagazineTitle, item.Series);
+        if (!string.IsNullOrWhiteSpace(publicationTitle)) return $"{publicationTitle.Trim()} #{item.IssueNumber.Trim()}";
+    }
+
     return string.IsNullOrWhiteSpace(item.Title) ? item.FileName : item.Title.Trim();
 }
 
@@ -9989,5 +10097,5 @@ static class GuidevaultLibraryIoGate
 
 static class GuidevaultBuildInfo
 {
-    public const string Version = "0.9.117";
+    public const string Version = "0.9.118";
 }
