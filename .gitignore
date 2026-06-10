@@ -9,3 +9,13 @@ src/PageQuest.Web/data/pagequest.json
 _repo/
 _packaged/
 Guidevault-source-clean/
+# Local scratch/backup files
+patch.py
+backups/
+Backups/
+
+# Local backup/scratch files
+_backup/
+backup/
+backups/
+patch.py
