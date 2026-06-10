@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Questions / setup help
+    url: https://github.com/Shredder5262/GuideVault/discussions
+    about: Please use Discussions for general setup help, troubleshooting questions, and ideas that are not yet feature requests.
+  - name: GuideVault project page
+    url: https://github.com/Shredder5262/GuideVault
+    about: Check the README, releases, and existing issues before opening a new report.

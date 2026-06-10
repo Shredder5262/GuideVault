@@ -1,0 +1,128 @@
+name: Bug report
+description: Report something in GuideVault that is broken or not working as expected.
+title: "[Bug]: "
+labels: ["bug", "needs-triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting a GuideVault issue. Please include enough detail that the problem can be reproduced.
+
+        Before submitting, please check existing issues to avoid duplicates.
+
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Pre-flight checks
+      options:
+        - label: I searched existing issues and did not find a duplicate.
+          required: true
+        - label: I am using the latest available GuideVault Docker image/release.
+          required: false
+        - label: I have restarted the container/app and the issue still happens.
+          required: false
+
+  - type: textarea
+    id: summary
+    attributes:
+      label: What happened?
+      description: Describe the problem clearly.
+      placeholder: "Example: The reader opens, but pages stay blank until I refresh the browser."
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: What did you expect to happen?
+      placeholder: "Example: The reader should open directly to the first page and display the page image."
+    validations:
+      required: true
+
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      description: Provide exact steps so the issue can be tested.
+      placeholder: |
+        1. Go to ...
+        2. Click ...
+        3. Open ...
+        4. See error ...
+    validations:
+      required: true
+
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area of GuideVault
+      options:
+        - Library / browsing
+        - Reader
+        - Metadata manager
+        - Import / scan
+        - OPDS
+        - Login / users / profiles
+        - Docker / deployment
+        - Performance
+        - UI / styling
+        - Other
+    validations:
+      required: true
+
+  - type: input
+    id: version
+    attributes:
+      label: GuideVault version / image tag
+      description: Include the release version or Docker image tag.
+      placeholder: "Example: ghcr.io/shredder5262/guidevault:latest or v0.x.x"
+    validations:
+      required: false
+
+  - type: input
+    id: install
+    attributes:
+      label: Install method
+      placeholder: "Example: Docker Compose, Docker run, local dev build"
+    validations:
+      required: false
+
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment details
+      description: Include anything relevant about the system where GuideVault is running and the browser/device used.
+      placeholder: |
+        Server OS: Windows / Linux / NAS / other
+        Docker version:
+        Browser: Chrome / Edge / Firefox / Safari
+        Device: Desktop / tablet / phone
+        Reverse proxy: None / Nginx / Traefik / Cloudflare / other
+        Library size: Approx. item count and total size
+    validations:
+      required: false
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Relevant logs or error messages
+      description: Paste logs, console errors, or screenshots. Please remove passwords, tokens, API keys, and private paths if needed.
+      render: shell
+    validations:
+      required: false
+
+  - type: textarea
+    id: screenshots
+    attributes:
+      label: Screenshots or recordings
+      description: Drag and drop images/videos here if they help explain the issue.
+    validations:
+      required: false
+
+  - type: textarea
+    id: additional
+    attributes:
+      label: Additional context
+      description: Anything else that might help diagnose the issue.
+    validations:
+      required: false

@@ -1,0 +1,92 @@
+name: Performance issue
+description: Report slow loading, laggy navigation, slow scans, or heavy resource usage.
+title: "[Performance]: "
+labels: ["performance", "needs-triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Use this for slow first loads, library navigation lag, full scans, reader performance, cover loading, or high CPU/memory usage.
+
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Pre-flight checks
+      options:
+        - label: I searched existing issues and did not find a duplicate.
+          required: true
+        - label: I restarted GuideVault and the issue still happens.
+          required: false
+
+  - type: dropdown
+    id: area
+    attributes:
+      label: Where is the slowdown?
+      options:
+        - First app load / login
+        - Home page
+        - Library browsing
+        - Reader
+        - Metadata manager
+        - Full library scan
+        - Cover loading / thumbnails
+        - OPDS
+        - Docker/container startup
+        - Other
+    validations:
+      required: true
+
+  - type: textarea
+    id: description
+    attributes:
+      label: Describe the performance issue
+      placeholder: "Example: After logging in, the library takes 30+ seconds to show collections and the UI becomes unresponsive during a full scan."
+    validations:
+      required: true
+
+  - type: textarea
+    id: timing
+    attributes:
+      label: Approximate timing / scale
+      description: Give rough numbers if possible.
+      placeholder: |
+        First load time:
+        Library item count:
+        Total library size:
+        Number of manuals:
+        Number of strategy guides:
+        Number of magazines:
+        Scan duration:
+    validations:
+      required: false
+
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment details
+      placeholder: |
+        Server OS:
+        CPU/RAM:
+        Storage type: SSD / HDD / NAS / network share
+        Docker version:
+        Browser/device:
+        Reverse proxy:
+    validations:
+      required: false
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs, browser console output, or screenshots
+      description: Include anything that shows errors, long requests, or resource spikes.
+      render: shell
+    validations:
+      required: false
+
+  - type: textarea
+    id: additional
+    attributes:
+      label: Additional context
+      description: Anything else that may help narrow this down.
+    validations:
+      required: false

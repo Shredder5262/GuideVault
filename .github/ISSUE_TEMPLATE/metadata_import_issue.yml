@@ -1,0 +1,121 @@
+name: Metadata or import issue
+description: Report incorrect metadata, failed imports, scan problems, or lookup/enrichment issues.
+title: "[Metadata]: "
+labels: ["metadata", "needs-triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Use this when GuideVault imports, scans, displays, or enriches metadata incorrectly.
+
+        Please do not upload copyrighted manuals, guides, magazines, or game files. Small metadata JSON snippets, screenshots, and file-name examples are usually enough.
+
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Pre-flight checks
+      options:
+        - label: I searched existing issues and did not find a duplicate.
+          required: true
+        - label: I am not attaching copyrighted guide/manual/magazine files.
+          required: true
+
+  - type: dropdown
+    id: content_type
+    attributes:
+      label: Content type
+      options:
+        - Manual
+        - Strategy Guide
+        - Magazine
+        - Mixed / multiple types
+        - Not sure
+    validations:
+      required: true
+
+  - type: textarea
+    id: item_examples
+    attributes:
+      label: Affected item examples
+      description: List a few affected titles, file names, or series names. Remove private paths if needed.
+      placeholder: |
+        Example file/title:
+        - Prima's Official Strategy Guide: Rayman 2 - The Great Escape.cbz
+        - Nintendo Power Issue 1.cbz
+    validations:
+      required: true
+
+  - type: dropdown
+    id: problem_type
+    attributes:
+      label: What kind of metadata/import problem is this?
+      options:
+        - JSON import does not apply changes
+        - Scan misses files
+        - Scan is very slow
+        - Wrong title
+        - Wrong game/platform association
+        - Wrong magazine series grouping
+        - Missing fields
+        - Open Library / IGDB / ESRB lookup problem
+        - Cover/preview problem
+        - Other
+    validations:
+      required: true
+
+  - type: textarea
+    id: actual
+    attributes:
+      label: Current result
+      description: What does GuideVault currently show or do?
+      placeholder: "Example: The JSON import says 0 rows updated, and the metadata fields remain blank."
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected result
+      description: What should GuideVault show or do instead?
+      placeholder: "Example: The formal strategy guide title should populate the Strategy Guide Title field, and all covered games should be listed."
+    validations:
+      required: true
+
+  - type: textarea
+    id: json
+    attributes:
+      label: Metadata JSON snippet, if relevant
+      description: Paste only the relevant part of the JSON. Remove anything private.
+      render: json
+    validations:
+      required: false
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs or errors
+      description: Paste scan/import errors, browser console errors, or Docker logs if available.
+      render: shell
+    validations:
+      required: false
+
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment details
+      placeholder: |
+        GuideVault version/image tag:
+        Install method:
+        Browser:
+        Library size:
+        File format: CBZ / CBR / PDF / other
+    validations:
+      required: false
+
+  - type: textarea
+    id: additional
+    attributes:
+      label: Additional context
+      description: Add screenshots, notes, or examples that would help.
+    validations:
+      required: false

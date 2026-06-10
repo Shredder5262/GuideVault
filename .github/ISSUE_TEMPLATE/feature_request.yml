@@ -1,0 +1,92 @@
+name: Feature request
+description: Suggest an improvement or new capability for GuideVault.
+title: "[Feature]: "
+labels: ["enhancement", "needs-triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for suggesting a GuideVault improvement. Please focus on the problem you are trying to solve, not just the button or setting you want added.
+
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Pre-flight checks
+      options:
+        - label: I searched existing issues and did not find a duplicate request.
+          required: true
+        - label: This request is about GuideVault functionality, not hosted copyrighted content.
+          required: true
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem or use case
+      description: What are you trying to do, and what currently makes it difficult?
+      placeholder: "Example: I have a large magazine library and want the OPDS view to group issues by magazine series instead of showing every issue at once."
+    validations:
+      required: true
+
+  - type: textarea
+    id: solution
+    attributes:
+      label: Proposed solution
+      description: Describe the behavior you would like GuideVault to support.
+      placeholder: "Example: Add a Magazine Series level in OPDS before listing individual issues."
+    validations:
+      required: true
+
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area of GuideVault
+      options:
+        - Library / browsing
+        - Reader
+        - Metadata manager
+        - Import / scan
+        - OPDS
+        - Login / users / profiles
+        - Docker / deployment
+        - Performance
+        - UI / styling
+        - Metadata enrichment / lookup
+        - Other
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: Have you tried another workflow, workaround, or existing setting?
+      placeholder: "Example: I tried collections, but they do not solve this because..."
+    validations:
+      required: false
+
+  - type: textarea
+    id: examples
+    attributes:
+      label: Examples, screenshots, or mockups
+      description: Add links, screenshots, rough mockups, or examples from other apps if useful.
+    validations:
+      required: false
+
+  - type: dropdown
+    id: priority
+    attributes:
+      label: How important is this to you?
+      options:
+        - Nice to have
+        - Would improve my workflow
+        - Important / blocking my use case
+    validations:
+      required: false
+
+  - type: textarea
+    id: additional
+    attributes:
+      label: Additional context
+      description: Anything else that would help explain the request.
+    validations:
+      required: false
