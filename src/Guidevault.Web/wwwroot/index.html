@@ -4,9 +4,9 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Guidevault</title>
-  <link rel="icon" type="image/x-icon" href="/assets/favicon.ico?v=0.9.118" />
-  <link rel="shortcut icon" type="image/x-icon" href="/assets/favicon.ico?v=0.9.118" />
-  <link rel="stylesheet" href="/styles.css?v=0.9.118-opds-grouping" />
+  <link rel="icon" type="image/x-icon" href="/assets/favicon.ico?v=0.9.144" />
+  <link rel="shortcut icon" type="image/x-icon" href="/assets/favicon.ico?v=0.9.144" />
+  <link rel="stylesheet" href="/styles.css?v=0.9.144-platform-icons-trueup" />
 </head>
 <body class="right-collapsed auth-locked">
   <section id="loginView" class="login-view" aria-labelledby="loginTitle">
@@ -49,21 +49,21 @@
       <nav id="settingsSideNav" class="settings-side-nav hidden" aria-label="Settings navigation">
         <button class="settings-side-back" id="settingsBackToLibrary" type="button">&#x2190; Library</button>
         <h3>Settings</h3>
-        <button class="settings-nav active" data-settings-tab="account">Account</button>
-        <div class="settings-submenu" aria-label="Account settings subsections">
+        <button class="settings-nav settings-nav-group active" data-settings-tab="account" data-settings-group="account" aria-expanded="true" aria-controls="settingsSubmenuAccount" type="button"><span class="settings-nav-icon">&#x1F464;</span><span class="settings-nav-text">Account</span><span class="settings-nav-chevron" aria-hidden="true">&#x203A;</span></button>
+        <div id="settingsSubmenuAccount" class="settings-submenu" data-settings-parent="account" aria-label="Account settings subsections">
           <button id="settingsPreferencesNav" class="settings-subnav" data-settings-tab="preferences" type="button">Preferences</button>
           <button id="settingsKeybindsNav" class="settings-subnav" data-settings-tab="keybinds" type="button">Key Binds</button>
           <button id="settingsReadingProfilesNav" class="settings-subnav" data-settings-tab="reading-profiles" type="button">Reading Profiles</button>
           <button id="settingsCustomizeNav" class="settings-subnav" data-settings-tab="customize" type="button">Customize</button>
           <button id="settingsDevicesNav" class="settings-subnav" data-settings-tab="devices" type="button">Devices</button>
         </div>
-        <button class="settings-nav" data-settings-tab="insights">Insights</button>
-        <div class="settings-submenu" aria-label="Insights subsections">
+        <button class="settings-nav settings-nav-group" data-settings-tab="insights" data-settings-group="insights" aria-expanded="true" aria-controls="settingsSubmenuInsights" type="button"><span class="settings-nav-icon">&#x25C8;</span><span class="settings-nav-text">Insights</span><span class="settings-nav-chevron" aria-hidden="true">&#x203A;</span></button>
+        <div id="settingsSubmenuInsights" class="settings-submenu" data-settings-parent="insights" aria-label="Insights subsections">
           <button id="settingsInsightDevicesNav" class="settings-subnav" data-settings-tab="insights-devices" type="button">Devices</button>
           <button id="settingsStatisticsNav" class="settings-subnav" data-settings-tab="statistics" type="button">Statistics</button>
         </div>
-        <button class="settings-nav" data-settings-tab="server">Server</button>
-        <div class="settings-submenu" aria-label="Server settings subsections">
+        <button class="settings-nav settings-nav-group" data-settings-tab="server" data-settings-group="server" aria-expanded="true" aria-controls="settingsSubmenuServer" type="button"><span class="settings-nav-icon">&#x2699;</span><span class="settings-nav-text">Server</span><span class="settings-nav-chevron" aria-hidden="true">&#x203A;</span></button>
+        <div id="settingsSubmenuServer" class="settings-submenu" data-settings-parent="server" aria-label="Server settings subsections">
           <button id="settingsServerGeneralNav" class="settings-subnav" data-settings-tab="server" type="button">General</button>
           <button id="settingsLibraryNav" class="settings-subnav" data-settings-tab="library" type="button">Library</button>
           <button id="settingsMediaNav" class="settings-subnav" data-settings-tab="media" type="button">Media</button>
@@ -73,8 +73,8 @@
           <button id="settingsTasksNav" class="settings-subnav" data-settings-tab="tasks" type="button">Tasks</button>
           <button id="settingsMetadataManagerNav" class="settings-subnav" data-settings-tab="metadata-manager" type="button">Metadata Manager</button>
         </div>
-        <button class="settings-nav" data-settings-tab="info">Info</button>
-        <div class="settings-submenu" aria-label="Info subsections">
+        <button class="settings-nav settings-nav-group" data-settings-tab="info" data-settings-group="info" aria-expanded="true" aria-controls="settingsSubmenuInfo" type="button"><span class="settings-nav-icon">i</span><span class="settings-nav-text">Info</span><span class="settings-nav-chevron" aria-hidden="true">&#x203A;</span></button>
+        <div id="settingsSubmenuInfo" class="settings-submenu" data-settings-parent="info" aria-label="Info subsections">
           <button id="settingsInfoSystemNav" class="settings-subnav" data-settings-tab="info" type="button">System</button>
           <button id="settingsEmailHistoryNav" class="settings-subnav" data-settings-tab="email-history" type="button">E-mail History</button>
         </div>
@@ -132,7 +132,7 @@
 
       <section id="libraryView" class="library-view">
         <div id="libraryGridScroll" class="library-grid-scroll">
-        <div class="heading-row"><div><h1 id="pageTitle">Home</h1><span id="itemCount" class="pill">0 items</span></div><div class="library-heading-controls"><label class="cover-size-control" for="coverSizeSlider"><span>Cover size</span><input id="coverSizeSlider" type="range" min="75" max="140" step="5" value="100" /><em id="coverSizeValue">100%</em></label><select id="sort"><option value="recent">Recently Added</option><option value="title">Title A-Z</option><option value="kind">Content Type</option><option value="category">Category</option></select></div></div>
+        <div class="heading-row"><div><h1 id="pageTitle">Home</h1><span id="itemCount" class="pill">0 items</span></div><div class="library-heading-controls"><label class="cover-size-control" for="coverSizeSlider"><span>Cover size</span><input id="coverSizeSlider" type="range" min="75" max="140" step="5" value="100" /><em id="coverSizeValue">100%</em></label><label class="library-sort-control" for="sort"><span>Sort by</span><select id="sort" aria-label="Sort library"><option value="recent">Date Added</option><option value="title">Title A-Z</option><option value="issue">Issue #</option><option value="kind">Library Type</option><option value="category">Platform/Series</option></select></label></div></div>
         <div id="homeShelves" class="home-shelves"></div>
         <h2 class="section-recent-title hidden">Recently Added</h2>
         <div id="recentGrid" class="card-row hidden"></div>
@@ -452,7 +452,7 @@
           <div id="profileTopLists" class="profile-top-lists"></div>
         </section>
         <section id="profileReviewsPanel" class="profile-panel hidden">
-          <article class="settings-card"><h2>Reviews</h2><p class="sub">Reviews are not wired into Guidevault yet. When ratings/reviews are added, this tab will show the current user's review history.</p></article>
+          <div id="profileReviewsContent" class="profile-reviews-content"></div>
         </section>
         <section id="profileActivityPanel" class="profile-panel hidden">
           <div id="profileActivityList" class="profile-activity-list"></div>
@@ -463,7 +463,6 @@
         <div class="settings-content-panel settings-content-panel-main">
           <section id="settingsAccountPanel" class="settings-section-panel">
             <h1>Account</h1>
-            <p class="sub">Manage the local Guidevault login profile used by this browser.</p>
             <div class="settings-card-grid account-settings-grid">
               <article class="settings-card account-profile-card">
                 <div class="account-card-header">
@@ -512,18 +511,63 @@
             </div>
             <div class="settings-card-grid preferences-settings-grid">
               <article class="settings-card preferences-card">
-                <div class="settings-card-kicker">Global Settings</div>
-                <div class="preference-toggle-row">
+                <div class="settings-card-kicker">Colorscape</div>
+                <div class="preference-toggle-row preference-toggle-row-master">
                   <div>
                     <h3>Use Colorscape</h3>
-                    <p class="sub">Global toggle to enable disable the dynamic gradient feature will override theme settings.</p>
+                    <p class="sub">Master switch for cover-color effects. Turn this off to disable Colorscape everywhere.</p>
                   </div>
                   <label class="gv-toggle" for="preferenceUseColorscape">
                     <input id="preferenceUseColorscape" type="checkbox" />
                     <span class="gv-toggle-track"><span class="gv-toggle-thumb"></span></span>
                   </label>
                 </div>
-                <p class="sub colorscape-preview-note">When enabled, manual, strategy guide, and magazine detail pages sample the dominant cover color and blend it into the detail background and overview containers.</p>
+                <div id="colorscapeChildSettings" class="colorscape-child-settings">
+                  <div class="preference-toggle-row preference-toggle-row-child">
+                    <div>
+                      <h3>Details Pane</h3>
+                      <p class="sub">Apply the sampled cover color to manual, strategy guide, and magazine detail pages.</p>
+                    </div>
+                    <label class="gv-toggle" for="preferenceColorscapeDetailPane">
+                      <input id="preferenceColorscapeDetailPane" type="checkbox" />
+                      <span class="gv-toggle-track"><span class="gv-toggle-thumb"></span></span>
+                    </label>
+                  </div>
+                  <div class="colorscape-subsection-title">Main menu containers</div>
+                  <div class="colorscape-menu-toggle-grid">
+                    <div class="preference-toggle-row preference-toggle-row-child">
+                      <div>
+                        <h3>Manuals</h3>
+                        <p class="sub">Tint manual platform tiles only.</p>
+                      </div>
+                      <label class="gv-toggle" for="preferenceColorscapeManualMenus">
+                        <input id="preferenceColorscapeManualMenus" type="checkbox" />
+                        <span class="gv-toggle-track"><span class="gv-toggle-thumb"></span></span>
+                      </label>
+                    </div>
+                    <div class="preference-toggle-row preference-toggle-row-child">
+                      <div>
+                        <h3>Strategy Guides</h3>
+                        <p class="sub">Tint strategy guide platform tiles only.</p>
+                      </div>
+                      <label class="gv-toggle" for="preferenceColorscapeStrategyMenus">
+                        <input id="preferenceColorscapeStrategyMenus" type="checkbox" />
+                        <span class="gv-toggle-track"><span class="gv-toggle-thumb"></span></span>
+                      </label>
+                    </div>
+                    <div class="preference-toggle-row preference-toggle-row-child">
+                      <div>
+                        <h3>Magazines</h3>
+                        <p class="sub">Tint magazine publication tiles only.</p>
+                      </div>
+                      <label class="gv-toggle" for="preferenceColorscapeMagazineMenus">
+                        <input id="preferenceColorscapeMagazineMenus" type="checkbox" />
+                        <span class="gv-toggle-track"><span class="gv-toggle-thumb"></span></span>
+                      </label>
+                    </div>
+                  </div>
+                </div>
+                <p class="sub colorscape-preview-note">Main menu Colorscape affects only the outer container of each menu tile. Cover previews and text stay unchanged.</p>
                 <p id="preferencesStatus" class="sub account-status" aria-live="polite"></p>
               </article>
             </div>
@@ -1526,1668 +1570,239 @@
 
             <hr class="system-info-divider" />
 
-            <h2>Update History</h2>
+            <div class="system-update-history-head">
+              <h2>Update History</h2>
+            </div>
             <div class="system-update-list">
               <details class="system-update-entry" open>
                 <summary>
-                  <span>Guidevault 0.9.118 - OPDS Grouping Restoration</span>
+                  <span>Guidevault 0.9.144 - Platform Icon Source True-Up</span>
                   <em>Installed</em>
                 </summary>
                 <ul>
-                  <li>Restored the OPDS magazine structure so Magazines opens to official magazine titles before issue lists.</li>
-                  <li>Restored the OPDS manual structure so Manuals opens to system/platform groups before manual lists.</li>
-                  <li>Kept Strategy Guides as the direct guide list and preserved the existing all-items, recent, category, series, and search feeds.</li>
-                  <li>Updated magazine OPDS item titles to prefer Magazine Title plus issue number when available.</li>
+                  <li>Added the platform/category icon library into the source tree under <code>wwwroot/assets/icons/platforms</code> so the GitHub repo and working source stay aligned.</li>
+                  <li>Included the platform icon manifest alongside the PNG icons for future matching/lookup support.</li>
+                  <li>Removed the need to rely on stale repo-only icon files when matching Guidevault platforms, categories, and collections.</li>
                 </ul>
               </details>
-              <details class="system-update-entry">
+                            <details class="system-update-entry" open>
                 <summary>
-                  <span>Guidevault 0.9.113 - Sidebar Category Modes</span>
+                  <span>Guidevault 0.9.144 - Platform Icon Source True-Up</span>
                   <em>Installed</em>
                 </summary>
                 <ul>
-                  <li>Changed the left sidebar category selector into a context-aware category mode picker.</li>
-                  <li>Added Manual, Strategy Guide, Magazine, and shared category modes without adding extra permanent sidebar controls.</li>
-                  <li>Magazine category browsing now supports Magazine Title, Primary System, and Year using existing magazine metadata fields.</li>
-                </ul>
-              </details>
-              <details class="system-update-entry">
-                <summary>
-                  <span>Guidevault 0.9.111 - Magazine Group Metadata Manager Column</span>
-                  <em>Installed</em>
-                </summary>
-                <ul>
-                  <li>Added a dedicated Magazine Group column under the Metadata Manager Magazine fields group.</li>
-                  <li>Made Magazine Group available in Batch edit selected rows whenever that column is visible.</li>
-                  <li>Kept Preferred Platform from applying to magazine rows so magazine grouping and primary system values do not get mixed together.</li>
-                </ul>
-              </details>
-              <details class="system-update-entry">
-                <summary>
-                  <span>Guidevault 0.9.109 - Visible Column Batch Editing</span>
-                  <em>Installed</em>
-                </summary>
-                <ul>
-                  <li>Changed Metadata Manager batch editing so it automatically shows the currently visible editable columns.</li>
-                  <li>Kept Type and Source out of batch edit because they are display/read-only columns.</li>
-                  <li>Preserved the Topics add/replace/remove mode when the Topics / Games column is visible.</li>
-                </ul>
-              </details>
-              <details class="system-update-entry">
-                <summary>
-                  <span>Guidevault 0.9.108 - Large Library Performance Pass</span>
-                  <em>Installed</em>
-                </summary>
-                <ul>
-                  <li>Added windowed rendering for large library grids so only the visible card slice stays in the DOM while scrolling.</li>
-                  <li>Changed the Magazines chip to open the magazine-series hub instead of immediately rendering every issue.</li>
-                  <li>Debounced library search input and avoided building search haystacks when no search text is active.</li>
-                  <li>Stopped collapsed sidebar category groups from rendering all hidden category buttons until expanded.</li>
-                  <li>Kept lazy/async cover loading active inside the virtualized card window.</li>
-                </ul>
-              </details>
-              <details class="system-update-entry">
-                <summary>
-                  <span>Guidevault 0.9.107 - Metadata Cleanup and Initial Load Polish</span>
-                  <em>Installed</em>
-                </summary>
-                <ul>
-                  <li>Added Page Count to the Strategy Guide identity card so guide page totals are visible in the main guide details overview.</li>
-                  <li>Expanded Metadata Manager JSON import so reviewed cleanup files can update all editable metadata fields, not just the small core subset.</li>
-                  <li>Reduced initial library grid render pressure and skipped a duplicate re-render when the refreshed server library matches the cached library already shown on startup.</li>
-                </ul>
-              </details>
-              <details class="system-update-entry">
-                <summary>
-                  <span>Guidevault 0.9.106 - Metadata Manager Column Groups</span>
-                  <em>Installed</em>
-                </summary>
-                <ul>
-                  <li>Grouped the Metadata Manager column selector by content context so shared, book, strategy guide, manual, magazine, lookup, and notes fields are easier to identify.</li>
-                  <li>Kept the existing column visibility and table reorder behavior while making the picker easier to scan.</li>
-                </ul>
-              </details>
-              <details class="system-update-entry">
-                <summary>
-                  <span>Guidevault 0.9.105 - Metadata Manager Filter Layout</span>
-                  <em>Installed</em>
-                </summary>
-                <ul>
-                  <li>Shortened the Metadata Manager search placeholder and status label.</li>
-                  <li>Compressed the Metadata Manager filter grid so Search, Type, Status, Focus, and Preferred Platform / Series fit on one desktop row.</li>
+                  <li>Flattened OPDS acquisition lists so item entries are terminal entries instead of opening an extra single-item submenu first.</li>
+                  <li>Manuals, Strategy Guides, and Magazines now expose download/read/detail links directly from the item entry in OPDS readers.</li>
+                  <li>Kept the existing /opds/items/{id} detail feed route available for older saved links while no longer using it as the normal list-navigation step.</li>
+                  <li>Reduced the repeated-title navigation pattern where a reader showed the same manual, guide, or magazine issue twice before reaching the item details/actions.</li>
                 </ul>
               </details>
               <details class="system-update-entry" open>
                 <summary>
-                  <span>Guidevault 0.9.104 - Metadata Manager Summary Layout</span>
+                  <span>Guidevault 0.9.142 - Insights, Devices, Menu Polish</span>
                   <em>Installed</em>
                 </summary>
                 <ul>
-                  <li>Compressed the Metadata Manager summary cards so the visible, review, missing-field, platform, and edited-row counts fit on a single row on desktop-width screens.</li>
-                  <li>Reduced summary card spacing, padding, and label sizing while keeping the existing wrapped layout for smaller screens.</li>
+                  <li>Compacted the Statistics top metric cards so Total Series, Total Items, Manuals, Strategy Guides, Magazines, Total Size, File Types, and Read Events fit as a tighter one-line summary on wide screens.</li>
+                  <li>Applied the same blue-glass visual treatment from the Statistics page to Insights &gt; Devices without changing its existing layout structure.</li>
+                  <li>Added more dimensional polish to the Devices summary cards, donut chart containers, legends, and connected-device cards.</li>
+                  <li>Applied the squared-gradient Settings sidebar treatment to the main Guidevault sidebar while keeping the main menu item hover/active styling rounded.</li>
                 </ul>
-              </details>
-              <details class="system-update-entry" open>
+              </details>              <details class="system-update-entry" open>
                 <summary>
-                  <span>Guidevault 0.9.103 - Metadata Status Workflow</span>
+                  <span>Guidevault 0.9.141 - Insights Statistics Graph Polish</span>
                   <em>Installed</em>
                 </summary>
                 <ul>
-                  <li>Added item-level metadata status values: Unreviewed, Needs Review, Reviewed, Locked, Failed Lookup, and Manual Only.</li>
-                  <li>Added Metadata Status to the item metadata editor, Guidevault JSON export/import, and the Library Data panel.</li>
-                  <li>Added Metadata Manager status filtering, a status column, and batch status updates for selected rows.</li>
-                  <li>External lookup imports now mark updated items as Needs Review so curated metadata can be reviewed and locked afterward.</li>
+                  <li>Polished Insights &gt; Statistics with deeper blue-glass cards, stronger icon treatments, and more dimensional chart styling.</li>
+                  <li>Enhanced the Stats and Management graphs with layered backgrounds, glows, shadows, area fills, point halos, and wider plotting areas.</li>
+                  <li>Updated Management format bars with a more dimensional treatment while keeping the statistics layout intact.</li>
                 </ul>
-              </details>
-              <details class="system-update-entry" open>
-                <summary>
-                  <span>Guidevault 0.9.102 - OPDS Connection Page Size Fix</span>
-                  <em>Installed</em>
-                </summary>
-                <ul>
-                  <li>Added compatibility for OPDS connection URLs that use /opds/v1.</li>
-                  <li>Preserved pageSize=20, 50, or 100 when navigating from the OPDS root catalog into item feeds.</li>
-                  <li>Prevented /opds/v1 connection URLs from falling through to the browser login page.</li>
-                </ul>
-              </details>
-              <details class="system-update-entry" open>
-                <summary>
-                  <span>Guidevault 0.9.101 - OPDS Detail Build Fix</span>
-                  <em>Installed</em>
-                </summary>
-                <ul>
-                  <li>Fixed the OPDS browser detail page raw string interpolation so CSS media-query braces no longer break the C# build.</li>
-                  <li>Kept the 20, 50, and 100 item OPDS catalog paging behavior from the previous update.</li>
-                </ul>
-              </details>
-              <details class="system-update-entry" open>
-                <summary>
-                  <span>Guidevault 0.9.100 - OPDS Paging and Item Details</span>
-                  <em>Installed</em>
-                </summary>
-                <ul>
-                  <li>Added OPDS catalog paging with 20, 50, and 100 item page sizes instead of returning very large feeds all at once.</li>
-                  <li>Added first, previous, next, and last OPDS navigation links so large catalogs continue across pages instead of silently capping results.</li>
-                  <li>Added formal OPDS item detail feeds and an authenticated web detail page with Read in Guidevault, Open Details, and Download File actions.</li>
-                  <li>Added Guidevault deep links for OPDS read/detail actions so browser links can open the active item directly after login.</li>
-                </ul>
-              </details>
-              <details class="system-update-entry" open>
-                <summary>
-                  <span>Guidevault 0.9.99 - Metadata Manager Row Cap Controls</span>
-                  <em>Installed</em>
-                </summary>
-                <ul>
-                  <li>Clarified the Metadata Manager count so matched rows that are not yet rendered are no longer confusing.</li>
-                  <li>Added Load More, Show All, and Collapse to 250 controls for large filtered metadata sets.</li>
-                  <li>Kept the default 250-row render cap for performance while making the remaining matched rows accessible on demand.</li>
-                    <li>Updated the header checkbox to select only the rendered rows while the Select Filtered button still selects the full matched set.</li>
-                </ul>
-              </details>
-              <details class="system-update-entry" open>
-                <summary>
-                  <span>Guidevault 0.9.98 - Lookup Prepopulate Current Item</span>
-                  <em>Installed</em>
-                </summary>
-                <ul>
-                  <li>Reset individual Open Library, IGDB, and ESRB lookup dialogs when Details Previous/Next changes the active guide.</li>
-                  <li>Forced lookup search fields to seed from the currently active item instead of stale dialog/form values from the previous guide.</li>
-                  <li>Limited the Open Library secondary hint prefill to ISBN, year, or blank.</li>
-                </ul>
-              </details>
-              <details class="system-update-entry">
-                <summary>
-                  <span>Guidevault 0.9.97 - Lookup Result Detail Cards</span>
-                  <em>Installed</em>
-                </summary>
-                <ul>
-                  <li>Expanded individual IGDB result cards so platform/system lists are readable before selecting a match.</li>
-                  <li>Expanded individual ESRB result cards so rating, platform/system, publisher, and descriptor details are visible in the result card.</li>
-                  <li>Removed Game Title from the Strategy Guide identity snapshot and moved it into the game-context section as Associated Game.</li>
-                </ul>
-              </details>
-              <details class="system-update-entry" open>
-                <summary>
-                  <span>Guidevault 0.9.96 - Individual Lookup Dialog Layout</span>
-                  <em>Installed</em>
-                </summary>
-                <ul>
-                  <li>Restored the compact themed layout for individual Open Library, IGDB, and ESRB lookup dialogs.</li>
-                  <li>Rebuilt lookup search fields and result cards so they use horizontal space instead of stacking into a tall plain dialog.</li>
-                  <li>Added consistent preview areas for Open Library covers, IGDB covers, and ESRB rating badges in individual lookup comparison screens.</li>
-                </ul>
-              </details>
-              <details class="system-update-entry" open>
-                <summary>
-                  <span>Guidevault 0.9.95 - Batch Lookup Run Isolation</span>
-                  <em>Installed</em>
-                </summary>
-                <ul>
-                  <li>Added run isolation for Metadata Manager batch lookups so results from an older lookup cannot be appended into a newer lookup table.</li>
-                  <li>Starting a new batch lookup now cancels the previous active lookup before clearing and rebuilding the result list.</li>
-                  <li>Added fetch cancellation and stale-run guards around Open Library, IGDB, and ESRB batch requests.</li>
-                </ul>
-              </details>
-              <details class="system-update-entry" open>
-                <summary>
-                  <span>Guidevault 0.9.94 - Single Batch Lookup Source</span>
-                  <em>Installed</em>
-                </summary>
-                <ul>
-                  <li>Changed Strategy Guide batch lookup to allow only one active source at a time; inactive Open Library, IGDB, and ESRB options are locked until the active source is unchecked.</li>
-                  <li>Updated the batch result comparison column so it shows the active provider preview: Open Library cover, IGDB cover, or ESRB rating badge.</li>
-                  <li>Dimmed inactive provider field cards so only fields for the selected lookup source are editable and apply-ready.</li>
-                </ul>
-              </details>
-              <details class="system-update-entry" open>
-                <summary>
-                  <span>Guidevault 0.9.93 - Build Warning Cleanup</span>
-                  <em>Installed</em>
-                </summary>
-                <ul>
-                  <li>Fixed the nullable warning in IGDB OAuth error formatting by allowing the local TrimError helper to accept nullable response text.</li>
-                </ul>
-              </details>
-              <details class="system-update-entry" open>
-                <summary>
-                  <span>Guidevault 0.9.92 - IGDB Credential Guardrails</span>
-                  <em>Installed</em>
-                </summary>
-                <ul>
-                  <li>Added an IGDB credential test button in Server &gt; General &gt; Metadata Sources.</li>
-                  <li>Added a batch lookup preflight so invalid IGDB credentials are reported once instead of repeating a Twitch OAuth failure on every row.</li>
-                  <li>Improved IGDB credential cleanup and error messages for pasted Client ID / Client Secret values.</li>
-                  <li>Constrained batch result table wrapping so provider errors no longer stretch the lookup results horizontally.</li>
-                </ul>
-              </details>
-              <details class="system-update-entry" open>
-                <summary>
-                  <span>Guidevault 0.9.91 - Batch Lookup Sources & Detail Icon Polish</span>
-                  <em>Installed</em>
-                </summary>
-                <ul>
-                  <li>Enabled IGDB and ESRB.org batch lookup toggles again for Strategy Guide metadata testing.</li>
-                  <li>Changed batch result rows so the preferred platform wraps under the strategy guide title instead of running inline.</li>
-                  <li>Restored styled metadata info icons and popovers on guide, magazine, and manual detail pages.</li>
-                </ul>
-              </details>
-              <details class="system-update-entry" open>
-                <summary>
-                  <span>Guidevault 0.9.90 - Open Library Batch Layout Cleanup</span>
-                  <em>Installed</em>
-                </summary>
-                <ul>
-                  <li>Reworked the Open Library Strategy Guide batch lookup panel into a compact source strip, import-mode control, and horizontal field chips.</li>
-                  <li>Removed the oversized disabled IGDB/ESRB field sections from the active batch workflow so the panel no longer wastes vertical space.</li>
-                  <li>Moved run/apply actions into the compact lookup header so the workflow is visible without excessive scrolling.</li>
-                </ul>
-              </details>
-              <details class="system-update-entry" open>
-                <summary>
-                  <span>Guidevault 0.9.89 - Metadata Manager Sorting & Open Library Match Tuning</span>
-                  <em>Installed</em>
-                </summary>
-                <ul>
-                  <li>Added ascending/descending sorting from Metadata Manager column headers.</li>
-                  <li>Added column reordering with header arrows, drag/drop headers, and column-picker move controls.</li>
-                  <li>Improved Open Library batch matching by trying multiple guide/game/title query variants and selecting the best-scored result instead of always taking the first result.</li>
-                  <li>Kept IGDB and ESRB batch options disabled while Open Library batch lookup is refined.</li>
-                </ul>
-              </details>
-              <details class="system-update-entry">
-                <summary>
-                  <span>Guidevault 0.9.88 - Open Library Batch Apply Fix</span>
-                  <em>Installed</em>
-                </summary>
-                <ul>
-                  <li>Focused Metadata Manager batch source lookup on Open Library while IGDB and ESRB batch modes remain disabled for follow-up fixes.</li>
-                  <li>Added Guidevault and Open Library cover thumbnails to each batch result row for visual match confirmation.</li>
-                  <li>Improved Open Library batch search hints and added per-row apply/save status after applying checked results.</li>
-                </ul>
-              </details>
-              <details class="system-update-entry" open>
-                <summary>
-                  <span>Guidevault 0.9.87 - Batch Strategy Guide Source Lookup</span>
-                  <em>Installed</em>
-                </summary>
-                <ul>
-                  <li>Added a Metadata Manager batch source lookup workflow for selected Strategy Guide rows.</li>
-                  <li>Added review/apply modes for source lookup results.</li>
-                  <li>Kept batch lookup scoped to Strategy Guides.</li>
-                </ul>
-              </details>
-              <details class="system-update-entry" open>
-                <summary>
-                  <span>Guidevault 0.9.86 - Strategy Guide Source Lookup Scope</span>
-                  <em>Installed</em>
-                </summary>
-                <ul>
-                  <li>Limited the current Open Library, IGDB, and ESRB lookup buttons to Strategy Guide items only.</li>
-                  <li>Kept the lookup flows separated so future Manual- and Magazine-specific source searches can use their own criteria.</li>
-                  <li>Hid and disabled source lookup buttons outside their supported item scope instead of exposing generic searches on every item type.</li>
-                </ul>
-              </details>
-              <details class="system-update-entry" open>
-                <summary>
-                  <span>Guidevault 0.9.85 - Display Encoding Hotfix</span>
-                  <em>Installed</em>
-                </summary>
-                <ul>
-                  <li>Replaced risky non-ASCII metadata separators with plain ASCII separators.</li>
-                  <li>Cleaned corrupted magazine issue title text such as mojibake dash and bullet characters before display.</li>
-                  <li>Applied the cleanup to magazine hero subtitles, entry titles, and overview identity fields.</li>
-                </ul>
-              </details>
-              <details class="system-update-entry">
-                <summary>
-                  <span>Guidevault 0.9.83 - Magazine Issue Publisher</span>
-                  <em>Installed</em>
-                </summary>
-                <ul>
-                  <li>Added Publisher to the magazine issue identity overview card when populated.</li>
-                  <li>Kept Barcode / UPC / ISSN, Page Count, and Editor in the same magazine issue identity area.</li>
-                </ul>
-              </details>
-              <details class="system-update-entry">
-                <summary>
-                  <span>Guidevault 0.9.82 - Magazine Issue Identity Save</span>
-                  <em>Installed</em>
-                </summary>
-                <ul>
-                  <li>Fixed Barcode / UPC / ISSN so it saves when using Save Metadata.</li>
-                  <li>Added Barcode / UPC / ISSN, Page Count, and Editor to the magazine issue identity overview card when populated.</li>
-                  <li>Locked the magazine overview context card so Cover Game / Subject and Category sit together on the second row.</li>
-                </ul>
-              </details>
-              <details class="system-update-entry">
-                <summary>
-                  <span>Guidevault 0.9.81 - Magazine Issue Field Labels</span>
-                  <em>Installed</em>
-                </summary>
-                <ul>
-                  <li>Added a Barcode / UPC / ISSN field for magazine issues and displays it with the issue identity details.</li>
-                  <li>Renamed magazine-only metadata labels: Writer / Author to Editor, Region to Country of publication, and Physical Extras to Insert Details.</li>
-                  <li>Adjusted the magazine overview card so Category and Cover Game / Subject sit together on the second row.</li>
-                </ul>
-              </details>
-              <details class="system-update-entry">
-                <summary>
-                  <span>Guidevault 0.9.80 - Magazine Overview Card Layout</span>
-                  <em>Installed</em>
-                </summary>
-                <ul>
-                  <li>Moved Cover Game / Subject next to Category in the magazine overview card to reduce empty space.</li>
-                  <li>Kept magazine Primary System, Publisher, and Page Count in the top detail subtitle instead of repeating them in the overview card.</li>
-                  <li>Preserved the cleaner magazine overview layout without extra Issue Identity or Coverage section headings.</li>
-                </ul>
-              </details>
-              <details class="system-update-entry">
-                <summary>
-                  <span>Guidevault 0.9.79 - Magazine Overview Subheading Cleanup</span>
-                  <em>Installed</em>
-                </summary>
-                <ul>
-                  <li>Removed Issue Identity and Coverage headings from the magazine overview layout.</li>
-                  <li>Removed redundant Magazine Title, Publisher, and Primary System fields from the magazine overview cards.</li>
-                  <li>Moved magazine Primary System, Publisher, and Page Count into the top detail subtitle when available.</li>
-                  <li>Kept Issue # and Volume as top-level subtitle context instead of including issue details in the main title.</li>
-                </ul>
-              </details>
-              <details class="system-update-entry">
-                <summary>
-                  <span>Guidevault 0.9.78 - Magazine Metadata Overview Cleanup</span>
-                  <em>Installed</em>
-                </summary>
-                <ul>
-                  <li>Refined magazine metadata scope by hiding the generic Year field and using Cover Date as the primary issue date.</li>
-                  <li>Renamed magazine Special Features to Sections / Departments for recurring columns, headings, and major issue components.</li>
-                  <li>Changed magazine overview titles so issue number no longer appears in the main title; issue and volume now display as a secondary heading when populated.</li>
-                  <li>Updated the magazine overview layout to reduce redundant fields and only show Volume when it has a value.</li>
-                </ul>
-              </details>
-              <details class="system-update-entry" open>
-                <summary>
-                  <span>Guidevault 0.9.77 - Manual Title Cleanup</span>
-                  <em>Installed</em>
-                </summary>
-                <div class="system-update-body">
-                  <h3>Changed <b>3</b></h3>
-                  <ul>
-                    <li>Removed the duplicate Manual Title field from the manual metadata form.</li>
-                    <li>Manual Title now uses the main Title field for manual records.</li>
-                    <li>Removed Manual Title from the manual identity overview card and clarified Game Title display.</li>
-                  </ul>
-                </div>
               </details>
 
-              <details class="system-update-entry">
-                <summary>
-                  <span>Guidevault 0.9.76 - Manual Metadata Scope Help</span>
-                  <em>Installed</em>
-                </summary>
-                <div class="system-update-body">
-                  <h3>Changed <b>4</b></h3>
-                  <ul>
-                    <li>Removed manual-specific use of the generic Year field in favor of Game Release Year.</li>
-                    <li>Removed Publication Date from manual metadata because it applies to books/guides and magazines, not most game manuals.</li>
-                    <li>Added Physical Extras to the manual metadata form for inserts, maps, posters, cards, discs, overlays, and similar materials.</li>
-                    <li>Added clickable info icons beside metadata fields to explain field scope and acceptable usage.</li>
-                  </ul>
-                </div>
-              </details>
 
-              <details class="system-update-entry">
+              <details class="system-update-entry" open>
                 <summary>
-                  <span>Guidevault 0.9.75 - IGDB Tab Retention</span>
+                  <span>Guidevault 0.9.140 - Customize Drag Reorder</span>
                   <em>Installed</em>
                 </summary>
-                <div class="system-update-body">
-                  <h3>Changed <b>1</b></h3>
-                  <ul>
-                    <li>Kept the details page on the File &amp; Metadata tab after importing IGDB game metadata instead of switching back to the Metadata tab.</li>
-                  </ul>
-                </div>
-              </details>
-
-              <details class="system-update-entry">
-                <summary>
-                  <span>Guidevault 0.9.74 - ESRB Rating Lookup</span>
-                  <em>Installed</em>
-                </summary>
-                <div class="system-update-body">
-                  <h3>Changed <b>2</b></h3>
-                  <ul>
-                    <li>Added a separate ESRB.org lookup flow for importing the selected game rating into Guidevault.</li>
-                    <li>Adjusted the Open Library metadata button so it no longer uses heavy bold font styling.</li>
-                  </ul>
-                </div>
-              </details>
-
-              <details class="system-update-entry">
-                <summary>
-                  <span>Guidevault 0.9.73 - Platform Icon Name Normalization</span>
-                  <em>Installed</em>
-                </summary>
-                <div class="system-update-body">
-                  <h3>Changed <b>2</b></h3>
-                  <ul>
-                    <li>Normalized PlayStation 2/PS2 platform values to the Guidevault-preferred name Sony Playstation 2.</li>
-                    <li>Expanded platform normalization so imported IGDB names prefer known Guidevault platform/icon names for Sony Playstation generations and related abbreviations.</li>
-                  </ul>
-                </div>
-              </details>
-              <details class="system-update-entry">
-                <summary>
-                  <span>Guidevault 0.9.72 - MS-DOS Platform Normalization</span>
-                  <em>Installed</em>
-                </summary>
-                <div class="system-update-body">
-                  <h3>Changed <b>1</b></h3>
-                  <ul>
-                    <li>Normalized IGDB/platform values of DOS, MS DOS, and related variants to the Guidevault-preferred platform name MS-DOS instead of grouping them under Windows.</li>
-                  </ul>
-                </div>
-              </details>
-              <details class="system-update-entry">
-                <summary>
-                  <span>Guidevault 0.9.71 - Strategy Overview and IGDB Platform Names</span>
-                  <em>Installed</em>
-                </summary>
-                <div class="system-update-body">
-                  <h3>Changed <b>2</b></h3>
-                  <ul>
-                    <li>Removed the duplicate Strategy Guide Title field from the strategy guide overview card because the guide title already appears under the Strategy Guide heading.</li>
-                    <li>Normalized imported/displayed IGDB platform names to Guidevault-preferred names such as Windows, Sony Playstation, Sony Playstation 3, Sony PSP, Sega Dreamcast, and Microsoft Xbox.</li>
-                  </ul>
-                </div>
-              </details>
-              <details class="system-update-entry">
-                <summary>
-                  <span>Guidevault 0.9.70 - Split Open Library and IGDB Metadata Lookups</span>
-                  <em>Installed</em>
-                </summary>
-                <div class="system-update-body">
-                  <h3>Added <b>4</b></h3>
-                  <ul>
-                    <li>Added a separate Search IGDB Game Metadata action for game-side fields instead of mixing game data into the Open Library book lookup.</li>
-                    <li>Added IGDB comparison/import support for game title, developer, publisher, release year, franchise/series, genre, associated platforms, and preferred platform.</li>
-                    <li>Added IGDB Client ID and Client Secret settings under Server &gt; General &gt; Metadata Sources.</li>
-                    <li>Kept external cover art as preview-only; Guidevault/CBZ covers are not replaced by metadata lookups.</li>
-                  </ul>
-                </div>
-              </details>
-              <details class="system-update-entry">
-                <summary>
-                  <span>Guidevault 0.9.69 - Strategy Guide Detail Title Mapping</span>
-                  <em>Installed</em>
-                </summary>
-                <div class="system-update-body">
-                  <h3>Improved <b>3</b></h3>
-                  <ul>
-                    <li>Changed Strategy Guide detail pages so the top page title uses the Game Title value when available.</li>
-                    <li>Changed the Strategy Guide hero heading to show the Strategy Guide Title value instead of repeating the game title.</li>
-                    <li>Clarified the Overview identity fields as Strategy Guide Title and Game Title.</li>
-                  </ul>
-                </div>
+                <ul>
+                  <li>Removed the up/down arrow buttons from the Customize &gt; Home shelf rows.</li>
+                  <li>Changed the six-dot shelf handle into the reorder control with a grab/hand cursor.</li>
+                  <li>Added drag-and-drop ordering for Home shelves so the shelf order can be changed by click-holding the handle and moving the row.</li>
+                  <li>Added visual drag feedback, insertion markers, and a softer handle treatment so reordering feels intentional.</li>
+                </ul>
               </details>
               <details class="system-update-entry" open>
                 <summary>
-                  <span>Guidevault 0.9.68 - Open Library Title-First Metadata Lookup</span>
+                  <span>Guidevault 0.9.139 - Settings Sidebar Corner Refinement</span>
                   <em>Installed</em>
                 </summary>
-                <div class="system-update-body">
-                  <h3>Added <b>4</b></h3>
-                  <ul>
-                    <li>Added a themed Search Open Library Metadata action to the File &amp; Metadata workflow.</li>
-                    <li>Changed Open Library lookup to search by strategy guide title first, then game title or a secondary hint instead of assuming ISBN-first.</li>
-                    <li>Added a selectable results flow followed by a side-by-side comparison screen for existing Guidevault values and Open Library values.</li>
-                    <li>Kept Open Library covers as preview-only visual comparisons; Guidevault/CBZ covers are never imported or replaced.</li>
-                  </ul>
-                </div>
+                <ul>
+                  <li>Rounded the Settings sidebar interactive elements so the hover states, active containers, and icon chips feel softer and more intentional.</li>
+                  <li>Kept the overall Settings sidebar panel itself squared off so the gradient header/sidebar shell still matches the earlier design direction.</li>
+                  <li>Applied the corner refinement only to the button, container, submenu, and icon surfaces instead of changing the outer sidebar frame.</li>
+                </ul>
+              </details>              <details class="system-update-entry" open>
+                <summary>
+                  <span>Guidevault 0.9.138 - Sidebar, Account, Stack Polish</span>
+                  <em>Installed</em>
+                </summary>
+                <ul>
+                  <li>Refined the Settings sidebar styling while keeping the squared-off gradient treatment and avoiding the top-bar click layers.</li>
+                  <li>Polished the Account and Profile surfaces with cleaner blue-glass card treatment, sharper tab styling, and better account-card balance.</li>
+                  <li>Changed the category tile stack so the rear layers read as intentional backing cards/page edges instead of duplicate cover glitches.</li>
+                  <li>Cached grouped library menu data and switched category-card clicks to one delegated handler so opening Manuals, Strategy Guides, and Magazines does less repeated client-side work.</li>
+                </ul>
+              </details>
+
+              <details class="system-update-entry" open>
+                <summary>
+                  <span>Guidevault 0.9.137 - Top Bar Reliability Hotfix</span>
+                  <em>Installed</em>
+                </summary>
+                <ul>
+                  <li>Hardened the Tasks, Settings, and Profile menu buttons so they bind before other startup work can interrupt the rest of the page initialization.</li>
+                  <li>Added a top-bar click guard that forwards blocked clicks back to the correct top-bar control if a view layer or stuck animation state tries to swallow input.</li>
+                  <li>Wrapped category/sidebar startup preference loading with safe fallbacks so a bad local preference cannot prevent the top-bar controls from attaching.</li>
+                </ul>
               </details>
               <details class="system-update-entry" open>
                 <summary>
-                  <span>Guidevault 0.9.65 - File Metadata Layout Polish</span>
+                  <span>Guidevault 0.9.136 - Account + Info Cleanup</span>
                   <em>Installed</em>
                 </summary>
-                <div class="system-update-body">
-                  <h3>Improved <b>3</b></h3>
-                  <ul>
-                    <li>Moved Library Data to the top of the File &amp; Metadata tab so file/path details are visible before other actions.</li>
-                    <li>Placed rename controls directly with the current file, preview filename, and naming schema.</li>
-                    <li>Renamed the single-file enrichment action to Import Guidevault metadata JSON for clearer intent.</li>
-                  </ul>
-                </div>
+                <ul>
+                  <li>Fixed the Account page avatar preview so uploaded profile pictures display correctly even with the polished account-card styling.</li>
+                  <li>Removed the Account page helper sentence above the login profile card.</li>
+                  <li>Removed the explanatory Update History text and hard-capped the System update list to the newest 20 entries.</li>
+                  <li>Squared off the Settings sidebar container corners while keeping the blue gradient treatment.</li>
+                </ul>
               </details>
               <details class="system-update-entry" open>
                 <summary>
-                  <span>Guidevault 0.9.64 - File Metadata Layout</span>
+                  <span>Guidevault 0.9.135 - Top Bar Click Hotfix</span>
                   <em>Installed</em>
                 </summary>
-                <div class="system-update-body">
-                  <h3>Improved <b>2</b></h3>
-                  <ul>
-                    <li>Moved the Library Data dropdown from the Metadata tab into the File &amp; Metadata tab so file details live with export, enrichment, and rename actions.</li>
-                    <li>Reorganized the File &amp; Metadata tab into clearer File identity, Metadata actions, and Filename schema sections.</li>
-                  </ul>
-                </div>
+                <ul>
+                  <li>Fixed the top bar becoming blocked so Tasks, Settings, and the Profile menu remain clickable after the Settings sidebar polish pass.</li>
+                  <li>Raised the top bar and its dropdown panels above app view layers and forced hidden views to stop receiving pointer events.</li>
+                  <li>Added a small safety reset for stuck panel-animation state when interacting with the top bar.</li>
+                </ul>
               </details>
               <details class="system-update-entry" open>
                 <summary>
-                  <span>Guidevault 0.9.63 - Custom Collections Persistence</span>
+                  <span>Guidevault 0.9.134 - Settings Sidebar + Account Polish</span>
                   <em>Installed</em>
                 </summary>
-                <div class="system-update-body">
-                  <h3>Fixed <b>2</b></h3>
-                  <ul>
-                    <li>Persists Customize side-nav collections/shortcuts to the server-side Guidevault data folder instead of relying only on browser local storage.</li>
-                    <li>Reloads saved collections after login so pinned collection shortcuts survive logout, browser refresh, and container restarts.</li>
-                  </ul>
-                </div>
+                <ul>
+                  <li>Made the Settings sidebar sections collapsible for Account, Insights, Server, and Info so long setting groups can be tucked away.</li>
+                  <li>Gave the Settings sidebar and Account page a blue-glass visual polish with clearer active states, section icons, and refined account cards.</li>
+                  <li>Limited the visible Update History list to the latest 20 entries so the System page stays compact as Guidevault keeps shipping frequent updates.</li>
+                </ul>
               </details>
               <details class="system-update-entry" open>
                 <summary>
-                  <span>Guidevault 0.9.61 - Strategy Platform Layout Cleanup</span>
+                  <span>Guidevault 0.9.133 - Fast Three-Cover Stack</span>
                   <em>Installed</em>
                 </summary>
-                <div class="system-update-body">
-                  <h3>Improved <b>2</b></h3>
-                  <ul>
-                    <li>Removed the Entries, Platforms, and Library Size stat boxes from the Browse by Platform header.</li>
-                    <li>Reduced and tightened the platform/category preview cover well so Strategy Guide category cards no longer over-expand or crowd the layout.</li>
-                  </ul>
-                </div>
-              </details>
-              <details class="system-update-entry" open>
-                <summary>
-                  <span>Guidevault 0.9.60 - Library Duplicate Guard</span>
-                  <em>Installed</em>
-                </summary>
-                <div class="system-update-body">
-                  <h3>Fixed <b>3</b></h3>
-                  <ul>
-                    <li>Prevents the same library folder from being added twice; re-adding the same folder now updates the existing library entry instead of duplicating it.</li>
-                    <li>Deduplicates scan results by physical source path so overlapping configured library roots cannot display the same book twice.</li>
-                    <li>Improves folder-path errors so Docker users know to paste the mounted container path, such as /library/Strategy Guides.</li>
-                  </ul>
-                </div>
-              </details>
-              <details class="system-update-entry" open>
-                <summary>
-                  <span>Guidevault 0.9.59 - File &amp; Metadata Workflow</span>
-                  <em>Installed</em>
-                </summary>
-                <div class="system-update-body">
-                  <h3>Improved <b>4</b></h3>
-                  <ul>
-                    <li>Changed the Filename tab into a broader File &amp; Metadata tab with Save Metadata, Export Metadata, single-file enrichment, and rename actions in one place.</li>
-                    <li>Added a single-file native metadata enrichment action so one CBZ/CBR can be refreshed from Guidevault JSON without running a full-library enrichment pass.</li>
-                    <li>Improved Guidevault JSON import aliases for game franchise, game developer, language, edition, issue, and title fields.</li>
-                    <li>Made the initial library API return the cached index immediately instead of starting a cold filesystem scan during first page load.</li>
-                  </ul>
-                </div>
-              </details>
-              <details class="system-update-entry" open>
-                <summary>
-                  <span>Guidevault 0.9.58 - Faster Metadata Enrichment</span>
-                  <em>Installed</em>
-                </summary>
-                <div class="system-update-body">
-                  <h3>Improved <b>3</b></h3>
-                  <ul>
-                    <li>Split Metadata Enrichment into a faster Guidevault JSON import pass and an optional slower Legacy ComicInfo import pass.</li>
-                    <li>Uses modest parallel archive reads during explicit metadata enrichment so large libraries can complete faster without hammering Docker bind mounts.</li>
-                    <li>Keeps legacy ComicInfo.xml parsing out of the default enrichment path unless specifically requested.</li>
-                  </ul>
-                </div>
-              </details>
-              <details class="system-update-entry" open>
-                <summary>
-                  <span>Guidevault 0.9.57 - Fast Scan Performance Guard</span>
-                  <em>Installed</em>
-                </summary>
-                <div class="system-update-body">
-                  <h3>Improved <b>3</b></h3>
-                  <ul>
-                    <li>Kept normal library rescans metadata-light so they do not open CBZ/CBR archive payloads while checking the library index.</li>
-                    <li>Reserved Guidevault JSON and ComicInfo archive reads for explicit Metadata Enrichment, while saved in-app metadata still updates the active item immediately.</li>
-                    <li>Reduced normal scan filesystem concurrency to avoid Docker bind-mount and network-share thrashing on large libraries.</li>
-                  </ul>
-                </div>
-              </details>
-              <details class="system-update-entry" open>
-                <summary>
-                  <span>Guidevault 0.9.56 - Library File Operation Guard</span>
-                  <em>Installed</em>
-                </summary>
-                <div class="system-update-body">
-                  <h3>Improved <b>3</b></h3>
-                  <ul>
-                    <li>Prevents metadata export and file rename operations from running while a library scan, cleanup, or metadata enrichment task is actively reading library files.</li>
-                    <li>Queues scans behind active metadata writes/renames instead of letting both operations compete for the same CBZ/PDF/CBR files.</li>
-                    <li>Shows a clear in-app busy message instead of allowing long file-operation stalls caused by scan/write contention.</li>
-                  </ul>
-                </div>
-              </details>
-              <details class="system-update-entry" open>
-                <summary>
-                  <span>Guidevault 0.9.55 - Filename Sanitizer Build Fix</span>
-                  <em>Installed</em>
-                </summary>
-                <div class="system-update-body">
-                  <h3>Fixed <b>2</b></h3>
-                  <ul>
-                    <li>Fixed a C# compile error in the Windows-safe filename sanitizer by replacing non-ASCII character literals with explicit Unicode string replacements.</li>
-                    <li>Preserved the Windows-safe colon and punctuation handling added for source-file renames.</li>
-                  </ul>
-                </div>
-              </details>
-              <details class="system-update-entry" open>
-                <summary>
-                  <span>Guidevault 0.9.54 - Windows-Safe Filename Sanitizing</span>
-                  <em>Installed</em>
-                </summary>
-                <div class="system-update-body">
-                  <h3>Fixed <b>3</b></h3>
-                  <ul>
-                    <li>Filename renames now use Windows-safe sanitizing even when Guidevault is running inside a Linux Docker container.</li>
-                    <li>Characters Windows does not allow in filenames, including colons in titles like <em>Silent Hill 4: The Room</em>, are converted to readable separators before renaming.</li>
-                    <li>Added extra guards for reserved Windows device names and control characters.</li>
-                  </ul>
-                </div>
-              </details>
-              <details class="system-update-entry" open>
-                <summary>
-                  <span>Guidevault 0.9.53 - Filename Rename Preview Target</span>
-                  <em>Installed</em>
-                </summary>
-                <div class="system-update-body">
-                  <h3>Fixed <b>3</b></h3>
-                  <ul>
-                    <li>Changed Filename tab renames so the server receives the exact preview filename shown in the UI.</li>
-                    <li>Added a safety check that refuses Windows 8.3 short-name alias targets such as SQBRU6~B.CBZ.</li>
-                    <li>Clarified the safe workflow: save metadata first, verify the filename preview, then rename/export.</li>
-                  </ul>
-                </div>
-              </details>
-              <details class="system-update-entry" open>
-                <summary>
-                  <span>Guidevault 0.9.52 - Metadata Export Read-Only Handling</span>
-                  <em>Installed</em>
-                </summary>
-                <div class="system-update-body">
-                  <h3>Fixed <b>3</b></h3>
-                  <ul>
-                    <li>Added a preflight write check before native Guidevault metadata export tries to modify or package source files.</li>
-                    <li>Improved Docker/read-only library mount errors so they explain that metadata export and file rename require write access to the source folder.</li>
-                    <li>Moved metadata export failures into Guidevault's in-app status/modal messaging instead of browser alert popups.</li>
-                  </ul>
-                </div>
-              </details>
-              <details class="system-update-entry" open>
-                <summary>
-                  <span>Guidevault 0.9.51 - Filename Token Aliases</span>
-                  <em>Installed</em>
-                </summary>
-                <div class="system-update-body">
-                  <h3>Fixed <b>4</b></h3>
-                  <ul>
-                    <li>Fixed Filename tab renames when using Game Publisher and ISBN tokens in naming schemas.</li>
-                    <li>Added an ISBN token that uses ISBN-13 first and falls back to ISBN-10.</li>
-                    <li>Allowed human-readable token names such as {Game Publisher}, {ISBN}, {ISBN-10}, and {ISBN-13} in addition to camel-case tokens.</li>
-                    <li>Preserved intentional separator spacing around patterns like {title} - {isbn} while still cleaning up empty trailing separators.</li>
-                  </ul>
-                </div>
-              </details>
-              <details class="system-update-entry" open>
-                <summary>
-                  <span>Guidevault 0.9.50 - Contextual Filename Tokens</span>
-                  <em>Installed</em>
-                </summary>
-                <div class="system-update-body">
-                  <h3>Improved <b>4</b></h3>
-                  <ul>
-                    <li>Filtered Filename tab token buttons by item type so strategy guides no longer show manual-only or magazine-only tokens.</li>
-                    <li>Grouped filename tokens into Common, Game / release, Strategy guide, Manual, and Magazine sections.</li>
-                    <li>Added a few extra supported filename tokens such as Manual Type, Control Scheme, ISBN, Developer, Genre, Month, and Cover Story.</li>
-                    <li>Kept the working in-app Rename file flow unchanged while tightening the naming-schema helper UI.</li>
-                  </ul>
-                </div>
-              </details>
-
-              <details class="system-update-entry">
-                <summary>
-                  <span>Guidevault 0.9.49 - Filename Tab Polish</span>
-                  <em>Installed</em>
-                </summary>
-                <div class="system-update-body">
-                  <h3>Fixed <b>4</b></h3>
-                  <ul>
-                    <li>Fixed the Filename tab preview layout so Current file and Preview filename display as clean rows instead of wrapping into narrow columns.</li>
-                    <li>Changed the rename confirmation from a browser popup to the in-app Guidevault confirmation modal.</li>
-                    <li>Kept rename errors inside the Filename tab/status area instead of showing browser alert popups.</li>
-                    <li>Added another cache-busting version bump for the Filename tab JavaScript and CSS.</li>
-                  </ul>
-                </div>
-              </details>
-
-              <details class="system-update-entry">
-                <summary>
-                  <span>Guidevault 0.9.48 - Filename Tab Button Fixes</span>
-                  <em>Installed</em>
-                </summary>
-                <div class="system-update-body">
-                  <h3>Fixed <b>5</b></h3>
-                  <ul>
-                    <li>Fixed the Filename tab click handler by restoring the missing current-file-name helper used by the preview and rename flow.</li>
-                    <li>Simplified the action buttons to Rename file and Reset naming schema.</li>
-                    <li>Added human-readable token buttons above the naming schema input.</li>
-                    <li>Improved the current and preview filename labels so the workflow is clearer.</li>
-                    <li>Fixed the nullable warning in the naming-schema backend helper and cache-busted the browser assets.</li>
-                  </ul>
-                </div>
-              </details>
-
-              <details class="system-update-entry">
-                <summary>
-                  <span>Guidevault 0.9.47 - Filename Schema Rename Tab</span>
-                  <em>Installed</em>
-                </summary>
-                <div class="system-update-body">
-                  <h3>Changed <b>4</b></h3>
-                  <ul>
-                    <li>Moved source-file renaming into its own Filename tab instead of burying it in Metadata.</li>
-                    <li>Renamed the action to Rename File to Guide Title and removed the confusing copy-suggested-name action.</li>
-                    <li>Added a customizable naming schema preview with tokens while keeping the default schema as the Guide Title.</li>
-                    <li>Kept rename behavior tied to the same Guidevault item/database entry so the item does not need to be rediscovered.</li>
-                  </ul>
-                </div>
-              </details>
-
-              <details class="system-update-entry">
-                <summary>
-                  <span>Guidevault 0.9.46 - Suggested Filename Rename</span>
-                  <em>Installed</em>
-                </summary>
-                <div class="system-update-body">
-                  <h3>Added <b>4</b></h3>
-                  <ul>
-                    <li>Added a File Maintenance panel in the Metadata tab with current and suggested filenames.</li>
-                    <li>Added Copy Suggested Name and Rename File to Suggested Name actions for individual items.</li>
-                    <li>Renaming now updates the active Guidevault index/database entry instead of requiring a full rescan.</li>
-                    <li>Added a persistent file identity map so renamed paths keep the same item identity across future rescans.</li>
-                  </ul>
-                </div>
-              </details>
-
-              <details class="system-update-entry">
-                <summary>
-                  <span>Guidevault 0.9.45 - Login Identity Field Cleanup</span>
-                  <em>Installed</em>
-                </summary>
-                <div class="system-update-body">
-                  <h3>Changed <b>3</b></h3>
-                  <ul>
-                    <li>Changed normal sign-in to use one Username / Email Address field plus Password.</li>
-                    <li>Kept separate Username and Email fields for first-time local profile creation.</li>
-                    <li>Updated sign-in matching so either the saved username or saved email address can be used with the password.</li>
-                  </ul>
-                </div>
-              </details>
-
-              <details class="system-update-entry">
-                <summary>
-                  <span>Guidevault 0.9.44 - Native Metadata Archive Export</span>
-                  <em>Installed</em>
-                </summary>
-                <div class="system-update-body">
-                  <h3>Changed <b>4</b></h3>
-                  <ul>
-                    <li>Saved manually entered Page Count values through the server metadata override path.</li>
-                    <li>Changed individual metadata export names to guidevault-guide-metadata.json, guidevault-manual-metadata.json, and guidevault-magazine-metadata.json.</li>
-                    <li>Writes Guidevault JSON metadata into CBZ archives, creates CBZ metadata packages for CBR sources, and creates ZIP metadata packages for PDF sources.</li>
-                    <li>Reads Guidevault JSON metadata ahead of ComicInfo.xml so native Guidevault metadata takes precedence on future scans.</li>
-                  </ul>
-                </div>
-              </details>
-
-              <details class="system-update-entry">
-                <summary>
-                  <span>Guidevault 0.9.43 - Metadata Export Page Count</span>
-                  <em>Installed</em>
-                </summary>
-                <div class="system-update-body">
-                  <h3>Changed <b>3</b></h3>
-                  <ul>
-                    <li>Added a Page Count field to Details &gt; Metadata for manually entered page totals.</li>
-                    <li>Changed item metadata exports to use suggestedFileName instead of fileName.</li>
-                    <li>Exported pageCount only when a page count is entered.</li>
-                  </ul>
-                </div>
-              </details>
-
-              <details class="system-update-entry">
-                <summary>
-                  <span>Guidevault 0.9.43 - Metadata Export Filename Cleanup</span>
-                  <em>Installed</em>
-                </summary>
-                <div class="system-update-body">
-                  <h3>Changed <b>2</b></h3>
-                  <ul>
-                    <li>Changed item metadata exports to use a title-derived file name instead of the raw archive file name.</li>
-                    <li>Omitted empty content hashes and zero page counts from item metadata exports.</li>
-                  </ul>
-                </div>
-              </details>
-
-              <details class="system-update-entry">
-                <summary>
-                  <span>Guidevault 0.9.43 - Individual Metadata Export</span>
-                  <em>Installed</em>
-                </summary>
-                <div class="system-update-body">
-                  <h3>Added <b>1</b></h3>
-                  <ul>
-                    <li>Added item-level Guidevault JSON metadata export beside Save Metadata for guides, manuals, and magazines.</li>
-                  </ul>
-                </div>
-              </details>
-
-              <details class="system-update-entry">
-                <summary>
-                  <span>Guidevault 0.9.43 - Detail Navigation Stabilization</span>
-                  <em>Installed</em>
-                </summary>
-                <div class="system-update-body">
-                  <h3>Fixed <b>3</b></h3>
-                  <ul>
-                    <li>Stabilized Details Previous/Next by capturing the visible card order when Details opens.</li>
-                    <li>Removed the stable update toolbar button while keeping the auto-dismissing toast.</li>
-                    <li>Made the Guidevault wordmark navigate Home from anywhere and show a pointer cursor.</li>
-                  </ul>
-                </div>
-              </details>
-
-              <details class="system-update-entry">
-                <summary>
-                  <span>Guidevault 0.9.43 - Sort and Reader Transition Cleanup</span>
-                  <em>Installed</em>
-                </summary>
-                <div class="system-update-body">
-                  <h3>Changed <b>3</b></h3>
-                  <ul>
-                    <li>Fixed the library sort dropdown so main menu/group/category views sort where applicable.</li>
-                    <li>Removed Soft Dissolve and Push from reader transition options because they duplicated Quick Fade and Slide.</li>
-                    <li>Kept existing saved Soft Dissolve and Push profiles compatible by mapping them to Quick Fade and Slide.</li>
-                  </ul>
-                </div>
-              </details>
-
-              <details class="system-update-entry">
-                <summary>
-                  <span>Guidevault 0.9.43 - Clickable Logo Cursor Polish</span>
-                  <em>Installed</em>
-                </summary>
-                <div class="system-update-body">
-                  <h3>Changed <b>1</b></h3>
-                  <ul>
-                    <li>Changed the Guidevault wordmark cursor to a pointer so it clearly behaves like a clickable Home link.</li>
-                  </ul>
-                </div>
-              </details>
-
-              <details class="system-update-entry">
-                <summary>
-                  <span>Guidevault 0.9.43 - Navigation and Update Toast Polish</span>
-                  <em>Installed</em>
-                </summary>
-                <div class="system-update-body">
-                  <h3>Changed <b>3</b></h3>
-                  <ul>
-                    <li>Removed the stable update button from the top toolbar while keeping the toast notification.</li>
-                    <li>Changed the update toast to auto-dismiss after a few seconds without requiring Dismiss.</li>
-                    <li>Made the Guidevault logo navigate back to Home and corrected Details Previous/Next navigation order.</li>
-                  </ul>
-                </div>
-              </details>
-
-              <details class="system-update-entry">
-                <summary>
-                  <span>Guidevault 0.9.43 - Detail Navigation Direction Fix</span>
-                  <em>Installed</em>
-                </summary>
-                <div class="system-update-body">
-                  <h3>Fixed <b>1</b></h3>
-                  <ul>
-                    <li>Corrected Details page Previous and Next navigation so the buttons move in the expected direction.</li>
-                  </ul>
-                </div>
-              </details>
-
-              <details class="system-update-entry">
-                <summary>
-                  <span>Guidevault 0.9.42 - Reading Profile and OPDS Accent Reapply</span>
-                  <em>Installed</em>
-                </summary>
-                <div class="system-update-body">
-                  <h3>Fixed <b>2</b></h3>
-                  <ul>
-                    <li>Reapplied Reading Profile brightness and fullscreen defaults with cache-busted app assets.</li>
-                    <li>Added exact OPDS blue accent overrides for the OPDS URL field, toggle, and action buttons.</li>
-                  </ul>
-                </div>
-              </details>
-
-              <details class="system-update-entry">
-                <summary>
-                  <span>Guidevault 0.9.42 - Reading Profile Reader Defaults</span>
-                  <em>Installed</em>
-                </summary>
-                <div class="system-update-body">
-                  <h3>Added <b>2</b></h3>
-                  <ul>
-                    <li>Added Background Brightness to Reading Profile presets.</li>
-                    <li>Added an Open Fullscreen by Default option to Reading Profile presets.</li>
-                  </ul>
-                </div>
-              </details>
-
-              <details class="system-update-entry">
-                <summary>
-                  <span>Guidevault 0.9.42 - OPDS Blue Accent Polish</span>
-                  <em>Installed</em>
-                </summary>
-                <div class="system-update-body">
-                  <h3>Changed <b>2</b></h3>
-                  <ul>
-                    <li>Changed OPDS controls and focus accents from purple to the Guidevault blue theme.</li>
-                    <li>Changed Update History entries to start collapsed by default.</li>
-                  </ul>
-                </div>
-              </details>
-
-              <details class="system-update-entry">
-                <summary>
-                  <span>Guidevault 0.9.42 - Stable Update Force Check Hotfix</span>
-                  <em>Installed</em>
-                </summary>
-                <div class="system-update-body">
-                  <h3>Fixed <b>1</b></h3>
-                  <ul>
-                    <li>Fixed forced stable update checks by accepting force=true and force=1 query values without throwing a backend binding error.</li>
-                  </ul>
-                </div>
-              </details>
-
-              <details class="system-update-entry">
-                <summary>
-                  <span>Guidevault 0.9.42 - Follow-up UI Polish</span>
-                  <em>Installed</em>
-                </summary>
-                <div class="system-update-body">
-                  <h3>Changed <b>3</b></h3>
-                  <ul>
-                    <li>Changed remaining add-button focus rings from purple to blue.</li>
-                    <li>Compressed Metadata Manager summary cards so they fit on one row on wide screens.</li>
-                    <li>Softened stable update status text when GitHub tag fallback confirms the installed version is current.</li>
-                  </ul>
-                </div>
-              </details>
-
-              <details class="system-update-entry">
-                <summary>
-                  <span>Guidevault 0.9.42 - Settings, Metadata, and Update Check Polish</span>
-                  <em>Installed</em>
-                </summary>
-                <div class="system-update-body">
-                  <h3>Changed <b>5</b></h3>
-                  <ul>
-                    <li>Removed the Mixed option from the Add Library type selector.</li>
-                    <li>Changed the Web App device badge and top action rings to match the blue interface theme.</li>
-                    <li>Compacted the Metadata Manager toolbar and moved batch edit controls behind a collapsible section.</li>
-                    <li>Clarified Strategy Guide metadata labels and hid redundant match/series fields on strategy-guide records.</li>
-                    <li>Added a direct browser-side GitHub tags fallback for stable update checks.</li>
-                  </ul>
-                </div>
-              </details>
-
-              <details class="system-update-entry">
-                <summary>
-                  <span>Guidevault 0.9.42 - Stable Update Check Fallback</span>
-                  <em>Installed</em>
-                </summary>
-                <div class="system-update-body">
-                  <h3>Fixed <b>1</b></h3>
-                  <ul>
-                    <li>Changed the stable update checker to use GitHub tags as the primary feed and report release/package paths even when the latest-release endpoint is unavailable.</li>
-                  </ul>
-                </div>
-              </details>
-
-              <details class="system-update-entry">
-                <summary>
-                  <span>Guidevault 0.9.42 - ESRB and Metadata Manager Stability</span>
-                  <em>Installed</em>
-                </summary>
-                <div class="system-update-body">
-                  <h3>Fixed <b>3</b></h3>
-                  <ul>
-                    <li>Corrected the Rated None ESRB icon path to use the case-sensitive RatedNone.png asset.</li>
-                    <li>Added a GitHub tags fallback for stable update checks when the latest release endpoint is unavailable.</li>
-                    <li>Reduced Metadata Manager search stalls by debouncing search input and limiting the rendered grid size.</li>
-                  </ul>
-                </div>
-              </details>
-
-              <details class="system-update-entry">
-                <summary>
-                  <span>Guidevault 0.9.42 - Mojibake-safe UI Icon Encoding</span>
-                  <em>Installed</em>
-                </summary>
-                <div class="system-update-body">
-                  <h3>Fixed <b>3</b></h3>
-                  <ul>
-                    <li>Converted visible UI glyphs to encoding-safe entities/escapes so icons no longer render as mojibake.</li>
-                    <li>Repaired the keybind add icon and other action glyphs that could show as corrupted text.</li>
-                    <li>Kept the app/cache version aligned with 0.9.42 for the browser reload path.</li>
-                  </ul>
-                </div>
-              </details>
-
-              <details class="system-update-entry">
-                <summary>
-                  <span>Guidevault 0.9.40 - Source Cleanup and Asset Path Fixes</span>
-                  <em>Installed</em>
-                </summary>
-                <div class="system-update-body">
-                  <h3>Fixed <b>4</b></h3>
-                  <ul>
-                    <li>Updated the active app version markers from 0.9.39 to 0.9.40.</li>
-                    <li>Cleaned the platform icon manifest so icon URLs point to /assets/icons/platforms.</li>
-                    <li>Removed stale generated build/runtime folders from the source package.</li>
-                    <li>Repaired mojibake text artifacts in the client script after the source cleanup pass.</li>
-                  </ul>
-                </div>
-              </details>
-
-              <details class="system-update-entry">
-                <summary>
-                  <span>Guidevault 0.9.39 - View Recovery Hotfix</span>
-                  <em>Installed</em>
-                </summary>
-                <div class="system-update-body">
-                  <h3>Fixed <b>3</b></h3>
-                  <ul>
-                    <li>Fixed settings pages appearing blank after visiting My Profile.</li>
-                    <li>Fixed detail pages and other app views inheriting forced hidden styles from profile-page mode.</li>
-                    <li>Centralized view show/hide cleanup so Library, Settings, Details, Reader, and My Profile recover cleanly when navigating between them.</li>
-                  </ul>
-                </div>
-              </details>
-
-              <details class="system-update-entry">
-                <summary>
-                  <span>Guidevault 0.9.38 - Profile Navigation Hotfix</span>
-                  <em>Installed</em>
-                </summary>
-                <div class="system-update-body">
-                  <h3>Fixed <b>3</b></h3>
-                  <ul>
-                    <li>Fixed the current user's My Profile menu item so it reliably opens the dedicated personal profile page.</li>
-                    <li>Added a first-class profile page mode that hides library/settings/detail/reader views and forces the personal profile page visible.</li>
-                    <li>Added a #profile route fallback and cache-busted app.js/styles.css references for this hotfix.</li>
-                  </ul>
-                </div>
+                <ul>
+                  <li>Restored the three-cover category/menu tile look while keeping the 0.9.132 fast primary-cover loading path.</li>
+                  <li>Uses one real primary cover and lightweight faux rear cover layers, so opening Manuals, Strategy Guides, or Magazines does not wait on secondary preview images.</li>
+                  <li>Keeps secondary category preview image prewarming disabled to avoid slowing down first library clicks.</li>
+                </ul>
               </details>
               <details class="system-update-entry">
                 <summary>
-                  <span>Guidevault 0.9.37 - Transactional Email and Profile Page</span>
+                  <span>Guidevault 0.9.132 - Category Cover Fast Path</span>
                   <em>Installed</em>
                 </summary>
-                <div class="system-update-body">
-                  <h3>Added <b>3</b></h3>
-                  <ul>
-                    <li>Added a long-term transactional email provider model with Resend API and SendGrid API options while keeping SMTP as a fallback.</li>
-                    <li>Changed the current user menu's My Profile item to open a dedicated personal profile page with hero, stats, heatmap, recent reads, and activity tabs.</li>
-                    <li>Added cache-busted app.js and styles.css references for this update.</li>
-                  </ul>
-                </div>
+                <ul>
+                  <li>Disabled the aggressive category cover prewarm pass because it could compete with the covers currently visible on screen.</li>
+                  <li>Changed category/menu tiles to load one primary preview cover first instead of building a multi-cover stack on first open.</li>
+                  <li>Optimized cached cover lookup on the server so existing cover thumbnails are read by direct path checks instead of directory wildcard scans.</li>
+                </ul>
               </details>
               <details class="system-update-entry">
                 <summary>
-                  <span>Guidevault 0.9.36 - Email Test Button Hotfix</span>
+                  <span>Guidevault 0.9.131 - Category Preview Prewarm</span>
                   <em>Installed</em>
                 </summary>
-                <div class="system-update-body">
-                  <h3>Fixed <b>2</b></h3>
-                  <ul>
-                    <li>Fixed the email settings status helper so saving SMTP settings no longer fails with a JavaScript setText error.</li>
-                    <li>Kept cache-busted app.js and styles.css references so the corrected email screen loads cleanly after update.</li>
-                  </ul>
-                </div>
+                <ul>
+                  <li>Added aggressive browser and server-side prewarming for main-menu category preview covers before opening Manuals, Strategy Guides, or Magazines.</li>
+                  <li>Stopped showing visible No Preview placeholders for delayed stacked covers, so tiles no longer visibly assemble themselves on first open.</li>
+                  <li>Added a local cover-result cache so future category tiles prefer covers that are known to render successfully and push missing covers out of the preview stack.</li>
+                </ul>
               </details>
               <details class="system-update-entry">
                 <summary>
-                  <span>Guidevault 0.9.35 - Email Preview Render Fallback</span>
+                  <span>Guidevault 0.9.130 - Instant Category Covers</span>
                   <em>Installed</em>
                 </summary>
-                <div class="system-update-body">
-                  <h3>Fixed <b>3</b></h3>
-                  <ul>
-                    <li>Rebuilt the email template preview renderer so templates render inside an isolated preview host.</li>
-                    <li>Added cache-busting references for app.js and styles.css to avoid stale browser assets after updates.</li>
-                    <li>Added a visible fallback preview when a saved template body is blank or not ready yet.</li>
-                  </ul>
-                </div>
+                <ul>
+                  <li>Changed category/menu tiles so the primary visible cover starts loading immediately in the initial HTML instead of waiting for the cover observer path.</li>
+                  <li>Kept the primary cover visually on top of the stacked preview so delayed secondary covers no longer make the tile look like it is stuck on No Preview.</li>
+                  <li>Added idle prewarming for main-menu primary category covers so Manuals, Strategy Guides, and Magazines feel ready when opened.</li>
+                </ul>
               </details>
               <details class="system-update-entry">
                 <summary>
-                  <span>Guidevault 0.9.34 - Email Template Preview Hotfix</span>
+                  <span>Guidevault 0.9.129 - Cover Priority Loading</span>
                   <em>Installed</em>
                 </summary>
-                <div class="system-update-body">
-                  <h3>Fixed <b>2</b></h3>
-                  <ul>
-                    <li>Fixed the email template preview so selected built-in and uploaded templates render directly in the preview panel.</li>
-                    <li>Changed the preview renderer away from the iframe-based srcdoc approach for better browser compatibility.</li>
-                  </ul>
-                </div>
+                <ul>
+                  <li>Prioritized the front/primary cover on category menu tiles so visible covers start loading before decorative stacked preview covers.</li>
+                  <li>Deferred secondary stacked covers into small delayed batches to reduce first-paint network and archive-reader pressure.</li>
+                  <li>Changed menu Colorscape sampling so it reuses covers after they load instead of starting extra competing cover requests.</li>
+                </ul>
               </details>
               <details class="system-update-entry">
                 <summary>
-                  <span>Guidevault 0.9.33 - Email, Users, and Tasks Refinement</span>
+                  <span>Guidevault 0.9.128 - Faster Colorscape Apply</span>
                   <em>Installed</em>
                 </summary>
-                <div class="system-update-body">
-                  <h3>Changed <b>6</b></h3>
-                  <ul>
-                    <li>Refined Server &#x2192; Email with SMTP testing, template upload, built-in templates, and a live preview panel.</li>
-                    <li>Added persistent email history for invite and test email attempts.</li>
-                    <li>Added Info &#x2192; E-mail History to review recent email activity.</li>
-                    <li>Refined Server &#x2192; Users with a clearer invite/access layout and current-user cards.</li>
-                    <li>Refined Server &#x2192; Tasks with schedule cards and one-click maintenance task tiles.</li>
-                    <li>Removed the top-level Import menu item while keeping Library management under Server.</li>
-                  </ul>
-                </div>
+                <ul>
+                  <li>Added a persistent local Colorscape color cache so previously sampled cover colors apply immediately after reloads and future logins.</li>
+                  <li>Changed main-menu Colorscape tiles to apply an instant seeded tint first, then replace it with the real sampled cover color as soon as it is ready.</li>
+                  <li>Optimized category Colorscape sampling by prioritizing visible cards, reusing already-loaded cover images, sampling smaller canvases, and processing colors in small parallel batches.</li>
+                </ul>
               </details>
               <details class="system-update-entry">
                 <summary>
-                  <span>Guidevault 0.9.32 - Settings Layout Refinement</span>
+                  <span>Guidevault 0.9.127 - Colorscape Controls</span>
                   <em>Installed</em>
                 </summary>
-                <div class="system-update-body">
-                  <h3>Changed <b>4</b></h3>
-                  <ul>
-                    <li>Refined the Account profile picture area by removing the nested avatar container and enlarging the preview.</li>
-                    <li>Improved Customize &#x2192; Side Nav with a two-column builder, pinned-item preview, result scope filtering, match mode, sort mode, and better default list icons.</li>
-                    <li>Left-aligned custom sidebar shortcuts and added item counts for saved side-nav filters.</li>
-                    <li>Reworked Server &#x2192; General into clearer Networking and Backups & Logging sections with inline guidance.</li>
-                  </ul>
-                </div>
+                <ul>
+                  <li>Changed the Preferences Colorscape toggle styling to blue so it matches the rest of the current Guidevault UI.</li>
+                  <li>Converted Use Colorscape into a master switch with separate child toggles for the Details Pane, Manual menu tiles, Strategy Guide menu tiles, and Magazine menu tiles.</li>
+                  <li>Added optional Colorscape tinting to main menu category containers while keeping the effect limited to the tile container only.</li>
+                </ul>
               </details>
               <details class="system-update-entry">
                 <summary>
-                  <span>Guidevault 0.9.31 - Account, Server, Users, and Navigation Settings</span>
+                  <span>Guidevault 0.9.126 - Profile Hero Gloss</span>
                   <em>Installed</em>
                 </summary>
-                <div class="system-update-body">
-                  <h3>Changed <b>8</b></h3>
-                  <ul>
-                    <li>Added local profile picture upload support for the Account screen and top user avatar.</li>
-                    <li>Moved OPDS into the Server settings area and added an enable/disable toggle.</li>
-                    <li>Added Server &#x2192; General settings for hostname, base URL, IP addresses, port, backups, and logging level.</li>
-                    <li>Added Server &#x2192; Media settings with a configurable bookmarks directory.</li>
-                    <li>Added Server &#x2192; Email settings for SMTP-based invites and future email workflows.</li>
-                    <li>Added Server &#x2192; Users with invite, library access, permission, and age-restriction controls.</li>
-                    <li>Added Server &#x2192; Tasks with recurring task settings and ad-hoc maintenance actions.</li>
-                    <li>Removed Smart Filters and External Sources from Customize and replaced the Side Nav placeholder with custom navigation shortcuts.</li>
-                  </ul>
-                </div>
+                <ul>
+                  <li>Restored the profile-picture based hero background on the My Profile page.</li>
+                  <li>Added a semi-gloss blurred avatar backdrop with blue-tinted glass overlays so the hero keeps the polished profile-card look without overpowering the text.</li>
+                  <li>Kept the profile avatar, read badge, and hero stats layered above the image treatment for readability.</li>
+                </ul>
               </details>
               <details class="system-update-entry">
                 <summary>
-                  <span>Guidevault 0.9.30 - Library Scope Classification Fix</span>
+                  <span>Guidevault 0.9.125 - Profile Polish + Reviews</span>
                   <em>Installed</em>
                 </summary>
-                <div class="system-update-body">
-                  <h3>Fixed <b>5</b></h3>
-                  <ul>
-                    <li>Fixed mixed Manual and Strategy Guide libraries fighting over the same indexed files when configured library folders overlap.</li>
-                    <li>Added deterministic one-owner-per-file discovery so the most-specific configured library folder wins during scans.</li>
-                    <li>Made explicit library types authoritative, while allowing Mixed libraries named Manuals, Strategy Guides, or Magazines to inherit the expected content type.</li>
-                    <li>Fast rescans now repair cached items whose content type no longer matches the owning library.</li>
-                    <li>Updated app version metadata for browser heartbeat and stable-image update checks.</li>
-                  </ul>
-                </div>
-              </details>
-              <details class="system-update-entry">
-                <summary>
-                  <span>Guidevault 0.9.29 - Platform Classification Expansion</span>
-                  <em>Installed</em>
-                </summary>
-                <div class="system-update-body">
-                  <h3>Fixed <b>5</b></h3>
-                  <ul>
-                    <li>Expanded fast-index platform detection for retro systems that were falling into Unsorted Manuals, including Atari, Amstrad, ColecoVision, Daphne/LaserDisc, Intellivision, Vectrex, Commodore, MSX, ZX Spectrum, Neo Geo, and Philips CD-i platforms.</li>
-                    <li>Kept the fast scan path lightweight while improving folder/file-name inference for platform libraries.</li>
-                    <li>Reduced manual misclassification caused by missing platform aliases rather than actual content-type errors.</li>
-                    <li>Fast rescans now repair already-cached Unsorted items when improved path inference can classify them without reopening the archive.</li>
-                    <li>Updated the app version metadata used by the browser heartbeat and stable-image update checks.</li>
-                  </ul>
-                </div>
-              </details>
-              <details class="system-update-entry">
-                <summary>
-                  <span>Guidevault 0.9.28 - Metadata Classification Hotfix</span>
-                  <em>Installed</em>
-                </summary>
-                <div class="system-update-body">
-                  <h3>Fixed <b>3</b></h3>
-                  <ul>
-                    <li>Fixed filename inference so titles like Primal Rage are no longer mistaken for Prima strategy guides.</li>
-                    <li>Changed guide, magazine, and publisher keyword detection to use whole-word matching instead of broad substring matching.</li>
-                    <li>Kept the fast indexing path intact while making manual/strategy-guide classification safer for mixed libraries.</li>
-                  </ul>
-                </div>
-              </details>
-              <details class="system-update-entry">
-                <summary>
-                  <span>Guidevault 0.9.27 - Fast Indexing and Metadata Enrichment</span>
-                  <em>Installed</em>
-                </summary>
-                <div class="system-update-body">
-                  <h3>Changed <b>5</b></h3>
-                  <ul>
-                    <li>Changed normal library rescans into a fast index pass that avoids opening every CBZ archive for ComicInfo metadata.</li>
-                    <li>Added a separate low-priority Metadata Enrichment action for deeper ComicInfo import after the library is already usable.</li>
-                    <li>Removed expensive last-modified sorting during file discovery so network-mounted libraries begin indexing sooner.</li>
-                    <li>Added scan timing and reuse/deferred metadata counters to Info &#x2192; System &#x2192; Performance.</li>
-                    <li>Updated task messages so scanning, cleanup, and enrichment show clearer progress and do not look stuck during large libraries.</li>
-                  </ul>
-                </div>
-              </details>
-              <details class="system-update-entry">
-                <summary>
-                  <span>Guidevault 0.9.26 - Performance Stabilization and Stable Image Updates</span>
-                  <em>Installed</em>
-                </summary>
-                <div class="system-update-body">
-                  <h3>Changed <b>5</b></h3>
-                  <ul>
-                    <li>Changed cover caching so large cover byte arrays are kept on disk instead of being pinned in memory after burst loads.</li>
-                    <li>Reduced aggressive offscreen cover preloading so the browser requests fewer covers before they are actually near the visible library area.</li>
-                    <li>Added Info &#x2192; System performance diagnostics for working set, private memory, managed memory, cache counts, task counts, and disk cover cache size.</li>
-                    <li>Added a safe memory trim action for clearing in-memory archive/cover request caches without deleting persistent user data.</li>
-                    <li>Added stable container image update notifications driven by a configurable update feed for Docker/GHCR-style releases.</li>
-                  </ul>
-                </div>
-              </details>
-              <details class="system-update-entry">
-                <summary>
-                  <span>Guidevault 0.9.25 - Reader Hit-Zone Overlay Cleanup</span>
-                  <em>Installed</em>
-                </summary>
-                <div class="system-update-body">
-                  <h3>Fixed <b>3</b></h3>
-                  <ul>
-                    <li>Changed the invisible reader click zones from focusable buttons to non-focusable overlay regions.</li>
-                    <li>Added a stronger reader keyboard cleanup so fullscreen and page navigation keys do not leave vertical focus outlines over the scanned pages.</li>
-                    <li>Kept mouse/touch page navigation behavior intact while removing browser button focus artifacts from the reader surface.</li>
-                  </ul>
-                </div>
-              </details>
-              <details class="system-update-entry">
-                <summary>
-                  <span>Guidevault 0.9.24 - Login Cleanup and Reader Key Focus Polish</span>
-                  <em>Installed</em>
-                </summary>
-                <div class="system-update-body">
-                  <h3>Changed <b>3</b></h3>
-                  <ul>
-                    <li>Cleaned up the login screen so first-run setup guidance only appears while creating the first local profile.</li>
-                    <li>Removed the persistent login help text from the bottom of the login card.</li>
-                    <li>Suppressed reader hit-zone focus outlines so fullscreen and navigation keybinds do not draw vertical guide lines over the page.</li>
-                  </ul>
-                </div>
-              </details>
-              <details class="system-update-entry">
-                <summary>
-                  <span>Guidevault 0.9.23 - OPDS, Docker Path Help, and Reader Keybinds</span>
-                  <em>Installed</em>
-                </summary>
-                <div class="system-update-body">
-                  <h3>Changed <b>5</b></h3>
-                  <ul>
-                    <li>Removed the duplicate OPDS authorization key button from the Account OPDS screen.</li>
-                    <li>Changed library folder placeholders to Linux/Docker-style paths such as /app/data/library.</li>
-                    <li>Added a Docker-aware folder browser so Path Help can browse server/container folders and mounted volumes.</li>
-                    <li>Activated reader keybinds for fullscreen, bookmark, page navigation, go-to-page, overlay toggle, and first/last page commands.</li>
-                    <li>Kept Docker defaults aligned to port 5478 for generated container packages.</li>
-                  </ul>
-                </div>
-              </details>
-              <details class="system-update-entry">
-                <summary>
-                  <span>Guidevault 0.9.22 - Default Port Reassignment</span>
-                  <em>Installed</em>
-                </summary>
-                <div class="system-update-body">
-                  <h3>Changed <b>3</b></h3>
-                  <ul>
-                    <li>Changed the default Guidevault web port from 5000 to 5478 to avoid conflicts with other self-hosted readers on port 5000.</li>
-                    <li>Added local development launch settings so dotnet run opens Guidevault on http://localhost:5478.</li>
-                    <li>Updated Kestrel defaults so portable builds listen on port 5478 unless overridden by command-line or environment settings.</li>
-                  </ul>
-                </div>
-              </details>
-              <details class="system-update-entry">
-                <summary>
-                  <span>Guidevault 0.9.21 - Release Packaging Automation</span>
-                  <em>Installed</em>
-                </summary>
-                <div class="system-update-body">
-                  <h3>Changed <b>5</b></h3>
-                  <ul>
-                    <li>Added a release script that publishes Guidevault as a self-contained portable Windows build.</li>
-                    <li>Added automatic portable ZIP creation under artifacts/releases.</li>
-                    <li>Added SHA256 checksum generation for validating release packages.</li>
-                    <li>Added release notes and starter latest.json manifest output for future update notifications.</li>
-                    <li>Added cleanup safeguards so user data, OPDS keys, device history, cache, and local configuration are stripped from release packages.</li>
-                  </ul>
-                </div>
-              </details>
-              <details class="system-update-entry">
-                <summary>
-                  <span>Guidevault 0.9.20 - Metadata Dropdown Control Cleanup</span>
-                  <em>Installed</em>
-                </summary>
-                <div class="system-update-body">
-                  <h3>Changed <b>4</b></h3>
-                  <ul>
-                    <li>Changed Guide Type from a listbox into a themed dropdown with multi-select checkboxes.</li>
-                    <li>Changed Edition Type into a themed multi-select dropdown while keeping Year Edition and Volume Edition detail fields working.</li>
-                    <li>Changed ESRB Rating into a dropdown with standard ESRB choices.</li>
-                    <li>Removed the visible container styling around the upper-right username control.</li>
-                  </ul>
-                </div>
-              </details>
-              <details class="system-update-entry">
-                <summary>
-                  <span>Guidevault 0.9.19 - Header User Menu and Guide Metadata Controls</span>
-                  <em>Installed</em>
-                </summary>
-                <div class="system-update-body">
-                  <h3>Changed <b>4</b></h3>
-                  <ul>
-                    <li>Moved the current-user control into the top-right header row with Tasks and Settings so it no longer wraps underneath the search bar.</li>
-                    <li>Changed Guide Type into a multi-select list with common guide classifications such as Official Guide, Hint Book, Code Book, Art Book, and Tips & Tricks.</li>
-                    <li>Changed Edition into an edition-type selector with dedicated Year Edition and Volume Edition inputs.</li>
-                    <li>Saved derived edition text while preserving year and volume metadata fields for future metadata manager use.</li>
-                  </ul>
-                </div>
-              </details>
-              <details class="system-update-entry">
-                <summary>
-                  <span>Guidevault 0.9.18 - Navigation Performance, Favorites, and User Menu</span>
-                  <em>Installed</em>
-                </summary>
-                <div class="system-update-body">
-                  <h3>Changed <b>5</b></h3>
-                  <ul>
-                    <li>Themed native dropdown options so the Categories mode selector no longer opens as a bright default browser menu.</li>
-                    <li>Activated the library card favorite star and wired the Favorites side-nav count/filter.</li>
-                    <li>Added the current user menu to the upper-right corner with My Profile, Help, and Log out actions.</li>
-                    <li>Added reader/navigation cleanup to release page images and reader overlays when switching between books or leaving the reader.</li>
-                    <li>Reduced repeated per-card click handlers so grid navigation relies on delegated events instead of accumulating listeners.</li>
-                  </ul>
-                </div>
-              </details>
-              <details class="system-update-entry">
-                <summary>
-                  <span>Guidevault 0.9.17 - Login Wallpaper, Category Modes, and Cover Sizing</span>
-                  <em>Installed</em>
-                </summary>
-                <div class="system-update-body">
-                  <h3>Changed <b>5</b></h3>
-                  <ul>
-                    <li>Set the login page to use assets/backgrounds/loginwallpaper.png as the wallpaper background with the normal Guidevault gradient as fallback.</li>
-                    <li>Changed the sidebar Categories heading into a browsing-mode dropdown.</li>
-                    <li>Added category browsing modes for content type, platform/publication, publisher, and decade.</li>
-                    <li>Made sidebar category groups collapsed by default on app start.</li>
-                    <li>Added a Cover size slider beside the sort dropdown so library/card cover containers can be scaled up or down.</li>
-                  </ul>
-                </div>
-              </details>
-              <details class="system-update-entry">
-                <summary>
-                  <span>Guidevault 0.9.16 - Library Hub Subtitle Spacing Cleanup</span>
-                  <em>Installed</em>
-                </summary>
-                <div class="system-update-body">
-                  <h3>Changed <b>3</b></h3>
-                  <ul>
-                    <li>Removed the duplicate subtitle from the main Manuals, Strategy Guides, and Magazines hub screens.</li>
-                    <li>Moved the library hub overview panel upward so the page uses the space left behind by the removed subtitle.</li>
-                    <li>Kept category/detail views unchanged while tightening only the top-level content-type hub layout.</li>
-                  </ul>
-                </div>
-              </details>
-              <details class="system-update-entry">
-                <summary>
-                  <span>Guidevault 0.9.15 - Library Menu Layout Refresh</span>
-                  <em>Installed</em>
-                </summary>
-                <div class="system-update-body">
-                  <h3>Changed <b>4</b></h3>
-                  <ul>
-                    <li>Reworked the main Manuals, Strategy Guides, and Magazines menu screens into cleaner library hub pages.</li>
-                    <li>Added a compact overview strip showing total entries, platform/publication groups, and total library size.</li>
-                    <li>Replaced the large single-cover category cards with wider tiles that show platform identity, useful counts, latest item context, and a small cover preview strip.</li>
-                    <li>Removed duplicate-looking category count presentation so each tile reads less cluttered.</li>
-                  </ul>
-                </div>
-              </details>
-              <details class="system-update-entry">
-                <summary>
-                  <span>Guidevault 0.9.14 - Home Bar Magazine Icon and Shelf Badge Cleanup</span>
-                  <em>Installed</em>
-                </summary>
-                <div class="system-update-body">
-                  <h3>Changed <b>3</b></h3>
-                  <ul>
-                    <li>Pointed the Magazines home-bar button at the standard magazines.png icon name first, with a fallback to the earlier magainzes.png filename.</li>
-                    <li>Made the home-bar icon fallback handler recover if the browser reports a missing image before the app script finishes loading.</li>
-                    <li>Removed the content-type filter badges above the Home shelves so the Recently Added shelf area is cleaner.</li>
-                  </ul>
-                </div>
-              </details>
-              <details class="system-update-entry">
-                <summary>
-                  <span>Guidevault 0.9.13 - Home Bar Icon Refresh</span>
-                  <em>Installed</em>
-                </summary>
-                <div class="system-update-body">
-                  <h3>Changed <b>2</b></h3>
-                  <ul>
-                    <li>Replaced the left Home bar text glyphs for Home, Manuals, Strategy Guides, and Magazines with the image icons from assets/icons/homebar.</li>
-                    <li>Added dedicated sidebar icon styling so the home bar artwork scales cleanly in expanded and collapsed navigation modes.</li>
-                  </ul>
-                </div>
-              </details>
-              <details class="system-update-entry">
-                <summary>
-                  <span>Guidevault 0.9.12 - Statistics and Shelf Motion Polish</span>
-                  <em>Installed</em>
-                </summary>
-                <div class="system-update-body">
-                  <h3>Changed <b>5</b></h3>
-                  <ul>
-                    <li>Updated Home shelf navigation so left/right shelf arrows slide the shelf content instead of jumping instantly.</li>
-                    <li>Removed the redundant Insights &#x2192; Activity submenu and routed the Insights parent toward Statistics.</li>
-                    <li>Replaced the temporary Statistics summary glyphs with cleaner inline SVG icons for series, items, content types, size, file types, and read events.</li>
-                    <li>Changed Reading Activity to chart Manuals, Strategy Guides, and Magazines instead of file-format groups.</li>
-                    <li>Improved the Management files-added timeline with a legend, month labels, and labeled horizontal count lines.</li>
-                  </ul>
-                </div>
-              </details>
-              <details class="system-update-entry">
-                <summary>
-                  <span>Guidevault 0.9.11 - Home Shelf Carousel and Performance</span>
-                  <em>Installed</em>
-                </summary>
-                <div class="system-update-body">
-                  <h3>Changed <b>3</b></h3>
-                  <ul>
-                    <li>Home shelves now show the first six items instead of wrapping into extra rows.</li>
-                    <li>Added left/right shelf arrows so larger shelves can page through items in-place.</li>
-                    <li>Reduced cover-image work by lazy loading shelf/grid covers closer to the visible viewport.</li>
-                  </ul>
-                  <h3>Fixed <b>1</b></h3>
-                  <ul><li>Deferred hidden Statistics management rendering unless the Management tab is active to reduce settings-screen workload.</li></ul>
-                </div>
-              </details>
-              <details class="system-update-entry">
-                <summary>
-                  <span>Guidevault 0.9.10 - Keybinds, Home Customize, and Statistics</span>
-                  <em>Installed</em>
-                </summary>
-                <div class="system-update-body">
-                  <h3>Added <b>4</b></h3>
-                  <ul>
-                    <li>Added Account &#x2192; Key Binds with blue-themed key chips, alternate key actions, and reset controls.</li>
-                    <li>Added Account &#x2192; Customize with a Home shelf manager for replacing the fixed Recently Added shelf with selectable shelves.</li>
-                    <li>Added Insights &#x2192; Statistics with library totals, popular/recent lists, active-user cards, and reading activity.</li>
-                    <li>Added a Statistics Management tab with files-added timeline and format totals by size and file count.</li>
-                  </ul>
-                  <h3>Changed <b>1</b></h3>
-                  <ul><li>Renamed the visible All Content landing label to Home while keeping the internal All Content filter behavior intact.</li></ul>
-                </div>
-              </details>
-              <details class="system-update-entry">
-                <summary>
-                  <span>Guidevault 0.9.9 - Platform Icon Container Cleanup</span>
-                  <em>Installed</em>
-                </summary>
-                <div class="system-update-body">
-                  <h3>Changed <b>2</b></h3>
-                  <ul>
-                    <li>Removed the visible chip/container styling around associated-platform icons on multi-platform strategy guide library cards.</li>
-                    <li>Kept the platform icons underneath the title while allowing them to sit directly on the card background.</li>
-                  </ul>
-                </div>
-              </details>
-              <details class="system-update-entry">
-                <summary>
-                  <span>Guidevault 0.9.8 - Multi-Platform Preferred Platform Rules</span>
-                  <em>Installed</em>
-                </summary>
-                <div class="system-update-body">
-                  <h3>Changed <b>4</b></h3>
-                  <ul>
-                    <li>Preferred Platform now becomes read-only and displays Multi-Platform when a strategy guide has multiple Associated Platforms.</li>
-                    <li>Library cards now show a row of associated platform icons under the title for multi-platform strategy guides.</li>
-                    <li>Multi-platform guide cards now show Multi-Platform as their system label while still appearing in each associated platform library.</li>
-                    <li>The details overview System field now shows the currently browsed platform when opening a guide from a platform library.</li>
-                  </ul>
-                </div>
-              </details>
-              <details class="system-update-entry">
-                <summary>
-                  <span>Guidevault 0.9.7 - Associated Platform Library Membership</span>
-                  <em>Installed</em>
-                </summary>
-                <div class="system-update-body">
-                  <h3>Changed <b>4</b></h3>
-                  <ul>
-                    <li>Strategy guides now appear in each platform library listed in their Associated Platforms field.</li>
-                    <li>Stopped treating multi-platform guides as a separate library bucket when associated platforms are available.</li>
-                    <li>Renamed the visible System / Category metadata field to Preferred Platform for clearer editing.</li>
-                    <li>Added Associated Platforms to the default Metadata Manager grid so multi-platform placement is easier to review and edit.</li>
-                  </ul>
-                </div>
-              </details>
-              <details class="system-update-entry">
-                <summary>
-                  <span>Guidevault 0.9.6 - Metadata Focus Filters</span>
-                  <em>Installed</em>
-                </summary>
-                <div class="system-update-body">
-                  <h3>Changed <b>3</b></h3>
-                  <ul>
-                    <li>Added Focus dropdown filters for Unsorted Strategy Guides and strategy guides with multiple associated platforms in Server &#x2192; Metadata Manager.</li>
-                    <li>Updated Metadata Manager summary stats to expose unsorted and multi-platform strategy guide counts while filtering.</li>
-                    <li>Kept the filters aligned with existing Guidevault strategy guide grouping rules while preparing for associated-platform based placement.</li>
-                  </ul>
-                </div>
-              </details>
-              <details class="system-update-entry">
-                <summary>
-                  <span>Guidevault 0.9.5 - Metadata Cover Hold Preview</span>
-                </summary>
-                <div class="system-update-body">
-                  <h3>Added <b>2</b></h3>
-                  <ul>
-                    <li>Added click-and-hold cover previews to the Metadata Manager Type column.</li>
-                    <li>Preview cards show the selected entry cover, title, content type, year, and category/system without opening the details pane.</li>
-                  </ul>
-                </div>
-              </details>
-              <details class="system-update-entry">
-                <summary>
-                  <span>Guidevault 0.9.4 - Metadata Manager Normalize and Columns</span>
-                </summary>
-                <div class="system-update-body">
-                  <h3>Changed <b>4</b></h3>
-                  <ul>
-                    <li>Updated Normalize Selected so it visibly cleans title/name values instead of only filling invisible defaults.</li>
-                    <li>Changed language normalization to use the full word English, while keeping region normalization as US.</li>
-                    <li>Added a Metadata Manager column picker with all available metadata fields listed for show/hide control.</li>
-                    <li>Updated CSV export so it follows the currently visible metadata columns.</li>
-                  </ul>
-                </div>
-              </details>
-              <details class="system-update-entry">
-                <summary>
-                  <span>Guidevault 0.9.3 - Server Metadata Manager</span>
-                </summary>
-                <div class="system-update-body">
-                  <h3>Added <b>4</b></h3>
-                  <ul>
-                    <li>Added Server &#x2192; Metadata Manager as a bulk metadata workspace for manuals, strategy guides, and magazines.</li>
-                    <li>Added a grid view for title, category/system, series/publication, language, region, year, publisher, topics, games, and metadata source.</li>
-                    <li>Added batch metadata tools for language, region, category/system, publisher, and tags/topics.</li>
-                    <li>Added export/import hooks so metadata can be reviewed outside Guidevault and brought back as JSON.</li>
-                  </ul>
-                </div>
-              </details>
-              <details class="system-update-entry">
-                <summary>
-                  <span>Guidevault 0.9.2 - System History Blue Theme Cleanup</span>
-                </summary>
-                <div class="system-update-body">
-                  <h3>Changed <b>2</b></h3>
-                  <ul>
-                    <li>Updated the Info &#x2192; System update-history cards from the temporary purple accent to the default Guidevault blue theme.</li>
-                    <li>Aligned the More Info accent/link styling with the default blue interface color.</li>
-                  </ul>
-                </div>
-              </details>
-              <details class="system-update-entry">
-                <summary>
-                  <span>Guidevault 0.9.1 - System Info and Local App Polish</span>
-                </summary>
-                <div class="system-update-body">
-                  <h3>Added <b>3</b></h3>
-                  <ul>
-                    <li>Added the Info &#x2192; System page with version, install identity, and first-install metadata.</li>
-                    <li>Added a stable Guidevault install ID generated as a local <code>GV-YYYYMMDD-XXXXXXXX</code> identifier.</li>
-                    <li>Added More Info and Update History sections to match the system-style settings layout.</li>
-                  </ul>
-                  <h3>Changed <b>1</b></h3>
-                  <ul>
-                    <li>Magazine detail overview cards no longer show the Issue Identity and Classification card headers.</li>
-                  </ul>
-                </div>
+                <ul>
+                  <li>Removed the visible Home startup loading strip while keeping the background startup improvements in place.</li>
+                  <li>Updated the My Profile hero to use real local profile/activity dates for joined, last read, total read time, and average read time per week.</li>
+                  <li>Changed the profile tab active color from purple to blue and refreshed the profile metric cards with proper SVG icons.</li>
+                  <li>Adjusted the reading activity heatmap so the square grid spans the full year width instead of bunching up early in the chart.</li>
+                  <li>Added a Reviews tab editor for saving local reviews against recently read items.</li>
+                  <li>Limited the visible Activity tab list for performance and made the local activity retention cap explicit.</li>
+                  <li>Gave the Stats tab a light visual pass with cover previews for top-read items.</li>
+                </ul>
               </details>
             </div>
             <p id="systemInfoStatus" class="sub account-status" aria-live="polite"></p>
@@ -3382,6 +1997,6 @@
   </dialog>
 
 
-  <script src="/app.js?v=0.9.118-opds-grouping"></script>
+  <script src="/app.js?v=0.9.144-platform-icons-trueup"></script>
 </body>
 </html>

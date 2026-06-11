@@ -12,6 +12,11 @@ const state = {
   taskPanelVisible: false,
   taskPollTimer: null,
   libraryLoadedOnce: false,
+  libraryIsPartial: false,
+  librarySummary: null,
+  libraryFullLoadPromise: null,
+  deferredFullLibraryItems: null,
+  libraryBackgroundLoad: { running: false, loaded: 0, total: 0 },
   virtualGrid: null,
   auth: { profile: null, authenticated: false, editing: false, appStarted: false },
   readingProfiles: { presets: {}, defaultPresetId: 'default', groupAssignments: {}, entryAssignments: {} },
@@ -30,13 +35,15 @@ const state = {
   homeShelfOffsets: {},
   statistics: { activeTab: 'stats', range: 'all' },
   profilePage: { activeTab: 'overview', range: 'all' },
-  preferences: { useColorscape: false },
-  colorscape: { itemId: '', token: 0, cache: {} },
+  preferences: { useColorscape: false, colorscapeDetailPane: true, colorscapeManualMenus: false, colorscapeStrategyMenus: false, colorscapeMagazineMenus: false },
+  colorscape: { itemId: '', token: 0, menuToken: 0, cache: {}, persistentLoaded: false, cacheSaveTimer: 0, imageSampleQueue: [], imageSampleQueued: false },
+  coverResults: { cache: {}, loaded: false, saveTimer: 0, serverPrewarmToken: 0, browserPrewarmQueued: false },
   systemInfo: null,
   performanceInfo: null,
   updateCheck: null,
   updateCheckTimer: null,
   updateToastTimer: null,
+  settingsNavCollapsed: {},
   deviceHeartbeatTimer: null,
   openLibrary: { results: [], selectedResult: null, resolvedResult: null, step: 'search' },
   igdb: { results: [], selectedResult: null, resolvedResult: null, step: 'search' },
@@ -62,33 +69,75 @@ const GUIDEVAULT_LOGIN_PROFILE_KEY = 'guidevault.localLoginProfile.v1';
 const GUIDEVAULT_READING_PROFILES_KEY = 'guidevault.readingProfiles.v1';
 const GUIDEVAULT_OPDS_SETTINGS_KEY = 'guidevault.opdsSettings.v1';
 const GUIDEVAULT_PREFERENCES_KEY = 'guidevault.preferences.v1';
+const GUIDEVAULT_SETTINGS_NAV_KEY = 'guidevault.settingsNavCollapsed.v1';
 const GUIDEVAULT_KEYBINDS_KEY = 'guidevault.keybinds.v1';
 const GUIDEVAULT_CUSTOMIZE_KEY = 'guidevault.customize.v1';
 let guidevaultCustomizeSaveTimer = null;
 let guidevaultCustomizeSyncInFlight = false;
 let guidevaultStartupDeepLinkHandled = false;
 const GUIDEVAULT_READING_ACTIVITY_KEY = 'guidevault.readingActivity.v1';
+const GUIDEVAULT_READING_ACTIVITY_LIMIT = 1000;
+const GUIDEVAULT_PROFILE_ACTIVITY_DISPLAY_LIMIT = 100;
+const GUIDEVAULT_PROFILE_REVIEWS_KEY = 'guidevault.profileReviews.v1';
 const GUIDEVAULT_CATEGORY_STRUCTURE_KEY = 'guidevault.categoryStructure.v1';
 const GUIDEVAULT_COVER_SIZE_KEY = 'guidevault.libraryCoverSize.v1';
 const GUIDEVAULT_FAVORITES_KEY = 'guidevault.favorites.v1';
 const GUIDEVAULT_LIBRARY_CACHE_KEY = 'guidevault.libraryCache.v1';
-const GUIDEVAULT_GRID_INITIAL_RENDER = 56;
-const GUIDEVAULT_GRID_CHUNK_SIZE = 72;
-const GUIDEVAULT_GRID_VIRTUAL_THRESHOLD = 180;
-const GUIDEVAULT_GRID_VIRTUAL_BUFFER_ROWS = 4;
-const GUIDEVAULT_GRID_VIRTUAL_MAX_CARDS = 160;
-const GUIDEVAULT_LIBRARY_SEARCH_DEBOUNCE_MS = 140;
-const GUIDEVAULT_APP_VERSION = '0.9.118';
+const GUIDEVAULT_GRID_INITIAL_RENDER = 36;
+const GUIDEVAULT_GRID_CHUNK_SIZE = 36;
+const GUIDEVAULT_GRID_VIRTUAL_THRESHOLD = 80;
+const GUIDEVAULT_GRID_VIRTUAL_BUFFER_ROWS = 2;
+const GUIDEVAULT_GRID_VIRTUAL_MAX_CARDS = 84;
+const GUIDEVAULT_LIBRARY_STARTUP_CACHE_LIMIT = 240;
+const GUIDEVAULT_LIBRARY_CACHE_MAX_BYTES = 1500000;
+const GUIDEVAULT_LIBRARY_FULL_RENDER_DELAY_MS = 900;
+const GUIDEVAULT_LIBRARY_CHUNK_SIZE = 220;
+const GUIDEVAULT_LIBRARY_CHUNK_YIELD_MS = 30;
+const GUIDEVAULT_STARTUP_STATUS_HIDE_MS = 2400;
+const GUIDEVAULT_LIBRARY_SEARCH_DEBOUNCE_MS = 180;
+const GUIDEVAULT_SORT_COLLATOR = new Intl.Collator(undefined, { numeric: true, sensitivity: 'base' });
+const GUIDEVAULT_APP_VERSION = '0.9.144';
 const GUIDEVAULT_FILENAME_SCHEMA_KEY = 'guidevault.filenameRename.schema.v1';
 const GUIDEVAULT_DEFAULT_FILENAME_SCHEMA = '{title}';
 const GUIDEVAULT_STABLE_TAG_FEED_URL = 'https://api.github.com/repos/Shredder5262/GuideVault/tags';
 const GUIDEVAULT_RELEASES_URL = 'https://github.com/Shredder5262/GuideVault/releases';
 const GUIDEVAULT_PACKAGE_URL = 'https://github.com/Shredder5262/GuideVault/pkgs/container/guidevault';
 const GUIDEVAULT_CURRENT_IMAGE = 'ghcr.io/shredder5262/guidevault:latest';
+const GUIDEVAULT_COLORSCAPE_CACHE_KEY = 'guidevault.colorscapeCache.v1';
+const GUIDEVAULT_COLORSCAPE_CACHE_LIMIT = 900;
+const GUIDEVAULT_COLORSCAPE_MENU_BATCH_SIZE = 2;
+const GUIDEVAULT_COLORSCAPE_MENU_SAMPLE_DELAY_MS = 700;
+const GUIDEVAULT_SECONDARY_COVER_DELAY_MS = 2600;
+const GUIDEVAULT_SECONDARY_COVER_BATCH_SIZE = 4;
+const GUIDEVAULT_CATEGORY_PRIMARY_PREWARM_LIMIT = 96;
+const GUIDEVAULT_CATEGORY_PRIMARY_PREWARM_BATCH_SIZE = 8;
+const GUIDEVAULT_CATEGORY_PRIMARY_PREWARM_DELAY_MS = 110;
+const GUIDEVAULT_CATEGORY_PREVIEW_PREWARM_LIMIT = 220;
+const GUIDEVAULT_CATEGORY_PREVIEW_PREWARM_BATCH_SIZE = 16;
+const GUIDEVAULT_CATEGORY_PREVIEW_PREWARM_DELAY_MS = 42;
+const GUIDEVAULT_CATEGORY_VISIBLE_COVER_EAGER_LIMIT = 16;
+const GUIDEVAULT_COVER_RESULT_CACHE_KEY = 'guidevault.coverResultCache.v1';
+const GUIDEVAULT_COVER_RESULT_CACHE_LIMIT = 1600;
+const GUIDEVAULT_TRANSPARENT_COVER_PLACEHOLDER = 'data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///ywAAAAAAQABAAACAUwAOw==';
 
 let guidevaultLibrarySearchTimer = null;
 let guidevaultVirtualResizeAttached = false;
 let guidevaultLibrarySearchCache = typeof WeakMap === 'function' ? new WeakMap() : null;
+let guidevaultCategoryRenderKey = '';
+let guidevaultCategoryRenderTimer = 0;
+let guidevaultGroupGridCacheVersion = -1;
+let guidevaultGroupGridCache = new Map();
+let guidevaultHomeShelfCacheKey = '';
+let guidevaultHomeShelfCache = new Map();
+let guidevaultStartupStatusHideTimer = null;
+let guidevaultSecondaryCoverPrimeTimer = 0;
+const guidevaultSecondaryCoverPrimeQueue = new Set();
+let guidevaultCategoryPrimaryPrewarmTimer = 0;
+const guidevaultCategoryPrimaryPrewarmQueue = [];
+const guidevaultCategoryPrimaryPrewarmSeen = new Set();
+let guidevaultCategoryPreviewPrewarmTimer = 0;
+const guidevaultCategoryPreviewPrewarmQueue = [];
+const guidevaultCategoryPreviewPrewarmSeen = new Set();
 
 const METADATA_STATUS_OPTIONS = ['Unreviewed', 'Needs Review', 'Reviewed', 'Locked', 'Failed Lookup', 'Manual Only'];
 const METADATA_STATUS_ALIASES = new Map([
@@ -227,12 +276,13 @@ function normalizeGuidevaultPlatformList(value) {
   parts.forEach(platform => pushUniquePlatformBucket(normalized, normalizeGuidevaultPlatformName(platform)));
   return normalized;
 }
-const categoryOf = item => {
+const rawCategoryOf = item => {
   if (item?.kind === 'Magazine') return String(item.magazineTitle || item.series || 'Unsorted Magazines').trim() || 'Unsorted Magazines';
   return normalizeGuidevaultPlatformName(item?.category || item?.system || 'Unsorted') || 'Unsorted';
 };
-const associatedPlatformsOf = item => normalizeGuidevaultPlatformList(item?.associatedPlatforms || []);
-const platformListText = item => associatedPlatformsOf(item).join(', ');
+const categoryOf = item => item?._gvComputed?.category || rawCategoryOf(item);
+const associatedPlatformsOf = item => item?._gvComputed?.associatedPlatforms || normalizeGuidevaultPlatformList(item?.associatedPlatforms || []);
+const platformListText = item => item?._gvComputed?.platformListText || associatedPlatformsOf(item).join(', ');
 function platformNamesEqual(a, b) {
   return String(a || '').trim().localeCompare(String(b || '').trim(), undefined, { sensitivity: 'accent' }) === 0;
 }
@@ -373,7 +423,7 @@ function decadeLabelForItem(item) {
   if (!Number.isFinite(year) || year <= 0) return 'Unknown Decade';
   return `${Math.floor(year / 10) * 10}s`;
 }
-const displayTitle = item => {
+const rawDisplayTitle = item => {
   if (!item) return '';
   const title = String(item.title || item.name || '').trim();
   if (title) return title;
@@ -384,8 +434,66 @@ const displayTitle = item => {
   }
   return item.title || '';
 };
-const hasSequence = item => item.kind === 'Magazine' && !!String(item.issueNumber || '').trim();
-const issueValue = item => Number.parseFloat(String(item.issueNumber || '').replace(/[^0-9.]/g, '')) || 0;
+const displayTitle = item => item?._gvComputed?.title || rawDisplayTitle(item);
+const rawHasSequence = item => item?.kind === 'Magazine' && !!String(item.issueNumber || '').trim();
+const hasSequence = item => item?._gvComputed?.hasIssue ?? rawHasSequence(item);
+const rawIssueValue = item => Number.parseFloat(String(item?.issueNumber || '').replace(/[^0-9.]/g, '')) || 0;
+const issueValue = item => item?._gvComputed?.issue ?? rawIssueValue(item);
+
+function libraryItemComputed(item) {
+  if (!item || typeof item !== 'object') return {};
+  if (item._gvComputed) return item._gvComputed;
+  const title = rawDisplayTitle(item);
+  const category = rawCategoryOf(item);
+  const associatedPlatforms = normalizeGuidevaultPlatformList(item?.associatedPlatforms || []);
+  const computed = {
+    title,
+    category,
+    associatedPlatforms,
+    platformListText: associatedPlatforms.join(', '),
+    hasIssue: rawHasSequence(item),
+    issue: rawIssueValue(item),
+    recent: itemRecentTimestamp(item),
+    alpha: alphaKey(title),
+    kind: String(item.kind || '')
+  };
+  try {
+    Object.defineProperty(item, '_gvComputed', { value: computed, enumerable: false, configurable: true });
+  } catch {
+    item._gvComputed = computed;
+  }
+  return computed;
+}
+
+function prepareLibraryItemComputedFields(item) {
+  if (!item || typeof item !== 'object') return item;
+  try { delete item._gvComputed; } catch {}
+  libraryItemComputed(item);
+  return item;
+}
+
+function prepareLibraryItemsForClient(items = state.items) {
+  (Array.isArray(items) ? items : []).forEach(prepareLibraryItemComputedFields);
+  return items;
+}
+
+function markLibraryIndexesDirty() {
+  state.libraryCategoryCacheVersion = (Number(state.libraryCategoryCacheVersion || 0) + 1) % 1000000;
+  guidevaultCategoryRenderKey = '';
+  guidevaultGroupGridCacheVersion = -1;
+  guidevaultGroupGridCache = new Map();
+  guidevaultHomeShelfCacheKey = '';
+  guidevaultHomeShelfCache = new Map();
+  const categoriesHost = $('categories');
+  if (categoriesHost) categoriesHost.dataset.categoryCacheKey = '';
+}
+
+function refreshLibraryDerivedState() {
+  prepareLibraryItemsForClient(state.items);
+  state._countCache = null;
+  clearLibrarySearchCaches();
+  markLibraryIndexesDirty();
+}
 
 
 function defaultReadingProfile() {
@@ -1030,7 +1138,7 @@ function normalizeLoginProfile(value = {}) {
     email: String(value.email || '').trim(),
     password: String(value.password || ''),
     avatarDataUrl: String(value.avatarDataUrl || ''),
-    createdAt: value.createdAt || new Date().toISOString(),
+    createdAt: value.createdAt || '',
     updatedAt: value.updatedAt || new Date().toISOString()
   };
 }
@@ -1171,10 +1279,28 @@ function userInitials(profile = state.auth.profile || readLoginProfile() || {}) 
 function renderUserAvatarElement(el, profile = state.auth.profile || readLoginProfile() || {}) {
   if (!el) return;
   const avatar = String(profile.avatarDataUrl || '').trim();
+  const avatarUrl = avatar ? `url("${avatar.replace(/"/g, '%22')}")` : '';
   el.textContent = avatar ? '' : userInitials(profile);
   el.classList.toggle('has-image', !!avatar);
-  if (avatar) el.style.backgroundImage = `url("${avatar.replace(/"/g, '%22')}")`;
-  else el.style.removeProperty('background-image');
+  if (avatarUrl) {
+    el.style.setProperty('--guidevault-avatar-image', avatarUrl);
+    el.style.backgroundImage = avatarUrl;
+  } else {
+    el.style.removeProperty('--guidevault-avatar-image');
+    el.style.removeProperty('background-image');
+  }
+}
+function profileAvatarCssUrl(profile = state.auth.profile || readLoginProfile() || {}) {
+  const avatar = String(profile.avatarDataUrl || '').trim();
+  return avatar ? `url("${avatar.replace(/"/g, '%22')}")` : '';
+}
+function renderProfileHeroBackground(profile = state.auth.profile || readLoginProfile() || {}) {
+  const hero = $('profileHero');
+  if (!hero) return;
+  const image = profileAvatarCssUrl(profile);
+  hero.classList.toggle('has-profile-hero-image', !!image);
+  if (image) hero.style.setProperty('--profile-hero-image', image);
+  else hero.style.removeProperty('--profile-hero-image');
 }
 function syncTopUserMenu() {
   const profile = state.auth.profile || readLoginProfile() || {};
@@ -1220,37 +1346,83 @@ function formatProfileRelativeTime(value) {
   const years = Math.floor(days / 365);
   return `${years} year${years === 1 ? '' : 's'} ago`;
 }
-function profileEventsForRange() {
-  const range = state.profilePage?.range || 'all';
+function profileUserKey(profile = state.auth.profile || readLoginProfile() || {}) {
+  return String(profile.username || profile.email || 'local user').trim().toLowerCase() || 'local user';
+}
+function profileEventsForRange(rangeOverride = null) {
+  const range = rangeOverride ?? (state.profilePage?.range || 'all');
   const profile = state.auth.profile || readLoginProfile() || {};
-  const userKey = String(profile.username || profile.email || 'local user').toLowerCase();
+  const userKey = profileUserKey(profile);
   const cutoff = range === 'month' ? Date.now() - 31 * 86400000 : range === 'year' ? new Date(new Date().getFullYear(), 0, 1).getTime() : 0;
-  return readReadingActivity().filter(e => {
-    const eventUser = String(e.user || userKey).toLowerCase();
-    return eventUser === userKey && (!cutoff || dateValue(e.at) >= cutoff);
-  });
+  return readReadingActivity()
+    .filter(e => {
+      const eventUser = String(e.user || userKey).toLowerCase();
+      const at = dateValue(e.at);
+      return eventUser === userKey && (!cutoff || at >= cutoff);
+    })
+    .sort((a, b) => (dateValue(a.at) || 0) - (dateValue(b.at) || 0));
 }
 function profileItemLookup() {
   return new Map((state.items || []).map(item => [String(item.id || item.Id || ''), item]));
 }
+function isProfileReadEvent(event) {
+  const action = String(event?.action || '').trim().toLowerCase();
+  return ['read', 'open-reader', 'reader', 'pdf'].includes(action);
+}
+function profileReadingEvents(events = []) {
+  const readOnly = (events || []).filter(isProfileReadEvent);
+  return readOnly.length ? readOnly : (events || []);
+}
+function eventItemPageCount(event = {}, item = null) {
+  return Number(event.pageCount || event.pages || item?.pageCount || item?.pages || item?.PageCount || 0) || 0;
+}
+function estimatedMinutesForReadEvent(event = {}, lookup = new Map()) {
+  const explicit = Number(event.minutes || event.durationMinutes || event.readMinutes || event.readTimeMinutes || 0);
+  if (Number.isFinite(explicit) && explicit > 0) return explicit;
+  const item = lookup.get(String(event.id || '')) || null;
+  const pages = eventItemPageCount(event, item);
+  if (pages > 0) return Math.max(3, Math.round(pages * 0.75));
+  return 5;
+}
+function formatProfileDate(value) {
+  const time = dateValue(value);
+  if (!time) return '\u2014';
+  return new Date(time).toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' });
+}
+function formatProfileDateWithRelative(value) {
+  const time = dateValue(value);
+  if (!time) return '\u2014';
+  return `${formatProfileDate(time)} (${formatProfileRelativeTime(time)})`;
+}
 function profilePageStats() {
   const profile = state.auth.profile || readLoginProfile() || {};
-  const events = profileEventsForRange();
+  const events = profileReadingEvents(profileEventsForRange());
+  const allEventsRaw = profileEventsForRange('all');
+  const allEvents = profileReadingEvents(allEventsRaw);
   const lookup = profileItemLookup();
   const uniqueIds = [...new Set(events.map(e => String(e.id || '')).filter(Boolean))];
   const uniqueItems = uniqueIds.map(id => lookup.get(id)).filter(Boolean);
-  const fallbackItems = uniqueItems.length ? uniqueItems : events.map(e => ({ kind: e.kind, title: e.title, pageCount: 0 }));
+  const fallbackItems = uniqueItems.length ? uniqueItems : events.map(e => ({ kind: e.kind, title: e.title, pageCount: e.pageCount || 0 }));
   const pages = fallbackItems.reduce((sum, item) => sum + (Number(item.pageCount || item.pages || item.PageCount || 0) || 0), 0);
-  const estimatedMinutes = Math.max(events.length * 5, Math.round(pages * 1.6));
-  const joined = dateValue(profile.createdAt) || Date.now();
-  const weeks = Math.max(1, Math.ceil((Date.now() - joined) / (7 * 86400000)));
+  const estimatedMinutes = events.reduce((sum, event) => sum + estimatedMinutesForReadEvent(event, lookup), 0);
+  const allEstimatedMinutes = allEvents.reduce((sum, event) => sum + estimatedMinutesForReadEvent(event, lookup), 0);
+  const firstActivityAt = allEventsRaw.reduce((min, e) => {
+    const at = dateValue(e.at);
+    return at && (!min || at < min) ? at : min;
+  }, 0);
+  const joined = dateValue(profile.createdAt) || firstActivityAt || 0;
+  const weeks = joined ? Math.max(1, Math.ceil((Date.now() - joined) / (7 * 86400000))) : Math.max(1, Math.ceil((Date.now() - (firstActivityAt || Date.now())) / (7 * 86400000)));
+  const lastRead = allEvents.reduce((max, e) => Math.max(max, dateValue(e.at) || 0), 0);
   return {
     profile,
     events,
+    allEvents,
+    allEventsRaw,
     lookup,
     uniqueIds,
     uniqueItems,
     totalReads: events.length,
+    allReadCount: allEvents.length,
     manuals: events.filter(e => normalizeReadingKindGroup(e.kind) === 'Manual').length,
     strategyGuides: events.filter(e => normalizeReadingKindGroup(e.kind) === 'Strategy Guide').length,
     magazines: events.filter(e => normalizeReadingKindGroup(e.kind) === 'Magazine').length,
@@ -1259,9 +1431,10 @@ function profilePageStats() {
     authors: new Set(uniqueItems.map(i => i.writer || i.author || i.publisher).filter(Boolean)).size,
     ratings: Object.keys(state.favorites || {}).length,
     estimatedMinutes,
-    avgPerWeek: estimatedMinutes / weeks,
+    allEstimatedMinutes,
+    avgPerWeek: allEstimatedMinutes / weeks,
     joined,
-    lastRead: events.reduce((max, e) => Math.max(max, dateValue(e.at) || 0), 0)
+    lastRead
   };
 }
 function formatProfileMinutes(minutes) {
@@ -1269,19 +1442,31 @@ function formatProfileMinutes(minutes) {
   if (n >= 60) return `${(n / 60).toFixed(1)} hours`;
   return `${n} minutes`;
 }
+function profileMetricIcon(key) {
+  const icons = {
+    manuals: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4.5 5.5h6A3.5 3.5 0 0 1 14 9v10.5a3.5 3.5 0 0 0-3.5-3.5h-6V5.5Z"/><path d="M14 9a3.5 3.5 0 0 1 3.5-3.5h2v10.5h-2A3.5 3.5 0 0 0 14 19.5"/></svg>',
+    strategy: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 18V6l8-3 8 3v12l-8 3-8-3Z"/><path d="M12 3v18M4 6l8 3 8-3M8 12h8M8 16h5"/></svg>',
+    magazines: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 4h10a3 3 0 0 1 3 3v13H8a3 3 0 0 1-3-3V5a1 1 0 0 1 1-1Z"/><path d="M8 8h7M8 11h7M8 14h4"/></svg>',
+    pages: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 3h8l4 4v14H7a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2Z"/><path d="M15 3v5h5M8 12h8M8 16h8"/></svg>',
+    words: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6h16M4 10h16M4 14h11M4 18h8"/><path d="M17 14l1.4 4 1.6-4 1.5 4 1.5-4"/></svg>',
+    publishers: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 20V8l7-4 7 4v12"/><path d="M8 20v-7h8v7M9 9h.01M12 9h.01M15 9h.01"/></svg>',
+    favorites: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="m12 3 2.7 5.5 6.1.9-4.4 4.3 1 6.1L12 17l-5.4 2.8 1-6.1-4.4-4.3 6.1-.9L12 3Z"/></svg>'
+  };
+  return icons[key] || icons.pages;
+}
 function renderProfileMetricStrip(stats) {
   const host = $('profileMetricStrip');
   if (!host) return;
   const metrics = [
-    ['Manuals Read', stats.manuals, '\u25A4'],
-    ['Strategy Guides Read', stats.strategyGuides, '\u2316'],
-    ['Magazines Read', stats.magazines, '\u25A5'],
-    ['Pages Read', stats.pages.toLocaleString(), '\u25FB'],
-    ['Words Read', stats.words.toLocaleString(), '\u25A6'],
-    ['Authors / Publishers', stats.authors, '\u265A'],
-    ['Favorites', stats.ratings, '\u2605']
+    { key: 'manuals', label: 'Manuals Read', value: stats.manuals },
+    { key: 'strategy', label: 'Strategy Guides Read', value: stats.strategyGuides },
+    { key: 'magazines', label: 'Magazines Read', value: stats.magazines },
+    { key: 'pages', label: 'Pages Read', value: stats.pages.toLocaleString() },
+    { key: 'words', label: 'Words Read', value: stats.words.toLocaleString() },
+    { key: 'publishers', label: 'Authors / Publishers', value: stats.authors },
+    { key: 'favorites', label: 'Favorites', value: stats.ratings }
   ];
-  host.innerHTML = metrics.map(([label, value, icon]) => `<div class="profile-metric"><span>${escapeHtml(label)}</span><i>${escapeHtml(icon)}</i><strong>${escapeHtml(String(value))}</strong></div>`).join('');
+  host.innerHTML = metrics.map(metric => `<div class="profile-metric profile-metric-${escapeForAttribute(metric.key)}"><i>${profileMetricIcon(metric.key)}</i><span>${escapeHtml(metric.label)}</span><strong>${escapeHtml(String(metric.value))}</strong></div>`).join('');
 }
 function heatmapStartDate(year) {
   const start = new Date(year, 0, 1);
@@ -1313,7 +1498,7 @@ function renderProfileHeatmap(stats) {
       const count = byDay.get(key) || 0;
       const level = !inYear || future ? 0 : Math.min(4, count);
       const label = `${current.toLocaleDateString()}: ${count} read event${count === 1 ? '' : 's'}`;
-      cells += `<span class="profile-heatmap-cell" data-level="${level}" title="${escapeForAttribute(label)}"></span>`;
+      cells += `<span class="profile-heatmap-cell" data-level="${level}" data-in-year="${inYear ? 'true' : 'false'}" title="${escapeForAttribute(label)}"></span>`;
     }
     cells += '</div>';
   }
@@ -1325,25 +1510,172 @@ function renderProfileHeatmap(stats) {
 function renderProfileRecent(stats) {
   const host = $('profileRecentReads');
   if (!host) return;
-  const recent = [...new Set(stats.events.slice().reverse().map(e => String(e.id || '')).filter(Boolean))]
+  const recent = [...new Set(stats.allEvents.slice().reverse().map(e => String(e.id || '')).filter(Boolean))]
     .map(id => stats.lookup.get(id)).filter(Boolean).slice(0, 6);
   host.innerHTML = recent.length ? recent.map(item => `<article class="profile-recent-card"><img loading="lazy" src="${coverUrl(item)}" alt="" /><div><strong>${escapeHtml(displayTitle(item))}</strong><span>${escapeHtml(item.kind || '')} \u2022 ${escapeHtml(preferredPlatformOf(item) || categoryOf(item) || '\u2014')}</span></div></article>`).join('') : '<article class="settings-card"><p class="sub">Open a manual, guide, or magazine to start filling out recent reads.</p></article>';
+}
+function profileTopReadRows(stats) {
+  const map = new Map();
+  (stats.events || []).forEach(e => {
+    const id = String(e.id || '').trim();
+    const key = id || `title:${e.title || 'Unknown item'}`;
+    const item = id ? stats.lookup.get(id) : null;
+    const existing = map.get(key) || { key, id, item, title: item ? displayTitle(item) : (e.title || 'Unknown item'), kind: item?.kind || e.kind || 'Item', count: 0 };
+    existing.count += 1;
+    map.set(key, existing);
+  });
+  return [...map.values()].sort((a, b) => b.count - a.count || compareTextForSort(a.title, b.title));
+}
+function profileTopReadsHtml(stats) {
+  const rows = profileTopReadRows(stats).slice(0, 8);
+  if (!rows.length) return '<p class="sub">No read history yet.</p>';
+  return rows.map((row, index) => {
+    const img = row.item ? `<img loading="lazy" src="${coverUrl(row.item)}" alt="" />` : '<span class="profile-stat-preview-fallback">GV</span>';
+    return `<div class="profile-stat-preview-row"><span class="profile-stat-rank">${index + 1}</span>${img}<div><strong>${escapeHtml(row.title)}</strong><em>${escapeHtml(row.kind)} \u2022 ${row.count} read${row.count === 1 ? '' : 's'}</em></div></div>`;
+  }).join('');
 }
 function renderProfileTopLists(stats) {
   const host = $('profileTopLists');
   if (!host) return;
-  const events = stats.events;
   host.innerHTML = [
-    ['Top Reads', countBy(events, e => e.title || 'Unknown'), 'reads'],
-    ['By Content Type', countBy(events, e => normalizeReadingKindGroup(e.kind) || 'Unknown'), 'events'],
-    ['Recent Platforms', countBy(stats.uniqueItems, item => libraryCategoryKeysForItem(item)), 'items']
-  ].map(([title, rows, unit]) => `<article class="settings-card profile-top-card"><h2>${escapeHtml(title)}</h2>${topItemsHtml(rows, unit, 8)}</article>`).join('');
+    `<article class="settings-card profile-top-card profile-top-card-featured"><h2>Top Reads</h2>${profileTopReadsHtml(stats)}</article>`,
+    `<article class="settings-card profile-top-card"><h2>By Content Type</h2>${topItemsHtml(countBy(stats.events, e => normalizeReadingKindGroup(e.kind) || 'Unknown'), 'events', 8)}</article>`,
+    `<article class="settings-card profile-top-card"><h2>Recent Platforms</h2>${topItemsHtml(countBy(stats.uniqueItems, item => libraryCategoryKeysForItem(item)), 'items', 8)}</article>`
+  ].join('');
+}
+function readProfileReviews() {
+  try { return JSON.parse(localStorage.getItem(GUIDEVAULT_PROFILE_REVIEWS_KEY) || '[]').filter(Boolean); } catch { return []; }
+}
+function saveProfileReviews(reviews = []) {
+  const clean = Array.isArray(reviews) ? reviews.filter(Boolean).slice(-500) : [];
+  try { localStorage.setItem(GUIDEVAULT_PROFILE_REVIEWS_KEY, JSON.stringify(clean)); } catch {}
+  return clean;
+}
+function profileReviewsForCurrentUser() {
+  const userKey = profileUserKey();
+  return readProfileReviews().filter(review => String(review.user || userKey).toLowerCase() === userKey);
+}
+function profileRecentReviewableItems(stats, limit = 12) {
+  const seen = new Set();
+  const ids = [];
+  const source = (stats.allEvents || stats.events || []).slice().reverse();
+  source.forEach(event => {
+    const id = String(event.id || '').trim();
+    if (!id || seen.has(id)) return;
+    const item = stats.lookup.get(id);
+    if (!item) return;
+    seen.add(id);
+    ids.push(item);
+  });
+  return ids.slice(0, limit);
+}
+function profileReviewStars(value) {
+  const rating = Math.max(0, Math.min(5, Number(value || 0)));
+  return rating ? '\u2605'.repeat(rating) + '\u2606'.repeat(5 - rating) : 'No rating';
+}
+function renderProfileReviews(stats) {
+  const host = $('profileReviewsContent');
+  if (!host) return;
+  const recentItems = profileRecentReviewableItems(stats);
+  const reviews = profileReviewsForCurrentUser().sort((a, b) => (dateValue(b.updatedAt || b.createdAt) || 0) - (dateValue(a.updatedAt || a.createdAt) || 0));
+  const previousSelected = $('profileReviewItemSelect')?.value || '';
+  const selectedItem = recentItems.find(item => String(item.id || item.Id || '') === previousSelected) || recentItems[0] || null;
+  const selectedId = String(selectedItem?.id || selectedItem?.Id || '');
+  const existing = selectedId ? reviews.find(review => String(review.itemId || '') === selectedId) : null;
+  const options = recentItems.map(item => `<option value="${escapeForAttribute(item.id || item.Id || '')}">${escapeHtml(displayTitle(item))}</option>`).join('');
+  const list = reviews.length ? reviews.map(review => {
+    const item = review.itemId ? stats.lookup.get(String(review.itemId)) : null;
+    const title = item ? displayTitle(item) : (review.title || 'Unknown item');
+    const kind = item?.kind || review.kind || 'Item';
+    const cover = item ? `<img loading="lazy" src="${coverUrl(item)}" alt="" />` : '<span class="profile-stat-preview-fallback">GV</span>';
+    return `<article class="profile-review-card">${cover}<div><div class="profile-review-card-head"><strong>${escapeHtml(title)}</strong><span>${escapeHtml(profileReviewStars(review.rating))}</span></div><p>${escapeHtml(review.text || '')}</p><em>${escapeHtml(kind)} \u2022 updated ${escapeHtml(formatProfileDateWithRelative(review.updatedAt || review.createdAt))}</em><button class="ghost mini profile-review-delete" type="button" data-profile-review-delete="${escapeForAttribute(review.id)}">Delete review</button></div></article>`;
+  }).join('') : '<article class="settings-card"><p class="sub">No reviews yet. Choose a recently read item and write the first one.</p></article>';
+  host.innerHTML = `
+    <div class="profile-review-layout">
+      <article class="settings-card profile-review-editor">
+        <h2>Write a Review</h2>
+        <p class="sub">Pick something from your recent reads and save a quick personal review.</p>
+        ${recentItems.length ? `
+          <label>Recently read item<select id="profileReviewItemSelect">${options}</select></label>
+          <label>Rating<select id="profileReviewRating">
+            <option value="5">5 - Loved it</option>
+            <option value="4">4 - Strong</option>
+            <option value="3">3 - Good enough</option>
+            <option value="2">2 - Rough</option>
+            <option value="1">1 - Not useful</option>
+          </select></label>
+          <label>Review<textarea id="profileReviewText" rows="7" maxlength="2000" placeholder="What stood out? Was it complete, useful, nostalgic, or hard to read?">${escapeHtml(existing?.text || '')}</textarea></label>
+          <div class="profile-review-actions"><button id="profileSaveReview" class="primary" type="button">Save Review</button><button id="profileClearReview" class="ghost" type="button">Clear</button></div>
+          <p id="profileReviewStatus" class="sub"></p>
+        ` : '<p class="sub">Open something in the reader first. Recent reads will appear here as review options.</p>'}
+      </article>
+      <div class="profile-review-list">${list}</div>
+    </div>`;
+  const select = $('profileReviewItemSelect');
+  if (select && selectedId) select.value = selectedId;
+  const rating = $('profileReviewRating');
+  if (rating) rating.value = String(existing?.rating || 5);
+}
+function syncProfileReviewEditorFromSelection() {
+  const stats = profilePageStats();
+  const itemId = $('profileReviewItemSelect')?.value || '';
+  const existing = profileReviewsForCurrentUser().find(review => String(review.itemId || '') === String(itemId));
+  if ($('profileReviewRating')) $('profileReviewRating').value = String(existing?.rating || 5);
+  if ($('profileReviewText')) $('profileReviewText').value = existing?.text || '';
+  if ($('profileReviewStatus')) $('profileReviewStatus').textContent = existing ? 'Loaded your saved review for this item.' : '';
+}
+function saveProfileReviewFromForm() {
+  const select = $('profileReviewItemSelect');
+  const itemId = select?.value || '';
+  const rating = Math.max(1, Math.min(5, Number($('profileReviewRating')?.value || 5)));
+  const text = String($('profileReviewText')?.value || '').trim();
+  const status = $('profileReviewStatus');
+  if (!itemId) { if (status) status.textContent = 'Choose a recently read item first.'; return; }
+  if (!text) { if (status) status.textContent = 'Write a short review before saving.'; return; }
+  const item = (state.items || []).find(i => String(i.id || i.Id || '') === String(itemId)) || null;
+  const user = profileUserKey();
+  const now = new Date().toISOString();
+  const reviews = readProfileReviews();
+  const existingIndex = reviews.findIndex(review => String(review.user || '').toLowerCase() === user && String(review.itemId || '') === String(itemId));
+  const nextReview = {
+    id: existingIndex >= 0 ? reviews[existingIndex].id : `review-${Date.now()}-${Math.random().toString(16).slice(2)}`,
+    user,
+    itemId,
+    title: item ? displayTitle(item) : (select?.selectedOptions?.[0]?.textContent || 'Unknown item'),
+    kind: item?.kind || '',
+    rating,
+    text,
+    createdAt: existingIndex >= 0 ? reviews[existingIndex].createdAt : now,
+    updatedAt: now
+  };
+  if (existingIndex >= 0) reviews[existingIndex] = nextReview;
+  else reviews.push(nextReview);
+  saveProfileReviews(reviews);
+  renderProfileReviews(profilePageStats());
+  if ($('profileReviewStatus')) $('profileReviewStatus').textContent = 'Review saved.';
+}
+function clearProfileReviewForm() {
+  if ($('profileReviewText')) $('profileReviewText').value = '';
+  if ($('profileReviewRating')) $('profileReviewRating').value = '5';
+  if ($('profileReviewStatus')) $('profileReviewStatus').textContent = '';
+}
+function deleteProfileReview(reviewId) {
+  const id = String(reviewId || '');
+  if (!id) return;
+  saveProfileReviews(readProfileReviews().filter(review => String(review.id || '') !== id));
+  renderProfileReviews(profilePageStats());
 }
 function renderProfileActivityList(stats) {
   const host = $('profileActivityList');
   if (!host) return;
-  const rows = stats.events.slice().reverse().slice(0, 50);
-  host.innerHTML = rows.length ? rows.map(e => `<article class="settings-card profile-activity-row"><strong>${escapeHtml(e.title || 'Unknown item')}</strong><span>${escapeHtml(e.kind || 'Item')} \u2022 ${escapeHtml(e.action || 'view')}</span><em>${escapeHtml(e.at ? new Date(e.at).toLocaleString() : 'Unknown time')}</em></article>`).join('') : '<article class="settings-card"><p class="sub">No activity is logged for this range yet.</p></article>';
+  const total = (stats.events || []).length;
+  const rows = (stats.events || []).slice().reverse().slice(0, GUIDEVAULT_PROFILE_ACTIVITY_DISPLAY_LIMIT);
+  const note = total > rows.length
+    ? `<div class="profile-activity-limit-note">Showing the latest ${rows.length.toLocaleString()} of ${total.toLocaleString()} activity entries for this range. Local activity storage is capped at ${GUIDEVAULT_READING_ACTIVITY_LIMIT.toLocaleString()} entries.</div>`
+    : `<div class="profile-activity-limit-note">Local activity storage is capped at ${GUIDEVAULT_READING_ACTIVITY_LIMIT.toLocaleString()} entries to keep the profile page fast.</div>`;
+  host.innerHTML = rows.length
+    ? `${note}${rows.map(e => `<article class="settings-card profile-activity-row"><strong>${escapeHtml(e.title || 'Unknown item')}</strong><span>${escapeHtml(e.kind || 'Item')} \u2022 ${escapeHtml(e.action || 'read')}</span><em>${escapeHtml(e.at ? new Date(e.at).toLocaleString() : 'Unknown time')}</em></article>`).join('')}`
+    : '<article class="settings-card"><p class="sub">No activity is logged for this range yet.</p></article>';
 }
 function setProfileTab(tab = 'overview') {
   state.profilePage.activeTab = ['overview','stats','reviews','activity'].includes(tab) ? tab : 'overview';
@@ -1360,18 +1692,20 @@ function renderPersonalProfile() {
   const stats = profilePageStats();
   const profile = stats.profile;
   renderUserAvatarElement($('profilePageAvatar'), profile);
+  renderProfileHeroBackground(profile);
   setText('profilePageName', profile.username || profile.email || 'Guidevault User');
-  setText('profileReadBadge', `${stats.totalReads} Read${stats.totalReads === 1 ? '' : 's'}`);
-  setText('profileJoined', formatProfileRelativeTime(stats.joined));
-  setText('profileLastRead', stats.lastRead ? formatProfileRelativeTime(stats.lastRead) : 'No reads yet');
-  setText('profileTotalReadTime', formatProfileMinutes(stats.estimatedMinutes));
-  setText('profileAvgPerWeek', `${Math.max(0, stats.avgPerWeek).toFixed(1)} minutes`);
+  setText('profileReadBadge', `${stats.allReadCount} Read${stats.allReadCount === 1 ? '' : 's'}`);
+  setText('profileJoined', stats.joined ? formatProfileDateWithRelative(stats.joined) : '\u2014');
+  setText('profileLastRead', stats.lastRead ? formatProfileDateWithRelative(stats.lastRead) : 'No reads yet');
+  setText('profileTotalReadTime', formatProfileMinutes(stats.allEstimatedMinutes));
+  setText('profileAvgPerWeek', `${formatProfileMinutes(stats.avgPerWeek)} / week`);
   setText('profileOverviewTitle', `A look at ${(profile.username || 'your')}\u2019s journey through Guidevault`);
   if ($('profileRange')) $('profileRange').value = state.profilePage.range || 'all';
   renderProfileMetricStrip(stats);
   renderProfileHeatmap(stats);
   renderProfileRecent(stats);
   renderProfileTopLists(stats);
+  renderProfileReviews(stats);
   renderProfileActivityList(stats);
 }
 function showUserProfilePage(options = {}) {
@@ -1412,14 +1746,14 @@ function showAuthenticatedApp() {
   renderAccountProfile();
   syncTopUserMenu();
   startDeviceHeartbeat();
+  resetGuidevaultLandingToHome({ render: false });
   if (!state.auth.appStarted) {
     state.auth.appStarted = true;
     renderCachedLibraryImmediately();
     loadLibrary();
     startStableUpdatePolling();
-    if (window.location.hash === '#profile') {
-      requestAnimationFrame(() => showUserProfilePage({ skipHash: true }));
-    }
+  } else {
+    applyFilters();
   }
 }
 function setAccountEditMode(editing, clearStatus = true) {
@@ -1518,12 +1852,32 @@ function removeAccountProfilePic() {
 
 
 function defaultGuidevaultPreferences() {
-  return { useColorscape: false };
+  return {
+    useColorscape: false,
+    colorscapeDetailPane: true,
+    colorscapeManualMenus: false,
+    colorscapeStrategyMenus: false,
+    colorscapeMagazineMenus: false
+  };
+}
+
+function preferenceBool(value, fallback = false) {
+  if (value === undefined || value === null || value === '') return !!fallback;
+  if (typeof value === 'boolean') return value;
+  const text = String(value).trim().toLowerCase();
+  if (['true','1','yes','on','enabled'].includes(text)) return true;
+  if (['false','0','no','off','disabled'].includes(text)) return false;
+  return !!fallback;
 }
 
 function normalizeGuidevaultPreferences(value = {}) {
+  const defaults = defaultGuidevaultPreferences();
   return {
-    useColorscape: value.useColorscape === true || String(value.useColorscape || '').toLowerCase() === 'true'
+    useColorscape: preferenceBool(value.useColorscape, defaults.useColorscape),
+    colorscapeDetailPane: preferenceBool(value.colorscapeDetailPane, defaults.colorscapeDetailPane),
+    colorscapeManualMenus: preferenceBool(value.colorscapeManualMenus, defaults.colorscapeManualMenus),
+    colorscapeStrategyMenus: preferenceBool(value.colorscapeStrategyMenus, defaults.colorscapeStrategyMenus),
+    colorscapeMagazineMenus: preferenceBool(value.colorscapeMagazineMenus, defaults.colorscapeMagazineMenus)
   };
 }
 
@@ -1552,15 +1906,53 @@ function setPreferencesStatus(message = '', tone = '') {
 
 function renderPreferencesSettings() {
   const preferences = loadGuidevaultPreferences();
-  if ($('preferenceUseColorscape')) $('preferenceUseColorscape').checked = !!preferences.useColorscape;
+  const masterEnabled = !!preferences.useColorscape;
+  if ($('preferenceUseColorscape')) $('preferenceUseColorscape').checked = masterEnabled;
+  [
+    ['preferenceColorscapeDetailPane', 'colorscapeDetailPane'],
+    ['preferenceColorscapeManualMenus', 'colorscapeManualMenus'],
+    ['preferenceColorscapeStrategyMenus', 'colorscapeStrategyMenus'],
+    ['preferenceColorscapeMagazineMenus', 'colorscapeMagazineMenus']
+  ].forEach(([id, key]) => {
+    const input = $(id);
+    if (!input) return;
+    input.checked = !!preferences[key];
+    input.disabled = !masterEnabled;
+  });
+  const card = document.querySelector('.preferences-card');
+  if (card) card.classList.toggle('colorscape-disabled', !masterEnabled);
   if (document.body.classList.contains('detail-page-mode')) applyColorscapeToDetail(state.selected);
+  refreshColorscapeGroupCards();
+}
+
+function colorscapePreferenceLabel(key) {
+  return ({
+    useColorscape: 'Colorscape',
+    colorscapeDetailPane: 'Details pane Colorscape',
+    colorscapeManualMenus: 'Manual menu container Colorscape',
+    colorscapeStrategyMenus: 'Strategy guide menu container Colorscape',
+    colorscapeMagazineMenus: 'Magazine menu container Colorscape'
+  })[key] || 'Colorscape';
+}
+
+function setGuidevaultPreferenceValue(key, enabled) {
+  const current = state.preferences || loadGuidevaultPreferences();
+  const next = saveGuidevaultPreferences({ ...current, [key]: !!enabled });
+  renderPreferencesSettings();
+  const label = colorscapePreferenceLabel(key);
+  const masterOff = !next.useColorscape;
+  if (key === 'useColorscape') {
+    setPreferencesStatus(enabled ? 'Colorscape enabled. Child toggles now control where the cover-color effect appears.' : 'Colorscape disabled. Theme gradients will be used everywhere.', enabled ? 'success' : 'info');
+  } else {
+    setPreferencesStatus(`${label} ${enabled ? 'enabled' : 'disabled'}${masterOff ? ' — enable Use Colorscape to apply it.' : '.'}`, enabled ? 'success' : 'info');
+  }
+  if (document.body.classList.contains('detail-page-mode')) applyColorscapeToDetail(state.selected);
+  else clearColorscapeDetailTheme();
+  refreshColorscapeGroupCards();
 }
 
 function setUseColorscapePreference(enabled) {
-  saveGuidevaultPreferences({ ...(state.preferences || defaultGuidevaultPreferences()), useColorscape: !!enabled });
-  setPreferencesStatus(enabled ? 'Colorscape enabled. Detail containers and background will use the selected cover color.' : 'Colorscape disabled. Theme gradients will be used.', enabled ? 'success' : 'info');
-  if (document.body.classList.contains('detail-page-mode')) applyColorscapeToDetail(state.selected);
-  else clearColorscapeDetailTheme();
+  setGuidevaultPreferenceValue('useColorscape', enabled);
 }
 
 function isColorscapeSupportedItem(item) {
@@ -1640,8 +2032,8 @@ function polishColorscapeColor(rgb) {
 
 function sampleDominantCoverColor(img) {
   const canvas = document.createElement('canvas');
-  const width = 48;
-  const height = 64;
+  const width = 32;
+  const height = 44;
   canvas.width = width;
   canvas.height = height;
   const ctx = canvas.getContext('2d', { willReadFrequently: true });
@@ -1682,6 +2074,73 @@ function sampleDominantCoverColor(img) {
   return polishColorscapeColor([best.r / best.weight, best.g / best.weight, best.b / best.weight]);
 }
 
+function loadColorscapeColorCache() {
+  if (state.colorscape.persistentLoaded) return state.colorscape.cache || {};
+  state.colorscape.persistentLoaded = true;
+  state.colorscape.cache = state.colorscape.cache || {};
+  try {
+    const raw = localStorage.getItem(GUIDEVAULT_COLORSCAPE_CACHE_KEY);
+    if (!raw) return state.colorscape.cache;
+    const parsed = JSON.parse(raw);
+    const colors = parsed?.colors && typeof parsed.colors === 'object' ? parsed.colors : parsed;
+    Object.entries(colors || {}).forEach(([url, value]) => {
+      const rgb = Array.isArray(value) ? value : value?.rgb;
+      if (!url || !Array.isArray(rgb) || rgb.length < 3) return;
+      state.colorscape.cache[url] = normalizeRgbTriplet(rgb);
+    });
+  } catch {
+    state.colorscape.cache = state.colorscape.cache || {};
+  }
+  return state.colorscape.cache;
+}
+
+function persistColorscapeColorCache(immediate = false) {
+  if (!state.colorscape.persistentLoaded) return;
+  const save = () => {
+    state.colorscape.cacheSaveTimer = 0;
+    try {
+      const entries = Object.entries(state.colorscape.cache || {}).filter(([, rgb]) => Array.isArray(rgb) && rgb.length >= 3);
+      const trimmed = entries.slice(Math.max(0, entries.length - GUIDEVAULT_COLORSCAPE_CACHE_LIMIT));
+      const colors = Object.fromEntries(trimmed.map(([url, rgb]) => [url, { rgb: normalizeRgbTriplet(rgb), savedAt: Date.now() }]));
+      localStorage.setItem(GUIDEVAULT_COLORSCAPE_CACHE_KEY, JSON.stringify({ version: 1, colors }));
+    } catch {}
+  };
+  if (immediate) {
+    if (state.colorscape.cacheSaveTimer) clearTimeout(state.colorscape.cacheSaveTimer);
+    save();
+    return;
+  }
+  if (state.colorscape.cacheSaveTimer) return;
+  state.colorscape.cacheSaveTimer = window.setTimeout(save, 650);
+}
+
+function getCachedDominantCoverColor(url) {
+  if (!url) return null;
+  const cache = loadColorscapeColorCache();
+  const rgb = cache?.[url];
+  return Array.isArray(rgb) && rgb.length >= 3 ? normalizeRgbTriplet(rgb) : null;
+}
+
+function setCachedDominantCoverColor(url, rgb) {
+  if (!url) return normalizeRgbTriplet(rgb);
+  const normalized = normalizeRgbTriplet(rgb);
+  loadColorscapeColorCache();
+  state.colorscape.cache[url] = normalized;
+  persistColorscapeColorCache(false);
+  return normalized;
+}
+
+function fastColorscapeFallbackColor(seed) {
+  const text = String(seed || 'Guidevault');
+  let hash = 2166136261;
+  for (let i = 0; i < text.length; i += 1) {
+    hash ^= text.charCodeAt(i);
+    hash = Math.imul(hash, 16777619);
+  }
+  const hue = ((hash >>> 0) % 360) / 360;
+  return hslToRgb(hue, .58, .44);
+}
+
 function loadImageForColorscape(url) {
   return new Promise((resolve, reject) => {
     const img = new Image();
@@ -1692,15 +2151,28 @@ function loadImageForColorscape(url) {
   });
 }
 
-async function getDominantCoverColor(url) {
+function imageElementMatchesColorscapeUrl(img, url) {
+  if (!img || !url) return false;
+  const current = img.currentSrc || img.getAttribute('src') || '';
+  const wanted = img.dataset.coverSrc || url;
+  return wanted === url || current === url || current.endsWith(url) || wanted.endsWith(url);
+}
+
+function findLoadedColorscapeImage(card, url) {
+  if (!card || !url) return null;
+  const images = Array.from(card.querySelectorAll('img[data-cover-src], img[src]'));
+  return images.find(img => imageElementMatchesColorscapeUrl(img, url) && img.complete && img.naturalWidth > 1 && img.naturalHeight > 1) || null;
+}
+
+async function getDominantCoverColor(url, imageEl = null) {
   if (!url) return [88, 151, 255];
-  state.colorscape.cache = state.colorscape.cache || {};
-  if (state.colorscape.cache[url]) return state.colorscape.cache[url];
+  const cached = getCachedDominantCoverColor(url);
+  if (cached) return cached;
   try {
-    const img = await loadImageForColorscape(url);
-    const rgb = sampleDominantCoverColor(img);
-    state.colorscape.cache[url] = rgb;
-    return rgb;
+    const source = imageEl && imageEl.complete && imageEl.naturalWidth > 1 && imageEl.naturalHeight > 1
+      ? imageEl
+      : await loadImageForColorscape(url);
+    return setCachedDominantCoverColor(url, sampleDominantCoverColor(source));
   } catch (err) {
     console.warn('Colorscape sampling failed', err);
     return [88, 151, 255];
@@ -1709,7 +2181,7 @@ async function getDominantCoverColor(url) {
 
 async function applyColorscapeToDetail(item) {
   const preferences = state.preferences || loadGuidevaultPreferences();
-  if (!preferences.useColorscape || !isColorscapeSupportedItem(item)) {
+  if (!preferences.useColorscape || !preferences.colorscapeDetailPane || !isColorscapeSupportedItem(item)) {
     clearColorscapeDetailTheme();
     return;
   }
@@ -1717,13 +2189,135 @@ async function applyColorscapeToDetail(item) {
   const url = coverUrl(item);
   const token = (state.colorscape.token || 0) + 1;
   state.colorscape.token = token;
-  // Apply a safe color immediately so the page does not flash back to the theme gradient.
-  if (!document.body.classList.contains('colorscape-active')) applyColorscapeRgb([88, 151, 255], item);
-  const rgb = await getDominantCoverColor(url);
+  // Apply cached/fallback color immediately so the page does not flash back to the theme gradient.
+  const cached = getCachedDominantCoverColor(url);
+  applyColorscapeRgb(cached || fastColorscapeFallbackColor(`${item?.kind || ''}:${displayTitle(item)}`), item);
+  const rgb = cached || await getDominantCoverColor(url);
   if (state.colorscape.token !== token) return;
   if (!document.body.classList.contains('detail-page-mode')) return;
   if (String(state.selected?.id || state.selected?.Id || '') !== itemId) return;
   applyColorscapeRgb(rgb, item);
+}
+
+
+function colorscapeMenuPreferenceKeyForKind(kind) {
+  const normalized = String(kind || '').trim();
+  if (normalized === 'Manual') return 'colorscapeManualMenus';
+  if (normalized === 'Strategy Guide') return 'colorscapeStrategyMenus';
+  if (normalized === 'Magazine') return 'colorscapeMagazineMenus';
+  return '';
+}
+
+function isColorscapeMenuEnabledForKind(kind) {
+  const preferences = state.preferences || loadGuidevaultPreferences();
+  const key = colorscapeMenuPreferenceKeyForKind(kind);
+  return !!(preferences.useColorscape && key && preferences[key]);
+}
+
+function applyColorscapeRgbToCategoryCard(card, rgb) {
+  if (!card) return;
+  const [r, g, b] = normalizeRgbTriplet(rgb);
+  card.style.setProperty('--category-colorscape-rgb', `${r}, ${g}, ${b}`);
+  card.classList.remove('category-colorscape-pending');
+  card.classList.add('category-colorscape-active');
+}
+
+function clearColorscapeCategoryCard(card) {
+  if (!card) return;
+  card.classList.remove('category-colorscape-active', 'category-colorscape-pending');
+  card.style.removeProperty('--category-colorscape-rgb');
+}
+
+function clearColorscapeGroupCards(root = $('grid')) {
+  if (!root) return;
+  root.querySelectorAll('.category-card.category-card-redesign').forEach(clearColorscapeCategoryCard);
+}
+
+function refreshColorscapeGroupCards() {
+  const groupMode = ['manual-systems', 'guide-systems', 'magazine-series'].includes(state.viewMode);
+  if (!groupMode) return;
+  scheduleApplyColorscapeToGroupCards(groupDefinition(state.viewMode).kind);
+}
+
+function colorscapeCardViewportDistance(card) {
+  if (!card?.getBoundingClientRect) return 0;
+  const scroller = libraryScrollElement();
+  const viewport = scroller?.getBoundingClientRect?.() || { top: 0, bottom: window.innerHeight || 0 };
+  const rect = card.getBoundingClientRect();
+  if (rect.bottom >= viewport.top && rect.top <= viewport.bottom) return 0;
+  return Math.min(Math.abs(rect.top - viewport.bottom), Math.abs(rect.bottom - viewport.top));
+}
+
+function runWhenBrowserIsIdle(work, timeout = 1200) {
+  if (typeof requestIdleCallback === 'function') {
+    requestIdleCallback(work, { timeout });
+    return;
+  }
+  window.setTimeout(work, Math.min(timeout, 250));
+}
+
+function scheduleColorscapeSampleQueue() {
+  if (state.colorscape.imageSampleQueued) return;
+  state.colorscape.imageSampleQueued = true;
+  runWhenBrowserIsIdle(async () => {
+    state.colorscape.imageSampleQueued = false;
+    const token = state.colorscape.menuToken;
+    const batch = (state.colorscape.imageSampleQueue || []).splice(0, GUIDEVAULT_COLORSCAPE_MENU_BATCH_SIZE);
+    for (const entry of batch) {
+      const { card, img, kind, url } = entry;
+      if (state.colorscape.menuToken !== token) return;
+      if (!card?.isConnected || !img?.isConnected || !isColorscapeMenuEnabledForKind(kind)) continue;
+      if (!img.complete || img.naturalWidth <= 1 || img.naturalHeight <= 1) continue;
+      const rgb = await getDominantCoverColor(url, img);
+      if (state.colorscape.menuToken !== token || !card.isConnected) return;
+      applyColorscapeRgbToCategoryCard(card, rgb);
+      await new Promise(resolve => requestAnimationFrame(resolve));
+    }
+    persistColorscapeColorCache(false);
+    if ((state.colorscape.imageSampleQueue || []).length) scheduleColorscapeSampleQueue();
+  }, GUIDEVAULT_COLORSCAPE_MENU_SAMPLE_DELAY_MS);
+}
+
+function scheduleColorscapeSampleForLoadedCover(img) {
+  if (!img || !img.isConnected || !img.complete || img.naturalWidth <= 1 || img.naturalHeight <= 1) return;
+  const card = img.closest?.('.category-card.category-card-redesign[data-colorscape-cover]');
+  if (!card) return;
+  const kind = card.dataset.kind || groupDefinition(state.viewMode).kind;
+  if (!isColorscapeMenuEnabledForKind(kind)) return;
+  const url = card.dataset.colorscapeCover || '';
+  if (!url || !imageElementMatchesColorscapeUrl(img, url)) return;
+  const queue = state.colorscape.imageSampleQueue || (state.colorscape.imageSampleQueue = []);
+  if (!queue.some(entry => entry.card === card && entry.img === img)) queue.push({ card, img, kind, url });
+  scheduleColorscapeSampleQueue();
+}
+
+function scheduleApplyColorscapeToGroupCards(kind) {
+  const root = $('grid');
+  if (!root) return;
+  const token = (state.colorscape.menuToken || 0) + 1;
+  state.colorscape.menuToken = token;
+  state.colorscape.imageSampleQueue = [];
+  state.colorscape.imageSampleQueued = false;
+  if (!isColorscapeMenuEnabledForKind(kind)) {
+    clearColorscapeGroupCards(root);
+    return;
+  }
+  loadColorscapeColorCache();
+  const cards = Array.from(root.querySelectorAll('.category-card.category-card-redesign[data-colorscape-cover]'))
+    .filter(card => !!card.dataset.colorscapeCover)
+    .sort((a, b) => colorscapeCardViewportDistance(a) - colorscapeCardViewportDistance(b));
+  cards.forEach(card => {
+    const url = card.dataset.colorscapeCover;
+    const cached = getCachedDominantCoverColor(url);
+    if (cached) {
+      applyColorscapeRgbToCategoryCard(card, cached);
+      return;
+    }
+    applyColorscapeRgbToCategoryCard(card, fastColorscapeFallbackColor(`${kind}:${card.dataset.category || url}`));
+    card.classList.add('category-colorscape-pending');
+    const loadedImage = findLoadedColorscapeImage(card, url);
+    if (loadedImage) scheduleColorscapeSampleForLoadedCover(loadedImage);
+  });
 }
 function cancelAccountEdit() {
   renderAccountProfile();
@@ -1737,6 +2331,7 @@ function logoutGuidevault() {
 }
 function initializeGuidevaultAuthAndApp() {
   loadReadingProfiles();
+  loadColorscapeColorCache();
   loadGuidevaultPreferences();
   loadKeybinds();
   loadCustomizeSettings();
@@ -1785,6 +2380,18 @@ function renderSystemInfo(info = state.systemInfo || fallbackSystemInfo()) {
   setText('systemInstallId', data.installId || '\u2014');
   setText('systemRuntimeMode', data.runtimeMode || 'Local self-hosted web app');
   setText('systemSupportedFiles', data.supportedFiles || 'CBZ, CBR, PDF');
+  trimSystemUpdateHistory();
+}
+
+function trimSystemUpdateHistory(limit = 20) {
+  const panel = $('settingsInfoPanel');
+  if (!panel) return;
+  const explanatory = panel.querySelector('.system-update-history-head .sub');
+  if (explanatory) explanatory.remove();
+  const entries = Array.from(panel.querySelectorAll('.system-update-entry'));
+  entries.forEach((entry, index) => {
+    if (index >= limit) entry.remove();
+  });
 }
 
 function formatDiagnosticBytes(value) {
@@ -4596,6 +5203,47 @@ function normalizeLibraryPayload(data) {
   return Array.isArray(data) ? data : (Array.isArray(data?.items) ? data.items : []);
 }
 
+function normalizeLibrarySummary(data) {
+  if (!data || Array.isArray(data)) return null;
+  const counts = data.counts || {};
+  const total = Number(data.totalCount ?? data.total ?? counts.all ?? 0) || 0;
+  return {
+    totalCount: total,
+    counts: {
+      Manual: Number(counts.manual ?? counts.Manual ?? 0) || 0,
+      'Strategy Guide': Number(counts.strategyGuide ?? counts.StrategyGuide ?? counts['Strategy Guide'] ?? 0) || 0,
+      Magazine: Number(counts.magazine ?? counts.Magazine ?? 0) || 0
+    },
+    message: String(data.message || ''),
+    generatedAt: String(data.generatedAt || '')
+  };
+}
+
+function isUnfilteredAllContentView() {
+  const q = ($('search')?.value || '').trim();
+  return !q && !state.customFilter && !state.categoryFilter && state.filter === 'All Content';
+}
+
+function currentLibraryTotalCount() {
+  if (state.libraryIsPartial && state.librarySummary?.totalCount && isUnfilteredAllContentView()) return state.librarySummary.totalCount;
+  return Array.isArray(state.filtered) ? state.filtered.length : 0;
+}
+
+function scheduleGuidevaultIdleWork(fn) {
+  if (typeof requestIdleCallback === 'function') return requestIdleCallback(fn, { timeout: 700 });
+  return window.setTimeout(fn, 60);
+}
+
+function guidevaultYieldToUi(timeout = GUIDEVAULT_LIBRARY_CHUNK_YIELD_MS) {
+  return new Promise(resolve => {
+    if (typeof requestIdleCallback === 'function') {
+      requestIdleCallback(() => resolve(), { timeout: Math.max(20, timeout) });
+    } else {
+      window.setTimeout(resolve, Math.max(0, timeout));
+    }
+  });
+}
+
 function libraryItemRenderFingerprint(item) {
   if (!item) return '';
   return [
@@ -4616,16 +5264,72 @@ function libraryItemRenderFingerprint(item) {
 
 function libraryPayloadFingerprint(items = []) {
   const list = Array.isArray(items) ? items : [];
-  return `${list.length}::${list.map(libraryItemRenderFingerprint).join('§')}`;
+  const length = list.length;
+  if (!length) return '0';
+
+  // Large libraries were previously fingerprinted by walking every item and
+  // building one huge string. That made first load and full-index refreshes feel
+  // frozen. Sample stable positions instead; server-generated timestamps/counts
+  // are included by callers when available.
+  const sampleIndexes = [0, 1, 2, Math.floor(length / 2), length - 3, length - 2, length - 1]
+    .filter(index => index >= 0 && index < length);
+  const uniqueIndexes = [...new Set(sampleIndexes)];
+  return `${length}::${uniqueIndexes.map(index => libraryItemRenderFingerprint(list[index])).join('§')}`;
+}
+
+function takeBestLibraryItems(source, limit, compare, predicate = null) {
+  const best = [];
+  const max = Math.max(0, Number(limit || 0));
+  if (!max) return best;
+  for (const item of source || []) {
+    if (!item || (predicate && !predicate(item))) continue;
+    if (best.length < max) {
+      best.push(item);
+      continue;
+    }
+    let worstIndex = 0;
+    for (let i = 1; i < best.length; i++) {
+      if (compare(best[i], best[worstIndex]) > 0) worstIndex = i;
+    }
+    if (compare(item, best[worstIndex]) < 0) best[worstIndex] = item;
+  }
+  return best.sort(compare);
+}
+
+function startupCacheItemsForLibrary(items = state.items) {
+  const source = Array.isArray(items) ? items : [];
+  if (source.length <= GUIDEVAULT_LIBRARY_STARTUP_CACHE_LIMIT) return source.slice();
+
+  const selected = new Map();
+  const add = candidates => {
+    for (const item of candidates || []) {
+      const id = itemIdOf(item);
+      if (!id || selected.has(id)) continue;
+      selected.set(id, item);
+      if (selected.size >= GUIDEVAULT_LIBRARY_STARTUP_CACHE_LIMIT) return true;
+    }
+    return false;
+  };
+  const byRecent = (a, b) => (libraryItemComputed(b).recent - libraryItemComputed(a).recent) || compareTextForSort(displayTitle(a), displayTitle(b));
+  const byTitle = (a, b) => compareTextForSort(displayTitle(a), displayTitle(b));
+  const byIssue = (a, b) => compareItemsByIssueThenTitle(a, b);
+  add(takeBestLibraryItems(source, 72, byRecent));
+  add(takeBestLibraryItems(source, 56, byTitle, i => i.kind === 'Manual'));
+  add(takeBestLibraryItems(source, 56, byTitle, i => i.kind === 'Strategy Guide'));
+  add(takeBestLibraryItems(source, 56, byIssue, i => i.kind === 'Magazine'));
+  add(source);
+  return [...selected.values()].slice(0, GUIDEVAULT_LIBRARY_STARTUP_CACHE_LIMIT);
 }
 
 function saveLibraryClientCache(items = state.items) {
   try {
-    const list = Array.isArray(items) ? items : [];
+    const startupItems = startupCacheItemsForLibrary(items);
     localStorage.setItem(GUIDEVAULT_LIBRARY_CACHE_KEY, JSON.stringify({
       version: GUIDEVAULT_APP_VERSION,
       savedAt: new Date().toISOString(),
-      items: list
+      isStartupSubset: true,
+      totalCount: Array.isArray(items) ? items.length : startupItems.length,
+      items: startupItems
     }));
   } catch (err) {
     console.debug('Guidevault library browser cache was not saved.', err);
@@ -4636,8 +5340,15 @@ function loadLibraryClientCache() {
   try {
     const raw = localStorage.getItem(GUIDEVAULT_LIBRARY_CACHE_KEY);
     if (!raw) return [];
+    if (raw.length > GUIDEVAULT_LIBRARY_CACHE_MAX_BYTES) {
+      // Older builds saved the complete library index in synchronous localStorage.
+      // Drop oversized caches instead of parsing a multi-MB JSON blob on login.
+      localStorage.removeItem(GUIDEVAULT_LIBRARY_CACHE_KEY);
+      return [];
+    }
     const data = JSON.parse(raw);
-    return Array.isArray(data?.items) ? data.items : [];
+    const list = Array.isArray(data?.items) ? data.items : [];
+    return list.slice(0, GUIDEVAULT_LIBRARY_STARTUP_CACHE_LIMIT);
   } catch (err) {
     console.debug('Guidevault library browser cache was not readable.', err);
     return [];
@@ -4687,51 +5398,97 @@ function renderCachedLibraryImmediately() {
   const cached = loadLibraryClientCache();
   if (!cached.length) return false;
   state.items = cached;
-  state._countCache = null;
-  clearLibrarySearchCaches();
   applyClientMetadataOverridesToLibrary();
+  refreshLibraryDerivedState();
   state.libraryLoadedOnce = true;
   state.libraryLastRenderedFingerprint = libraryPayloadFingerprint(state.items);
   applyFilters();
+  scheduleCategoryPreviewCoverPrewarm('', { immediate: true, includeSecondary: true });
   handleGuidevaultStartupDeepLink();
   setStatus('Loaded cached library. Refreshing latest library state in the background...');
   return true;
 }
 
-async function loadLibrary() {
+function shouldDeferFullLibraryRender() {
+  const libraryVisible = $('libraryView') && !$('libraryView').classList.contains('hidden');
+  return libraryVisible
+    && state.viewMode === 'all'
+    && state.filter === 'All Content'
+    && isUnfilteredAllContentView()
+    && !getGuidevaultStartupDeepLink()?.id
+    && !state.selected
+    && ($('detailView')?.classList.contains('hidden') ?? true)
+    && ($('readerView')?.classList.contains('hidden') ?? true);
+}
+
+function activateDeferredFullLibrary() {
+  const pending = state.deferredFullLibraryItems;
+  if (!Array.isArray(pending) || !pending.length) return false;
+  const selectedId = state.selected?.id || state.selected?.Id || '';
+  state.deferredFullLibraryItems = null;
+  state.items = pending;
+  state.libraryIsPartial = false;
+  state.librarySummary = { totalCount: pending.length, counts: null, message: '' };
+  applyClientMetadataOverridesToLibrary();
+  refreshLibraryDerivedState();
+  if (selectedId) state.selected = state.items.find(i => String(i.id || i.Id || '') === String(selectedId)) || null;
+  state.libraryLastRenderedFingerprint = libraryPayloadFingerprint(state.items) + `::partial=false::activated=${Date.now()}`;
+  return true;
+}
+
+async function loadLibrary(options = {}) {
+  const preferFastStartup = options.preferFastStartup !== false;
   try {
     const iconPromise = Object.keys(state.iconMap || {}).length ? Promise.resolve() : loadPlatformIcons();
     const settingsPromise = loadSettings().catch(err => { console.warn('Settings load failed', err); });
-    const libraryPromise = fetch(`/api/library?_=${Date.now()}`, { cache: 'no-store' });
+    const url = preferFastStartup
+      ? `/api/library/initial?limit=240&_=${Date.now()}`
+      : `/api/library?_=${Date.now()}`;
+    const libraryPromise = fetch(url, { cache: 'no-store' });
     await Promise.all([iconPromise, settingsPromise]);
     const res = await libraryPromise;
     if (!res.ok) throw new Error(await res.text());
     const data = await res.json();
     const nextItems = normalizeLibraryPayload(data);
+    const summary = normalizeLibrarySummary(data);
+    const isPartial = !!data?.isPartial;
+
+    state.deferredFullLibraryItems = null;
     state.items = nextItems;
-    state._countCache = null;
-    clearLibrarySearchCaches();
+    state.librarySummary = summary;
+    state.libraryIsPartial = isPartial;
     applyClientMetadataOverridesToLibrary();
+    refreshLibraryDerivedState();
     state.libraryLoadedOnce = true;
-    saveLibraryClientCache(state.items);
+    if (!isPartial) saveLibraryClientCache(state.items);
     if (state.selected) state.selected = state.items.find(i => i.id === state.selected.id) || null;
-    const nextFingerprint = libraryPayloadFingerprint(state.items);
+    const nextFingerprint = libraryPayloadFingerprint(state.items) + `::partial=${isPartial}::generated=${summary?.generatedAt || data?.generatedAt || ''}`;
     const canSkipRender = state.libraryLastRenderedFingerprint && state.libraryLastRenderedFingerprint === nextFingerprint;
     if (!canSkipRender) {
       state.libraryLastRenderedFingerprint = nextFingerprint;
       applyFilters();
+      scheduleCategoryPreviewCoverPrewarm('', { immediate: true, includeSecondary: true });
     } else {
       updateSettingsInsights();
-      setStatus('Library is up to date.');
+      setStatus(isPartial ? (summary?.message || 'Fast library startup loaded. Full library is loading in the background...') : 'Library is up to date.');
     }
     handleGuidevaultStartupDeepLink();
     if (!$('settingsReadingProfilesPanel')?.classList.contains('hidden')) renderReadingProfileSettings();
+
+    if (isPartial && preferFastStartup) {
+      setStatus(summary?.message || 'Fast library startup loaded. Full library is loading in the background...');
+      scheduleGuidevaultIdleWork(() => {
+        window.setTimeout(() => loadFullLibraryInBackground(), GUIDEVAULT_LIBRARY_FULL_RENDER_DELAY_MS);
+      });
+    }
   } catch (err) {
     console.error(err);
     const hadItems = Array.isArray(state.items) && state.items.length > 0;
     if (!hadItems) {
       state.items = [];
       state.filtered = [];
+      state.libraryIsPartial = false;
+      state.librarySummary = null;
       render();
     }
     setStatus('Library failed to load. Check the terminal for scan errors; existing results were kept if available.');
@@ -4739,10 +5496,144 @@ async function loadLibrary() {
   }
 }
 
+function itemIdOfForMerge(item) {
+  return String(item?.id || item?.Id || '').trim();
+}
+
+function mergeLibraryItemsById(existingItems = [], nextItems = []) {
+  const map = new Map();
+  (Array.isArray(existingItems) ? existingItems : []).forEach(item => {
+    const id = itemIdOfForMerge(item);
+    if (id) map.set(id, item);
+  });
+  (Array.isArray(nextItems) ? nextItems : []).forEach(item => {
+    const id = itemIdOfForMerge(item);
+    if (id) map.set(id, item);
+  });
+  return [...map.values()];
+}
+
+async function fetchLibraryChunk(offset = 0, limit = GUIDEVAULT_LIBRARY_CHUNK_SIZE) {
+  const params = new URLSearchParams({
+    offset: String(Math.max(0, Number(offset || 0))),
+    limit: String(Math.max(60, Number(limit || GUIDEVAULT_LIBRARY_CHUNK_SIZE))),
+    _: String(Date.now())
+  });
+  const res = await fetch(`/api/library/chunk?${params.toString()}`, { cache: 'no-store' });
+  if (!res.ok) throw new Error(await res.text());
+  const data = await res.json();
+  return {
+    data,
+    items: normalizeLibraryPayload(data),
+    summary: normalizeLibrarySummary(data),
+    total: Number(data?.totalCount ?? data?.total ?? 0) || 0,
+    offset: Number(data?.offset ?? offset) || 0,
+    nextOffset: Number(data?.nextOffset ?? (Number(offset || 0) + (Array.isArray(data?.items) ? data.items.length : 0))) || 0,
+    hasMore: !!data?.hasMore
+  };
+}
+
+async function loadFullLibraryInBackground() {
+  if (state.libraryFullLoadPromise) return state.libraryFullLoadPromise;
+  state.libraryFullLoadPromise = (async () => {
+    const initialItems = Array.isArray(state.items) ? state.items.slice() : [];
+    let mergedItems = initialItems;
+    let offset = 0;
+    let loaded = 0;
+    let total = Number(state.librarySummary?.totalCount || 0) || 0;
+    let counts = state.librarySummary?.counts || null;
+    let generatedAt = '';
+    state.libraryBackgroundLoad = { running: true, loaded: 0, total };
+
+    try {
+      while (true) {
+        await guidevaultYieldToUi();
+        const chunk = await fetchLibraryChunk(offset, GUIDEVAULT_LIBRARY_CHUNK_SIZE);
+        if (chunk.summary?.counts && Object.values(chunk.summary.counts).some(v => Number(v || 0) > 0)) counts = chunk.summary.counts;
+        if (chunk.summary?.generatedAt) generatedAt = chunk.summary.generatedAt;
+        if (chunk.total) total = chunk.total;
+        mergedItems = mergeLibraryItemsById(mergedItems, chunk.items);
+        loaded = Math.max(chunk.nextOffset, loaded + chunk.items.length);
+        state.libraryBackgroundLoad = { running: chunk.hasMore, loaded: Math.min(loaded, total || loaded), total: total || loaded };
+        if (total) {
+          state.librarySummary = {
+            ...(state.librarySummary || {}),
+            totalCount: total,
+            counts: counts || state.librarySummary?.counts || null,
+            generatedAt: generatedAt || state.librarySummary?.generatedAt || ''
+          };
+          state.libraryIsPartial = chunk.hasMore || mergedItems.length < total;
+          setStatus(chunk.hasMore
+            ? `Loading library index in the background... ${Math.min(loaded, total).toLocaleString()} of ${total.toLocaleString()} items.`
+            : `Library index downloaded. Preparing ${total.toLocaleString()} items...`);
+        }
+        if (!chunk.hasMore || !chunk.items.length) break;
+        offset = chunk.nextOffset;
+      }
+
+      await guidevaultYieldToUi(80);
+      const currentSelectedId = state.selected?.id || state.selected?.Id || '';
+      state.deferredFullLibraryItems = null;
+      state.items = applyClientMetadataOverridesToLibrary(mergedItems);
+      state.libraryIsPartial = false;
+      state.librarySummary = {
+        totalCount: state.items.length,
+        counts: counts || state.librarySummary?.counts || null,
+        message: '',
+        generatedAt: generatedAt || new Date().toISOString()
+      };
+      refreshLibraryDerivedState();
+      saveLibraryClientCache(state.items);
+      if (currentSelectedId) state.selected = state.items.find(i => itemIdOfForMerge(i) === String(currentSelectedId)) || null;
+      state.libraryLastRenderedFingerprint = libraryPayloadFingerprint(state.items) + `::partial=false::chunked=${state.librarySummary.generatedAt}`;
+
+      await guidevaultYieldToUi(80);
+      applyFilters();
+      scheduleCategoryPreviewCoverPrewarm('', { immediate: true, includeSecondary: true });
+      handleGuidevaultStartupDeepLink();
+      if (!$('settingsReadingProfilesPanel')?.classList.contains('hidden')) renderReadingProfileSettings();
+      setStatus('Full library loaded.');
+    } catch (err) {
+      console.warn('Full library background load failed.', err);
+      setStatus('Fast library startup loaded, but the full background refresh failed. Existing results were kept.');
+    } finally {
+      state.libraryBackgroundLoad = { running: false, loaded: state.libraryBackgroundLoad?.loaded || 0, total: state.libraryBackgroundLoad?.total || 0 };
+      state.libraryFullLoadPromise = null;
+    }
+  })();
+  return state.libraryFullLoadPromise;
+}
+
+async function refreshStartupStatusOnce() {
+  try {
+    const res = await fetch(`/api/startup/status?_=${Date.now()}`, { cache: 'no-store' });
+    if (!res.ok) return;
+    const data = await res.json();
+    const running = Array.isArray(data?.runningTasks) ? data.runningTasks[0] : null;
+    if (running?.message) {
+      setStatus(running.message);
+    } else if (Number(data?.itemCount || 0) > 0) {
+      setStatus(`Preparing library from ${Number(data.itemCount).toLocaleString()} indexed item(s)...`);
+    }
+  } catch {}
+}
+
 function setStatus(message = '') {
   const text = String(message || '');
   if ($('libraryDialogStatus')) $('libraryDialogStatus').textContent = text;
   if ($('settingsLibraryStatus')) $('settingsLibraryStatus').textContent = text;
+
+  const startupStatus = $('libraryStartupStatus');
+  if (!startupStatus) return;
+  window.clearTimeout(guidevaultStartupStatusHideTimer);
+  startupStatus.textContent = text;
+  startupStatus.dataset.tone = /fail|error/i.test(text) ? 'error' : /loaded|ready|up to date/i.test(text) ? 'success' : 'info';
+  startupStatus.classList.toggle('hidden', !text);
+  if (/^Full library loaded\.?$|^Library is up to date\.?$/i.test(text)) {
+    guidevaultStartupStatusHideTimer = window.setTimeout(() => {
+      if (startupStatus.textContent === text) startupStatus.classList.add('hidden');
+    }, GUIDEVAULT_STARTUP_STATUS_HIDE_MS);
+  }
 }
 
 
@@ -5239,16 +6130,57 @@ function itemRecentTimestamp(item) {
   return Number.isFinite(value) ? value : 0;
 }
 
-function compareItemsForLibrarySort(a, b, sort = $('sort')?.value || 'recent') {
-  const pinned = compareItemsByPinnedCategory(a, b);
-  if (sort === 'title') return pinned || displayTitle(a).localeCompare(displayTitle(b));
-  if (sort === 'kind') return a.kind.localeCompare(b.kind) || compareCategoryNames(a.kind, categoryOf(a), categoryOf(b)) || itemSequenceThenTitle(a, b);
-  if (sort === 'category') return pinned || compareCategoryNames(a.kind, categoryOf(a), categoryOf(b)) || itemSequenceThenTitle(a, b);
-  return pinned || (itemRecentTimestamp(b) - itemRecentTimestamp(a)) || displayTitle(a).localeCompare(displayTitle(b));
+function currentLibraryKindForSortContext() {
+  const filterKind = String(state.filter || '').trim();
+  if (['Manual', 'Strategy Guide', 'Magazine'].includes(filterKind)) return filterKind;
+  const categoryPrefix = String(state.categoryFilter || '').split('::')[0] || '';
+  if (['Manual', 'Strategy Guide', 'Magazine'].includes(categoryPrefix)) return categoryPrefix;
+  const categoryMode = sidebarCategoryModeConfig(categoryPrefix);
+  if (categoryMode?.kind) return categoryMode.kind;
+  const customScope = String(state.customFilter?.kindScope || '').trim();
+  if (['Manual', 'Strategy Guide', 'Magazine'].includes(customScope)) return customScope;
+  return '';
+}
+
+function defaultLibrarySortForCurrentView() {
+  const kind = currentLibraryKindForSortContext();
+  if (kind === 'Magazine') return 'issue';
+  if (kind === 'Manual' || kind === 'Strategy Guide') return 'title';
+  return 'recent';
+}
+
+function setDefaultSortForCurrentLibraryView() {
+  const select = $('sort');
+  if (select) select.value = defaultLibrarySortForCurrentView();
+}
+
+function compareTextForSort(a, b) {
+  return GUIDEVAULT_SORT_COLLATOR.compare(String(a || ''), String(b || ''));
+}
+
+function compareItemsByIssueThenTitle(a, b) {
+  const ac = libraryItemComputed(a);
+  const bc = libraryItemComputed(b);
+  if (ac.hasIssue && bc.hasIssue) {
+    const issueDiff = ac.issue - bc.issue;
+    if (issueDiff) return issueDiff;
+  }
+  if (ac.hasIssue !== bc.hasIssue) return ac.hasIssue ? -1 : 1;
+  return compareTextForSort(ac.title, bc.title);
+}
+
+function compareItemsForLibrarySort(a, b, sort = $('sort')?.value || defaultLibrarySortForCurrentView()) {
+  const ac = libraryItemComputed(a);
+  const bc = libraryItemComputed(b);
+  if (sort === 'title') return compareTextForSort(ac.title, bc.title);
+  if (sort === 'issue') return compareItemsByIssueThenTitle(a, b);
+  if (sort === 'kind') return compareTextForSort(ac.kind, bc.kind) || compareCategoryNames(ac.kind, ac.category, bc.category) || itemSequenceThenTitle(a, b);
+  if (sort === 'category') return compareCategoryNames(ac.kind, ac.category, bc.category) || itemSequenceThenTitle(a, b);
+  return (bc.recent - ac.recent) || compareTextForSort(ac.title, bc.title);
 }
 
 function sortGroupNamesForCurrentSort(kind, groups, allItems) {
-  const sort = $('sort')?.value || 'recent';
+  const sort = $('sort')?.value || defaultLibrarySortForCurrentView();
   const summary = new Map();
   const groupLookup = new Map();
   groups.forEach(name => {
@@ -5270,7 +6202,7 @@ function sortGroupNamesForCurrentSort(kind, groups, allItems) {
 
   return [...groups].sort((a, b) => {
     if (sort === 'recent') return ((summary.get(b)?.latest || 0) - (summary.get(a)?.latest || 0)) || compareCategoryNames(kind, a, b);
-    if (sort === 'kind' || sort === 'category' || sort === 'title') return compareCategoryNames(kind, a, b);
+    if (sort === 'kind' || sort === 'category' || sort === 'title' || sort === 'issue') return compareCategoryNames(kind, a, b);
     return compareCategoryNames(kind, a, b) || ((summary.get(b)?.count || 0) - (summary.get(a)?.count || 0));
   });
 }
@@ -5297,6 +6229,7 @@ function clearLibrarySearchCaches() {
 }
 
 function applyFilters() {
+  activateDeferredFullLibrary();
   const q = ($('search')?.value || '').trim().toLowerCase();
   state.filtered = state.items.filter(item => {
     const matchesFilter = state.filter === 'All Content' || (state.filter === 'Favorites' ? isFavoriteItem(item) : item.kind === state.filter);
@@ -5308,21 +6241,24 @@ function applyFilters() {
     return !q || libraryItemSearchHaystack(item).includes(q);
   });
 
-  const sort = $('sort')?.value || 'recent';
+  const sort = $('sort')?.value || defaultLibrarySortForCurrentView();
   state.filtered.sort((a, b) => compareItemsForLibrarySort(a, b, sort));
   if (state.customFilter?.sortMode && state.customFilter.sortMode !== 'default') {
-    if (state.customFilter.sortMode === 'title') state.filtered.sort((a,b) => displayTitle(a).localeCompare(displayTitle(b)));
+    if (state.customFilter.sortMode === 'title') state.filtered.sort((a,b) => compareTextForSort(displayTitle(a), displayTitle(b)));
     if (state.customFilter.sortMode === 'sequence') state.filtered.sort(itemSequenceThenTitle);
-    if (state.customFilter.sortMode === 'recent') state.filtered.sort((a,b) => new Date(b.modified) - new Date(a.modified));
+    if (state.customFilter.sortMode === 'recent') state.filtered.sort((a,b) => itemRecentTimestamp(b) - itemRecentTimestamp(a));
   }
   render();
 }
 function magazineThenTitle(a,b){ return itemSequenceThenTitle(a,b); }
 function itemSequenceThenTitle(a,b){
-  const bothSequenced = a.kind !== 'Manual' && b.kind !== 'Manual' && hasSequence(a) && hasSequence(b);
-  return bothSequenced && issueValue(a) !== issueValue(b) ? issueValue(a)-issueValue(b) : a.title.localeCompare(b.title);
+  if (a?.kind === 'Magazine' || b?.kind === 'Magazine') return compareItemsByIssueThenTitle(a, b);
+  return compareTextForSort(displayTitle(a), displayTitle(b));
 }
 function count(kind) {
+  if (state.libraryIsPartial && state.librarySummary?.counts && Object.prototype.hasOwnProperty.call(state.librarySummary.counts, kind)) {
+    return state.librarySummary.counts[kind] || 0;
+  }
   if (!state._countCache || state._countCacheSource !== state.items) {
     const cache = { Manual: 0, 'Strategy Guide': 0, Magazine: 0 };
     (state.items || []).forEach(i => { if (Object.prototype.hasOwnProperty.call(cache, i.kind)) cache[i.kind] += 1; });
@@ -5337,6 +6273,55 @@ function coverUrl(item) {
   const size = item?.sizeBytes || item?.SizeBytes || '';
   const stamp = modified || size;
   return stamp ? `/api/items/${id}/cover?v=${encodeURIComponent(stamp)}` : `/api/items/${id}/cover`;
+}
+
+function loadGuidevaultCoverResultCache() {
+  if (state.coverResults.loaded) return state.coverResults.cache || {};
+  state.coverResults.loaded = true;
+  try {
+    const raw = localStorage.getItem(GUIDEVAULT_COVER_RESULT_CACHE_KEY);
+    const parsed = raw ? JSON.parse(raw) : {};
+    state.coverResults.cache = parsed && typeof parsed === 'object' ? parsed : {};
+  } catch {
+    state.coverResults.cache = {};
+  }
+  return state.coverResults.cache;
+}
+
+function saveGuidevaultCoverResultCacheSoon() {
+  if (state.coverResults.saveTimer) return;
+  state.coverResults.saveTimer = window.setTimeout(() => {
+    state.coverResults.saveTimer = 0;
+    try {
+      const entries = Object.entries(state.coverResults.cache || {})
+        .sort((a, b) => Number(b[1]?.savedAt || 0) - Number(a[1]?.savedAt || 0))
+        .slice(0, GUIDEVAULT_COVER_RESULT_CACHE_LIMIT);
+      localStorage.setItem(GUIDEVAULT_COVER_RESULT_CACHE_KEY, JSON.stringify(Object.fromEntries(entries)));
+    } catch {}
+  }, 700);
+}
+
+function setGuidevaultCoverResult(url, ok) {
+  const key = String(url || '').trim();
+  if (!key || key.includes('/assets/missing-cover.svg')) return;
+  const cache = loadGuidevaultCoverResultCache();
+  cache[key] = { ok: !!ok, savedAt: Date.now() };
+  saveGuidevaultCoverResultCacheSoon();
+}
+
+function guidevaultCoverResultForUrl(url) {
+  const key = String(url || '').trim();
+  if (!key) return null;
+  const entry = loadGuidevaultCoverResultCache()[key];
+  return typeof entry?.ok === 'boolean' ? entry.ok : null;
+}
+
+function guidevaultItemLikelyHasCover(item) {
+  if (!item || !itemIdOf(item)) return false;
+  if (item.hasReadablePages === false || item.HasReadablePages === false) return false;
+  const format = String(item.format || item.Format || '').toUpperCase();
+  if (format === 'PDF') return true;
+  return true;
 }
 
 function coverRetryUrl(baseUrl) {
@@ -5375,12 +6360,24 @@ function forceCoverRepaint(img) {
   });
 }
 
+function isSecondaryCoverImage(img) {
+  return String(img?.dataset?.coverPriority || '').toLowerCase() === 'secondary';
+}
+
+function setCoverFetchPriority(img) {
+  if (!img) return;
+  try {
+    img.fetchPriority = isSecondaryCoverImage(img) ? 'low' : 'high';
+  } catch {}
+}
+
 function primeCoverImage(img) {
   if (!img || !img.dataset.coverSrc) return;
   const wanted = img.dataset.coverSrc;
   const current = img.getAttribute('src') || '';
-  img.loading = 'lazy';
+  img.loading = isSecondaryCoverImage(img) ? 'lazy' : 'eager';
   img.decoding = 'async';
+  setCoverFetchPriority(img);
   img.classList.add('cover-loading');
   if (current !== wanted) {
     img.setAttribute('src', wanted);
@@ -5388,11 +6385,215 @@ function primeCoverImage(img) {
   }
   if (img.complete && img.naturalWidth > 1 && img.naturalHeight > 1) {
     forceCoverRepaint(img);
+    scheduleColorscapeSampleForLoadedCover(img);
     return;
   }
   if (typeof img.decode === 'function') {
-    img.decode().then(() => forceCoverRepaint(img)).catch(() => {});
+    img.decode().then(() => {
+      forceCoverRepaint(img);
+      scheduleColorscapeSampleForLoadedCover(img);
+    }).catch(() => {});
   }
+}
+
+function coverImageIsNearViewport(img, padding = 180) {
+  const scroller = libraryScrollElement();
+  const scrollerRect = scroller?.getBoundingClientRect?.();
+  const rect = img?.getBoundingClientRect?.();
+  if (!rect || !scrollerRect) return true;
+  return rect.bottom >= scrollerRect.top - padding && rect.top <= scrollerRect.bottom + padding;
+}
+
+function flushSecondaryCoverPrimeQueue() {
+  guidevaultSecondaryCoverPrimeTimer = 0;
+  const batch = [];
+  for (const img of guidevaultSecondaryCoverPrimeQueue) {
+    guidevaultSecondaryCoverPrimeQueue.delete(img);
+    if (!img?.isConnected || !coverImageIsNearViewport(img, 220)) continue;
+    batch.push(img);
+    if (batch.length >= GUIDEVAULT_SECONDARY_COVER_BATCH_SIZE) break;
+  }
+  batch.forEach(primeCoverImage);
+  if (guidevaultSecondaryCoverPrimeQueue.size) {
+    guidevaultSecondaryCoverPrimeTimer = window.setTimeout(flushSecondaryCoverPrimeQueue, 180);
+  }
+}
+
+function queueSecondaryCoverPrime(img) {
+  if (!img || !img.dataset.coverSrc) return;
+  if ((img.getAttribute('src') || '') === img.dataset.coverSrc) return;
+  guidevaultSecondaryCoverPrimeQueue.add(img);
+  if (guidevaultSecondaryCoverPrimeTimer) return;
+  guidevaultSecondaryCoverPrimeTimer = window.setTimeout(flushSecondaryCoverPrimeQueue, GUIDEVAULT_SECONDARY_COVER_DELAY_MS);
+}
+
+function flushCategoryPrimaryPrewarmQueue() {
+  guidevaultCategoryPrimaryPrewarmTimer = 0;
+  const batch = guidevaultCategoryPrimaryPrewarmQueue.splice(0, GUIDEVAULT_CATEGORY_PRIMARY_PREWARM_BATCH_SIZE);
+  batch.forEach(url => {
+    if (!url) return;
+    try {
+      const img = new Image();
+      img.decoding = 'async';
+      img.loading = 'eager';
+      try { img.fetchPriority = 'high'; } catch {}
+      img.src = url;
+    } catch {}
+  });
+  if (guidevaultCategoryPrimaryPrewarmQueue.length) {
+    guidevaultCategoryPrimaryPrewarmTimer = window.setTimeout(flushCategoryPrimaryPrewarmQueue, GUIDEVAULT_CATEGORY_PRIMARY_PREWARM_DELAY_MS);
+  }
+}
+
+function enqueueCategoryPrimaryCoverPrewarm(url) {
+  const clean = String(url || '').trim();
+  if (!clean || guidevaultCategoryPrimaryPrewarmSeen.has(clean)) return;
+  guidevaultCategoryPrimaryPrewarmSeen.add(clean);
+  guidevaultCategoryPrimaryPrewarmQueue.push(clean);
+  if (guidevaultCategoryPrimaryPrewarmTimer) return;
+  guidevaultCategoryPrimaryPrewarmTimer = window.setTimeout(flushCategoryPrimaryPrewarmQueue, 40);
+}
+
+function collectPrimaryCategoryCoverUrls(kind, limit = GUIDEVAULT_CATEGORY_PRIMARY_PREWARM_LIMIT) {
+  const targetKind = String(kind || '').trim();
+  if (!targetKind || !Array.isArray(state.items) || !state.items.length) return [];
+  const groupMap = new Map();
+  for (const item of state.items) {
+    if (item?.kind !== targetKind) continue;
+    const keys = libraryCategoryKeysForItem(item);
+    for (const name of keys) {
+      const label = String(name || '').trim();
+      const key = sidebarCategoryCountKey(label);
+      if (!key) continue;
+      if (!groupMap.has(key)) groupMap.set(key, { name: label, items: [] });
+      groupMap.get(key).items.push(item);
+    }
+  }
+  const groups = sortGroupNamesForCurrentSort(
+    targetKind,
+    sortCategoriesForKind(targetKind, [...groupMap.values()].map(group => group.name)),
+    state.items.filter(i => i.kind === targetKind)
+  );
+  const urls = [];
+  for (const name of groups) {
+    const bucket = groupMap.get(sidebarCategoryCountKey(name));
+    const items = [...(bucket?.items || [])].sort(targetKind === 'Manual' ? ((a,b)=>compareTextForSort(displayTitle(a), displayTitle(b))) : itemSequenceThenTitle);
+    const url = coverUrl(items.find(item => coverUrl(item)) || items[0] || {});
+    if (url) urls.push(url);
+    if (urls.length >= limit) break;
+  }
+  return urls;
+}
+
+function scheduleCategoryPrimaryCoverPrewarm(kind = '') {
+  scheduleCategoryPreviewCoverPrewarm(kind, { includeSecondary: false });
+}
+
+function compareCategoryPreviewCandidates(a, b) {
+  const aUrl = coverUrl(a);
+  const bUrl = coverUrl(b);
+  const aKnown = guidevaultCoverResultForUrl(aUrl);
+  const bKnown = guidevaultCoverResultForUrl(bUrl);
+  const aRank = (aKnown === true ? 0 : aKnown === null ? 1 : 3) + (guidevaultItemLikelyHasCover(a) ? 0 : 20);
+  const bRank = (bKnown === true ? 0 : bKnown === null ? 1 : 3) + (guidevaultItemLikelyHasCover(b) ? 0 : 20);
+  if (aRank !== bRank) return aRank - bRank;
+  return itemSequenceThenTitle(a, b);
+}
+
+function categoryPreviewItems(items, limit = 4) {
+  const seen = new Set();
+  return [...(items || [])]
+    .filter(item => {
+      const id = itemIdOf(item);
+      if (!id || seen.has(id)) return false;
+      seen.add(id);
+      return guidevaultItemLikelyHasCover(item);
+    })
+    .sort(compareCategoryPreviewCandidates)
+    .slice(0, limit);
+}
+
+function collectCategoryPreviewCoverUrls(kind = '', options = {}) {
+  const targetKinds = kind ? [kind] : ['Manual', 'Strategy Guide', 'Magazine'];
+  const includeSecondary = options.includeSecondary !== false;
+  const limit = Math.max(24, Number(options.limit || GUIDEVAULT_CATEGORY_PREVIEW_PREWARM_LIMIT));
+  const urls = [];
+  const seen = new Set();
+  targetKinds.forEach(targetKind => {
+    const groupMap = new Map();
+    for (const item of state.items || []) {
+      if (item?.kind !== targetKind) continue;
+      for (const name of libraryCategoryKeysForItem(item)) {
+        const label = String(name || '').trim();
+        const key = sidebarCategoryCountKey(label);
+        if (!key) continue;
+        if (!groupMap.has(key)) groupMap.set(key, { name: label, items: [] });
+        groupMap.get(key).items.push(item);
+      }
+    }
+    const groups = sortGroupNamesForCurrentSort(
+      targetKind,
+      sortCategoriesForKind(targetKind, [...groupMap.values()].map(group => group.name)),
+      (state.items || []).filter(i => i.kind === targetKind)
+    );
+    for (const name of groups) {
+      const bucket = groupMap.get(sidebarCategoryCountKey(name));
+      const candidates = categoryPreviewItems(bucket?.items || [], includeSecondary ? 4 : 1);
+      for (const item of candidates) {
+        const url = coverUrl(item);
+        if (!url || seen.has(url)) continue;
+        seen.add(url);
+        urls.push(url);
+        if (urls.length >= limit) return;
+      }
+      if (urls.length >= limit) return;
+    }
+  });
+  return urls;
+}
+
+function flushCategoryPreviewPrewarmQueue() {
+  guidevaultCategoryPreviewPrewarmTimer = 0;
+  const batch = guidevaultCategoryPreviewPrewarmQueue.splice(0, GUIDEVAULT_CATEGORY_PREVIEW_PREWARM_BATCH_SIZE);
+  batch.forEach(url => {
+    try {
+      const img = new Image();
+      img.decoding = 'async';
+      img.loading = 'eager';
+      try { img.fetchPriority = 'high'; } catch {}
+      img.onload = () => setGuidevaultCoverResult(url, !(String(img.currentSrc || img.src || '').toLowerCase().includes('/assets/missing-cover.svg')));
+      img.onerror = () => setGuidevaultCoverResult(url, false);
+      img.src = url;
+    } catch {}
+  });
+  if (guidevaultCategoryPreviewPrewarmQueue.length) {
+    guidevaultCategoryPreviewPrewarmTimer = window.setTimeout(flushCategoryPreviewPrewarmQueue, GUIDEVAULT_CATEGORY_PREVIEW_PREWARM_DELAY_MS);
+  }
+}
+
+function enqueueCategoryPreviewCoverPrewarm(url) {
+  const clean = String(url || '').trim();
+  if (!clean || guidevaultCategoryPreviewPrewarmSeen.has(clean)) return;
+  guidevaultCategoryPreviewPrewarmSeen.add(clean);
+  guidevaultCategoryPreviewPrewarmQueue.push(clean);
+  if (guidevaultCategoryPreviewPrewarmTimer) return;
+  guidevaultCategoryPreviewPrewarmTimer = window.setTimeout(flushCategoryPreviewPrewarmQueue, 1);
+}
+
+function requestServerCategoryCoverPrewarm(kind = '') {
+  const token = `${kind || 'all'}:${Math.floor(Date.now() / 12000)}`;
+  if (state.coverResults.serverPrewarmToken === token) return;
+  state.coverResults.serverPrewarmToken = token;
+  const params = new URLSearchParams({ limit: String(GUIDEVAULT_CATEGORY_PREVIEW_PREWARM_LIMIT) });
+  if (kind) params.set('kind', kind);
+  fetch(`/api/library/prewarm-covers?${params.toString()}`, { method: 'POST', cache: 'no-store', keepalive: true }).catch(() => {});
+}
+
+function scheduleCategoryPreviewCoverPrewarm(kind = '', options = {}) {
+  // 0.9.132: disabled aggressive category preview prewarming.  It made the
+  // first library click feel slower by competing with the covers the user can
+  // actually see.  Category menus now load only the first visible primary
+  // covers eagerly, then let the normal viewport observer handle the rest.
 }
 
 let coverPrimeObserver = null;
@@ -5400,21 +6601,24 @@ function ensureCoverPrimeObserver() {
   if (coverPrimeObserver || typeof IntersectionObserver !== 'function') return coverPrimeObserver;
   coverPrimeObserver = new IntersectionObserver(entries => {
     entries.forEach(entry => {
-      if (entry.isIntersecting || entry.intersectionRatio > 0) primeCoverImage(entry.target);
+      if (!(entry.isIntersecting || entry.intersectionRatio > 0)) return;
+      if (isSecondaryCoverImage(entry.target)) queueSecondaryCoverPrime(entry.target);
+      else primeCoverImage(entry.target);
     });
-  }, { root: libraryScrollElement(), rootMargin: '180px 0px 180px 0px', threshold: 0.01 });
+  }, { root: libraryScrollElement(), rootMargin: '220px 0px 220px 0px', threshold: 0.01 });
   return coverPrimeObserver;
 }
 
 function primeVisibleCoverImages(root = document) {
-  const scroller = libraryScrollElement();
-  const scrollerRect = scroller?.getBoundingClientRect?.();
+  const primary = [];
+  const secondary = [];
   root.querySelectorAll?.('img[data-cover-src]').forEach(img => {
-    const rect = img.getBoundingClientRect?.();
-    if (!rect || !scrollerRect) { primeCoverImage(img); return; }
-    const near = rect.bottom >= scrollerRect.top - 180 && rect.top <= scrollerRect.bottom + 180;
-    if (near) primeCoverImage(img);
+    if (!coverImageIsNearViewport(img, 220)) return;
+    if (isSecondaryCoverImage(img)) secondary.push(img);
+    else primary.push(img);
   });
+  primary.forEach(primeCoverImage);
+  secondary.forEach(queueSecondaryCoverPrime);
 }
 
 function initializeCoverImages(root = document) {
@@ -5422,20 +6626,33 @@ function initializeCoverImages(root = document) {
   root.querySelectorAll?.('img[data-cover-src]').forEach(img => {
     if (img.dataset.coverWatch !== '1') {
       img.dataset.coverWatch = '1';
-      img.loading = 'lazy';
+      img.loading = isSecondaryCoverImage(img) ? 'lazy' : 'eager';
       img.decoding = 'async';
+      setCoverFetchPriority(img);
       img.classList.add('cover-loading');
       img.addEventListener('error', () => {
         img.classList.add('cover-error');
         img.classList.remove('cover-loaded', 'cover-loading');
+        img.closest?.('.category-preview-strip')?.classList.add('category-preview-missing');
         scheduleCoverRetry(img);
       });
       img.addEventListener('load', () => {
         const current = String(img.currentSrc || img.src || '').toLowerCase();
+        const requested = img.dataset.coverSrc || '';
         if (current.includes('/assets/missing-cover.svg')) {
+          setGuidevaultCoverResult(requested, false);
+          img.classList.add('cover-missing');
+          img.classList.remove('cover-loaded', 'cover-loading');
+          img.closest?.('.category-preview-strip')?.classList.add('category-preview-missing');
           return;
         }
-        if (img.naturalWidth > 1 && img.naturalHeight > 1) forceCoverRepaint(img);
+        if (img.naturalWidth > 1 && img.naturalHeight > 1) {
+          setGuidevaultCoverResult(requested, true);
+          img.classList.remove('cover-missing');
+          img.closest?.('.category-preview-strip')?.classList.remove('category-preview-missing');
+          forceCoverRepaint(img);
+          scheduleColorscapeSampleForLoadedCover(img);
+        }
       });
       observer?.observe(img);
     }
@@ -5461,6 +6678,16 @@ function currentCategoryName() {
 }
 function libraryScrollElement() {
   return $('libraryGridScroll') || document.querySelector('.main');
+}
+function scrollTopForElementWithinScroller(element, scroller) {
+  if (!element || !scroller) return 0;
+  try {
+    const elementRect = element.getBoundingClientRect();
+    const scrollerRect = scroller.getBoundingClientRect();
+    return Math.max(0, (elementRect.top - scrollerRect.top) + scroller.scrollTop);
+  } catch {
+    return Math.max(0, Number(element.offsetTop || 0));
+  }
 }
 function scrollMainToTop() {
   const scroller = libraryScrollElement();
@@ -5520,7 +6747,8 @@ function jumpToAlpha(key) {
       const columns = Math.max(1, Number(vgrid.columns || estimateGridColumns(grid)));
       const row = Math.floor(index / columns);
       const rowHeight = Math.max(160, Number(vgrid.rowHeight || 300));
-      scroller.scrollTo({ top: Math.max(0, grid.offsetTop + row * rowHeight - 10), behavior: 'smooth' });
+      const gridTop = scrollTopForElementWithinScroller(grid, scroller);
+      scroller.scrollTo({ top: Math.max(0, gridTop + row * rowHeight - 10), behavior: 'smooth' });
       requestAnimationFrame(() => renderVirtualGridWindow(true));
     }
   }
@@ -5536,7 +6764,7 @@ function render() {
   const groupMode = ['manual-systems', 'guide-systems', 'magazine-series'].includes(state.viewMode);
   const categoryMode = !!state.categoryFilter;
 
-  $('itemCount').textContent = groupMode ? `${groupCountForView()} categories` : `${state.filtered.length} items`;
+  $('itemCount').textContent = groupMode ? `${groupCountForView()} categories` : `${currentLibraryTotalCount()} items${state.libraryIsPartial ? ' indexed' : ''}`;
   $('libraryView').classList.toggle('category-mode', categoryMode || groupMode || state.viewMode !== 'all');
   $('libraryView').classList.toggle('group-mode', groupMode);
   $('libraryView').classList.toggle('magazine-mode', state.filter === 'Magazine' || state.viewMode === 'magazine-series');
@@ -5546,7 +6774,7 @@ function render() {
   $('manualSummary').textContent = `${count('Manual')} items`;
   $('guideSummary').textContent = `${count('Strategy Guide')} items`;
   $('magSummary').textContent = `${count('Magazine')} items`;
-  renderCategories();
+  scheduleRenderCategories();
 
   const homeMode = !groupMode && !categoryMode && state.viewMode === 'all' && state.filter === 'All Content';
   if ($('homeShelves')) $('homeShelves').classList.toggle('hidden', !homeMode);
@@ -5615,32 +6843,91 @@ function groupCardSizeLabel(items) {
   while (value >= 1024 && unit < units.length - 1) { value /= 1024; unit += 1; }
   return `${value >= 10 || unit === 0 ? Math.round(value) : value.toFixed(1)} ${units[unit]}`;
 }
-function categoryPreviewCovers(items, name) {
-  const covers = items.slice(0, 4);
-  if (!covers.length) {
-    return `<div class="category-preview-empty">${platformIconHtml(name, 'platform-icon large')}</div>`;
+function escapeForCssString(value) {
+  return String(value ?? '')
+    .replace(/\\/g, '\\\\')
+    .replace(/'/g, "\\'")
+    .replace(/[\r\n\f]/g, '');
+}
+
+function groupGridCacheKey(kind, sort) {
+  return `${Number(state.libraryCategoryCacheVersion || 0)}|${String(kind || '')}|${String(sort || '')}`;
+}
+
+function getCachedGroupGridData(kind, sort) {
+  const currentVersion = Number(state.libraryCategoryCacheVersion || 0);
+  if (guidevaultGroupGridCacheVersion !== currentVersion) {
+    guidevaultGroupGridCacheVersion = currentVersion;
+    guidevaultGroupGridCache = new Map();
   }
-  return covers.map((item, index) => `<img decoding="async" loading="lazy" data-cover-src="${coverUrl(item)}" src="/assets/missing-cover.svg" alt="${escapeHtml(displayTitle(item))} cover" style="--slot:${index}" />`).join('');
+  const key = groupGridCacheKey(kind, sort);
+  const cached = guidevaultGroupGridCache.get(key);
+  if (cached) return cached;
+
+  const allKindItems = [];
+  const groupMap = new Map();
+  for (const item of state.items || []) {
+    if (item?.kind !== kind) continue;
+    allKindItems.push(item);
+    const seen = new Set();
+    for (const name of libraryCategoryKeysForItem(item)) {
+      const label = String(name || '').trim();
+      const groupKey = sidebarCategoryCountKey(label);
+      if (!groupKey || seen.has(groupKey)) continue;
+      seen.add(groupKey);
+      if (!groupMap.has(groupKey)) groupMap.set(groupKey, { name: label, items: [] });
+      groupMap.get(groupKey).items.push(item);
+    }
+  }
+  const groupNames = [...groupMap.values()].map(group => group.name);
+  const groups = sortGroupNamesForCurrentSort(kind, sortCategoriesForKind(kind, groupNames), allKindItems);
+  const result = { allKindItems, groupMap, groups };
+  guidevaultGroupGridCache.set(key, result);
+  return result;
+}
+
+function openCategoryGridCard(card) {
+  if (!card) return;
+  showLibraryScreen();
+  state.filter = card.dataset.kind;
+  state.categoryFilter = `${card.dataset.kind}::${card.dataset.category}`;
+  state.viewMode = 'category';
+  if ($('search')) $('search').value = '';
+  setDefaultSortForCurrentLibraryView();
+  updateNavActive();
+  scrollMainToTop();
+  applyFilters();
+}
+
+function wireGroupGridCategoryDelegation(host) {
+  if (!host || host.dataset.groupGridDelegated === '1') return;
+  host.dataset.groupGridDelegated = '1';
+  host.addEventListener('click', event => {
+    const card = event.target.closest?.('.category-card.category-card-redesign[data-kind][data-category]');
+    if (!card || !host.contains(card)) return;
+    openCategoryGridCard(card);
+  });
+}
+
+function categoryPreviewStripHtml(items, name, cardIndex = 0) {
+  const covers = categoryPreviewItems(items, 1);
+  if (!covers.length) {
+    return `<div class="category-preview-strip single-cover" aria-hidden="true"><div class="category-preview-empty">${platformIconHtml(name, 'platform-icon large')}</div></div>`;
+  }
+  const item = covers[0];
+  const url = coverUrl(item);
+  const eager = Number(cardIndex || 0) < GUIDEVAULT_CATEGORY_VISIBLE_COVER_EAGER_LIMIT;
+  const src = eager ? url : GUIDEVAULT_TRANSPARENT_COVER_PLACEHOLDER;
+  const coverVar = url ? ` style="--gv-category-preview-cover:url('${escapeForAttribute(escapeForCssString(url))}')"` : '';
+  const cover = `<img class="category-preview-primary-cover" decoding="async" loading="${eager ? 'eager' : 'lazy'}" fetchpriority="${eager ? 'high' : 'low'}" data-cover-priority="primary" data-cover-src="${escapeForAttribute(url)}" src="${escapeForAttribute(src)}" alt="${escapeHtml(displayTitle(item))} cover" />`;
+  return `<div class="category-preview-strip single-cover faux-three-cover" aria-hidden="true"${coverVar}>${cover}</div>`;
 }
 function renderGroupGrid(id, viewMode) {
   clearVirtualGridIfHost(id);
   const def = groupDefinition(viewMode);
   const axis = groupAxisLabelForKind(def.kind);
-  const allKindItems = state.items.filter(i => i.kind === def.kind);
-  const groupMap = new Map();
-  allKindItems.forEach(item => {
-    const seen = new Set();
-    libraryCategoryKeysForItem(item).forEach(name => {
-      const label = String(name || '').trim();
-      const key = sidebarCategoryCountKey(label);
-      if (!key || seen.has(key)) return;
-      seen.add(key);
-      if (!groupMap.has(key)) groupMap.set(key, { name: label, items: [] });
-      groupMap.get(key).items.push(item);
-    });
-  });
-  const groupNames = [...groupMap.values()].map(group => group.name);
-  const groups = sortGroupNamesForCurrentSort(def.kind, sortCategoriesForKind(def.kind, groupNames), allKindItems);
+  const currentSort = $('sort')?.value || defaultLibrarySortForCurrentView();
+  const { allKindItems, groupMap, groups } = getCachedGroupGridData(def.kind, currentSort);
   renderAlphaRail(groups);
   const overview = groups.length ? `<section class="group-hub-panel">
       <div class="group-hub-copy">
@@ -5651,14 +6938,15 @@ function renderGroupGrid(id, viewMode) {
           : 'Content is grouped by platform so each library tile opens a focused shelf of related entries.')}</p>
       </div>
     </section>` : '';
-  const cards = groups.map(name => {
+  const cards = groups.map((name, cardIndex) => {
     const bucket = groupMap.get(sidebarCategoryCountKey(name));
-    const items = [...(bucket?.items || [])].sort(def.kind === 'Manual' ? ((a,b)=>displayTitle(a).localeCompare(displayTitle(b))) : itemSequenceThenTitle);
+    const items = [...(bucket?.items || [])].sort(def.kind === 'Manual' ? ((a,b)=>compareTextForSort(displayTitle(a), displayTitle(b))) : itemSequenceThenTitle);
     const issueHint = def.kind === 'Magazine' ? sequenceRange(items) : `${items.length} ${items.length === 1 ? 'entry' : 'entries'}`;
     const specialCategoryClass = def.kind === 'Manual' && isNintendoEntertainmentSystemName(name) ? ' nes-manual-category' : '';
     const latest = groupCardLatestLabel(items);
     const secondary = groupCardSecondaryLabel(def.kind, name, items);
-    return `<article class="category-card category-card-redesign${specialCategoryClass}" data-kind="${escapeHtml(def.kind)}" data-category="${escapeForAttribute(name)}" data-alpha="${alphaKey(name)}">
+    const colorscapeCover = coverUrl(items.find(item => coverUrl(item)) || items[0] || {});
+    return `<article class="category-card category-card-redesign${specialCategoryClass}" data-kind="${escapeHtml(def.kind)}" data-category="${escapeForAttribute(name)}" data-alpha="${alphaKey(name)}" data-colorscape-cover="${escapeForAttribute(colorscapeCover)}">
       <div class="category-card-content">
         <div class="category-title-line">
           <span class="category-platform-mark">${platformIconHtml(name, 'platform-icon large')}</span>
@@ -5673,22 +6961,15 @@ function renderGroupGrid(id, viewMode) {
         </div>
         <small class="category-latest">Latest: ${escapeHtml(latest)}</small>
       </div>
-      <div class="category-preview-strip" aria-hidden="true">${categoryPreviewCovers(items, name)}</div>
+      ${categoryPreviewStripHtml(items, name, cardIndex)}
     </article>`;
   }).join('');
   $(id).innerHTML = overview + (cards || `<div class="empty-message">${def.empty} Set a Library Root folder in Settings and scan your collection.</div>`);
-  initializeCoverImages($(id));
+  const host = $(id);
+  initializeCoverImages(host);
   attachCoverPrimeScrollHandler();
-  $(id).querySelectorAll('.category-card').forEach(card => card.addEventListener('click', () => {
-    showLibraryScreen();
-    state.filter = card.dataset.kind;
-    state.categoryFilter = `${card.dataset.kind}::${card.dataset.category}`;
-    state.viewMode = 'category';
-    $('search').value = '';
-    updateNavActive();
-    scrollMainToTop();
-    applyFilters();
-  }));
+  scheduleApplyColorscapeToGroupCards(def.kind);
+  wireGroupGridCategoryDelegation(host);
 }
 
 function sequenceRange(items) {
@@ -5885,10 +7166,65 @@ function categoryGroupMarkup(key, label, items, categories, options = {}) {
       <div class="category-body">${body}</div>
     </div>`;
 }
+function categoryRenderCacheKey(structure) {
+  return [
+    Number(state.libraryCategoryCacheVersion || 0),
+    structure,
+    state.categoryFilter || '',
+    JSON.stringify(state.collapsedCategoryGroups || {})
+  ].join('|');
+}
+
+function wireCategorySidebar(host) {
+  if (!host || host.dataset.categoryWired === '1') return;
+  host.dataset.categoryWired = '1';
+  host.addEventListener('click', event => {
+    const toggle = event.target.closest?.('.category-group-toggle');
+    if (toggle && host.contains(toggle)) {
+      const kind = toggle.dataset.kind;
+      const defaultCollapsed = toggle.dataset.defaultCollapsed !== 'false';
+      state.collapsedCategoryGroups[kind] = !isCategoryGroupCollapsed(kind, defaultCollapsed);
+      renderCategories();
+      return;
+    }
+
+    const btn = event.target.closest?.('.system-btn');
+    if (!btn || !host.contains(btn)) return;
+    showLibraryScreen();
+    const kind = btn.dataset.kind || 'Any';
+    const mode = sidebarCategoryModeConfig(kind);
+    state.filter = mode?.kind || (['Any', 'Publisher', 'Decade'].includes(kind) ? 'All Content' : kind);
+    state.categoryFilter = `${kind}::${btn.dataset.category}`;
+    state.customFilter = null;
+    state.viewMode = 'category';
+    if ($('search')) $('search').value = '';
+    setDefaultSortForCurrentLibraryView();
+    updateNavActive();
+    document.querySelectorAll('.chip').forEach(c => c.classList.toggle('active', c.dataset.kind === state.filter));
+    scrollMainToTop();
+    applyFilters();
+  });
+}
+
+function scheduleRenderCategories() {
+  const host = $('categories');
+  if (!host) return;
+  window.clearTimeout(guidevaultCategoryRenderTimer);
+  guidevaultCategoryRenderTimer = window.setTimeout(() => {
+    scheduleGuidevaultIdleWork(() => {
+      guidevaultCategoryRenderTimer = 0;
+      renderCategories();
+    });
+  }, 20);
+}
+
 function renderCategories() {
   const host = $('categories');
   if (!host) return;
+  wireCategorySidebar(host);
   const structure = loadCategoryStructure();
+  const cacheKey = categoryRenderCacheKey(structure);
+  if (guidevaultCategoryRenderKey === cacheKey && host.dataset.categoryCacheKey === cacheKey) return;
   const groups = [['Manual', 'Manuals'], ['Strategy Guide', 'Strategy Guides'], ['Magazine', 'Magazines']];
   let markup = '';
   if (structure === 'content-type') {
@@ -5953,26 +7289,8 @@ function renderCategories() {
     }
   }
   host.innerHTML = markup || '<p class="sub small-pad">Scan a library root to build categories.</p>';
-  host.querySelectorAll('.category-group-toggle').forEach(btn => btn.addEventListener('click', () => {
-    const kind = btn.dataset.kind;
-    const defaultCollapsed = btn.dataset.defaultCollapsed !== 'false';
-    state.collapsedCategoryGroups[kind] = !isCategoryGroupCollapsed(kind, defaultCollapsed);
-    renderCategories();
-  }));
-  host.querySelectorAll('.system-btn').forEach(btn => btn.addEventListener('click', () => {
-    showLibraryScreen();
-    const kind = btn.dataset.kind || 'Any';
-    const mode = sidebarCategoryModeConfig(kind);
-    state.filter = mode?.kind || (['Any', 'Publisher', 'Decade'].includes(kind) ? 'All Content' : kind);
-    state.categoryFilter = `${kind}::${btn.dataset.category}`;
-    state.customFilter = null;
-    state.viewMode = 'category';
-    if ($('search')) $('search').value = '';
-    updateNavActive();
-    document.querySelectorAll('.chip').forEach(c => c.classList.toggle('active', c.dataset.kind === state.filter));
-    scrollMainToTop();
-    applyFilters();
-  }));
+  host.dataset.categoryCacheKey = cacheKey;
+  guidevaultCategoryRenderKey = cacheKey;
 }
 
 
@@ -6009,7 +7327,9 @@ function virtualGridWindowFor(vgrid) {
   if (!scroller || !host || !list.length) return { startIndex: 0, endIndex: Math.min(list.length, GUIDEVAULT_GRID_INITIAL_RENDER), topHeight: 0, bottomHeight: 0 };
   const columns = Math.max(1, Number(vgrid.columns || 1));
   const rowHeight = Math.max(160, Number(vgrid.rowHeight || 300));
-  const topWithinGrid = Math.max(0, scroller.scrollTop - host.offsetTop - 12);
+  const hostTop = scrollTopForElementWithinScroller(host, scroller);
+  vgrid.hostTop = hostTop;
+  const topWithinGrid = Math.max(0, scroller.scrollTop - hostTop - 12);
   const firstRow = Math.max(0, Math.floor(topWithinGrid / rowHeight) - GUIDEVAULT_GRID_VIRTUAL_BUFFER_ROWS);
   const visibleRows = Math.ceil((scroller.clientHeight || window.innerHeight || 800) / rowHeight) + GUIDEVAULT_GRID_VIRTUAL_BUFFER_ROWS * 2;
   const maxRowsByCards = Math.max(visibleRows, Math.floor(GUIDEVAULT_GRID_VIRTUAL_MAX_CARDS / columns));
@@ -6028,11 +7348,14 @@ function renderVirtualGridWindow(force = false) {
   const vgrid = state.virtualGrid;
   if (!vgrid?.host || !vgrid.host.isConnected) return;
   const host = vgrid.host;
-  const measured = measureVirtualGrid(host, vgrid);
-  const columnsChanged = measured.columns !== vgrid.columns || Math.abs(measured.rowHeight - Number(vgrid.rowHeight || 0)) > 6;
-  vgrid.columns = measured.columns;
-  vgrid.rowHeight = measured.rowHeight;
-  vgrid.cardHeight = measured.cardHeight;
+  let columnsChanged = false;
+  if (force || !Number(vgrid.columns) || !Number(vgrid.rowHeight)) {
+    const measured = measureVirtualGrid(host, vgrid);
+    columnsChanged = measured.columns !== vgrid.columns || Math.abs(measured.rowHeight - Number(vgrid.rowHeight || 0)) > 6;
+    vgrid.columns = measured.columns;
+    vgrid.rowHeight = measured.rowHeight;
+    vgrid.cardHeight = measured.cardHeight;
+  }
   const win = virtualGridWindowFor(vgrid);
   if (!force && !columnsChanged && win.startIndex === vgrid.startIndex && win.endIndex === vgrid.endIndex) return;
   vgrid.startIndex = win.startIndex;
@@ -6077,6 +7400,7 @@ function renderVirtualGrid(id, list) {
     columns: estimateGridColumns(host),
     rowHeight: 300,
     cardHeight: 280,
+    hostTop: scrollTopForElementWithinScroller(host, libraryScrollElement()),
     startIndex: -1,
     endIndex: -1
   };
@@ -6636,6 +7960,7 @@ function applyCustomSideNavItem(id) {
   state.filter = 'All Content';
   state.categoryFilter = '';
   if ($('search') && item.type !== 'search') $('search').value = '';
+  setDefaultSortForCurrentLibraryView();
   document.querySelectorAll('.chip').forEach(c => c.classList.remove('active'));
   updateNavActive();
   scrollMainToTop();
@@ -6656,14 +7981,12 @@ function renderCustomizeSettings() {
   }
   const list = $('customizeShelfList');
   if (list) {
-    list.innerHTML = (settings.homeShelves || []).map((id, index) => {
+    list.innerHTML = (settings.homeShelves || []).map((id) => {
       const opt = HOME_SHELF_OPTIONS.find(o => o.id === id) || HOME_SHELF_OPTIONS[0];
       return `<div class="customize-shelf-row" data-shelf-id="${escapeForAttribute(id)}">
-        <span class="customize-shelf-handle">\u283F</span>
+        <span class="customize-shelf-handle" draggable="true" role="button" aria-label="Drag ${escapeForAttribute(opt.label)} shelf" title="Drag to reorder">⠿</span>
         <div><strong>${escapeHtml(opt.label)}</strong><p class="sub">${escapeHtml(opt.description)}</p></div>
         <div class="customize-shelf-actions">
-          <button class="ghost" data-shelf-action="up" type="button" ${index === 0 ? 'disabled' : ''}>\u2191</button>
-          <button class="ghost" data-shelf-action="down" type="button" ${index === settings.homeShelves.length - 1 ? 'disabled' : ''}>\u2193</button>
           <button class="danger" data-shelf-action="remove" type="button">Remove</button>
         </div>
       </div>`;
@@ -6703,20 +8026,81 @@ function handleCustomizeShelfAction(e) {
   if (index < 0) return;
   const action = btn.dataset.shelfAction;
   if (action === 'remove') shelves.splice(index, 1);
-  if (action === 'up' && index > 0) [shelves[index - 1], shelves[index]] = [shelves[index], shelves[index - 1]];
-  if (action === 'down' && index < shelves.length - 1) [shelves[index + 1], shelves[index]] = [shelves[index], shelves[index + 1]];
   state.customize.homeShelves = shelves;
   saveCustomizeSettings();
   renderCustomizeSettings();
   render();
-  setCustomizeStatus('Home shelf layout updated.', 'success');
+  setCustomizeStatus(action === 'remove' ? 'Home shelf removed.' : 'Home shelf layout updated.', 'success');
+}
+let customizeShelfDragId = '';
+function clearCustomizeShelfDragState() {
+  document.querySelectorAll('.customize-shelf-row.dragging,.customize-shelf-row.drag-over-before,.customize-shelf-row.drag-over-after').forEach(row => {
+    row.classList.remove('dragging', 'drag-over-before', 'drag-over-after');
+  });
+}
+function handleCustomizeShelfDragStart(e) {
+  const handle = e.target.closest?.('.customize-shelf-handle');
+  const row = handle?.closest?.('.customize-shelf-row');
+  if (!handle || !row) return;
+  customizeShelfDragId = row.dataset.shelfId || '';
+  if (!customizeShelfDragId) { e.preventDefault(); return; }
+  row.classList.add('dragging');
+  if (e.dataTransfer) {
+    e.dataTransfer.effectAllowed = 'move';
+    e.dataTransfer.setData('text/plain', customizeShelfDragId);
+  }
+  setCustomizeStatus('Drag the shelf to a new position, then release.', 'info');
+}
+function handleCustomizeShelfDragOver(e) {
+  if (!customizeShelfDragId) return;
+  const row = e.target.closest?.('.customize-shelf-row');
+  if (!row || row.dataset.shelfId === customizeShelfDragId) return;
+  e.preventDefault();
+  if (e.dataTransfer) e.dataTransfer.dropEffect = 'move';
+  document.querySelectorAll('.customize-shelf-row.drag-over-before,.customize-shelf-row.drag-over-after').forEach(el => {
+    if (el !== row) el.classList.remove('drag-over-before', 'drag-over-after');
+  });
+  const rect = row.getBoundingClientRect();
+  const insertBefore = e.clientY < rect.top + rect.height / 2;
+  row.classList.toggle('drag-over-before', insertBefore);
+  row.classList.toggle('drag-over-after', !insertBefore);
+}
+function handleCustomizeShelfDrop(e) {
+  if (!customizeShelfDragId) return;
+  const row = e.target.closest?.('.customize-shelf-row');
+  if (!row) return;
+  e.preventDefault();
+  const sourceId = e.dataTransfer?.getData('text/plain') || customizeShelfDragId;
+  const targetId = row.dataset.shelfId || '';
+  if (!sourceId || !targetId || sourceId === targetId) { clearCustomizeShelfDragState(); customizeShelfDragId = ''; return; }
+  const settings = state.customize || loadCustomizeSettings();
+  const shelves = (settings.homeShelves || []).slice();
+  const sourceIndex = shelves.indexOf(sourceId);
+  let targetIndex = shelves.indexOf(targetId);
+  if (sourceIndex < 0 || targetIndex < 0) { clearCustomizeShelfDragState(); customizeShelfDragId = ''; return; }
+  const [moved] = shelves.splice(sourceIndex, 1);
+  if (sourceIndex < targetIndex) targetIndex -= 1;
+  const rect = row.getBoundingClientRect();
+  const insertAfter = e.clientY >= rect.top + rect.height / 2;
+  shelves.splice(targetIndex + (insertAfter ? 1 : 0), 0, moved);
+  state.customize.homeShelves = shelves;
+  clearCustomizeShelfDragState();
+  customizeShelfDragId = '';
+  saveCustomizeSettings();
+  renderCustomizeSettings();
+  render();
+  setCustomizeStatus('Home shelf order updated.', 'success');
+}
+function handleCustomizeShelfDragEnd() {
+  clearCustomizeShelfDragState();
+  customizeShelfDragId = '';
 }
 
 function readReadingActivity() {
   try { return JSON.parse(localStorage.getItem(GUIDEVAULT_READING_ACTIVITY_KEY) || '[]').filter(Boolean); } catch { return []; }
 }
 function saveReadingActivity(events) {
-  const clean = Array.isArray(events) ? events.slice(-500) : [];
+  const clean = Array.isArray(events) ? events.slice(-GUIDEVAULT_READING_ACTIVITY_LIMIT) : [];
   try { localStorage.setItem(GUIDEVAULT_READING_ACTIVITY_KEY, JSON.stringify(clean)); } catch {}
 }
 function recordReadingActivity(item, action = 'view') {
@@ -6728,6 +8112,7 @@ function recordReadingActivity(item, action = 'view') {
     title: displayTitle(item) || item.title || '',
     kind: item.kind || '',
     format: item.format || item.Format || fileExtensionOf(item).replace('.', '').toUpperCase(),
+    pageCount: Number(item.pageCount || item.pages || item.PageCount || 0) || 0,
     user: profile.username || profile.email || 'local user',
     action,
     at: new Date().toISOString()
@@ -6735,22 +8120,34 @@ function recordReadingActivity(item, action = 'view') {
   saveReadingActivity(events);
 }
 function shelfItemsFor(id, items = state.items, limit = HOME_SHELF_MAX_ITEMS) {
-  const all = Array.isArray(items) ? items.slice() : [];
-  const byRecent = (a,b) => dateValue(b.modified || b.Modified || b.addedAt || b.createdAt || 0) - dateValue(a.modified || a.Modified || a.addedAt || a.createdAt || 0) || displayTitle(a).localeCompare(displayTitle(b));
-  if (id === 'recently-added') return all.sort(byRecent).slice(0, limit);
-  if (id === 'manuals') return all.filter(i => i.kind === 'Manual').sort(byRecent).slice(0, limit);
-  if (id === 'strategy-guides') return all.filter(i => i.kind === 'Strategy Guide').sort(byRecent).slice(0, limit);
-  if (id === 'magazines') return all.filter(i => i.kind === 'Magazine').sort(byRecent).slice(0, limit);
-  if (id === 'unsorted-strategy-guides') return all.filter(i => i.kind === 'Strategy Guide' && isBlankish(preferredPlatformOf(i))).sort((a,b)=>displayTitle(a).localeCompare(displayTitle(b))).slice(0, limit);
-  if (id === 'multi-platform-guides') return all.filter(i => i.kind === 'Strategy Guide' && hasMultipleAssociatedPlatforms(i)).sort((a,b)=>displayTitle(a).localeCompare(displayTitle(b))).slice(0, limit);
-  if (id === 'largest-files') return all.sort((a,b)=>(Number(b.sizeBytes||b.SizeBytes||0)-Number(a.sizeBytes||a.SizeBytes||0))).slice(0, limit);
-  if (id === 'recently-viewed') {
+  const all = Array.isArray(items) ? items : [];
+  const cacheable = id !== 'recently-viewed';
+  const cacheKey = `${Number(state.libraryCategoryCacheVersion || 0)}|${id}|${limit}|${all.length}`;
+  if (cacheable && guidevaultHomeShelfCacheKey !== `${Number(state.libraryCategoryCacheVersion || 0)}|${all.length}`) {
+    guidevaultHomeShelfCacheKey = `${Number(state.libraryCategoryCacheVersion || 0)}|${all.length}`;
+    guidevaultHomeShelfCache = new Map();
+  }
+  if (cacheable && guidevaultHomeShelfCache.has(cacheKey)) return guidevaultHomeShelfCache.get(cacheKey);
+
+  const byRecent = (a,b) => (itemRecentTimestamp(b) - itemRecentTimestamp(a)) || compareTextForSort(displayTitle(a), displayTitle(b));
+  const byTitle = (a,b) => compareTextForSort(displayTitle(a), displayTitle(b));
+  const byLargest = (a,b) => (Number(b.sizeBytes||b.SizeBytes||0)-Number(a.sizeBytes||a.SizeBytes||0)) || byTitle(a,b);
+  let result = [];
+  if (id === 'recently-added') result = takeBestLibraryItems(all, limit, byRecent);
+  else if (id === 'manuals') result = takeBestLibraryItems(all, limit, byRecent, i => i.kind === 'Manual');
+  else if (id === 'strategy-guides') result = takeBestLibraryItems(all, limit, byRecent, i => i.kind === 'Strategy Guide');
+  else if (id === 'magazines') result = takeBestLibraryItems(all, limit, byRecent, i => i.kind === 'Magazine');
+  else if (id === 'unsorted-strategy-guides') result = takeBestLibraryItems(all, limit, byTitle, i => i.kind === 'Strategy Guide' && isBlankish(preferredPlatformOf(i)));
+  else if (id === 'multi-platform-guides') result = takeBestLibraryItems(all, limit, byTitle, i => i.kind === 'Strategy Guide' && hasMultipleAssociatedPlatforms(i));
+  else if (id === 'largest-files') result = takeBestLibraryItems(all, limit, byLargest);
+  else if (id === 'recently-viewed') {
     const lookup = new Map(all.map(item => [String(item.id || item.Id), item]));
     const seenIds = readReadingActivity().slice().reverse().map(e => e.id).filter(Boolean);
     const unique = [...new Set(seenIds)];
-    return unique.map(itemId => lookup.get(String(itemId))).filter(Boolean).slice(0, limit);
+    result = unique.map(itemId => lookup.get(String(itemId))).filter(Boolean).slice(0, limit);
   }
-  return [];
+  if (cacheable) guidevaultHomeShelfCache.set(cacheKey, result);
+  return result;
 }
 function renderHomeShelves() {
   const host = $('homeShelves');
@@ -6812,11 +8209,13 @@ function cardMarkupForItem(item) {
   const cover = coverUrl(item);
   const itemId = String(item.id || item.Id || '');
   const favorite = isFavoriteItem(item);
-  return `<article class="card ${specialCardClass(item)} ${state.selected?.id === item.id ? 'selected' : ''}" data-id="${escapeForAttribute(itemId)}" data-alpha="${alphaKey(displayTitle(item))}">
+  const computed = libraryItemComputed(item);
+  const title = computed.title || displayTitle(item);
+  return `<article class="card ${specialCardClass(item)} ${state.selected?.id === item.id ? 'selected' : ''}" data-id="${escapeForAttribute(itemId)}" data-alpha="${computed.alpha || alphaKey(title)}">
       <button class="favorite${favorite ? ' active' : ''}" type="button" data-id="${escapeForAttribute(itemId)}" aria-label="${favorite ? 'Remove from favorites' : 'Add to favorites'}" aria-pressed="${favorite ? 'true' : 'false'}" title="${favorite ? 'Remove from favorites' : 'Add to favorites'}">\u2605</button>
-      <div class="cover-wrap"><img decoding="async" loading="lazy" data-cover-src="${cover}" src="/assets/missing-cover.svg" alt="${escapeForAttribute(displayTitle(item))} cover" /></div>
+      <div class="cover-wrap"><img decoding="async" loading="lazy" data-cover-src="${cover}" src="/assets/missing-cover.svg" alt="${escapeForAttribute(title)} cover" /></div>
       <div class="card-body">
-        <div class="card-title">${escapeHtml(displayTitle(item))}</div>
+        <div class="card-title">${escapeHtml(title)}</div>
         ${libraryCardPlatformMetaHtml(item)}
         <small>${escapeHtml(item.year)}</small>
         <div class="badge-line"><span class="format ${kindClass(item.kind)}">${escapeHtml(item.kind)}</span><span class="pill">${itemPageCountLabel(item)}</span></div>
@@ -6824,6 +8223,11 @@ function cardMarkupForItem(item) {
     </article>`;
 }
 function dateValue(value) {
+  if (value instanceof Date) {
+    const t = value.getTime();
+    return Number.isFinite(t) ? t : 0;
+  }
+  if (typeof value === 'number') return Number.isFinite(value) ? value : 0;
   const t = Date.parse(value || '');
   return Number.isFinite(t) ? t : 0;
 }
@@ -7375,7 +8779,7 @@ async function persistSelectedMetadataLocks(lockMap, serverLockPayload = null) {
   };
   applyToItem(state.selected);
   const idx = (state.items || []).findIndex(i => String(i.id || i.Id || '') === selectedId);
-  if (idx >= 0) applyToItem(state.items[idx]);
+  if (idx >= 0) { applyToItem(state.items[idx]); prepareLibraryItemComputedFields(state.items[idx]); markLibraryIndexesDirty(); }
   rememberClientMetadataOverride(selectedId, { metadataLocks: normalized });
   refreshMetadataLockButtons();
   try {
@@ -9658,21 +11062,26 @@ function clearClientMetadataOverride(itemOrId) {
 }
 
 
-function applyClientMetadataOverride(item) {
+function applyClientMetadataOverride(item, overrides = null) {
   if (!item) return item;
   const key = metadataOverrideKey(item);
   if (!key) return item;
-  const map = readClientMetadataOverrides();
+  const map = overrides || readClientMetadataOverrides();
   const override = map[key];
   if (!override) return item;
   const { savedAt, ...metadata } = override;
   return mergeSavedMetadataClientSide(item, {}, metadata);
 }
 
-function applyClientMetadataOverridesToLibrary() {
-  if (!Array.isArray(state.items) || !state.items.length) return;
-  state.items = state.items.map(item => applyClientMetadataOverride(item));
-  if (state.selected) state.selected = applyClientMetadataOverride(state.selected);
+function applyClientMetadataOverridesToLibrary(items = state.items) {
+  const list = Array.isArray(items) ? items : [];
+  if (!list.length) return list;
+  const overrides = readClientMetadataOverrides();
+  if (!overrides || !Object.keys(overrides).length) return list;
+  const updated = list.map(item => applyClientMetadataOverride(item, overrides));
+  if (items === state.items) state.items = updated;
+  if (state.selected) state.selected = applyClientMetadataOverride(state.selected, overrides);
+  return updated;
 }
 
 
@@ -10078,7 +11487,9 @@ function metadataManagerUpdateItemLocal(id, payload) {
   const updated = mergeSavedMetadataClientSide(state.items[index], {}, payload);
   updated.id = updated.id || id;
   updated.Id = updated.Id || id;
+  prepareLibraryItemComputedFields(updated);
   state.items[index] = updated;
+  markLibraryIndexesDirty();
   rememberClientMetadataOverride(id, payload);
   if (state.selected && metadataManagerItemId(state.selected) === id) state.selected = updated;
   return updated;
@@ -11889,8 +13300,10 @@ function replaceItemInState(updated) {
   const updatedId = String(updated.id || updated.Id || '').trim();
   if (!updatedId) return;
   const index = state.items.findIndex(i => String(i.id || i.Id || '') === updatedId);
+  prepareLibraryItemComputedFields(updated);
   if (index >= 0) state.items[index] = updated;
   else state.items.push(updated);
+  markLibraryIndexesDirty();
   if (state.selected && String(state.selected.id || state.selected.Id || '') === updatedId) state.selected = updated;
 }
 
@@ -12829,6 +14242,8 @@ async function resolveStrategyPlatforms() {
     if (updated?.id) {
       const idx = state.items.findIndex(i => i.id === updated.id);
       if (idx >= 0) state.items[idx] = updated;
+      prepareLibraryItemComputedFields(updated);
+      markLibraryIndexesDirty();
       state.selected = updated;
       applyFilters();
       showDetailScreen(updated);
@@ -15855,9 +17270,12 @@ function lineChartSvg(labels, seriesMap, colors, emptyText, options = {}) {
   const keys = Object.keys(seriesMap || {});
   const rawMax = Math.max(0, ...keys.flatMap(k => seriesMap[k] || [0]));
   const max = Math.max(1, rawMax);
-  const w = 920, h = 286, padLeft = 58, padRight = 28, padTop = 28, padBottom = 44;
+  const chartNo = (lineChartSvg._counter = (lineChartSvg._counter || 0) + 1);
+  const safeId = `gvStatsChart${chartNo}`;
+  const w = 1600, h = 330, padLeft = 50, padRight = 14, padTop = 38, padBottom = 58;
   const plotW = w - padLeft - padRight;
   const plotH = h - padTop - padBottom;
+  const baselineY = padTop + plotH;
   const hasData = keys.some(k => (seriesMap[k] || []).some(v => v > 0));
   if (!hasData) return `<div class="statistics-empty-chart">${escapeHtml(emptyText || 'No chart data yet.')}</div>`;
   const ticks = [0, .25, .5, .75, 1];
@@ -15866,6 +17284,24 @@ function lineChartSvg(labels, seriesMap, colors, emptyText, options = {}) {
     const value = Math.round(max * t);
     return `<line x1="${padLeft}" y1="${y.toFixed(1)}" x2="${w-padRight}" y2="${y.toFixed(1)}" class="statistics-grid-line"/><text class="statistics-axis-label" x="${padLeft-10}" y="${(y+4).toFixed(1)}" text-anchor="end">${escapeHtml(String(value))}</text>`;
   }).join('');
+  const xGrid = labels.map((label,i) => {
+    const x = padLeft + plotW*(i/Math.max(1, labels.length-1));
+    return `<line x1="${x.toFixed(1)}" y1="${padTop}" x2="${x.toFixed(1)}" y2="${baselineY}" class="statistics-grid-line vertical"/>`;
+  }).join('');
+  const defs = `<defs>
+    <filter id="${safeId}Glow" x="-18%" y="-35%" width="136%" height="170%">
+      <feDropShadow dx="0" dy="6" stdDeviation="5" flood-color="#000000" flood-opacity="0.34"/>
+      <feDropShadow dx="0" dy="0" stdDeviation="3" flood-color="#76c8ff" flood-opacity="0.28"/>
+    </filter>
+    <linearGradient id="${safeId}Frame" x1="0" x2="0" y1="0" y2="1">
+      <stop offset="0" stop-color="#15345d" stop-opacity="0.78"/>
+      <stop offset="0.62" stop-color="#071423" stop-opacity="0.72"/>
+      <stop offset="1" stop-color="#02070d" stop-opacity="0.88"/>
+    </linearGradient>
+    ${keys.map((key, idx) => `<linearGradient id="${safeId}Area${idx}" x1="0" x2="0" y1="0" y2="1"><stop offset="0" stop-color="${colors[idx % colors.length]}" stop-opacity="0.38"/><stop offset="0.72" stop-color="${colors[idx % colors.length]}" stop-opacity="0.10"/><stop offset="1" stop-color="${colors[idx % colors.length]}" stop-opacity="0"/></linearGradient>`).join('')}
+  </defs>`;
+  const chartFrame = `<rect x="${(padLeft-12).toFixed(1)}" y="${(padTop-20).toFixed(1)}" width="${(plotW+24).toFixed(1)}" height="${(plotH+34).toFixed(1)}" rx="18" class="statistics-chart-frame" fill="url(#${safeId}Frame)"/>
+    <path class="statistics-chart-floor" d="M${padLeft},${baselineY} L${w-padRight},${baselineY} L${w-padRight-22},${h-38} L${padLeft+22},${h-38} Z"/>`;
   const paths = keys.map((key, idx) => {
     const vals = seriesMap[key] || [];
     const points = vals.map((v,i) => {
@@ -15874,13 +17310,16 @@ function lineChartSvg(labels, seriesMap, colors, emptyText, options = {}) {
       return [x,y];
     });
     const d = points.map((p,i)=>`${i?'L':'M'}${p[0].toFixed(1)},${p[1].toFixed(1)}`).join(' ');
-    const circles = points.map(p=>`<circle cx="${p[0].toFixed(1)}" cy="${p[1].toFixed(1)}" r="3" fill="${colors[idx % colors.length]}"/>`).join('');
-    return `<path d="${d}" fill="none" stroke="${colors[idx % colors.length]}" stroke-width="3"/>${circles}`;
+    const areaD = `${d} L${points[points.length-1][0].toFixed(1)},${baselineY.toFixed(1)} L${points[0][0].toFixed(1)},${baselineY.toFixed(1)} Z`;
+    const offsetD = points.map((p,i)=>`${i?'L':'M'}${p[0].toFixed(1)},${(p[1]+8).toFixed(1)}`).join(' ');
+    const color = colors[idx % colors.length];
+    const circles = points.map(p=>`<circle class="statistics-point-halo" cx="${p[0].toFixed(1)}" cy="${p[1].toFixed(1)}" r="8" fill="${color}"/><circle class="statistics-point" cx="${p[0].toFixed(1)}" cy="${p[1].toFixed(1)}" r="3.8" fill="${color}"/>`).join('');
+    return `<path class="statistics-series-area" d="${areaD}" fill="url(#${safeId}Area${idx})"/><path class="statistics-series-depth" d="${offsetD}"/><path class="statistics-series-line" d="${d}" fill="none" stroke="${color}" filter="url(#${safeId}Glow)"/>${circles}`;
   }).join('');
-  const xLabels = labels.map((label,i) => { const x = padLeft + plotW*(i/Math.max(1, labels.length-1)); return `<text class="statistics-axis-label" x="${x.toFixed(1)}" y="${h-18}" text-anchor="middle">${escapeHtml(statisticsMonthLabel(label, i))}</text>`; }).join('');
-  const yCaption = options.yLabel ? `<text class="statistics-axis-caption" x="14" y="${padTop + plotH/2}" text-anchor="middle" transform="rotate(-90 14 ${padTop + plotH/2})">${escapeHtml(options.yLabel)}</text>` : '';
-  const xCaption = options.xLabel ? `<text class="statistics-axis-caption" x="${padLeft + plotW/2}" y="${h-2}" text-anchor="middle">${escapeHtml(options.xLabel)}</text>` : '';
-  return `<svg class="statistics-chart-svg" viewBox="0 0 ${w} ${h}" role="img" aria-label="Statistics line chart">${grid}${paths}${xLabels}${yCaption}${xCaption}</svg>`;
+  const xLabels = labels.map((label,i) => { const x = padLeft + plotW*(i/Math.max(1, labels.length-1)); return `<text class="statistics-axis-label" x="${x.toFixed(1)}" y="${h-20}" text-anchor="middle">${escapeHtml(statisticsMonthLabel(label, i))}</text>`; }).join('');
+  const yCaption = options.yLabel ? `<text class="statistics-axis-caption" x="16" y="${padTop + plotH/2}" text-anchor="middle" transform="rotate(-90 16 ${padTop + plotH/2})">${escapeHtml(options.yLabel)}</text>` : '';
+  const xCaption = options.xLabel ? `<text class="statistics-axis-caption" x="${padLeft + plotW/2}" y="${h-4}" text-anchor="middle">${escapeHtml(options.xLabel)}</text>` : '';
+  return `<svg class="statistics-chart-svg enhanced" viewBox="0 0 ${w} ${h}" role="img" aria-label="Statistics line chart">${defs}${chartFrame}${xGrid}${grid}${paths}${xLabels}${yCaption}${xCaption}</svg>`;
 }
 function renderStatisticsManagement(items) {
   const monthCounts = new Map();
@@ -15933,18 +17372,107 @@ function updateSettingsInsights() {
   if ($('settingsInsightMags')) $('settingsInsightMags').textContent = String(count('Magazine'));
 }
 
+const GUIDEVAULT_SETTINGS_GROUPS = {
+  account: ['account', 'preferences', 'keybinds', 'reading-profiles', 'customize', 'devices'],
+  insights: ['insights', 'insights-devices', 'statistics'],
+  server: ['server', 'metadata-manager', 'library', 'opds', 'media', 'email', 'users', 'tasks'],
+  info: ['info', 'email-history']
+};
 
-function navigateGuidevaultHome() {
-  showLibraryScreen();
+function settingsGroupForTab(tab = 'account') {
+  const normalized = tab === 'insights' ? 'statistics' : tab;
+  return Object.entries(GUIDEVAULT_SETTINGS_GROUPS).find(([, tabs]) => tabs.includes(normalized))?.[0] || 'account';
+}
+
+function loadSettingsNavCollapsed() {
+  if (state.settingsNavCollapsed && Object.keys(state.settingsNavCollapsed).length) return state.settingsNavCollapsed;
+  const collapsed = {};
+  try {
+    const raw = localStorage.getItem(GUIDEVAULT_SETTINGS_NAV_KEY);
+    const saved = raw ? JSON.parse(raw) : {};
+    Object.keys(GUIDEVAULT_SETTINGS_GROUPS).forEach(group => { collapsed[group] = !!saved?.[group]; });
+  } catch {
+    Object.keys(GUIDEVAULT_SETTINGS_GROUPS).forEach(group => { collapsed[group] = false; });
+  }
+  state.settingsNavCollapsed = collapsed;
+  return collapsed;
+}
+
+function saveSettingsNavCollapsed() {
+  try { localStorage.setItem(GUIDEVAULT_SETTINGS_NAV_KEY, JSON.stringify(state.settingsNavCollapsed || {})); } catch {}
+}
+
+function setSettingsGroupCollapsed(group, collapsed, persist = true) {
+  if (!GUIDEVAULT_SETTINGS_GROUPS[group]) return;
+  loadSettingsNavCollapsed();
+  state.settingsNavCollapsed[group] = !!collapsed;
+  if (persist) saveSettingsNavCollapsed();
+  updateSettingsNavGroups(state.settingsActiveTab || 'account');
+}
+
+function updateSettingsNavGroups(active = state.settingsActiveTab || 'account') {
+  const collapsed = loadSettingsNavCollapsed();
+  const activeGroup = settingsGroupForTab(active);
+  document.querySelectorAll('.settings-nav-group').forEach(btn => {
+    const group = btn.dataset.settingsGroup || settingsGroupForTab(btn.dataset.settingsTab || 'account');
+    const isCollapsed = !!collapsed[group];
+    btn.classList.toggle('collapsed', isCollapsed);
+    btn.classList.toggle('expanded', !isCollapsed);
+    btn.classList.toggle('group-active', group === activeGroup);
+    btn.setAttribute('aria-expanded', String(!isCollapsed));
+  });
+  document.querySelectorAll('.settings-submenu[data-settings-parent]').forEach(menu => {
+    const group = menu.dataset.settingsParent || '';
+    const isCollapsed = !!collapsed[group];
+    menu.classList.toggle('collapsed', isCollapsed);
+    menu.classList.toggle('hidden', isCollapsed);
+  });
+}
+
+function handleSettingsNavClick(btn) {
+  const tab = btn.dataset.settingsTab || 'account';
+  const group = btn.dataset.settingsGroup || settingsGroupForTab(tab);
+  loadSettingsNavCollapsed();
+  if (btn.classList.contains('settings-subnav')) {
+    state.settingsNavCollapsed[group] = false;
+    saveSettingsNavCollapsed();
+  } else if (btn.classList.contains('settings-nav-group')) {
+    const activeGroup = settingsGroupForTab(state.settingsActiveTab || 'account');
+    const alreadyActiveGroup = activeGroup === group;
+    const currentlyCollapsed = !!state.settingsNavCollapsed[group];
+    if (alreadyActiveGroup && (state.settingsActiveTab === tab || btn.classList.contains('active'))) {
+      state.settingsNavCollapsed[group] = !currentlyCollapsed;
+    } else {
+      state.settingsNavCollapsed[group] = false;
+    }
+    saveSettingsNavCollapsed();
+  }
+  activateSettingsTab(tab);
+}
+
+
+function resetGuidevaultLandingToHome(options = {}) {
+  const shouldRender = options.render !== false;
   state.filter = 'All Content';
   state.categoryFilter = '';
   state.customFilter = null;
   state.viewMode = 'all';
+  state.selected = null;
   if ($('search')) $('search').value = '';
+  setDefaultSortForCurrentLibraryView();
   document.querySelectorAll('.chip').forEach(c => c.classList.remove('active'));
+  try {
+    const clean = `${window.location.pathname}${window.location.search}` || '/';
+    if (window.location.hash) history.replaceState(null, '', clean);
+  } catch {}
+  showLibraryScreen();
   updateNavActive();
   scrollMainToTop();
-  applyFilters();
+  if (shouldRender) applyFilters();
+}
+
+function navigateGuidevaultHome() {
+  resetGuidevaultLandingToHome({ render: true });
 }
 
 function showLibraryScreen() {
@@ -15975,14 +17503,15 @@ function activateSettingsTab(tab = 'account') {
   if (tab === 'insights') tab = 'statistics';
   const allowed = new Set(['account', 'preferences', 'keybinds', 'reading-profiles', 'customize', 'opds', 'devices', 'insights-devices', 'statistics', 'server', 'metadata-manager', 'library', 'media', 'email', 'users', 'tasks', 'info', 'email-history']);
   const active = allowed.has(tab) ? tab : 'account';
+  state.settingsActiveTab = active;
+  const activeGroup = settingsGroupForTab(active);
   document.querySelectorAll('.settings-nav, .settings-subnav').forEach(btn => {
-    const tab = btn.dataset.settingsTab || '';
-    const isInsightsParent = btn.classList.contains('settings-nav') && tab === 'insights' && (active.startsWith('insights') || active === 'statistics');
-    const isAccountParent = btn.classList.contains('settings-nav') && tab === 'account' && ['account', 'preferences', 'keybinds', 'reading-profiles', 'customize', 'devices'].includes(active);
-    const isInfoParent = btn.classList.contains('settings-nav') && tab === 'info' && ['info','email-history'].includes(active);
-    const isServerParent = btn.classList.contains('settings-nav') && tab === 'server' && ['server', 'metadata-manager', 'library', 'opds', 'media', 'email', 'users', 'tasks'].includes(active);
-    btn.classList.toggle('active', tab === active || isInsightsParent || isAccountParent || isInfoParent || isServerParent);
+    const navTab = btn.dataset.settingsTab || '';
+    const navGroup = btn.dataset.settingsGroup || settingsGroupForTab(navTab);
+    const isParentForActiveGroup = btn.classList.contains('settings-nav') && navGroup === activeGroup;
+    btn.classList.toggle('active', navTab === active || isParentForActiveGroup);
   });
+  updateSettingsNavGroups(active);
   if ($('settingsAccountPanel')) $('settingsAccountPanel').classList.toggle('hidden', active !== 'account');
   if ($('settingsPreferencesPanel')) $('settingsPreferencesPanel').classList.toggle('hidden', active !== 'preferences');
   if ($('settingsKeybindsPanel')) $('settingsKeybindsPanel').classList.toggle('hidden', active !== 'keybinds');
@@ -16011,7 +17540,7 @@ function activateSettingsTab(tab = 'account') {
   if (active === 'users') loadUsersSettings(false);
   if (active === 'tasks') loadTaskSettings(false);
   if (active === 'statistics') renderStatistics();
-  if (active === 'info') { loadSystemInfo(false); loadSystemPerformance(); checkStableUpdates(false); }
+  if (active === 'info') { trimSystemUpdateHistory(); loadSystemInfo(false); loadSystemPerformance(); checkStableUpdates(false); }
   if (active === 'email-history') loadEmailHistory(false);
   if (active === 'reading-profiles') renderReadingProfileSettings();
   if (active === 'opds') { renderOpdsSettings(); syncOpdsSettingsFromServer(false); }
@@ -16023,9 +17552,70 @@ function activateSettingsTab(tab = 'account') {
 }
 
 
+
+
+function bindGuidevaultTopbarAction(id, handler) {
+  const el = $(id);
+  if (!el || el.dataset.guidevaultTopbarBound === '1') return;
+  el.dataset.guidevaultTopbarBound = '1';
+  el.addEventListener('click', handler);
+}
+
+function bindGuidevaultTopbarActions() {
+  bindGuidevaultTopbarAction('userMenuBtn', e => { e.preventDefault(); e.stopPropagation(); toggleUserMenu(); });
+  bindGuidevaultTopbarAction('userMenuProfile', e => { e.preventDefault(); e.stopPropagation(); setUserMenuOpen(false); showUserProfilePage(); });
+  bindGuidevaultTopbarAction('userMenuHelp', e => { e.preventDefault(); setUserMenuOpen(false); showSettingsScreen('keybinds'); });
+  bindGuidevaultTopbarAction('userMenuLogout', e => { e.preventDefault(); setUserMenuOpen(false); logoutGuidevault(); });
+  bindGuidevaultTopbarAction('settingsBtn', e => { e.preventDefault(); e.stopPropagation(); showSettingsScreen('account'); });
+  bindGuidevaultTopbarAction('taskMonitorBtn', e => { e.preventDefault(); e.stopPropagation(); setTaskPanelVisible(!state.taskPanelVisible); pollTasks(false); });
+}
+
+function getGuidevaultTopbarHitTarget(event) {
+  const topbar = document.querySelector('.topbar');
+  if (!topbar || topbar.contains(event.target)) return null;
+  const point = event.touches?.[0] || event.changedTouches?.[0] || event;
+  const x = point.clientX;
+  const y = point.clientY;
+  if (!Number.isFinite(x) || !Number.isFinite(y)) return null;
+  const topbarRect = topbar.getBoundingClientRect();
+  if (x < topbarRect.left || x > topbarRect.right || y < topbarRect.top || y > topbarRect.bottom) return null;
+  const hitTargets = ['taskMonitorBtn', 'settingsBtn', 'userMenuBtn'];
+  return hitTargets.map(id => $(id)).find(el => {
+    if (!el) return false;
+    const rect = el.getBoundingClientRect();
+    return x >= rect.left && x <= rect.right && y >= rect.top && y <= rect.bottom;
+  }) || null;
+}
+
+function ensureTopbarInputIsInteractive() {
+  const topbar = document.querySelector('.topbar');
+  if (!topbar) return;
+  bindGuidevaultTopbarActions();
+  if (topbar.dataset.guidevaultTopbarGuard === '1') return;
+  topbar.dataset.guidevaultTopbarGuard = '1';
+  ['pointerdown', 'mousedown', 'touchstart'].forEach(eventName => {
+    topbar.addEventListener(eventName, () => {
+      document.body.classList.remove('panel-animating');
+    }, true);
+  });
+  ['pointerdown', 'mousedown', 'touchstart', 'click'].forEach(eventName => {
+    document.addEventListener(eventName, event => {
+      const target = getGuidevaultTopbarHitTarget(event);
+      if (!target) return;
+      document.body.classList.remove('panel-animating');
+      if (eventName === 'click') {
+        event.preventDefault();
+        event.stopPropagation();
+        target.click();
+      }
+    }, true);
+  });
+}
+
 setupHomebarIconFallbacks();
-loadCategoryStructure();
-loadLibraryCoverScale();
+ensureTopbarInputIsInteractive();
+try { loadCategoryStructure(); } catch (err) { console.warn('Guidevault category structure failed to load.', err); }
+try { loadLibraryCoverScale(); } catch (err) { console.warn('Guidevault cover scale failed to load.', err); }
 if ($('leftToggle')) $('leftToggle').addEventListener('click', () => runPanelTransition(() => document.body.classList.toggle('left-collapsed')));
 if ($('rightToggleTop')) $('rightToggleTop').addEventListener('click', () => toggleRightPanel());
 if ($('rightToggle')) $('rightToggle').addEventListener('click', () => toggleRightPanel(false));
@@ -16035,7 +17625,7 @@ if ($('search')) $('search').addEventListener('input', () => {
 });
 if ($('sort')) $('sort').addEventListener('change', applyFilters);
 if ($('coverSizeSlider')) $('coverSizeSlider').addEventListener('input', e => setLibraryCoverScale(e.currentTarget.value));
-if ($('categoryStructureSelect')) $('categoryStructureSelect').addEventListener('change', e => { saveCategoryStructure(e.currentTarget.value); state.categoryFilter = ''; state.customFilter = null; state.filter = 'All Content'; state.viewMode = 'all'; updateNavActive(); applyFilters(); });
+if ($('categoryStructureSelect')) $('categoryStructureSelect').addEventListener('change', e => { saveCategoryStructure(e.currentTarget.value); state.categoryFilter = ''; state.customFilter = null; state.filter = 'All Content'; state.viewMode = 'all'; setDefaultSortForCurrentLibraryView(); updateNavActive(); applyFilters(); });
 document.querySelectorAll('.nav').forEach(btn => btn.addEventListener('click', () => {
   showLibraryScreen();
   state.viewMode = btn.dataset.view || 'all';
@@ -16043,6 +17633,7 @@ document.querySelectorAll('.nav').forEach(btn => btn.addEventListener('click', (
   state.categoryFilter = '';
   state.customFilter = null;
   if ($('search')) $('search').value = '';
+  setDefaultSortForCurrentLibraryView();
   document.querySelectorAll('.chip').forEach(c => c.classList.toggle('active', c.dataset.kind === state.filter || (state.filter === 'All Content' && c.dataset.kind === 'All Content')));
   updateNavActive();
   scrollMainToTop();
@@ -16054,24 +17645,37 @@ document.querySelectorAll('.chip').forEach(btn => btn.addEventListener('click', 
   state.viewMode = state.filter === 'All Content' ? 'all' : state.filter === 'Manual' ? 'manuals' : state.filter === 'Strategy Guide' ? 'strategy-guides' : 'magazine-series';
   state.categoryFilter = '';
   state.customFilter = null;
+  setDefaultSortForCurrentLibraryView();
   document.querySelectorAll('.chip').forEach(c => c.classList.toggle('active', c === btn));
   updateNavActive();
   scrollMainToTop();
   applyFilters();
 }));
-document.querySelectorAll('.collection').forEach(btn => btn.addEventListener('click', () => {
-  showLibraryScreen();
-  const kind = btn.dataset.kind || 'All Content';
-  state.filter = kind;
-  state.viewMode = kind === 'Manual' ? 'manual-systems' : kind === 'Strategy Guide' ? 'guide-systems' : kind === 'Magazine' ? 'magazine-series' : 'all';
-  state.categoryFilter = '';
-  state.customFilter = null;
-  if ($('search')) $('search').value = '';
-  document.querySelectorAll('.chip').forEach(c => c.classList.toggle('active', c.dataset.kind === kind));
-  updateNavActive();
-  scrollMainToTop();
-  applyFilters();
-}));
+document.querySelectorAll('.collection').forEach(btn => {
+  const prewarm = () => {
+    const kind = btn.dataset.kind || 'All Content';
+    if (['Manual', 'Strategy Guide', 'Magazine'].includes(kind)) {
+      scheduleCategoryPreviewCoverPrewarm(kind, { immediate: true, includeSecondary: true });
+    }
+  };
+  btn.addEventListener('pointerenter', prewarm);
+  btn.addEventListener('focus', prewarm);
+  btn.addEventListener('click', () => {
+    showLibraryScreen();
+    const kind = btn.dataset.kind || 'All Content';
+    state.filter = kind;
+    state.viewMode = kind === 'Manual' ? 'manual-systems' : kind === 'Strategy Guide' ? 'guide-systems' : kind === 'Magazine' ? 'magazine-series' : 'all';
+    state.categoryFilter = '';
+    state.customFilter = null;
+    if ($('search')) $('search').value = '';
+    setDefaultSortForCurrentLibraryView();
+    document.querySelectorAll('.chip').forEach(c => c.classList.toggle('active', c.dataset.kind === kind));
+    updateNavActive();
+    scrollMainToTop();
+    prewarm();
+    applyFilters();
+  });
+});
 async function openSelectedReaderFromUi(e = null) {
   if (e) {
     e.preventDefault();
@@ -16217,8 +17821,8 @@ if ($('readerFullscreen')) $('readerFullscreen').addEventListener('click', async
 });
 
 document.addEventListener('click', handleFavoriteClick, true);
-if ($('userMenuBtn')) $('userMenuBtn').addEventListener('click', e => { e.preventDefault(); e.stopPropagation(); toggleUserMenu(); });
-if ($('userMenuProfile')) $('userMenuProfile').addEventListener('click', e => { e.preventDefault(); e.stopPropagation(); setUserMenuOpen(false); showUserProfilePage(); });
+if ($('userMenuBtn') && $('userMenuBtn').dataset.guidevaultTopbarBound !== '1') $('userMenuBtn').addEventListener('click', e => { e.preventDefault(); e.stopPropagation(); toggleUserMenu(); });
+if ($('userMenuProfile') && $('userMenuProfile').dataset.guidevaultTopbarBound !== '1') $('userMenuProfile').addEventListener('click', e => { e.preventDefault(); e.stopPropagation(); setUserMenuOpen(false); showUserProfilePage(); });
 document.addEventListener('click', e => {
   const profileButton = e.target.closest?.('#userMenuProfile,[data-open-profile-page]');
   if (!profileButton) return;
@@ -16230,10 +17834,10 @@ document.addEventListener('click', e => {
 window.addEventListener('hashchange', () => {
   if (window.location.hash === '#profile') showUserProfilePage({ skipHash: true });
 });
-if ($('userMenuHelp')) $('userMenuHelp').addEventListener('click', e => { e.preventDefault(); setUserMenuOpen(false); showSettingsScreen('keybinds'); });
-if ($('userMenuLogout')) $('userMenuLogout').addEventListener('click', e => { e.preventDefault(); setUserMenuOpen(false); logoutGuidevault(); });
+if ($('userMenuHelp') && $('userMenuHelp').dataset.guidevaultTopbarBound !== '1') $('userMenuHelp').addEventListener('click', e => { e.preventDefault(); setUserMenuOpen(false); showSettingsScreen('keybinds'); });
+if ($('userMenuLogout') && $('userMenuLogout').dataset.guidevaultTopbarBound !== '1') $('userMenuLogout').addEventListener('click', e => { e.preventDefault(); setUserMenuOpen(false); logoutGuidevault(); });
 document.addEventListener('click', e => { if (!$('userMenuPanel')?.classList.contains('hidden') && !e.target.closest?.('.top-user-wrap')) setUserMenuOpen(false); });
-if ($('settingsBtn')) $('settingsBtn').addEventListener('click', () => showSettingsScreen('account'));
+if ($('settingsBtn') && $('settingsBtn').dataset.guidevaultTopbarBound !== '1') $('settingsBtn').addEventListener('click', () => showSettingsScreen('account'));
 if ($('settingsBackToLibrary')) $('settingsBackToLibrary').addEventListener('click', () => showLibraryScreen());
 document.addEventListener('keydown', handleReaderKeydown, true);
 if ($('loginForm')) $('loginForm').addEventListener('submit', handleLoginSubmit);
@@ -16242,16 +17846,37 @@ if ($('accountSaveLogin')) $('accountSaveLogin').addEventListener('click', e => 
 if ($('accountCancelEdit')) $('accountCancelEdit').addEventListener('click', e => { e.preventDefault(); cancelAccountEdit(); });
 if ($('accountLogout')) $('accountLogout').addEventListener('click', e => { e.preventDefault(); logoutGuidevault(); });
 if ($('preferenceUseColorscape')) $('preferenceUseColorscape').addEventListener('change', e => { setUseColorscapePreference(e.currentTarget.checked); });
+[
+  ['preferenceColorscapeDetailPane', 'colorscapeDetailPane'],
+  ['preferenceColorscapeManualMenus', 'colorscapeManualMenus'],
+  ['preferenceColorscapeStrategyMenus', 'colorscapeStrategyMenus'],
+  ['preferenceColorscapeMagazineMenus', 'colorscapeMagazineMenus']
+].forEach(([id, key]) => {
+  if ($(id)) $(id).addEventListener('change', e => setGuidevaultPreferenceValue(key, e.currentTarget.checked));
+});
 if ($('keybindsList')) $('keybindsList').addEventListener('click', handleKeybindAction);
 if ($('keybindsResetAll')) $('keybindsResetAll').addEventListener('click', e => { e.preventDefault(); resetAllKeybinds(); });
 if ($('customizeAddShelf')) $('customizeAddShelf').addEventListener('click', e => { e.preventDefault(); addCustomizeShelf(); });
-if ($('customizeShelfList')) $('customizeShelfList').addEventListener('click', handleCustomizeShelfAction);
+if ($('customizeShelfList')) {
+  $('customizeShelfList').addEventListener('click', handleCustomizeShelfAction);
+  $('customizeShelfList').addEventListener('dragstart', handleCustomizeShelfDragStart);
+  $('customizeShelfList').addEventListener('dragover', handleCustomizeShelfDragOver);
+  $('customizeShelfList').addEventListener('drop', handleCustomizeShelfDrop);
+  $('customizeShelfList').addEventListener('dragend', handleCustomizeShelfDragEnd);
+}
 document.querySelectorAll('.customize-tab').forEach(btn => btn.addEventListener('click', handleCustomizeTabClick));
 if ($('statisticsRange')) $('statisticsRange').addEventListener('change', e => { state.statistics.range = e.target.value || 'all'; renderStatistics(); });
 document.querySelectorAll('.statistics-tab').forEach(btn => btn.addEventListener('click', () => setStatisticsTab(btn.dataset.statisticsTab || 'stats')));
 if ($('statisticsRefresh')) $('statisticsRefresh').addEventListener('click', e => { e.preventDefault(); renderStatistics(); });
 if ($('profileRange')) $('profileRange').addEventListener('change', e => { state.profilePage.range = e.target.value || 'all'; renderPersonalProfile(); });
 document.querySelectorAll('.profile-tab').forEach(btn => btn.addEventListener('click', () => setProfileTab(btn.dataset.profileTab || 'overview')));
+document.addEventListener('change', e => { if (e.target?.id === 'profileReviewItemSelect') syncProfileReviewEditorFromSelection(); });
+document.addEventListener('click', e => {
+  if (e.target?.closest?.('#profileSaveReview')) { e.preventDefault(); saveProfileReviewFromForm(); return; }
+  if (e.target?.closest?.('#profileClearReview')) { e.preventDefault(); clearProfileReviewForm(); return; }
+  const deleteBtn = e.target?.closest?.('[data-profile-review-delete]');
+  if (deleteBtn) { e.preventDefault(); deleteProfileReview(deleteBtn.dataset.profileReviewDelete || ''); }
+});
 if ($('opdsEditUrl')) $('opdsEditUrl').addEventListener('click', e => { e.preventDefault(); beginOpdsUrlEdit(); });
 if ($('opdsSaveUrl')) $('opdsSaveUrl').addEventListener('click', e => { e.preventDefault(); saveOpdsUrl(); });
 if ($('opdsCancelUrl')) $('opdsCancelUrl').addEventListener('click', e => { e.preventDefault(); cancelOpdsUrlEdit(); });
@@ -16288,7 +17913,7 @@ if ($('detailSaveEntryProfile')) $('detailSaveEntryProfile').addEventListener('c
 if ($('detailClearGroupProfile')) $('detailClearGroupProfile').addEventListener('click', e => { e.preventDefault(); clearDetailReadingProfileAssignment('group'); });
 if ($('detailClearEntryProfile')) $('detailClearEntryProfile').addEventListener('click', e => { e.preventDefault(); clearDetailReadingProfileAssignment('entry'); });
 if ($('detailReadingProfileManagePresets')) $('detailReadingProfileManagePresets').addEventListener('click', e => { e.preventDefault(); showSettingsScreen('reading-profiles'); });
-if ($('taskMonitorBtn')) $('taskMonitorBtn').addEventListener('click', e => { e.preventDefault(); setTaskPanelVisible(!state.taskPanelVisible); pollTasks(false); });
+if ($('taskMonitorBtn') && $('taskMonitorBtn').dataset.guidevaultTopbarBound !== '1') $('taskMonitorBtn').addEventListener('click', e => { e.preventDefault(); setTaskPanelVisible(!state.taskPanelVisible); pollTasks(false); });
 if ($('updateNotifyBtn')) $('updateNotifyBtn').addEventListener('click', e => { e.preventDefault(); showSettingsScreen('info'); setSystemInfoStatus('A stable container image update is available. Pull the new image from your Docker host when ready.', 'success'); });
 if ($('systemCheckUpdates')) $('systemCheckUpdates').addEventListener('click', async e => { e.preventDefault(); setSystemInfoStatus('Checking stable update feed...', 'info'); if ('Notification' in window && Notification.permission === 'default') { try { await Notification.requestPermission(); } catch {} } await checkStableUpdates(true); setSystemInfoStatus(state.updateCheck?.message || 'Update check complete.', state.updateCheck?.updateAvailable ? 'success' : ''); });
 if ($('systemTrimMemory')) $('systemTrimMemory').addEventListener('click', e => { e.preventDefault(); trimGuidevaultMemory(); });
@@ -16526,7 +18151,7 @@ document.addEventListener('click', e => {
 });
 document.querySelectorAll('.settings-nav, .settings-subnav').forEach(btn => btn.addEventListener('click', () => {
   const tab = btn.dataset.settingsTab || 'account';
-  activateSettingsTab(tab);
+  handleSettingsNavClick(btn);
   if (tab === 'import' || tab === 'library') {
     renderLibrariesTable?.();
     loadLibrarySettings?.();

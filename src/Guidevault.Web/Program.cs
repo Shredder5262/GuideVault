@@ -13,7 +13,7 @@ using System.Net.Http.Headers;
 using SharpCompress.Readers;
 
 var builder = WebApplication.CreateBuilder(args);
-const string GuidevaultVersion = "0.9.118";
+const string GuidevaultVersion = "0.9.144";
 var app = builder.Build();
 var metadataJsonOptions = new JsonSerializerOptions(JsonSerializerDefaults.Web) { PropertyNameCaseInsensitive = true };
 var options = app.Configuration.GetSection("Guidevault").Get<GuidevaultOptions>() ?? new GuidevaultOptions();
@@ -65,6 +65,7 @@ ArchiveReader.ConfigureCoverCache(coverCachePath);
 var taskMonitor = new TaskMonitor();
 var cache = new LibraryCache(loadedSettings.Libraries, metadataStore, fileIdentityStore, indexCachePath, taskMonitor);
 var updateChecker = new StableUpdateChecker(options.Updates, GuidevaultVersion);
+var categoryCoverPrewarmGate = new SemaphoreSlim(1, 1);
 // Do not create configured user library folders here. Guidevault scans existing folders in place.
 // Creating missing folders can hide typo/path mistakes and make libraries appear empty.
 app.UseDefaultFiles();
@@ -352,6 +353,119 @@ app.MapPost("/api/devices/clients/clear-stale", (int days) =>
 });
 
 app.MapGet("/api/library", () => Results.Ok(cache.GetItemsSnapshot()));
+
+app.MapPost("/api/library/prewarm-covers", (string? kind, int? limit) =>
+{
+    var requestedLimit = Math.Clamp(limit ?? 220, 20, 420);
+    var itemsToWarm = BuildCategoryPreviewCoverItems(cache.GetItemsSnapshot(), kind, requestedLimit);
+    if (itemsToWarm.Count == 0) return Results.Ok(new { queued = false, count = 0 });
+
+    _ = Task.Run(async () =>
+    {
+        if (!await categoryCoverPrewarmGate.WaitAsync(0)) return;
+        try
+        {
+            foreach (var item in itemsToWarm)
+            {
+                if (string.IsNullOrWhiteSpace(item.Path) || !File.Exists(item.Path)) continue;
+                if (string.Equals(item.Format, "PDF", StringComparison.OrdinalIgnoreCase)) continue;
+                try { await ArchiveReader.GetCoverImageAsync(item.Path); }
+                catch { /* best-effort warmup only */ }
+            }
+        }
+        finally
+        {
+            categoryCoverPrewarmGate.Release();
+        }
+    });
+
+    return Results.Ok(new { queued = true, count = itemsToWarm.Count });
+});
+
+app.MapGet("/api/startup/status", () =>
+{
+    var runningTasks = taskMonitor.RecentTasks()
+        .Where(t => string.Equals(t.Status, "running", StringComparison.OrdinalIgnoreCase) || string.Equals(t.Status, "queued", StringComparison.OrdinalIgnoreCase))
+        .Select(t => new
+        {
+            t.Id,
+            t.Kind,
+            t.Title,
+            t.Status,
+            t.Message,
+            t.ProgressPercent,
+            t.UpdatedAt
+        })
+        .ToArray();
+    var cachedCount = cache.CachedItemCount;
+    var status = runningTasks.Length > 0 ? "warming" : cachedCount > 0 ? "ready" : "empty";
+    var message = runningTasks.FirstOrDefault()?.Message
+        ?? (cachedCount > 0
+            ? $"Preparing library from {cachedCount:n0} indexed item(s)..."
+            : "No indexed library items are available yet. Run a library scan to build the index.");
+
+    return Results.Ok(new
+    {
+        status,
+        message,
+        itemCount = cachedCount,
+        libraryCount = cache.Libraries.Count,
+        libraryPathCount = cache.LibraryPaths.Count,
+        runningTasks,
+        generatedAt = DateTimeOffset.UtcNow
+    });
+});
+
+// Fast web bootstrap endpoint: returns a small, shelf-oriented subset so the browser can
+// paint the first view without downloading the entire library index. OPDS intentionally
+// continues to use the full cache path below so its feed structure is unchanged.
+app.MapGet("/api/library/initial", (int? limit) => Results.Ok(BuildLibraryInitialPayload(cache.GetItemsSnapshot(), limit)));
+
+// Chunked endpoint used by the web UI background loader. This avoids sending and
+// parsing the entire library index as one large JSON response during login.
+app.MapGet("/api/library/chunk", (int? offset, int? limit) =>
+{
+    var source = cache.GetItemsSnapshot();
+    var safeOffset = Math.Max(0, offset ?? 0);
+    var safeLimit = Math.Clamp(limit ?? 220, 60, 500);
+    var total = source.Count;
+    var items = source.Skip(safeOffset).Take(safeLimit).ToArray();
+    var nextOffset = safeOffset + items.Length;
+    return Results.Ok(new
+    {
+        items,
+        offset = safeOffset,
+        limit = safeLimit,
+        nextOffset,
+        totalCount = total,
+        hasMore = nextOffset < total,
+        counts = safeOffset == 0 ? BuildLibraryCounts(source) : null,
+        generatedAt = DateTimeOffset.UtcNow
+    });
+});
+
+// Lightweight paged endpoint for browser-facing library views. The legacy /api/library
+// endpoint remains full-index for compatibility and internal consumers.
+app.MapGet("/api/library/page", (int? page, int? pageSize, string? kind, string? q, string? sort) =>
+{
+    var source = cache.GetItemsSnapshot();
+    var filtered = FilterLibraryItems(source, kind, q);
+    var ordered = SortLibraryItems(filtered, sort);
+    var safePageSize = Math.Clamp(pageSize ?? 100, 12, 250);
+    var safePage = Math.Max(1, page ?? 1);
+    var total = ordered.Count;
+    var items = ordered.Skip((safePage - 1) * safePageSize).Take(safePageSize).ToArray();
+    return Results.Ok(new
+    {
+        items,
+        page = safePage,
+        pageSize = safePageSize,
+        total,
+        totalPages = (int)Math.Ceiling(total / (double)safePageSize),
+        hasMore = safePage * safePageSize < total,
+        counts = BuildLibraryCounts(source)
+    });
+});
 
 app.MapGet("/api/tasks", () => Results.Ok(new { tasks = taskMonitor.RecentTasks() }));
 app.MapPost("/api/tasks/clear", () => Results.Ok(new { cleared = taskMonitor.ClearNonRunning(), tasks = taskMonitor.RecentTasks() }));
@@ -1139,7 +1253,7 @@ app.MapGet("/api/items/{id}/cover", async (string id, HttpResponse response) =>
 {
     var item = cache.TryGetCachedItem(id) ?? (await cache.GetItemsAsync()).FirstOrDefault(i => i.Id == id);
     if (item is null) return Results.NotFound();
-    response.Headers.CacheControl = "public, max-age=86400";
+    response.Headers.CacheControl = "public, max-age=604800, immutable";
     if (item.Format == "PDF") return Results.Redirect("/assets/pdf-cover.svg");
 
     var image = await ArchiveReader.GetCoverImageAsync(item.Path);
@@ -1427,6 +1541,228 @@ app.MapFallbackToFile("index.html");
 app.Run();
 
 
+static object BuildLibraryInitialPayload(IReadOnlyList<LibraryItem> source, int? requestedLimit)
+{
+    var limit = Math.Clamp(requestedLimit ?? 320, 60, 800);
+    var items = source ?? Array.Empty<LibraryItem>();
+    var selected = new Dictionary<string, LibraryItem>(StringComparer.OrdinalIgnoreCase);
+    var totalCount = 0;
+    var manualCount = 0;
+    var strategyGuideCount = 0;
+    var magazineCount = 0;
+    var manuals = new List<LibraryItem>();
+    var guides = new List<LibraryItem>();
+    var magazines = new List<LibraryItem>();
+    var unsortedGuides = new List<LibraryItem>();
+    var multiPlatformGuides = new List<LibraryItem>();
+    var largest = new List<LibraryItem>();
+
+    foreach (var item in items)
+    {
+        if (item is null) continue;
+        totalCount++;
+        largest.Add(item);
+        if (KindEquals(item, "Manual"))
+        {
+            manualCount++;
+            manuals.Add(item);
+        }
+        else if (KindEquals(item, "Strategy Guide"))
+        {
+            strategyGuideCount++;
+            guides.Add(item);
+            if (string.IsNullOrWhiteSpace(CategoryOrSystem(item))) unsortedGuides.Add(item);
+            if ((item.AssociatedPlatforms?.Distinct(StringComparer.OrdinalIgnoreCase).Count() ?? 0) > 1) multiPlatformGuides.Add(item);
+        }
+        else if (KindEquals(item, "Magazine"))
+        {
+            magazineCount++;
+            magazines.Add(item);
+        }
+    }
+
+    void AddItems(IEnumerable<LibraryItem> candidates, int take)
+    {
+        foreach (var item in candidates.Take(take))
+        {
+            if (item is null || string.IsNullOrWhiteSpace(item.Id)) continue;
+            if (!selected.ContainsKey(item.Id)) selected[item.Id] = item;
+            if (selected.Count >= limit) return;
+        }
+    }
+
+    static DateTimeOffset RecentStamp(LibraryItem item) => item.Modified > DateTimeOffset.MinValue ? item.Modified : item.Added;
+    static int CompareTitle(LibraryItem a, LibraryItem b) => StringComparer.OrdinalIgnoreCase.Compare(DisplayItemTitle(a), DisplayItemTitle(b));
+    static int CompareRecent(LibraryItem a, LibraryItem b)
+    {
+        var recent = RecentStamp(b).CompareTo(RecentStamp(a));
+        return recent != 0 ? recent : CompareTitle(a, b);
+    }
+    static int CompareIssue(LibraryItem a, LibraryItem b)
+    {
+        var issue = IssueSortValue(a).CompareTo(IssueSortValue(b));
+        return issue != 0 ? issue : CompareTitle(a, b);
+    }
+    static int CompareSize(LibraryItem a, LibraryItem b)
+    {
+        var size = b.SizeBytes.CompareTo(a.SizeBytes);
+        return size != 0 ? size : CompareTitle(a, b);
+    }
+
+    AddItems(TakeBestLibraryItems(items, 96, CompareRecent), 96);
+    AddItems(TakeBestLibraryItems(manuals, 72, CompareTitle), 72);
+    AddItems(TakeBestLibraryItems(guides, 72, CompareTitle), 72);
+    AddItems(TakeBestLibraryItems(magazines, 72, CompareIssue), 72);
+    AddItems(TakeBestLibraryItems(unsortedGuides, 48, CompareTitle), 48);
+    AddItems(TakeBestLibraryItems(multiPlatformGuides, 48, CompareTitle), 48);
+    AddItems(TakeBestLibraryItems(largest, 48, CompareSize), 48);
+
+    return new
+    {
+        items = selected.Values.ToArray(),
+        isPartial = selected.Count < totalCount,
+        totalCount,
+        counts = BuildLibraryCountsPayload(totalCount, manualCount, strategyGuideCount, magazineCount),
+        generatedAt = DateTimeOffset.UtcNow,
+        message = selected.Count < totalCount
+            ? $"Fast startup loaded {selected.Count:n0} of {totalCount:n0} indexed item(s); full library is loading in the background."
+            : $"Loaded {totalCount:n0} indexed item(s)."
+    };
+}
+
+static IReadOnlyList<LibraryItem> TakeBestLibraryItems(IEnumerable<LibraryItem> source, int take, Comparison<LibraryItem> comparison)
+{
+    var limit = Math.Max(0, take);
+    if (limit == 0) return Array.Empty<LibraryItem>();
+    var best = new List<LibraryItem>(limit);
+    foreach (var item in source ?? Enumerable.Empty<LibraryItem>())
+    {
+        if (item is null) continue;
+        if (best.Count < limit)
+        {
+            best.Add(item);
+            continue;
+        }
+
+        var worstIndex = 0;
+        for (var i = 1; i < best.Count; i++)
+        {
+            if (comparison(best[i], best[worstIndex]) > 0) worstIndex = i;
+        }
+
+        if (comparison(item, best[worstIndex]) < 0) best[worstIndex] = item;
+    }
+
+    best.Sort(comparison);
+    return best;
+}
+
+static object BuildLibraryCountsPayload(int all, int manual, int strategyGuide, int magazine) => new
+{
+    all,
+    manual,
+    strategyGuide,
+    magazine
+};
+
+static object BuildLibraryCounts(IEnumerable<LibraryItem> source)
+{
+    var all = 0;
+    var manual = 0;
+    var strategyGuide = 0;
+    var magazine = 0;
+    foreach (var item in source ?? Array.Empty<LibraryItem>())
+    {
+        if (item is null) continue;
+        all++;
+        if (KindEquals(item, "Manual")) manual++;
+        else if (KindEquals(item, "Strategy Guide")) strategyGuide++;
+        else if (KindEquals(item, "Magazine")) magazine++;
+    }
+    return BuildLibraryCountsPayload(all, manual, strategyGuide, magazine);
+}
+
+static IReadOnlyList<LibraryItem> BuildCategoryPreviewCoverItems(IReadOnlyList<LibraryItem> source, string? kind, int limit)
+{
+    var targetKinds = string.IsNullOrWhiteSpace(kind)
+        ? new[] { "Manual", "Strategy Guide", "Magazine" }
+        : new[] { kind.Trim() };
+    var selected = new Dictionary<string, LibraryItem>(StringComparer.OrdinalIgnoreCase);
+
+    foreach (var targetKind in targetKinds)
+    {
+        var kindItems = (source ?? Array.Empty<LibraryItem>())
+            .Where(item => item is not null && KindEquals(item, targetKind) && item.HasReadablePages && !string.Equals(item.Format, "PDF", StringComparison.OrdinalIgnoreCase))
+            .ToArray();
+        if (kindItems.Length == 0) continue;
+
+        var groups = kindItems
+            .SelectMany(item => CategoryBuckets(item).Select(category => new { Category = category, Item = item }))
+            .GroupBy(x => x.Category, StringComparer.OrdinalIgnoreCase)
+            .OrderBy(g => g.Key, StringComparer.OrdinalIgnoreCase);
+
+        foreach (var group in groups)
+        {
+            var previewItems = string.Equals(targetKind, "Manual", StringComparison.OrdinalIgnoreCase)
+                ? group.Select(x => x.Item).OrderBy(DisplayItemTitle, StringComparer.OrdinalIgnoreCase).Take(4)
+                : group.Select(x => x.Item).OrderBy(IssueSortValue).ThenBy(DisplayItemTitle, StringComparer.OrdinalIgnoreCase).Take(4);
+
+            foreach (var item in previewItems)
+            {
+                if (string.IsNullOrWhiteSpace(item.Id) || selected.ContainsKey(item.Id)) continue;
+                selected[item.Id] = item;
+                if (selected.Count >= limit) return selected.Values.ToArray();
+            }
+        }
+    }
+
+    return selected.Values.ToArray();
+}
+
+static List<LibraryItem> FilterLibraryItems(IEnumerable<LibraryItem> source, string? kind, string? q)
+{
+    var query = source ?? Array.Empty<LibraryItem>();
+    var cleanKind = (kind ?? string.Empty).Trim();
+    if (!string.IsNullOrWhiteSpace(cleanKind) && !cleanKind.Equals("All Content", StringComparison.OrdinalIgnoreCase))
+        query = query.Where(i => KindEquals(i, cleanKind));
+
+    var term = (q ?? string.Empty).Trim();
+    if (!string.IsNullOrWhiteSpace(term))
+    {
+        query = query.Where(i => LibraryItemSearchText(i).Contains(term, StringComparison.OrdinalIgnoreCase));
+    }
+
+    return query.ToList();
+}
+
+static List<LibraryItem> SortLibraryItems(IEnumerable<LibraryItem> source, string? sort)
+{
+    var mode = (sort ?? "recent").Trim().ToLowerInvariant();
+    var query = source ?? Array.Empty<LibraryItem>();
+    return mode switch
+    {
+        "title" => query.OrderBy(DisplayItemTitle, StringComparer.OrdinalIgnoreCase).ToList(),
+        "issue" or "sequence" => query.OrderBy(i => IssueSortValue(i)).ThenBy(DisplayItemTitle, StringComparer.OrdinalIgnoreCase).ToList(),
+        "kind" => query.OrderBy(i => i.Kind ?? string.Empty, StringComparer.OrdinalIgnoreCase).ThenBy(CategoryOrSystem, StringComparer.OrdinalIgnoreCase).ThenBy(DisplayItemTitle, StringComparer.OrdinalIgnoreCase).ToList(),
+        "category" => query.OrderBy(CategoryOrSystem, StringComparer.OrdinalIgnoreCase).ThenBy(i => IssueSortValue(i)).ThenBy(DisplayItemTitle, StringComparer.OrdinalIgnoreCase).ToList(),
+        "largest" or "size" => query.OrderByDescending(i => i.SizeBytes).ThenBy(DisplayItemTitle, StringComparer.OrdinalIgnoreCase).ToList(),
+        _ => query.OrderByDescending(i => i.Modified > DateTimeOffset.MinValue ? i.Modified : i.Added).ThenBy(DisplayItemTitle, StringComparer.OrdinalIgnoreCase).ToList()
+    };
+}
+
+static string LibraryItemSearchText(LibraryItem item) => string.Join(' ', new[]
+{
+    item.Title, item.FileName, item.RelativePath, item.Kind, item.System, item.Category, item.Publisher,
+    item.Year, item.Series, item.MagazineTitle, item.GameTitle, item.Franchise, item.Developer,
+    item.GamePublisher, item.Genre, item.Summary, item.Notes,
+    string.Join(' ', item.Tags ?? Array.Empty<string>()),
+    string.Join(' ', item.AssociatedPlatforms ?? Array.Empty<string>()),
+    string.Join(' ', item.FeaturedGames ?? Array.Empty<string>()),
+    string.Join(' ', item.FeaturedPlatforms ?? Array.Empty<string>()),
+    string.Join(' ', item.CoveredGames ?? Array.Empty<string>()),
+    string.Join(' ', item.CoveredPlatforms ?? Array.Empty<string>())
+});
+
 static string DefaultOpdsConnectionUrl(HttpRequest request) => BuildAbsoluteUrl(request, "/opds");
 
 static string BuildAbsoluteUrl(HttpRequest request, string pathAndQuery)
@@ -1630,7 +1966,10 @@ static XDocument OpdsAcquisitionCatalog(HttpRequest request, string secret, stri
             paging.Page < paging.TotalPages ? new XElement(atom + "link", new XAttribute("rel", "next"), new XAttribute("type", "application/atom+xml;profile=opds-catalog;kind=acquisition"), new XAttribute("href", AppendOpdsAuth(request, BuildOpdsPagedPath(request, paging.Page + 1, paging.PageSize), secret))) : null,
             new XElement(atom + "link", new XAttribute("rel", "last"), new XAttribute("type", "application/atom+xml;profile=opds-catalog;kind=acquisition"), new XAttribute("href", AppendOpdsAuth(request, BuildOpdsPagedPath(request, paging.TotalPages, paging.PageSize), secret))),
             OpdsPageSizeLinks(request, secret, paging),
-            itemArray.Select(item => OpdsItemEntry(request, secret, item, includeDetailLink: true, includeAcquisitionLinks: false, includeWebLinks: false, fullDetails: false))));
+            // OPDS item lists should be terminal acquisition entries, not an extra
+            // single-item submenu. Readers can now open/download from the item
+            // entry itself instead of navigating through /opds/items/{id} first.
+            itemArray.Select(item => OpdsItemEntry(request, secret, item, includeDetailLink: false, includeAcquisitionLinks: true, includeWebLinks: true, fullDetails: true))));
 }
 
 static XDocument OpdsItemDetailsCatalog(HttpRequest request, string secret, LibraryItem item)
@@ -7678,6 +8017,7 @@ public static class ArchiveReader
     private static readonly ConcurrentDictionary<string, Lazy<Task<(byte[] Bytes, string ContentType)?>>> CoverCache = new(StringComparer.OrdinalIgnoreCase);
     private static readonly SemaphoreSlim CoverReadGate = new(6, 6);
     private static string CoverCacheDirectory = Path.Combine(AppContext.BaseDirectory, "data", "cache", "covers");
+    private static readonly string[] KnownCoverCacheExtensions = [".jpg", ".jpeg", ".png", ".webp", ".gif", ".bmp"];
 
     public static void ConfigureCoverCache(string cacheDirectory)
     {
@@ -8441,9 +8781,18 @@ public static class ArchiveReader
         try
         {
             Directory.CreateDirectory(CoverCacheDirectory);
-            var file = Directory.EnumerateFiles(CoverCacheDirectory, key + ".*").FirstOrDefault();
-            if (file is null || !File.Exists(file)) return null;
-            return (await File.ReadAllBytesAsync(file), ContentTypeFromExtension(Path.GetExtension(file)));
+
+            // Avoid Directory.EnumerateFiles(key + ".*") for every cover request.
+            // Large libraries can have thousands of cached covers, and wildcard
+            // enumeration becomes visible when a menu asks for many covers at once.
+            foreach (var extension in KnownCoverCacheExtensions)
+            {
+                var file = Path.Combine(CoverCacheDirectory, key + extension);
+                if (!File.Exists(file)) continue;
+                return (await File.ReadAllBytesAsync(file), ContentTypeFromExtension(extension));
+            }
+
+            return null;
         }
         catch
         {
@@ -10100,5 +10449,5 @@ static class GuidevaultLibraryIoGate
 
 static class GuidevaultBuildInfo
 {
-    public const string Version = "0.9.118";
+    public const string Version = "0.9.144";
 }

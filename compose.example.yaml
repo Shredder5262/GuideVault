@@ -1,4 +1,4 @@
-services:
+﻿services:
   guidevault:
     image: ghcr.io/shredder5262/guidevault:latest
     container_name: guidevault
