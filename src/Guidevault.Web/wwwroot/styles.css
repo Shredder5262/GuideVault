@@ -1432,7 +1432,7 @@ body.right-collapsed .details-inner{
 }
 
 
-/* v0.8.9.1 — safe NES manual cover ratio.
+/* v0.8.9.1 - safe NES manual cover ratio.
    This does not change grid routing, card width, click behavior, or navigation state.
    It only changes the cover window for NES manual cards so wide booklet scans are not cropped. */
 .card.nes-manual-card .cover-wrap{
@@ -1448,7 +1448,7 @@ body.right-collapsed .details-inner{
   line-height:1.18;
 }
 
-/* v0.9.0 — drill-in detail page and sidebar removal */
+/* v0.9.0 - drill-in detail page and sidebar removal */
 :root{--right:0px;}
 .shell{
   grid-template-columns:var(--left) minmax(0,1fr)!important;
@@ -1558,7 +1558,7 @@ body.right-collapsed .details-inner{
   background:#05080d!important;
 }
 
-/* v0.9.1 — Guidevault brand mark, cleaner details overview, flexible cover sizing */
+/* v0.9.1 - Guidevault brand mark, cleaner details overview, flexible cover sizing */
 .logo.gv-cartridge{
   position:relative;
   width:48px;
@@ -1634,7 +1634,7 @@ body.right-collapsed .details-inner{
   .detail-cover{max-height:420px;}
 }
 
-/* v0.9.2 — Guidevault GV mark and non-cropping covers */
+/* v0.9.2 - Guidevault GV mark and non-cropping covers */
 .logo.gv-cartridge span{
   font-size:12px!important;
   letter-spacing:.08em!important;
@@ -1657,7 +1657,7 @@ body.right-collapsed .details-inner{
   .detail-cover-column{max-width:560px!important;}
 }
 
-/* v0.9.3 — cleaner Guidevault left navigation */
+/* v0.9.3 - cleaner Guidevault left navigation */
 .sidebar{
   scrollbar-width:none;
   -ms-overflow-style:none;
@@ -1686,7 +1686,7 @@ body.left-collapsed .nav-icon{
   font-size:21px;
 }
 
-/* v0.9.4 — wordmark-only sidebar branding */
+/* v0.9.4 - wordmark-only sidebar branding */
 .brand.wordmark-brand{
   gap:10px;
   padding:14px 12px;
@@ -1724,7 +1724,7 @@ body.left-collapsed .brand-wordmark{
   .brand-wordmark{max-width:166px;}
 }
 
-/* v0.9.5 — themed main scrollbar and A-Z/# jump rail */
+/* v0.9.5 - themed main scrollbar and A-Z/# jump rail */
 .main{
   overflow-y:auto!important;
   overflow-x:hidden;
@@ -1804,7 +1804,7 @@ body.left-collapsed .brand-wordmark{
   .alpha-jump{width:20px;height:17px;font-size:9.5px;}
 }
 
-/* v0.9.6 — thicker main scrollbar and taller A-Z/# jump rail */
+/* v0.9.6 - thicker main scrollbar and taller A-Z/# jump rail */
 .main{
   scrollbar-width:auto!important;
   scrollbar-color:rgba(86,153,255,.82) rgba(7,16,24,.86)!important;
@@ -1849,7 +1849,7 @@ body.right-collapsed .alpha-rail{right:64px;}
   .alpha-jump{width:23px;height:19px;font-size:10.5px;}
 }
 
-/* v0.9.7 — dock the A-Z/# jump rail closer to the main content edge */
+/* v0.9.7 - dock the A-Z/# jump rail closer to the main content edge */
 .alpha-rail{
   right:calc(var(--right) + 4px)!important;
 }
@@ -1861,7 +1861,7 @@ body.right-collapsed .alpha-rail{
   body.right-collapsed .alpha-rail{right:18px!important;}
 }
 
-/* v0.9.8 — collapsible category groups and pinned unsorted/multi-platform ordering */
+/* v0.9.8 - collapsible category groups and pinned unsorted/multi-platform ordering */
 .category-group{
   margin:10px 0 16px;
 }
@@ -8144,7 +8144,7 @@ body.reader-page-mode #readerView.hidden{
 }
 
 
-/* v1.6.x — magazine overview layout and detail-page spacing refinement */
+/* v1.6.x - magazine overview layout and detail-page spacing refinement */
 .detail-view{
   padding:18px 20px 56px!important;
 }
@@ -8372,7 +8372,7 @@ body.reader-page-mode #readerView.hidden{
   transform:translateZ(0.001px)!important;
 }
 
-/* v1.7.x — strategy guide metadata/detail layout polish.
+/* v1.7.x - strategy guide metadata/detail layout polish.
    Keep the cover/actions card anchored at the top of the details view and give
    strategy guides a denser overview that is not just a sequential field list. */
 .detail-page-grid{
@@ -8486,7 +8486,7 @@ body.reader-page-mode #readerView.hidden{
   }
 }
 
-/* v1.7.1 — strategy overview hero polish and anchored details layout.
+/* v1.7.1 - strategy overview hero polish and anchored details layout.
    Strategy summaries now live only inside the overview hero, the ESRB badge sits
    inside that hero container, and the cover/action card stays fixed at the top
    while the overview/metadata column scrolls independently. */
@@ -8593,7 +8593,7 @@ body.detail-page-mode .detail-cover{
   }
 }
 
-/* v1.7.2 — detail-page viewport containment.
+/* v1.7.2 - detail-page viewport containment.
    The strategy overview pass made the detail layout visually better, but the
    two-column container could still overrun smaller/windowed viewports. Keep the
    detail page inside the visible main area and let only the right metadata panel
@@ -8667,7 +8667,7 @@ body.detail-page-mode .strategy-content-card{
   }
 }
 
-/* v1.7.3 — detail bottom clamp and strategy overview layout cleanup.
+/* v1.7.3 - detail bottom clamp and strategy overview layout cleanup.
    Keep both detail columns inside the visible app viewport, hide the right
    metadata scrollbar, reduce the hero ESRB badge slightly, and separate Genre
    from the Game Context card. */
@@ -8768,7 +8768,7 @@ body.detail-page-mode .detail-cover{
 }
 
 
-/* v1.7.4 — detail bottom safe-area pass.
+/* v1.7.4 - detail bottom safe-area pass.
    The previous clamp shortened the page, but the visible card edges could still
    sit underneath the app bottom rail. Keep the details surface in the viewport,
    reserve a real bottom safe area inside each scrollable column, and hide all
@@ -8883,7 +8883,7 @@ body.detail-page-mode .detail-main-column{
 }
 
 
-/* v1.7.5 — detail column hard clamp and strategy context stack.
+/* v1.7.5 - detail column hard clamp and strategy context stack.
    The bottom app rail is overlay-like, so the detail columns must be shorter
    than the viewport rather than merely adding padding inside clipped columns. */
 body.detail-page-mode #detailView,
@@ -8986,7 +8986,7 @@ body.detail-page-mode .detail-cover{
 }
 
 
-/* v1.7.6 — stretch detail columns down to the bottom safe edge.
+/* v1.7.6 - stretch detail columns down to the bottom safe edge.
    Keep the top anchor exactly where it is, but let the left cover/actions card
    and right overview/metadata column extend closer to the browser bottom without
    being clipped by the app/bottom rail. */
@@ -9066,7 +9066,7 @@ body.detail-page-mode .detail-main-column > *:last-child{
   }
 }
 
-/* v1.7.7 — strategy overview card gradient consistency.
+/* v1.7.7 - strategy overview card gradient consistency.
    Match the Strategy Guide hero treatment across the rest of the overview cards
    so Guide Context, Genre, and Guide Content feel like one cohesive surface. */
 .strategy-overview .overview-card,
@@ -9097,7 +9097,7 @@ body.detail-page-mode .detail-main-column > *:last-child{
 }
 
 
-/* v1.7.8 — strategy genre simplification and static cover/actions column.
+/* v1.7.8 - strategy genre simplification and static cover/actions column.
    Remove the nested genre box, remove the platform lookup action from the left
    rail, and keep the cover/buttons card equal-height but non-scrollable. */
 #lookupPlatformsBtn{
@@ -9169,7 +9169,7 @@ body.detail-page-mode .detail-action-stack #readBtn{
   }
 }
 
-/* v1.7.9 — strategy overview recovery + magazine gradient consistency.
+/* v1.7.9 - strategy overview recovery + magazine gradient consistency.
    Restore the strategy overview fields after the genre simplification pass and
    apply the same Guidevault gradient card language to video-game magazine
    overview panels. */
@@ -9229,7 +9229,7 @@ body.detail-page-mode .detail-action-stack #readBtn{
 }
 
 
-/* v1.7.7 — Strategy Guide left panel styling consistency.
+/* v1.7.7 - Strategy Guide left panel styling consistency.
    Match the cover/actions card to the Strategy Guide overview gradient style so
    the cover + Open Reader/Remove actions feel like part of the same detail view. */
 body.strategy-detail-mode.detail-page-mode .detail-cover-column{
@@ -9266,7 +9266,7 @@ body.strategy-detail-mode.detail-page-mode .detail-action-stack .danger{
 }
 
 
-/* v1.8.0 — Magazine/manual left panel and manual detail overview pass.
+/* v1.8.0 - Magazine/manual left panel and manual detail overview pass.
    Apply the same Guidevault gradient language used on Strategy Guide details to
    magazines and manuals, and give manuals a structured details layout instead
    of the older plain metadata list. */
@@ -9417,7 +9417,7 @@ body.manual-detail-mode.detail-page-mode .detail-action-stack .ghost{
 }
 
 
-/* v1.9.x — Manual overview ESRB hero badge.
+/* v1.9.x - Manual overview ESRB hero badge.
    The old lower-right manual ESRB overlay stays removed; manuals now show their
    ESRB badge inside the top Manual hero container, matching the Strategy Guide
    hero treatment. */
@@ -9441,7 +9441,7 @@ body.manual-detail-mode.detail-page-mode .detail-action-stack .ghost{
 }
 
 
-/* v1.8.x — detail Previous/Next navigation.
+/* v1.8.x - detail Previous/Next navigation.
    Buttons live in the upper-right of the detail header and navigate within the
    current filtered/category result when possible, otherwise within the same item kind. */
 .detail-page-top{
@@ -9493,7 +9493,7 @@ body.manual-detail-mode.detail-page-mode .detail-action-stack .ghost{
 }
 
 
-/* v1.8.x — reader tray Details return button.
+/* v1.8.x - reader tray Details return button.
    Details sits next to Library in the reader control tray and returns to the
    current item's details page without going through the main library grid. */
 #readerExitDetails{
@@ -9505,9 +9505,9 @@ body.manual-detail-mode.detail-page-mode .detail-action-stack .ghost{
 }
 
 
-/* v1.8.x — hard-fix reader tray visual order.
+/* v1.8.x - hard-fix reader tray visual order.
    The tray can inherit/flex-order buttons from prior rules, so explicitly force:
-   Previous → Details → Library. */
+   Previous -> Details -> Library. */
 .reader-tray-left-actions{
   display:flex!important;
   flex-direction:row!important;
@@ -9523,7 +9523,7 @@ body.manual-detail-mode.detail-page-mode .detail-action-stack .ghost{
 }
 
 
-/* v1.8.x — collapsed Library Data dropdown in details Metadata tab. */
+/* v1.8.x - collapsed Library Data dropdown in details Metadata tab. */
 .metadata-technical-info{
   margin-top:16px!important;
 }
@@ -9576,7 +9576,7 @@ body.manual-detail-mode.detail-page-mode .detail-action-stack .ghost{
 }
 
 
-/* v1.8.x — Library Data dropdown without outer wrapper card.
+/* v1.8.x - Library Data dropdown without outer wrapper card.
    Keep the collapsed dropdown functionality, but remove the surrounding container
    so only the dropdown/header card itself is visible. */
 #metadataTechnicalInfo,
@@ -10613,7 +10613,7 @@ body.auth-locked{
   .insight-chart-head h2{font-size:23px;}
 }
 
-/* v1.8.x — Preferences / Colorscape dynamic detail gradients. */
+/* v1.8.x - Preferences / Colorscape dynamic detail gradients. */
 .preferences-settings-grid{
   grid-template-columns:minmax(320px,760px)!important;
 }
@@ -10761,7 +10761,7 @@ body.colorscape-active.detail-page-mode .detail-action-stack .danger{
   border-color:rgba(var(--colorscape-rgb),.28)!important;
 }
 
-/* v1.9.x — Info / System settings page and magazine overview header cleanup. */
+/* v1.9.x - Info / System settings page and magazine overview header cleanup. */
 .settings-page-kicker{
   font-size:12px;
   letter-spacing:.12em;
@@ -11492,7 +11492,7 @@ body.colorscape-active.detail-page-mode .detail-action-stack .danger{
 .statistics-grid-line{stroke:rgba(220,238,255,.24);stroke-width:1;}
 
 
-/* v0.9.13 — image-backed Home bar icons */
+/* v0.9.13 - image-backed Home bar icons */
 .nav-icon.homebar-icon{
   width:24px;
   height:24px;
@@ -11884,7 +11884,7 @@ body.left-collapsed .category-structure-select{
 }
 
 
-/* v0.9.18 — category select theme, favorites, user menu, and navigation cleanup */
+/* v0.9.18 - category select theme, favorites, user menu, and navigation cleanup */
 select,
 select option,
 .category-structure-select,
@@ -11948,7 +11948,7 @@ select option:checked,
 .top-user-menu button:hover{background:rgba(47,129,255,.18);color:#d9ecff;}
 @media(max-width:900px){.top-user-name{display:none}.top-user-button{padding-right:8px}.top-user-menu{right:-4px}}
 
-/* v0.9.19 — top-right user menu alignment and guide metadata controls */
+/* v0.9.19 - top-right user menu alignment and guide metadata controls */
 .topbar{
   display:grid!important;
   grid-template-columns:minmax(260px,520px) minmax(0,1fr) 40px 40px minmax(150px,max-content)!important;
@@ -12030,7 +12030,7 @@ select option:checked,
 }
 
 
-/* v0.9.20 — metadata dropdown cleanup and borderless user control */
+/* v0.9.20 - metadata dropdown cleanup and borderless user control */
 .metadata-hidden-select{
   position:absolute!important;
   width:1px!important;
@@ -12260,7 +12260,7 @@ select option:checked,
   box-shadow:none!important;
 }
 
-/* v0.9.26 — stable update notification and performance diagnostics */
+/* v0.9.26 - stable update notification and performance diagnostics */
 .update-notify-button{
   position:relative!important;
   margin-left:10px!important;
@@ -12337,7 +12337,7 @@ select option:checked,
   font-variant-numeric:tabular-nums;
 }
 
-/* v0.9.31 — account avatar, server settings, email/users/tasks, and custom side nav */
+/* v0.9.31 - account avatar, server settings, email/users/tasks, and custom side nav */
 .top-user-avatar.has-image,
 .account-avatar-preview.has-image{
   background-position:center!important;
@@ -12497,7 +12497,7 @@ select option:checked,
   .custom-side-nav-row,.ad-hoc-task-list{grid-template-columns:1fr;}
 }
 
-/* v0.9.32 — settings refinement: open avatar layout, stronger side-nav builder, cleaner server general */
+/* v0.9.32 - settings refinement: open avatar layout, stronger side-nav builder, cleaner server general */
 .account-avatar-row.account-avatar-open-row{
   border:0!important;
   background:transparent!important;
@@ -12762,7 +12762,7 @@ select option:checked,
   }
 }
 
-/* v0.9.33 — email, users, and tasks refinement */
+/* v0.9.33 - email, users, and tasks refinement */
 .settings-card-heading-row{
   display:flex;
   gap:14px;
@@ -13017,10 +13017,10 @@ select option:checked,
   .email-history-meta{justify-content:flex-start;}
 }
 
-/* v0.9.34 — email template preview hotfix */
+/* v0.9.34 - email template preview hotfix */
 
 
-/* v0.9.35 — robust email preview rendering and fallback */
+/* v0.9.35 - robust email preview rendering and fallback */
 .email-template-preview-host{display:block;min-height:1px;}
 .email-template-preview-host h1,
 .email-template-preview-host h2,
@@ -13032,10 +13032,10 @@ select option:checked,
 .email-preview-empty strong{color:#0f172a;}
 
 
-/* v0.9.36 — email test/save status helper hotfix */
+/* v0.9.36 - email test/save status helper hotfix */
 
 
-/* v0.9.38 — reliable personal profile navigation */
+/* v0.9.38 - reliable personal profile navigation */
 .email-provider-picker{
   margin-bottom:14px;
 }
@@ -13165,7 +13165,7 @@ select option:checked,
 }
 
 
-/* v0.9.38 — force the personal profile page to behave as a first-class app view. */
+/* v0.9.38 - force the personal profile page to behave as a first-class app view. */
 body.profile-page-mode #libraryView,
 body.profile-page-mode #settingsView,
 body.profile-page-mode #detailView,
@@ -13191,7 +13191,7 @@ body.profile-page-mode .main{
 }
 
 
-/* v0.9.39 — normalize inline view visibility after profile navigation. */
+/* v0.9.39 - normalize inline view visibility after profile navigation. */
 
 /* Guidevault 0.9.40 update-check notification polish */
 .system-update-notice-main b{
@@ -15454,7 +15454,7 @@ button.metadata-manager-sort-button:focus-visible {
   color: #e4dbff;
 }
 
-/* v0.9.104 — Metadata Manager summary cards: keep desktop counters on one row. */
+/* v0.9.104 - Metadata Manager summary cards: keep desktop counters on one row. */
 .metadata-manager-summary{
   grid-template-columns:repeat(10,minmax(0,1fr))!important;
   gap:8px!important;
@@ -15500,7 +15500,7 @@ button.metadata-manager-sort-button:focus-visible {
   }
 }
 
-/* v0.9.105 — Metadata Manager filters: keep all primary filters on one desktop row. */
+/* v0.9.105 - Metadata Manager filters: keep all primary filters on one desktop row. */
 .metadata-manager-filter-grid{
   grid-template-columns:minmax(170px,.9fr) minmax(185px,1fr) minmax(130px,.7fr) minmax(180px,.95fr) minmax(200px,1.05fr)!important;
   gap:8px!important;
@@ -15523,7 +15523,7 @@ button.metadata-manager-sort-button:focus-visible {
   }
 }
 
-/* v0.9.106 — Metadata Manager columns grouped by content context. */
+/* v0.9.106 - Metadata Manager columns grouped by content context. */
 .metadata-manager-column-picker{
   display:block!important;
   max-height:300px;
@@ -15571,7 +15571,7 @@ button.metadata-manager-sort-button:focus-visible {
 }
 
 
-/* v0.9.108 — large-library performance pass.
+/* v0.9.108 - large-library performance pass.
    Large item grids now window rendered, so the browser only keeps the visible card
    slice in the DOM while preserving scroll height with lightweight spacers. */
 .grid.virtualized-grid{
@@ -15593,7 +15593,7 @@ button.metadata-manager-sort-button:focus-visible {
 }
 
 
-/* v0.9.109 — Metadata Manager batch editor follows the visible editable columns. */
+/* v0.9.109 - Metadata Manager batch editor follows the visible editable columns. */
 .metadata-manager-batch-empty{
   grid-column:1 / -1;
   margin:0;
@@ -15609,9 +15609,9 @@ button.metadata-manager-sort-button:focus-visible {
   padding-left:10px;
 }
 
-/* v0.9.112 — Magazine grouping now uses Magazine Title/series; removed redundant Magazine Group editing surface. */
+/* v0.9.112 - Magazine grouping now uses Magazine Title/series; removed redundant Magazine Group editing surface. */
 
-/* v0.9.114 — clearer sidebar category-mode section headings inside the native select popup. */
+/* v0.9.114 - clearer sidebar category-mode section headings inside the native select popup. */
 .category-structure-select optgroup,
 .category-structure-select option.category-structure-heading,
 .category-structure-select option[disabled].category-structure-heading{
@@ -15634,7 +15634,7 @@ button.metadata-manager-sort-button:focus-visible {
 }
 
 
-/* v0.9.124 — startup status and home-grid scroll stability. */
+/* v0.9.124 - startup status and home-grid scroll stability. */
 .library-startup-status{
   margin:10px 0 2px!important;
   padding:9px 12px!important;
@@ -15665,7 +15665,7 @@ button.metadata-manager-sort-button:focus-visible {
 }
 
 
-/* v0.9.125 — profile polish, review editor, and quieter startup. */
+/* v0.9.125 - profile polish, review editor, and quieter startup. */
 .profile-hero{
   border-radius:16px;
   background:
@@ -15858,7 +15858,7 @@ button.metadata-manager-sort-button:focus-visible {
 }
 
 
-/* v0.9.126 — semi-gloss profile-image hero background. */
+/* v0.9.126 - semi-gloss profile-image hero background. */
 .profile-hero{
   isolation:isolate;
 }
@@ -18408,7 +18408,7 @@ body.colorscape-active.detail-page-mode .detail-reviews-header{
 }
 
 
-/* v0.9.158 — Server / Media / Integrations visual pass */
+/* v0.9.158 - Server / Media / Integrations visual pass */
 .integrations-title-row,
 .media-title-row{
   align-items:flex-start!important;
@@ -18551,14 +18551,14 @@ body.colorscape-active.detail-page-mode .detail-reviews-header{
 @media(max-width:1050px){.integrations-grid{grid-template-columns:1fr}.integrations-credential-grid{grid-template-columns:1fr}}
 @media(max-width:720px){.integrations-health-card,.media-health-card{width:100%}.media-library-heading{display:grid}.media-library-actions{justify-content:flex-start}}
 
-/* v0.9.159 — Server integration cleanup */
+/* v0.9.159 - Server integration cleanup */
 .integration-igdb-card{grid-column:1 / -1;}
 .integration-esrb-card .integration-source-icon{
   background:linear-gradient(135deg,#3a8dff,#65ddff 52%,#39d98a);
   box-shadow:0 12px 30px rgba(57,217,138,.18),0 0 24px rgba(58,141,255,.18);
 }
 @media(max-width:1050px){.integration-igdb-card{grid-column:auto;}}
-/* v0.9.160 — Users panel responsiveness */
+/* v0.9.160 - Users panel responsiveness */
 .users-settings-panel{content-visibility:auto;contain-intrinsic-size:900px;}
 .users-inline-loading{margin:0;padding:10px 12px;border:1px solid rgba(126,184,255,.14);border-radius:12px;background:rgba(8,22,40,.54);}
 #settingsUsersPanel .users-list{min-height:72px;}

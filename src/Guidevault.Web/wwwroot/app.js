@@ -376,7 +376,7 @@ function platformIconBadgeHtml(name) {
   return `<span class="card-platform-icon-badge" title="${escapeForAttribute(label)}" aria-label="${escapeForAttribute(label)}">${icon || `<span>${escapeHtml(platformInitials(label))}</span>`}</span>`;
 }
 function magazinePublicationIconHtml(sizeClass = 'magazine-publication-icon') {
-  return `<span class="${escapeForAttribute(sizeClass)}" aria-hidden="true">â–¦</span>`;
+  return `<span class="${escapeForAttribute(sizeClass)}" aria-hidden="true">\u25A6</span>`;
 }
 function categoryDisplayIconHtml(kind, name, sizeClass = 'platform-icon tiny') {
   return kind === 'Magazine' ? magazinePublicationIconHtml(sizeClass.includes('large') ? 'magazine-publication-icon large' : 'magazine-publication-icon tiny') : platformIconHtml(name, sizeClass);
@@ -1613,9 +1613,9 @@ function profileReviewCleanSequenceValue(value, title = '') {
     text = text.slice(titleText.length).trim();
   }
   text = text
-    .replace(/^[\s:;\-â€“â€”â€¢]+/, '')
+    .replace(/^[\s:;\-\u2013\u2014\u2022]+/, '')
     .replace(/^(issue|iss\.?|no\.?|number|num\.?|#)\s*#?/i, '')
-    .replace(/^[\s:;\-â€“â€”â€¢#]+/, '')
+    .replace(/^[\s:;\-\u2013\u2014\u2022#]+/, '')
     .trim();
   const hashMatch = text.match(/#\s*([0-9]+[A-Za-z]?)\b/);
   if (hashMatch) text = hashMatch[1];
@@ -1633,7 +1633,7 @@ function profileReviewItemSequenceText(item = {}) {
   const volume = profileReviewCleanSequenceValue(item.volume || item.Volume || '', title);
   const number = profileReviewCleanSequenceValue(item.number || item.Number || item.issueInVolume || '', title);
   if (volume && number) return `Vol. ${volume} No. ${number}`;
-  if (volume && issue) return `Vol. ${volume} â€¢ Issue #${issue}`;
+  if (volume && issue) return `Vol. ${volume} \u2022 Issue #${issue}`;
   if (issue) return `Issue #${issue}`;
   if (number) return `Issue #${number}`;
   return '';
@@ -1656,7 +1656,7 @@ function profileReviewSelectedPreviewHtml(item = null) {
   const kindWord = profileReviewKindWord(item);
   const sequence = profileReviewItemSequenceText(item);
   const year = profileReviewItemYearText(item);
-  const meta = [kindWord, sequence, year].filter(Boolean).join(' â€¢ ');
+  const meta = [kindWord, sequence, year].filter(Boolean).join(' \u2022 ');
   const img = `<img src="${escapeForAttribute(coverUrl(item, { width: 280 }))}" alt="" loading="eager" />`;
   return `<div class="profile-review-selected-preview" id="profileReviewSelectedPreviewCard">
     <div class="profile-review-selected-cover">${img}</div>
@@ -1908,7 +1908,7 @@ function publicReviewsForItem(itemId) {
 function detailReviewSummaryHtml(reviews) {
   if (!reviews.length) {
     return `
-      <div class="detail-review-score-main is-empty"><strong>â€”</strong><span>No rating yet</span></div>
+      <div class="detail-review-score-main is-empty"><strong>\u2014</strong><span>No rating yet</span></div>
       <div class="detail-review-score-context"><span>No reviews yet</span><em>Be the first to add a score from your profile.</em></div>`;
   }
   const avg = reviews.reduce((sum, review) => sum + clampReviewRating(review.rating, 5), 0) / reviews.length;
@@ -2240,7 +2240,7 @@ function setGuidevaultPreferenceValue(key, enabled) {
   if (key === 'useColorscape') {
     setPreferencesStatus(enabled ? 'Colorscape enabled. Child toggles now control where the cover-color effect appears.' : 'Colorscape disabled. Theme gradients will be used everywhere.', enabled ? 'success' : 'info');
   } else {
-    setPreferencesStatus(`${label} ${enabled ? 'enabled' : 'disabled'}${masterOff ? ' â€” enable Use Colorscape to apply it.' : '.'}`, enabled ? 'success' : 'info');
+    setPreferencesStatus(`${label} ${enabled ? 'enabled' : 'disabled'}${masterOff ? ' \u2014 enable Use Colorscape to apply it.' : '.'}`, enabled ? 'success' : 'info');
   }
   if (document.body.classList.contains('detail-page-mode')) applyColorscapeToDetail(state.selected);
   else clearColorscapeDetailTheme();
@@ -5641,7 +5641,7 @@ function libraryItemRenderFingerprint(item) {
     item.languageTag || '',
     item.region || '',
     item.pageCount || item.metadataPageCount || ''
-  ].map(value => String(value ?? '').trim()).join('Â¦');
+  ].map(value => String(value ?? '').trim()).join('\u00A6');
 }
 
 function libraryPayloadFingerprint(items = []) {
@@ -5656,7 +5656,7 @@ function libraryPayloadFingerprint(items = []) {
   const sampleIndexes = [0, 1, 2, Math.floor(length / 2), length - 3, length - 2, length - 1]
     .filter(index => index >= 0 && index < length);
   const uniqueIndexes = [...new Set(sampleIndexes)];
-  return `${length}::${uniqueIndexes.map(index => libraryItemRenderFingerprint(list[index])).join('Â§')}`;
+  return `${length}::${uniqueIndexes.map(index => libraryItemRenderFingerprint(list[index])).join('\u00A7')}`;
 }
 
 function takeBestLibraryItems(source, limit, compare, predicate = null) {
@@ -7460,7 +7460,7 @@ const SIDEBAR_CATEGORY_MODE_CONFIGS = {
     label: 'Manual Series',
     empty: 'No manual series or franchise values found yet.',
     fallback: 'Unsorted Manual Series',
-    iconFor: () => '<span class="category-mini-icon" aria-hidden="true">â—¦</span>',
+    iconFor: () => '<span class="category-mini-icon" aria-hidden="true">\u25E6</span>',
     valueForItem: item => item?.franchise || item?.gameFranchise || item?.series || ''
   },
   'strategy-platform': {
@@ -7480,7 +7480,7 @@ const SIDEBAR_CATEGORY_MODE_CONFIGS = {
     label: 'Strategy Guide Types',
     empty: 'No strategy guide types found yet.',
     fallback: 'Unsorted Guide Type',
-    iconFor: () => '<span class="category-mini-icon" aria-hidden="true">â—ˆ</span>',
+    iconFor: () => '<span class="category-mini-icon" aria-hidden="true">\u25C8</span>',
     valueForItem: item => sidebarGuideTypeValues(item)
   },
   'strategy-series': {
@@ -7488,7 +7488,7 @@ const SIDEBAR_CATEGORY_MODE_CONFIGS = {
     label: 'Strategy Game Series',
     empty: 'No strategy guide series or franchise values found yet.',
     fallback: 'Unsorted Strategy Series',
-    iconFor: () => '<span class="category-mini-icon" aria-hidden="true">â—¦</span>',
+    iconFor: () => '<span class="category-mini-icon" aria-hidden="true">\u25E6</span>',
     valueForItem: item => item?.franchise || item?.gameFranchise || item?.series || ''
   },
   'magazine-title': {
@@ -7496,7 +7496,7 @@ const SIDEBAR_CATEGORY_MODE_CONFIGS = {
     label: 'Magazine Titles',
     empty: 'No magazine titles found yet.',
     fallback: 'Unsorted Magazines',
-    iconFor: () => '<span class="category-mini-icon" aria-hidden="true">â–¦</span>',
+    iconFor: () => '<span class="category-mini-icon" aria-hidden="true">\u25A6</span>',
     valueForItem: item => item?.magazineTitle || item?.series || ''
   },
   'magazine-primary-system': {
@@ -7512,14 +7512,14 @@ const SIDEBAR_CATEGORY_MODE_CONFIGS = {
     label: 'Magazine Years',
     empty: 'No magazine years found yet.',
     fallback: 'Unknown Year',
-    iconFor: () => '<span class="category-mini-icon" aria-hidden="true">â—·</span>',
+    iconFor: () => '<span class="category-mini-icon" aria-hidden="true">\u25F7</span>',
     valueForItem: item => sidebarYearLabelForItem(item)
   },
   'metadata-status': {
     label: 'Metadata Status',
     empty: 'No metadata status values found yet.',
     fallback: 'Unreviewed',
-    iconFor: () => '<span class="category-mini-icon" aria-hidden="true">â—†</span>',
+    iconFor: () => '<span class="category-mini-icon" aria-hidden="true">\u25C6</span>',
     valueForItem: item => metadataStatusOf(item)
   }
 };
@@ -7696,7 +7696,7 @@ function renderCategories() {
     const publishers = [...new Set(state.items.map(publisherValue).filter(Boolean))].sort((a,b)=>a.localeCompare(b));
     markup = categoryGroupMarkup('Publisher', 'Publishers', state.items, publishers, {
       groupKind: 'Publisher',
-      iconFor: () => '<span class="category-mini-icon" aria-hidden="true">â—¦</span>',
+      iconFor: () => '<span class="category-mini-icon" aria-hidden="true">\u25E6</span>',
       countFor: publisher => sidebarCategoryCount(publisherCounts, publisher),
       empty: 'No publisher values found yet.',
       defaultCollapsed: false
@@ -7710,7 +7710,7 @@ function renderCategories() {
     });
     markup = categoryGroupMarkup('Decade', 'Decades', state.items, decades, {
       groupKind: 'Decade',
-      iconFor: () => '<span class="category-mini-icon" aria-hidden="true">â—·</span>',
+      iconFor: () => '<span class="category-mini-icon" aria-hidden="true">\u25F7</span>',
       countFor: decade => sidebarCategoryCount(decadeCounts, decade),
       empty: 'No dated entries found yet.',
       defaultCollapsed: false
@@ -8450,7 +8450,7 @@ function renderCustomizeSettings() {
     list.innerHTML = (settings.homeShelves || []).map((id) => {
       const opt = HOME_SHELF_OPTIONS.find(o => o.id === id) || HOME_SHELF_OPTIONS[0];
       return `<div class="customize-shelf-row" data-shelf-id="${escapeForAttribute(id)}">
-        <span class="customize-shelf-handle" draggable="true" role="button" aria-label="Drag ${escapeForAttribute(opt.label)} shelf" title="Drag to reorder">â ¿</span>
+        <span class="customize-shelf-handle" draggable="true" role="button" aria-label="Drag ${escapeForAttribute(opt.label)} shelf" title="Drag to reorder">\u283F</span>
         <div class="customize-shelf-copy"><strong>${escapeHtml(opt.label)}</strong><p class="sub">${escapeHtml(opt.description)}</p><span class="customize-shelf-pill">Visible on Home</span></div>
         <div class="customize-shelf-actions">
           <button class="danger" data-shelf-action="remove" type="button">Remove</button>
@@ -9200,7 +9200,7 @@ function refreshMetadataLockButtons() {
     const key = button.dataset.metadataLockKey || '';
     const locked = isMetadataFieldLocked(state.selected || {}, key);
     button.classList.toggle('locked', locked);
-    button.textContent = locked ? 'ðŸ”’' : 'ðŸ”“';
+    button.textContent = locked ? '\uD83D\uDD12' : '\uD83D\uDD13';
     button.setAttribute('aria-pressed', locked ? 'true' : 'false');
     button.title = locked
       ? 'Locked: this field is read-only and scraper, import, batch, and normalize actions cannot overwrite it.'
@@ -10510,7 +10510,7 @@ function openLibraryComparisonRowHtml(field, current, proposed) {
   const disabled = hasIncoming && !locked ? '' : 'disabled';
   return `<tr class="${differs ? 'different' : ''} ${!hasIncoming ? 'missing-incoming' : ''} ${locked ? 'locked-field' : ''}">
     <td><input type="checkbox" data-openlibrary-field="${escapeForAttribute(field.key)}" ${checked} ${disabled} /></td>
-    <td>${locked ? '<span class="metadata-lock-inline" title="Locked field - skipped by imports">ðŸ”’</span> ' : ''}${escapeHtml(field.label)}</td>
+    <td>${locked ? '<span class="metadata-lock-inline" title="Locked field - skipped by imports">\uD83D\uDD12</span> ' : ''}${escapeHtml(field.label)}</td>
     <td>${escapeHtml(existing || '\u2014')}</td>
     <td>${escapeHtml(incoming || '\u2014')}</td>
   </tr>`;
@@ -10857,7 +10857,7 @@ function esrbComparisonRowHtml(field, current, proposed) {
   const disabled = hasIncoming && !locked ? '' : 'disabled';
   return `<tr class="${differs ? 'different' : ''} ${!hasIncoming ? 'missing-incoming' : ''} ${locked ? 'locked-field' : ''}">
     <td><input type="checkbox" data-esrb-field="${escapeForAttribute(field.key)}" ${checked} ${disabled} /></td>
-    <td>${locked ? '<span class="metadata-lock-inline" title="Locked field - skipped by imports">ðŸ”’</span> ' : ''}${escapeHtml(field.label)}</td>
+    <td>${locked ? '<span class="metadata-lock-inline" title="Locked field - skipped by imports">\uD83D\uDD12</span> ' : ''}${escapeHtml(field.label)}</td>
     <td>${escapeHtml(existingDisplay)}</td>
     <td>${escapeHtml(incomingDisplay)}</td>
   </tr>`;
@@ -11247,7 +11247,7 @@ function igdbComparisonRowHtml(field, current, proposed) {
   const disabled = hasIncoming && !locked ? '' : 'disabled';
   return `<tr class="${differs ? 'different' : ''} ${!hasIncoming ? 'missing-incoming' : ''} ${locked ? 'locked-field' : ''}">
     <td><input type="checkbox" data-igdb-field="${escapeForAttribute(field.key)}" ${checked} ${disabled} /></td>
-    <td>${locked ? '<span class="metadata-lock-inline" title="Locked field - skipped by imports">ðŸ”’</span> ' : ''}${escapeHtml(field.label)}</td>
+    <td>${locked ? '<span class="metadata-lock-inline" title="Locked field - skipped by imports">\uD83D\uDD12</span> ' : ''}${escapeHtml(field.label)}</td>
     <td>${escapeHtml(existingDisplay || '\u2014')}</td>
     <td>${escapeHtml(incomingDisplay || '\u2014')}</td>
   </tr>`;
@@ -12155,7 +12155,7 @@ function renderMetadataManagerColumnPicker() {
           return `<label class="metadata-manager-column-option" title="${escapeForAttribute(column.description || '')}">
             <input type="checkbox" data-column-key="${escapeForAttribute(column.key)}" ${isVisible ? 'checked' : ''} />
             <span>${escapeHtml(column.label)}</span>
-            ${isVisible ? `<button class="ghost tiny metadata-column-move" type="button" data-column-move="-1" data-column-key="${escapeForAttribute(column.key)}" ${position <= 0 ? 'disabled' : ''} title="Move left">â†</button><button class="ghost tiny metadata-column-move" type="button" data-column-move="1" data-column-key="${escapeForAttribute(column.key)}" ${position === visible.length - 1 ? 'disabled' : ''} title="Move right">â†’</button>` : ''}
+            ${isVisible ? `<button class="ghost tiny metadata-column-move" type="button" data-column-move="-1" data-column-key="${escapeForAttribute(column.key)}" ${position <= 0 ? 'disabled' : ''} title="Move left">\u2190</button><button class="ghost tiny metadata-column-move" type="button" data-column-move="1" data-column-key="${escapeForAttribute(column.key)}" ${position === visible.length - 1 ? 'disabled' : ''} title="Move right">\u2192</button>` : ''}
           </label>`;
         }).join('')}
       </div>
@@ -12427,7 +12427,7 @@ function renderMetadataManager() {
   if (headerRow) {
     headerRow.innerHTML = `
       <th><input id="metadataManagerHeaderCheck" type="checkbox" aria-label="Select visible rows" /></th>
-      ${columns.map(column => `<th class="metadata-manager-column-header ${sort.key === column.key ? 'is-sorted' : ''}" draggable="true" data-column-key="${escapeForAttribute(column.key)}" title="Click to sort. Drag this header to reorder columns."><div class="metadata-manager-column-head"><button class="metadata-manager-sort-button" type="button" data-column-sort="${escapeForAttribute(column.key)}" aria-label="Sort by ${escapeForAttribute(column.label)}"><span>${escapeHtml(column.label)}</span><b>${sort.key === column.key ? (sort.direction === 'desc' ? 'â†“' : 'â†‘') : 'â†•'}</b></button><span class="metadata-manager-column-drag-handle" aria-hidden="true" title="Drag to reorder">â‹®â‹®</span></div></th>`).join('')}
+      ${columns.map(column => `<th class="metadata-manager-column-header ${sort.key === column.key ? 'is-sorted' : ''}" draggable="true" data-column-key="${escapeForAttribute(column.key)}" title="Click to sort. Drag this header to reorder columns."><div class="metadata-manager-column-head"><button class="metadata-manager-sort-button" type="button" data-column-sort="${escapeForAttribute(column.key)}" aria-label="Sort by ${escapeForAttribute(column.label)}"><span>${escapeHtml(column.label)}</span><b>${sort.key === column.key ? (sort.direction === 'desc' ? '\u2193' : '\u2191') : '\u2195'}</b></button><span class="metadata-manager-column-drag-handle" aria-hidden="true" title="Drag to reorder">\u22EE\u22EE</span></div></th>`).join('')}
     `;
   }
   const body = $('metadataManagerTableBody');
@@ -13813,7 +13813,7 @@ function metadataManagerImportMagazineTitleKey(itemOrEntry) {
   ];
   const raw = candidates.find(value => String(value || '').trim()) || '';
   return metadataManagerImportNormalizeKey(String(raw)
-    .replace(/[â€’â€“â€”-]\s*Issue\s*#?\s*\d+.*$/i, '')
+    .replace(/[\u2012\u2013\u2014-]\s*Issue\s*#?\s*\d+.*$/i, '')
     .replace(/\s*#\s*\d+.*$/i, '')
     .replace(/\s*Issue\s*#?\s*\d+.*$/i, ''));
 }

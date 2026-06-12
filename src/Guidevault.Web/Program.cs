@@ -2413,7 +2413,7 @@ static string[] CategoryBuckets(LibraryItem item)
     void Add(string? value)
     {
         var text = (value ?? string.Empty).Trim();
-        if (string.IsNullOrWhiteSpace(text) || text == "â€”" || IsMultiPlatformBucket(text)) return;
+        if (string.IsNullOrWhiteSpace(text) || text == "\u2014" || IsMultiPlatformBucket(text)) return;
         if (!buckets.Any(existing => string.Equals(existing, text, StringComparison.OrdinalIgnoreCase))) buckets.Add(text);
     }
 
@@ -2514,7 +2514,7 @@ static string OpdsItemDescription(LibraryItem item)
         item.Year,
         item.PageCount > 0 ? $"{item.PageCount} page(s)" : string.Empty
     }.Where(p => !string.IsNullOrWhiteSpace(p)).Distinct(StringComparer.OrdinalIgnoreCase);
-    return string.Join(" â€¢ ", parts);
+    return string.Join(" \u2022 ", parts);
 }
 
 static string OpdsSearchText(LibraryItem item) => string.Join(" ", new[]
@@ -7320,7 +7320,7 @@ public static class MetadataInferer
         var suffix = new List<string>();
         if (!string.IsNullOrWhiteSpace(issueNumber)) suffix.Add($"Issue #{issueNumber}");
         if (!string.IsNullOrWhiteSpace(coverDate)) suffix.Add(coverDate);
-        return suffix.Count == 0 ? magazineTitle : $"{magazineTitle} â€” {string.Join(" â€¢ ", suffix)}";
+        return suffix.Count == 0 ? magazineTitle : $"{magazineTitle} \u2014 {string.Join(" \u2022 ", suffix)}";
     }
 
     private static string ExtractIssueNumber(string value)
@@ -7428,7 +7428,7 @@ public static class MetadataInferer
         var features = new List<string>();
         void AddIf(string key, string label) { if (value.Contains(key)) features.Add(label); }
         AddIf("e3", "E3 coverage");
-        AddIf("buyer", "Buyerâ€™s guide");
+        AddIf("buyer", "Buyer\u2019s guide");
         AddIf("holiday", "Holiday guide");
         AddIf("preview", "Previews");
         AddIf("review", "Reviews");
