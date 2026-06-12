@@ -16,7 +16,7 @@ using SixLabors.ImageSharp.Formats.Jpeg;
 using SixLabors.ImageSharp.Processing;
 
 var builder = WebApplication.CreateBuilder(args);
-const string GuidevaultVersion = "0.9.103";
+const string GuidevaultVersion = "0.9.167";
 var app = builder.Build();
 var metadataJsonOptions = new JsonSerializerOptions(JsonSerializerDefaults.Web) { PropertyNameCaseInsensitive = true };
 var options = app.Configuration.GetSection("Guidevault").Get<GuidevaultOptions>() ?? new GuidevaultOptions();
@@ -10832,7 +10832,7 @@ static class EsrbRatingMetadataClient
         var values = new List<string>();
         for (var i = start; i < lines.Length && values.Count < 4; i++)
         {
-            var line = lines[i].Trim(' ', 'â€¢', '-', '*');
+            var line = lines[i].Trim(' ', '\u2022', '-', '*');
             if (line.Equals("Rating Summary", StringComparison.OrdinalIgnoreCase) || line.Equals("Assigned Rating Info", StringComparison.OrdinalIgnoreCase) || line.Equals("Explore More Games", StringComparison.OrdinalIgnoreCase)) break;
             if (line.Equals("No Interactive Elements", StringComparison.OrdinalIgnoreCase)) return ["No Interactive Elements"];
             if (line.Equals("Users Interact", StringComparison.OrdinalIgnoreCase) || line.StartsWith("In-Game Purchases", StringComparison.OrdinalIgnoreCase) || line.Contains("Online Interactions", StringComparison.OrdinalIgnoreCase))
@@ -10930,7 +10930,7 @@ static class EsrbRatingMetadataClient
     private static string[] SplitList(string value)
     {
         return CleanDistinct(Regex.Split(value ?? string.Empty, @",|;|\||\s+/\s+")
-            .Select(v => Regex.Replace(Clean(v.Trim(' ', '.', 'â€¢', '-', '*')), @"^(?:and|or)\s+", string.Empty, RegexOptions.IgnoreCase).Trim())
+            .Select(v => Regex.Replace(Clean(v.Trim(' ', '.', '\u2022', '-', '*')), @"^(?:and|or)\s+", string.Empty, RegexOptions.IgnoreCase).Trim())
             .Where(v => !string.IsNullOrWhiteSpace(v)));
     }
 
@@ -11136,6 +11136,6 @@ static class GuidevaultLibraryIoGate
 
 static class GuidevaultBuildInfo
 {
-    public const string Version = "0.9.103";
+    public const string Version = "0.9.167";
 }
 
