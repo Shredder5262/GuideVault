@@ -1,6 +1,6 @@
-const state = {
+﻿const state = {
   items: [], filtered: [], selected: null, filter: 'All Content', categoryFilter: '', viewMode: 'all', activeTab: 'overview', customFilter: null,
-  reader: { item: null, pages: [], index: 0, animating: false, displayMode: 2, transitionMode: 'stable', overlayVisible: false, advancedVisible: false, magnifierSettingsVisible: false, scrubbing: false, shading: null, zoom: 100, fullscreenOnOpen: false, magnifier: null, magnifierActive: false, longPressTimer: null, suppressHitClickUntil: 0, backgrounds: [], background: '', backgroundBrightness: 72 },
+  reader: { item: null, pages: [], index: 0, animating: false, displayMode: 2, transitionMode: 'stable', overlayVisible: false, advancedVisible: false, bookmarkMenuOpen: false, magnifierSettingsVisible: false, scrubbing: false, shading: null, zoom: 100, fullscreenOnOpen: false, magnifier: null, magnifierActive: false, longPressTimer: null, suppressHitClickUntil: 0, backgrounds: [], background: '', backgroundBrightness: 72 },
   libraryPath: '',
   libraries: [],
   editingLibraryIndex: null,
@@ -31,10 +31,12 @@ const state = {
   emailSettings: null,
   emailHistory: [],
   usersSettings: { users: [], libraries: [], permissions: [] },
+  usersSettingsRuntime: { loaded: false, loading: false, requestId: 0, loadTimer: 0, renderedHash: '' },
   taskSettings: null,
   homeShelfOffsets: {},
   statistics: { activeTab: 'stats', range: 'all' },
   profilePage: { activeTab: 'overview', range: 'all' },
+  itemReviews: { cache: {}, loading: {} },
   preferences: { useColorscape: false, colorscapeDetailPane: true, colorscapeManualMenus: false, colorscapeStrategyMenus: false, colorscapeMagazineMenus: false },
   colorscape: { itemId: '', token: 0, menuToken: 0, cache: {}, persistentLoaded: false, cacheSaveTimer: 0, imageSampleQueue: [], imageSampleQueued: false },
   coverResults: { cache: {}, loaded: false, saveTimer: 0, serverPrewarmToken: 0, browserPrewarmQueued: false },
@@ -83,11 +85,11 @@ const GUIDEVAULT_CATEGORY_STRUCTURE_KEY = 'guidevault.categoryStructure.v1';
 const GUIDEVAULT_COVER_SIZE_KEY = 'guidevault.libraryCoverSize.v1';
 const GUIDEVAULT_FAVORITES_KEY = 'guidevault.favorites.v1';
 const GUIDEVAULT_LIBRARY_CACHE_KEY = 'guidevault.libraryCache.v1';
-const GUIDEVAULT_GRID_INITIAL_RENDER = 36;
-const GUIDEVAULT_GRID_CHUNK_SIZE = 36;
-const GUIDEVAULT_GRID_VIRTUAL_THRESHOLD = 80;
-const GUIDEVAULT_GRID_VIRTUAL_BUFFER_ROWS = 2;
-const GUIDEVAULT_GRID_VIRTUAL_MAX_CARDS = 84;
+const GUIDEVAULT_GRID_INITIAL_RENDER = 96;
+const GUIDEVAULT_GRID_CHUNK_SIZE = 96;
+const GUIDEVAULT_GRID_VIRTUAL_THRESHOLD = 5000;
+const GUIDEVAULT_GRID_VIRTUAL_BUFFER_ROWS = 5;
+const GUIDEVAULT_GRID_VIRTUAL_MAX_CARDS = 180;
 const GUIDEVAULT_LIBRARY_STARTUP_CACHE_LIMIT = 240;
 const GUIDEVAULT_LIBRARY_CACHE_MAX_BYTES = 1500000;
 const GUIDEVAULT_LIBRARY_FULL_RENDER_DELAY_MS = 900;
@@ -96,7 +98,7 @@ const GUIDEVAULT_LIBRARY_CHUNK_YIELD_MS = 30;
 const GUIDEVAULT_STARTUP_STATUS_HIDE_MS = 2400;
 const GUIDEVAULT_LIBRARY_SEARCH_DEBOUNCE_MS = 180;
 const GUIDEVAULT_SORT_COLLATOR = new Intl.Collator(undefined, { numeric: true, sensitivity: 'base' });
-const GUIDEVAULT_APP_VERSION = '0.9.144';
+const GUIDEVAULT_APP_VERSION = '0.9.103';
 const GUIDEVAULT_FILENAME_SCHEMA_KEY = 'guidevault.filenameRename.schema.v1';
 const GUIDEVAULT_DEFAULT_FILENAME_SCHEMA = '{title}';
 const GUIDEVAULT_STABLE_TAG_FEED_URL = 'https://api.github.com/repos/Shredder5262/GuideVault/tags';
@@ -109,6 +111,9 @@ const GUIDEVAULT_COLORSCAPE_MENU_BATCH_SIZE = 2;
 const GUIDEVAULT_COLORSCAPE_MENU_SAMPLE_DELAY_MS = 700;
 const GUIDEVAULT_SECONDARY_COVER_DELAY_MS = 2600;
 const GUIDEVAULT_SECONDARY_COVER_BATCH_SIZE = 4;
+const GUIDEVAULT_PRIMARY_COVER_BATCH_SIZE = 10;
+const GUIDEVAULT_PRIMARY_COVER_DELAY_MS = 70;
+const GUIDEVAULT_COVER_VIEWPORT_PRIME_PADDING = 950;
 const GUIDEVAULT_CATEGORY_PRIMARY_PREWARM_LIMIT = 96;
 const GUIDEVAULT_CATEGORY_PRIMARY_PREWARM_BATCH_SIZE = 8;
 const GUIDEVAULT_CATEGORY_PRIMARY_PREWARM_DELAY_MS = 110;
@@ -119,6 +124,7 @@ const GUIDEVAULT_CATEGORY_VISIBLE_COVER_EAGER_LIMIT = 16;
 const GUIDEVAULT_COVER_RESULT_CACHE_KEY = 'guidevault.coverResultCache.v1';
 const GUIDEVAULT_COVER_RESULT_CACHE_LIMIT = 1600;
 const GUIDEVAULT_TRANSPARENT_COVER_PLACEHOLDER = 'data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///ywAAAAAAQABAAACAUwAOw==';
+const GUIDEVAULT_GRID_COVER_THUMB_WIDTH = 360;
 
 let guidevaultLibrarySearchTimer = null;
 let guidevaultVirtualResizeAttached = false;
@@ -132,6 +138,8 @@ let guidevaultHomeShelfCache = new Map();
 let guidevaultStartupStatusHideTimer = null;
 let guidevaultSecondaryCoverPrimeTimer = 0;
 const guidevaultSecondaryCoverPrimeQueue = new Set();
+let guidevaultPrimaryCoverPrimeTimer = 0;
+const guidevaultPrimaryCoverPrimeQueue = new Set();
 let guidevaultCategoryPrimaryPrewarmTimer = 0;
 const guidevaultCategoryPrimaryPrewarmQueue = [];
 const guidevaultCategoryPrimaryPrewarmSeen = new Set();
@@ -367,6 +375,12 @@ function platformIconBadgeHtml(name) {
   const icon = platformIconHtml(label, 'platform-icon tiny');
   return `<span class="card-platform-icon-badge" title="${escapeForAttribute(label)}" aria-label="${escapeForAttribute(label)}">${icon || `<span>${escapeHtml(platformInitials(label))}</span>`}</span>`;
 }
+function magazinePublicationIconHtml(sizeClass = 'magazine-publication-icon') {
+  return `<span class="${escapeForAttribute(sizeClass)}" aria-hidden="true">â–¦</span>`;
+}
+function categoryDisplayIconHtml(kind, name, sizeClass = 'platform-icon tiny') {
+  return kind === 'Magazine' ? magazinePublicationIconHtml(sizeClass.includes('large') ? 'magazine-publication-icon large' : 'magazine-publication-icon tiny') : platformIconHtml(name, sizeClass);
+}
 function libraryCardPlatformMetaHtml(item) {
   const platforms = associatedPlatformsOf(item);
   if (item?.kind === 'Strategy Guide' && hasMultipleAssociatedPlatforms(platforms)) {
@@ -376,7 +390,8 @@ function libraryCardPlatformMetaHtml(item) {
     </div>`;
   }
   const category = categoryOf(item);
-  return `<small class="card-category">${platformIconHtml(category, 'platform-icon tiny')}<span>${escapeHtml(category)}${hasSequence(item) ? ` \u2022 #${escapeHtml(item.issueNumber)}` : ''}</span></small>`;
+  const icon = categoryDisplayIconHtml(item?.kind || '', category, 'platform-icon tiny');
+  return `<small class="card-category">${icon}<span>${escapeHtml(category)}${hasSequence(item) ? ` \u2022 #${escapeHtml(item.issueNumber)}` : ''}</span></small>`;
 }
 function isMultiPlatformBucketName(value) {
   return /^multi[-\s]*platform(?: strategy guides?)?$/i.test(String(value || '').trim());
@@ -874,13 +889,22 @@ function renderReadingProfilePresetList() {
   if (!list) return;
   const profiles = state.readingProfiles || loadReadingProfiles();
   const presets = allReadingProfilePresets();
+  const selectedId = $('readingProfilePresetSelect')?.value || profiles.defaultPresetId || 'default';
   if (!presets.length) {
     list.innerHTML = '<p class="sub">No reading profile presets yet.</p>';
     return;
   }
   list.innerHTML = presets.map(preset => {
-    const badge = preset.id === profiles.defaultPresetId ? '<span class="pill">Default</span>' : '';
-    return `<button class="reading-profile-preset-row" type="button" data-profile-id="${escapeHtml(preset.id)}"><span><b>${escapeHtml(preset.name || 'Reading Profile')}</b><em>${escapeHtml(readingProfileLabel(preset))}</em></span>${badge}</button>`;
+    const badges = [];
+    if (preset.id === profiles.defaultPresetId) badges.push('<span class="pill reading-profile-default-pill">Default</span>');
+    if (preset.id === selectedId) badges.push('<span class="pill reading-profile-active-pill">Selected</span>');
+    const displayLabel = displayModeLabel(preset.displayMode || preset.display || 1);
+    const transitionText = transitionLabel(preset.transitionMode || preset.transition || 'stable');
+    return `<button class="reading-profile-preset-row${preset.id === selectedId ? ' active' : ''}" type="button" data-profile-id="${escapeHtml(preset.id)}">
+      <span class="reading-profile-preset-main"><b>${escapeHtml(preset.name || 'Reading Profile')}</b><em>${escapeHtml(readingProfileLabel(preset))}</em></span>
+      <span class="reading-profile-preset-visual"><span>${escapeHtml(displayLabel)}</span><span>${escapeHtml(transitionText)}</span></span>
+      <span class="reading-profile-preset-badges">${badges.join('')}</span>
+    </button>`;
   }).join('');
 }
 
@@ -1569,9 +1593,157 @@ function profileRecentReviewableItems(stats, limit = 12) {
   });
   return ids.slice(0, limit);
 }
+
+function profileReviewKindWord(itemOrKind = null) {
+  const kind = typeof itemOrKind === 'string' ? itemOrKind : String(itemOrKind?.kind || itemOrKind?.Kind || '').trim();
+  const normalized = normalizeReadingKindGroup(kind) || kind;
+  if (normalized === 'Manual') return 'Manual';
+  if (normalized === 'Magazine') return 'Magazine';
+  if (normalized === 'Strategy Guide') return 'Guide';
+  return 'Item';
+}
+function profileReviewRatingLabel(itemOrKind = null) {
+  return `${profileReviewKindWord(itemOrKind)} Rating`;
+}
+function profileReviewCleanSequenceValue(value, title = '') {
+  let text = String(value || '').trim();
+  if (!text) return '';
+  const titleText = String(title || '').trim();
+  if (titleText && text.toLowerCase().startsWith(titleText.toLowerCase())) {
+    text = text.slice(titleText.length).trim();
+  }
+  text = text
+    .replace(/^[\s:;\-â€“â€”â€¢]+/, '')
+    .replace(/^(issue|iss\.?|no\.?|number|num\.?|#)\s*#?/i, '')
+    .replace(/^[\s:;\-â€“â€”â€¢#]+/, '')
+    .trim();
+  const hashMatch = text.match(/#\s*([0-9]+[A-Za-z]?)\b/);
+  if (hashMatch) text = hashMatch[1];
+  const trailingNumber = text.match(/\b([0-9]+[A-Za-z]?)\s*$/);
+  if (trailingNumber && /[A-Za-z]/.test(text.replace(trailingNumber[1], ''))) text = trailingNumber[1];
+  if (/^0+\d+$/.test(text)) text = String(Number(text));
+  return text.trim();
+}
+function profileReviewItemSequenceText(item = {}) {
+  if (!item || typeof item !== 'object') return '';
+  const normalizedKind = normalizeReadingKindGroup(item.kind || item.Kind || '') || String(item.kind || item.Kind || '').trim();
+  if (normalizedKind !== 'Magazine') return '';
+  const title = displayTitle(item) || '';
+  const issue = profileReviewCleanSequenceValue(item.issueNumber || item.IssueNumber || '', title);
+  const volume = profileReviewCleanSequenceValue(item.volume || item.Volume || '', title);
+  const number = profileReviewCleanSequenceValue(item.number || item.Number || item.issueInVolume || '', title);
+  if (volume && number) return `Vol. ${volume} No. ${number}`;
+  if (volume && issue) return `Vol. ${volume} â€¢ Issue #${issue}`;
+  if (issue) return `Issue #${issue}`;
+  if (number) return `Issue #${number}`;
+  return '';
+}
+function profileReviewItemYearText(item = {}) {
+  const value = String(item.year || item.Year || item.coverDate || item.CoverDate || item.publicationDate || '').trim();
+  const year = value.match(/\b(19|20)\d{2}\b/)?.[0] || '';
+  return year;
+}
+function profileReviewItemOptionLabel(item = {}) {
+  const title = displayTitle(item) || 'Untitled item';
+  const sequence = profileReviewItemSequenceText(item);
+  return sequence ? `${title} - ${sequence}` : title;
+}
+function profileReviewSelectedPreviewHtml(item = null) {
+  if (!item) {
+    return `<div class="profile-review-selected-preview is-empty"><div class="profile-review-selected-cover fallback">GV</div><div><strong>No recent item selected</strong><span>Open something in the reader first.</span></div></div>`;
+  }
+  const title = displayTitle(item) || 'Untitled item';
+  const kindWord = profileReviewKindWord(item);
+  const sequence = profileReviewItemSequenceText(item);
+  const year = profileReviewItemYearText(item);
+  const meta = [kindWord, sequence, year].filter(Boolean).join(' â€¢ ');
+  const img = `<img src="${escapeForAttribute(coverUrl(item, { width: 280 }))}" alt="" loading="eager" />`;
+  return `<div class="profile-review-selected-preview" id="profileReviewSelectedPreviewCard">
+    <div class="profile-review-selected-cover">${img}</div>
+    <div class="profile-review-selected-copy"><span>Reviewing</span><strong>${escapeHtml(title)}</strong>${meta ? `<em>${escapeHtml(meta)}</em>` : ''}</div>
+  </div>`;
+}
+function updateProfileReviewSelectedPreview(item = null) {
+  const host = $('profileReviewSelectedPreview');
+  if (host) host.innerHTML = profileReviewSelectedPreviewHtml(item);
+  const label = $('profileReviewRatingLabel');
+  if (label) label.textContent = profileReviewRatingLabel(item);
+}
+function clampReviewRating(value, fallback = 0) {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) return Math.max(0, Math.min(5, Number(fallback || 0)));
+  return Math.max(0, Math.min(5, parsed));
+}
 function profileReviewStars(value) {
-  const rating = Math.max(0, Math.min(5, Number(value || 0)));
+  const rating = Math.round(clampReviewRating(value, 0));
   return rating ? '\u2605'.repeat(rating) + '\u2606'.repeat(5 - rating) : 'No rating';
+}
+function reviewRatingTone(value) {
+  const rating = clampReviewRating(value, 0);
+  if (!rating) return { hue: 208, color: 'hsl(208 16% 66%)' };
+  const hue = Math.round(((rating - 1) / 4) * 120);
+  return { hue, color: `hsl(${hue} 86% 58%)` };
+}
+function reviewRatingStyleAttr(value) {
+  const tone = reviewRatingTone(value);
+  const style = [
+    `--review-rating-hue:${tone.hue}`,
+    `--review-rating-color:${tone.color}`,
+    `--review-rating-soft:hsla(${tone.hue},86%,58%,.16)`,
+    `--review-rating-glow:hsla(${tone.hue},86%,58%,.30)`
+  ].join(';');
+  return ` style="${escapeForAttribute(style)}"`;
+}
+function reviewRatingStarsHtml(value, className = 'review-rating-stars') {
+  return `<span class="${escapeForAttribute(className)}"${reviewRatingStyleAttr(value)}>${escapeHtml(profileReviewStars(value))}</span>`;
+}
+function normalizeReviewVisibility(value) {
+  return String(value || '').trim().toLowerCase() === 'public' ? 'public' : 'private';
+}
+function isPublicReview(review) {
+  return normalizeReviewVisibility(review?.visibility) === 'public' || review?.isPublic === true;
+}
+function profileReviewVisibilityLabel(review) {
+  return isPublicReview(review) ? 'Public' : 'Private';
+}
+function currentProfileDisplayName() {
+  const profile = state.auth.profile || readLoginProfile() || {};
+  return String(profile.username || profile.email || 'Guidevault user').trim() || 'Guidevault user';
+}
+function currentProfileAvatarDataUrl() {
+  const profile = state.auth.profile || readLoginProfile() || {};
+  return String(profile.avatarDataUrl || '').trim();
+}
+function reviewAuthorLabel(review = {}) {
+  return String(review.userDisplayName || review.author || review.user || 'Guidevault user').trim() || 'Guidevault user';
+}
+function reviewAuthorAvatarDataUrl(review = {}) {
+  const direct = String(review.avatarDataUrl || review.userAvatarDataUrl || review.authorAvatarDataUrl || '').trim();
+  if (direct) return direct;
+  const user = String(review.user || '').trim().toLowerCase();
+  if (user && user === profileUserKey()) return currentProfileAvatarDataUrl();
+  return '';
+}
+function detailReviewAvatarHtml(review = {}) {
+  const avatar = reviewAuthorAvatarDataUrl(review);
+  const author = reviewAuthorLabel(review);
+  if (avatar) {
+    return `<div class="detail-review-avatar has-image" title="${escapeForAttribute(author)}"><img src="${escapeForAttribute(avatar)}" alt="" loading="lazy" /></div>`;
+  }
+  return `<div class="detail-review-avatar is-generic" title="${escapeForAttribute(author)}" aria-hidden="true"><svg viewBox="0 0 24 24" focusable="false"><path d="M12 12.4c2.4 0 4.35-1.95 4.35-4.35S14.4 3.7 12 3.7 7.65 5.65 7.65 8.05 9.6 12.4 12 12.4Zm0 2.1c-3.45 0-6.45 1.72-7.95 4.28-.48.82.12 1.82 1.07 1.82h13.76c.95 0 1.55-1 1.07-1.82-1.5-2.56-4.5-4.28-7.95-4.28Z"/></svg></div>`;
+}
+function publicReviewsForItemFromLocal(itemId) {
+  const id = String(itemId || '');
+  if (!id) return [];
+  return readProfileReviews().filter(review => String(review.itemId || '') === id && isPublicReview(review));
+}
+function mergeReviewLists(...lists) {
+  const map = new Map();
+  lists.flat().filter(Boolean).forEach(review => {
+    const key = String(review.id || `${review.user || 'user'}:${review.itemId || ''}:${review.updatedAt || review.createdAt || ''}`);
+    map.set(key, { ...review, visibility: normalizeReviewVisibility(review.visibility), rating: Math.max(1, Math.min(5, Number(review.rating || 5))) });
+  });
+  return [...map.values()].sort((a, b) => (dateValue(b.updatedAt || b.createdAt) || 0) - (dateValue(a.updatedAt || a.createdAt) || 0));
 }
 function renderProfileReviews(stats) {
   const host = $('profileReviewsContent');
@@ -1582,27 +1754,31 @@ function renderProfileReviews(stats) {
   const selectedItem = recentItems.find(item => String(item.id || item.Id || '') === previousSelected) || recentItems[0] || null;
   const selectedId = String(selectedItem?.id || selectedItem?.Id || '');
   const existing = selectedId ? reviews.find(review => String(review.itemId || '') === selectedId) : null;
-  const options = recentItems.map(item => `<option value="${escapeForAttribute(item.id || item.Id || '')}">${escapeHtml(displayTitle(item))}</option>`).join('');
+  const options = recentItems.map(item => `<option value="${escapeForAttribute(item.id || item.Id || '')}">${escapeHtml(profileReviewItemOptionLabel(item))}</option>`).join('');
   const list = reviews.length ? reviews.map(review => {
     const item = review.itemId ? stats.lookup.get(String(review.itemId)) : null;
     const title = item ? displayTitle(item) : (review.title || 'Unknown item');
     const kind = item?.kind || review.kind || 'Item';
     const cover = item ? `<img loading="lazy" src="${coverUrl(item)}" alt="" />` : '<span class="profile-stat-preview-fallback">GV</span>';
-    return `<article class="profile-review-card">${cover}<div><div class="profile-review-card-head"><strong>${escapeHtml(title)}</strong><span>${escapeHtml(profileReviewStars(review.rating))}</span></div><p>${escapeHtml(review.text || '')}</p><em>${escapeHtml(kind)} \u2022 updated ${escapeHtml(formatProfileDateWithRelative(review.updatedAt || review.createdAt))}</em><button class="ghost mini profile-review-delete" type="button" data-profile-review-delete="${escapeForAttribute(review.id)}">Delete review</button></div></article>`;
+    return `<article class="profile-review-card">${cover}<div><div class="profile-review-card-head"><strong>${escapeHtml(title)}</strong>${reviewRatingStarsHtml(review.rating, 'profile-review-rating')}</div><div class="profile-review-visibility ${isPublicReview(review) ? 'public' : 'private'}">${escapeHtml(profileReviewVisibilityLabel(review))} review</div><p>${escapeHtml(review.text || '')}</p><em>${escapeHtml(kind)} \u2022 updated ${escapeHtml(formatProfileDateWithRelative(review.updatedAt || review.createdAt))}</em><button class="ghost mini profile-review-delete" type="button" data-profile-review-delete="${escapeForAttribute(review.id)}">Delete review</button></div></article>`;
   }).join('') : '<article class="settings-card"><p class="sub">No reviews yet. Choose a recently read item and write the first one.</p></article>';
   host.innerHTML = `
     <div class="profile-review-layout">
       <article class="settings-card profile-review-editor">
         <h2>Write a Review</h2>
-        <p class="sub">Pick something from your recent reads and save a quick personal review.</p>
+        <div id="profileReviewSelectedPreview">${profileReviewSelectedPreviewHtml(selectedItem)}</div>
         ${recentItems.length ? `
           <label>Recently read item<select id="profileReviewItemSelect">${options}</select></label>
-          <label>Rating<select id="profileReviewRating">
+          <label><span id="profileReviewRatingLabel">${escapeHtml(profileReviewRatingLabel(selectedItem))}</span><select id="profileReviewRating">
             <option value="5">5 - Loved it</option>
             <option value="4">4 - Strong</option>
             <option value="3">3 - Good enough</option>
             <option value="2">2 - Rough</option>
             <option value="1">1 - Not useful</option>
+          </select></label>
+          <label>Visibility<select id="profileReviewVisibility">
+            <option value="private">Private - only show in my profile</option>
+            <option value="public">Public - show on the item Reviews tab</option>
           </select></label>
           <label>Review<textarea id="profileReviewText" rows="7" maxlength="2000" placeholder="What stood out? Was it complete, useful, nostalgic, or hard to read?">${escapeHtml(existing?.text || '')}</textarea></label>
           <div class="profile-review-actions"><button id="profileSaveReview" class="primary" type="button">Save Review</button><button id="profileClearReview" class="ghost" type="button">Clear</button></div>
@@ -1615,19 +1791,26 @@ function renderProfileReviews(stats) {
   if (select && selectedId) select.value = selectedId;
   const rating = $('profileReviewRating');
   if (rating) rating.value = String(existing?.rating || 5);
+  const visibility = $('profileReviewVisibility');
+  if (visibility) visibility.value = normalizeReviewVisibility(existing?.visibility || (existing?.isPublic ? 'public' : 'private'));
+  updateProfileReviewSelectedPreview(selectedItem);
 }
 function syncProfileReviewEditorFromSelection() {
   const stats = profilePageStats();
   const itemId = $('profileReviewItemSelect')?.value || '';
+  const item = itemId ? stats.lookup.get(String(itemId)) : null;
   const existing = profileReviewsForCurrentUser().find(review => String(review.itemId || '') === String(itemId));
+  updateProfileReviewSelectedPreview(item);
   if ($('profileReviewRating')) $('profileReviewRating').value = String(existing?.rating || 5);
+  if ($('profileReviewVisibility')) $('profileReviewVisibility').value = normalizeReviewVisibility(existing?.visibility || (existing?.isPublic ? 'public' : 'private'));
   if ($('profileReviewText')) $('profileReviewText').value = existing?.text || '';
   if ($('profileReviewStatus')) $('profileReviewStatus').textContent = existing ? 'Loaded your saved review for this item.' : '';
 }
-function saveProfileReviewFromForm() {
+async function saveProfileReviewFromForm() {
   const select = $('profileReviewItemSelect');
   const itemId = select?.value || '';
   const rating = Math.max(1, Math.min(5, Number($('profileReviewRating')?.value || 5)));
+  const visibility = normalizeReviewVisibility($('profileReviewVisibility')?.value || 'private');
   const text = String($('profileReviewText')?.value || '').trim();
   const status = $('profileReviewStatus');
   if (!itemId) { if (status) status.textContent = 'Choose a recently read item first.'; return; }
@@ -1640,30 +1823,143 @@ function saveProfileReviewFromForm() {
   const nextReview = {
     id: existingIndex >= 0 ? reviews[existingIndex].id : `review-${Date.now()}-${Math.random().toString(16).slice(2)}`,
     user,
+    userDisplayName: currentProfileDisplayName(),
+    avatarDataUrl: currentProfileAvatarDataUrl(),
     itemId,
     title: item ? displayTitle(item) : (select?.selectedOptions?.[0]?.textContent || 'Unknown item'),
     kind: item?.kind || '',
+    issueNumber: item?.issueNumber || item?.IssueNumber || '',
+    volume: item?.volume || item?.Volume || '',
+    number: item?.number || item?.Number || '',
     rating,
     text,
+    visibility,
+    isPublic: visibility === 'public',
     createdAt: existingIndex >= 0 ? reviews[existingIndex].createdAt : now,
     updatedAt: now
   };
   if (existingIndex >= 0) reviews[existingIndex] = nextReview;
   else reviews.push(nextReview);
   saveProfileReviews(reviews);
+  let reviewStatusMessage = '';
+  try {
+    const synced = await syncProfileReviewToServer(nextReview);
+    if (synced?.review) {
+      const refreshed = readProfileReviews();
+      const idx = refreshed.findIndex(review => String(review.id || '') === String(nextReview.id || ''));
+      if (idx >= 0) {
+        refreshed[idx] = { ...refreshed[idx], ...synced.review, itemId: synced.review.itemId || nextReview.itemId };
+        saveProfileReviews(refreshed);
+      }
+      state.itemReviews.cache[String(itemId)] = Array.isArray(synced.reviews) ? synced.reviews : state.itemReviews.cache[String(itemId)];
+    }
+    reviewStatusMessage = visibility === 'public' ? 'Public review saved and available on the item Reviews tab.' : 'Private review saved to your profile.';
+  } catch {
+    reviewStatusMessage = 'Review saved locally. Server review sync is unavailable.';
+  }
   renderProfileReviews(profilePageStats());
-  if ($('profileReviewStatus')) $('profileReviewStatus').textContent = 'Review saved.';
+  if ($('profileReviewStatus')) $('profileReviewStatus').textContent = reviewStatusMessage;
+  if (state.selected && String(itemIdOf(state.selected)) === String(itemId)) renderDetailReviews(state.selected);
 }
 function clearProfileReviewForm() {
   if ($('profileReviewText')) $('profileReviewText').value = '';
   if ($('profileReviewRating')) $('profileReviewRating').value = '5';
+  if ($('profileReviewVisibility')) $('profileReviewVisibility').value = 'private';
   if ($('profileReviewStatus')) $('profileReviewStatus').textContent = '';
 }
-function deleteProfileReview(reviewId) {
+async function deleteProfileReview(reviewId) {
   const id = String(reviewId || '');
   if (!id) return;
+  const existing = readProfileReviews().find(review => String(review.id || '') === id);
   saveProfileReviews(readProfileReviews().filter(review => String(review.id || '') !== id));
+  if (existing?.itemId) state.itemReviews.cache[String(existing.itemId)] = (state.itemReviews.cache[String(existing.itemId)] || []).filter(review => String(review.id || '') !== id);
+  try { await fetch(`/api/reviews/${encodeURIComponent(id)}?user=${encodeURIComponent(profileUserKey())}`, { method: 'DELETE' }); } catch {}
   renderProfileReviews(profilePageStats());
+  if (state.selected && existing?.itemId && String(itemIdOf(state.selected)) === String(existing.itemId)) renderDetailReviews(state.selected);
+}
+async function syncProfileReviewToServer(review) {
+  const itemId = String(review?.itemId || '');
+  if (!itemId) return null;
+  const response = await fetch(`/api/items/${encodeURIComponent(itemId)}/reviews`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      id: review.id,
+      user: review.user || profileUserKey(),
+      userDisplayName: review.userDisplayName || currentProfileDisplayName(),
+      avatarDataUrl: review.avatarDataUrl || currentProfileAvatarDataUrl(),
+      title: review.title || '',
+      kind: review.kind || '',
+      issueNumber: review.issueNumber || '',
+      volume: review.volume || '',
+      number: review.number || '',
+      rating: review.rating || 5,
+      text: review.text || '',
+      visibility: normalizeReviewVisibility(review.visibility)
+    })
+  });
+  if (!response.ok) throw new Error('Review sync failed');
+  return response.json();
+}
+function publicReviewsForItem(itemId) {
+  const id = String(itemId || '');
+  return mergeReviewLists(state.itemReviews.cache[id] || [], publicReviewsForItemFromLocal(id));
+}
+function detailReviewSummaryHtml(reviews) {
+  if (!reviews.length) {
+    return `
+      <div class="detail-review-score-main is-empty"><strong>â€”</strong><span>No rating yet</span></div>
+      <div class="detail-review-score-context"><span>No reviews yet</span><em>Be the first to add a score from your profile.</em></div>`;
+  }
+  const avg = reviews.reduce((sum, review) => sum + clampReviewRating(review.rating, 5), 0) / reviews.length;
+  const avgText = avg.toFixed(1);
+  return `
+    <div class="detail-review-score-main"${reviewRatingStyleAttr(avg)}><strong>${avgText}</strong><span>average rating</span></div>
+    <div class="detail-review-score-context"${reviewRatingStyleAttr(avg)}>${reviewRatingStarsHtml(avg, 'detail-review-summary-stars')}<em>Based on ${reviews.length} public review${reviews.length === 1 ? '' : 's'}</em></div>`;
+}
+function detailPublicReviewsHtml(item, reviews) {
+  if (!reviews.length) {
+    return `<article class="detail-review-empty"><h3>No reviews yet</h3><p class="sub">Shared profile reviews for ${escapeHtml(displayTitle(item))} will appear here.</p></article>`;
+  }
+  return reviews.map(review => {
+    const author = reviewAuthorLabel(review);
+    const date = formatProfileDateWithRelative(review.updatedAt || review.createdAt);
+    return `<article class="detail-review-card">${detailReviewAvatarHtml(review)}<div class="detail-review-main"><div class="detail-review-head"><div><strong>${escapeHtml(author)}</strong><em>${escapeHtml(date)}</em></div>${reviewRatingStarsHtml(review.rating, 'detail-review-rating')}</div><p>${escapeHtml(review.text || '')}</p></div></article>`;
+  }).join('');
+}
+function renderDetailReviews(item, loading = false) {
+  const host = $('detailReviewsContent');
+  if (!host) return;
+  const itemId = itemIdOf(item);
+  const reviews = publicReviewsForItem(itemId);
+  host.innerHTML = `
+    <div class="detail-reviews-header">
+      <div class="detail-reviews-summary">${detailReviewSummaryHtml(reviews)}</div>
+    </div>
+    ${loading ? '<p class="sub detail-review-loading">Refreshing reviews...</p>' : ''}
+    <div class="detail-review-list">${detailPublicReviewsHtml(item, reviews)}</div>`;
+}
+async function loadPublicReviewsForItem(item, force = false) {
+  const itemId = itemIdOf(item);
+  if (!itemId) return;
+  if (!force && Array.isArray(state.itemReviews.cache[itemId])) {
+    renderDetailReviews(item);
+    return;
+  }
+  if (state.itemReviews.loading[itemId]) return;
+  state.itemReviews.loading[itemId] = true;
+  renderDetailReviews(item, true);
+  try {
+    const response = await fetch(`/api/items/${encodeURIComponent(itemId)}/reviews`, { cache: 'no-store' });
+    if (response.ok) {
+      const data = await response.json();
+      state.itemReviews.cache[itemId] = Array.isArray(data.reviews) ? data.reviews : [];
+    }
+  } catch {}
+  finally {
+    state.itemReviews.loading[itemId] = false;
+    if (state.selected && itemIdOf(state.selected) === itemId) renderDetailReviews(state.selected);
+  }
 }
 function renderProfileActivityList(stats) {
   const host = $('profileActivityList');
@@ -1944,7 +2240,7 @@ function setGuidevaultPreferenceValue(key, enabled) {
   if (key === 'useColorscape') {
     setPreferencesStatus(enabled ? 'Colorscape enabled. Child toggles now control where the cover-color effect appears.' : 'Colorscape disabled. Theme gradients will be used everywhere.', enabled ? 'success' : 'info');
   } else {
-    setPreferencesStatus(`${label} ${enabled ? 'enabled' : 'disabled'}${masterOff ? ' — enable Use Colorscape to apply it.' : '.'}`, enabled ? 'success' : 'info');
+    setPreferencesStatus(`${label} ${enabled ? 'enabled' : 'disabled'}${masterOff ? ' â€” enable Use Colorscape to apply it.' : '.'}`, enabled ? 'success' : 'info');
   }
   if (document.body.classList.contains('detail-page-mode')) applyColorscapeToDetail(state.selected);
   else clearColorscapeDetailTheme();
@@ -2919,7 +3215,7 @@ function renderOpdsSettings() {
           <td><span class="opds-masked-key">${maskOpdsKey(key.secret)}</span><button class="opds-inline-copy" type="button" data-opds-action="copy-key" title="Copy key">\u29C9</button></td>
           <td>${escapeHtml(key.expiresAt ? formatOpdsDate(key.expiresAt) : 'Never')}</td>
           <td>${escapeHtml(formatOpdsDate(key.lastAccessed))}</td>
-          <td class="opds-actions-cell"><button class="opds-action-button" type="button" data-opds-action="rotate" title="Rotate key">\u27F3</button><button class="opds-action-button danger" type="button" data-opds-action="delete" title="Delete key" aria-label="Delete key">${deviceIcon('trash')}</button></td>
+          <td class="opds-actions-cell"><button class="opds-action-button opds-rotate-key" type="button" data-opds-action="rotate" title="Rotate key">\u27F3</button><button class="opds-action-button danger" type="button" data-opds-action="delete" title="Delete key" aria-label="Delete key">${deviceIcon('trash')}</button></td>
         </tr>`).join('')
       : '<tr><td colspan="5" class="opds-empty-row">No authorization keys yet. Select + New to generate one.</td></tr>';
   }
@@ -2929,6 +3225,10 @@ function renderOpdsSettings() {
 
 function setServerSettingsStatus(message = '', tone = '') {
   const el = $('serverSettingsStatus');
+  if (el) { el.textContent = message || ''; el.dataset.tone = tone || ''; }
+}
+function setIntegrationsSettingsStatus(message = '', tone = '') {
+  const el = $('integrationsSettingsStatus');
   if (el) { el.textContent = message || ''; el.dataset.tone = tone || ''; }
 }
 function setMediaSettingsStatus(message = '', tone = '') {
@@ -3014,27 +3314,32 @@ async function saveServerSettings(source = 'general') {
     if (!res.ok) throw new Error(`Save failed: ${res.status}`);
     state.serverSettings = normalizeServerSettings(await res.json());
     renderServerSettings();
-    const msg = source === 'media' ? 'Media settings saved.' : 'General server settings saved. Restart Guidevault if you changed listener values.';
-    source === 'media' ? setMediaSettingsStatus(msg, 'success') : setServerSettingsStatus(msg, 'success');
+    const msg = source === 'media' ? 'Media settings saved.' : (source === 'integrations' ? 'Integrations saved.' : 'General server settings saved. Restart Guidevault if you changed listener values.');
+    if (source === 'media') setMediaSettingsStatus(msg, 'success');
+    else if (source === 'integrations') setIntegrationsSettingsStatus(msg, 'success');
+    else setServerSettingsStatus(msg, 'success');
   } catch (err) {
     console.error('Unable to save server settings', err);
     const msg = `Unable to save settings: ${err?.message || err}`;
-    source === 'media' ? setMediaSettingsStatus(msg, 'error') : setServerSettingsStatus(msg, 'error');
+    if (source === 'media') setMediaSettingsStatus(msg, 'error');
+    else if (source === 'integrations') setIntegrationsSettingsStatus(msg, 'error');
+    else setServerSettingsStatus(msg, 'error');
   }
 }
 async function testIgdbCredentials() {
   const payload = collectServerSettings();
-  setServerSettingsStatus('Saving and testing IGDB credentials...', 'info');
+  const setIgdbStatus = $('integrationsSettingsStatus') ? setIntegrationsSettingsStatus : setServerSettingsStatus;
+  setIgdbStatus('Saving and testing IGDB credentials...', 'info');
   try {
     const saveRes = await fetch('/api/server/settings', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
     if (!saveRes.ok) throw new Error(`Save failed: ${saveRes.status}`);
     state.serverSettings = normalizeServerSettings(await saveRes.json());
     renderServerSettings();
     const data = await metadataBatchFetchJson('/api/igdb/status');
-    setServerSettingsStatus(data?.message || 'IGDB credentials verified.', 'success');
+    setIgdbStatus(data?.message || 'IGDB credentials verified.', 'success');
   } catch (err) {
     console.error('IGDB credential test failed', err);
-    setServerSettingsStatus(`IGDB credential test failed: ${metadataBatchFriendlySourceError('igdb', err?.message || err)}`, 'error');
+    setIgdbStatus(`IGDB credential test failed: ${metadataBatchFriendlySourceError('igdb', err?.message || err)}`, 'error');
   }
 }
 function resetServerDefaults() {
@@ -3325,28 +3630,103 @@ function renderEmailHistory() {
     </article>`;
   }).join('') : '<article class="settings-card"><p class="sub">No email has been sent or attempted yet.</p></article>';
 }
+function usersSettingsRuntime() {
+  if (!state.usersSettingsRuntime) state.usersSettingsRuntime = { loaded: false, loading: false, requestId: 0, loadTimer: 0, renderedHash: '' };
+  return state.usersSettingsRuntime;
+}
+function deferAfterVisiblePaint(callback, delayMs = 0) {
+  const run = () => {
+    if (delayMs > 0) window.setTimeout(callback, delayMs);
+    else callback();
+  };
+  if (typeof requestAnimationFrame === 'function') {
+    requestAnimationFrame(() => requestAnimationFrame(run));
+  } else {
+    window.setTimeout(run, delayMs || 0);
+  }
+}
+function renderUsersLoadingState() {
+  const usersHost = $('usersList');
+  if (usersHost && !usersHost.dataset.loadingRendered) {
+    usersHost.dataset.loadingRendered = '1';
+    usersHost.innerHTML = '<article class="settings-card user-card refined-user-card users-loading-card"><div class="user-avatar-badge generic">GV</div><div class="user-card-main"><h3>Loading users...</h3><p class="sub">Opening the Users panel now. Account details will refresh in the background.</p></div></article>';
+  }
+  const libHost = $('inviteLibrariesList');
+  if (libHost && !libHost.dataset.loadingRendered) {
+    libHost.dataset.loadingRendered = '1';
+    libHost.innerHTML = '<p class="sub users-inline-loading">Loading library access...</p>';
+  }
+  const permHost = $('invitePermissionsList');
+  if (permHost && !permHost.dataset.loadingRendered) {
+    permHost.dataset.loadingRendered = '1';
+    permHost.innerHTML = '<p class="sub users-inline-loading">Loading permissions...</p>';
+  }
+}
+function openUsersSettingsPanel() {
+  const runtime = usersSettingsRuntime();
+  const hasCachedData = runtime.loaded || !!((state.usersSettings?.users || []).length || (state.usersSettings?.libraries || []).length || (state.usersSettings?.permissions || []).length);
+  if (hasCachedData) {
+    renderUsersSettings({ allowSkip: true });
+    return;
+  }
+  renderUsersLoadingState();
+  scheduleUsersSettingsLoad(false, 90);
+}
+function scheduleUsersSettingsLoad(showStatus = false, delayMs = 0) {
+  const runtime = usersSettingsRuntime();
+  if (runtime.loadTimer) {
+    window.clearTimeout(runtime.loadTimer);
+    runtime.loadTimer = 0;
+  }
+  deferAfterVisiblePaint(() => {
+    runtime.loadTimer = window.setTimeout(() => {
+      runtime.loadTimer = 0;
+      loadUsersSettings(showStatus);
+    }, Math.max(0, delayMs));
+  });
+}
 async function loadUsersSettings(showStatus = false) {
+  const runtime = usersSettingsRuntime();
+  if (runtime.loading) return;
+  runtime.loading = true;
+  const requestId = ++runtime.requestId;
   try {
     const res = await fetch('/api/users', { cache: 'no-store' });
     if (!res.ok) throw new Error(`Users request failed: ${res.status}`);
     const data = await res.json();
+    if (requestId !== runtime.requestId) return;
     state.usersSettings = { users: Array.isArray(data.users) ? data.users : [], libraries: Array.isArray(data.libraries) ? data.libraries : [], permissions: Array.isArray(data.permissions) ? data.permissions : [] };
-    renderUsersSettings();
+    runtime.loaded = true;
+    runtime.loading = false;
+    deferAfterVisiblePaint(() => renderUsersSettings(), 0);
     if (showStatus) setUsersStatus('Users refreshed.', 'success');
   } catch (err) {
+    runtime.loading = false;
     console.warn('Unable to load users', err);
-    renderUsersSettings();
+    deferAfterVisiblePaint(() => renderUsersSettings(), 0);
     if (showStatus) setUsersStatus('Unable to load users from the backend.', 'error');
   }
 }
 function libraryNameForInvite(lib, index = 0) {
   return String(lib?.name || lib?.Name || lib?.libraryPath || lib?.LibraryPath || lib?.path || lib?.Path || `Library ${index + 1}`).trim();
 }
-function renderUsersSettings() {
+function renderUsersSettings(options = {}) {
   const data = state.usersSettings || { users: [], libraries: [], permissions: [] };
+  const runtime = usersSettingsRuntime();
+  const users = Array.isArray(data.users) ? data.users : [];
+  const libraries = data.libraries?.length ? data.libraries : (state.libraries || []);
+  const permissions = data.permissions?.length ? data.permissions : ['Login', 'Bookmark', 'Download', 'Read Only'];
+  const renderHash = JSON.stringify({
+    users: users.map(user => [user.email, user.displayName, user.role, user.status, user.ageRatingRestriction, user.libraries, user.permissions]),
+    libraries,
+    permissions
+  });
+  if (options.allowSkip && runtime.renderedHash === renderHash) return;
+  runtime.renderedHash = renderHash;
+
   const libHost = $('inviteLibrariesList');
   if (libHost) {
-    const libraries = data.libraries?.length ? data.libraries : (state.libraries || []);
+    delete libHost.dataset.loadingRendered;
     libHost.innerHTML = libraries.map((lib, index) => {
       const name = libraryNameForInvite(lib, index);
       return `<label class="inline-check"><input type="checkbox" value="${escapeForAttribute(name)}" checked /> <span>${escapeHtml(name)}</span></label>`;
@@ -3354,19 +3734,20 @@ function renderUsersSettings() {
   }
   const permHost = $('invitePermissionsList');
   if (permHost) {
-    const permissions = data.permissions?.length ? data.permissions : ['Login', 'Bookmark', 'Download', 'Read Only'];
+    delete permHost.dataset.loadingRendered;
     permHost.innerHTML = permissions.map(name => `<label class="inline-check"><input type="checkbox" value="${escapeForAttribute(name)}" ${['Login','Bookmark','Read Only'].includes(name) ? 'checked' : ''} /> <span>${escapeHtml(name)}</span></label>`).join('');
   }
   const usersHost = $('usersList');
   if (usersHost) {
-    usersHost.innerHTML = (data.users || []).map(user => {
+    delete usersHost.dataset.loadingRendered;
+    usersHost.innerHTML = users.map(user => {
       const initials = String(user.displayName || user.email || 'GV').trim().split(/\s+/).slice(0,2).map(x => x[0] || '').join('').toUpperCase() || 'GV';
-      const libraries = (user.libraries || []).join(', ') || 'No library access';
-      const permissions = (user.permissions || []).join(', ') || 'No permissions';
+      const userLibraries = (user.libraries || []).join(', ') || 'No library access';
+      const userPermissions = (user.permissions || []).join(', ') || 'No permissions';
       return `<article class="settings-card user-card refined-user-card">
         <div class="user-avatar-badge">${escapeHtml(initials)}</div>
         <div class="user-card-main"><h3>${escapeHtml(user.displayName || user.email || 'Invited user')}</h3><p class="sub">${escapeHtml(user.email || '')}</p><div class="user-chip-list left"><span>${escapeHtml(user.role || 'Reader')}</span><span>${escapeHtml(user.status || 'Invited')}</span><span>${escapeHtml(user.ageRatingRestriction || 'No Restriction')}</span></div></div>
-        <div class="user-access-summary"><strong>Libraries</strong><span>${escapeHtml(libraries)}</span><strong>Permissions</strong><span>${escapeHtml(permissions)}</span></div>
+        <div class="user-access-summary"><strong>Libraries</strong><span>${escapeHtml(userLibraries)}</span><strong>Permissions</strong><span>${escapeHtml(userPermissions)}</span></div>
       </article>`;
     }).join('') || '<article class="settings-card"><p class="sub">No invited users yet.</p></article>';
   }
@@ -3819,9 +4200,9 @@ function renderEmailDeviceTable(emailDevices = []) {
     body.innerHTML = emailDevices.length
       ? emailDevices.map(device => `
         <tr data-email-device-id="${escapeForAttribute(device.id || '')}">
-          <td><strong>${escapeHtml(device.name || 'Email Device')}</strong></td>
-          <td>${escapeHtml(device.email || '\u2014')}</td>
-          <td>${escapeHtml(device.platform || 'Email')}</td>
+          <td><span class="device-email-name-cell">${deviceIcon('opds')}<strong>${escapeHtml(device.name || 'Email Device')}</strong></span></td>
+          <td><span class="device-email-address">${escapeHtml(device.email || '\u2014')}</span></td>
+          <td><span class="device-badge web">${escapeHtml(device.platform || 'Email')}</span></td>
           <td><button class="device-table-action danger" type="button" data-device-email-action="delete" title="Delete device" aria-label="Delete device">${deviceIcon('trash')}</button></td>
         </tr>`).join('')
       : '<tr><td colspan="4" class="device-empty-row">No data to display</td></tr>';
@@ -5072,6 +5453,7 @@ function activateTab(tab) {
   document.querySelectorAll('.tab').forEach(b => b.classList.toggle('active', b.dataset.tab === state.activeTab));
   document.querySelectorAll('.tab-panel').forEach(p => p.classList.toggle('hidden', p.id !== `${state.activeTab}Panel`));
   if (state.activeTab === 'file-name') updateMetadataFileMaintenance();
+  if (state.activeTab === 'reviews' && state.selected) loadPublicReviewsForItem(state.selected, true);
 }
 
 function setupHomebarIconFallbacks() {
@@ -5259,7 +5641,7 @@ function libraryItemRenderFingerprint(item) {
     item.languageTag || '',
     item.region || '',
     item.pageCount || item.metadataPageCount || ''
-  ].map(value => String(value ?? '').trim()).join('¦');
+  ].map(value => String(value ?? '').trim()).join('Â¦');
 }
 
 function libraryPayloadFingerprint(items = []) {
@@ -5274,7 +5656,7 @@ function libraryPayloadFingerprint(items = []) {
   const sampleIndexes = [0, 1, 2, Math.floor(length / 2), length - 3, length - 2, length - 1]
     .filter(index => index >= 0 && index < length);
   const uniqueIndexes = [...new Set(sampleIndexes)];
-  return `${length}::${uniqueIndexes.map(index => libraryItemRenderFingerprint(list[index])).join('§')}`;
+  return `${length}::${uniqueIndexes.map(index => libraryItemRenderFingerprint(list[index])).join('Â§')}`;
 }
 
 function takeBestLibraryItems(source, limit, compare, predicate = null) {
@@ -6267,12 +6649,20 @@ function count(kind) {
   }
   return state._countCache?.[kind] || 0;
 }
-function coverUrl(item) {
+function coverUrl(item, options = {}) {
   const id = encodeURIComponent(item?.id || item?.Id || '');
+  if (!id) return '';
   const modified = item?.modified || item?.Modified || '';
   const size = item?.sizeBytes || item?.SizeBytes || '';
   const stamp = modified || size;
-  return stamp ? `/api/items/${id}/cover?v=${encodeURIComponent(stamp)}` : `/api/items/${id}/cover`;
+  const useFull = options?.full === true;
+  const width = Math.max(120, Math.min(720, Number(options?.width || GUIDEVAULT_GRID_COVER_THUMB_WIDTH) || GUIDEVAULT_GRID_COVER_THUMB_WIDTH));
+  const query = new URLSearchParams();
+  if (!useFull) query.set('w', String(width));
+  if (stamp) query.set('v', String(stamp));
+  const path = useFull ? `/api/items/${id}/cover` : `/api/items/${id}/cover-thumb`;
+  const qs = query.toString();
+  return qs ? `${path}?${qs}` : path;
 }
 
 function loadGuidevaultCoverResultCache() {
@@ -6337,6 +6727,9 @@ function scheduleCoverRetry(img) {
   img.dataset.coverAttempts = String(attempts + 1);
   img.classList.add('cover-loading');
   img.classList.remove('cover-loaded', 'cover-error');
+  const wrap = img.closest?.('.cover-wrap');
+  wrap?.classList.add('cover-pending');
+  wrap?.classList.remove('cover-ready');
   const delay = 900 + attempts * 1300;
   window.setTimeout(() => {
     if (!img.isConnected) return;
@@ -6346,18 +6739,13 @@ function scheduleCoverRetry(img) {
 
 function forceCoverRepaint(img) {
   if (!img || !img.isConnected) return;
-  // Chromium can occasionally keep archive-backed images as a black composited tile
-  // until a hover/transform invalidates the card.  Toggle a tiny, harmless repaint
-  // flag after decode/load so the cover paints immediately and persists while scrolling.
+  // Stability first: avoid forced layout/animation pulses while covers are loading.
+  // Mark the image as ready and let the browser paint naturally.
   img.classList.add('cover-loaded');
   img.classList.remove('cover-loading', 'cover-error');
-  img.style.setProperty('--gv-cover-paint-nonce', String(Date.now() % 100000));
-  requestAnimationFrame(() => {
-    if (!img.isConnected) return;
-    img.classList.add('cover-repaint-pulse');
-    void img.offsetHeight;
-    requestAnimationFrame(() => img.classList.remove('cover-repaint-pulse'));
-  });
+  const wrap = img.closest?.('.cover-wrap');
+  wrap?.classList.add('cover-ready');
+  wrap?.classList.remove('cover-pending', 'cover-error');
 }
 
 function isSecondaryCoverImage(img) {
@@ -6375,10 +6763,14 @@ function primeCoverImage(img) {
   if (!img || !img.dataset.coverSrc) return;
   const wanted = img.dataset.coverSrc;
   const current = img.getAttribute('src') || '';
+  const wrap = img.closest?.('.cover-wrap');
+  wrap?.classList.add('cover-pending');
+  wrap?.classList.remove('cover-ready', 'cover-error');
   img.loading = isSecondaryCoverImage(img) ? 'lazy' : 'eager';
   img.decoding = 'async';
   setCoverFetchPriority(img);
   img.classList.add('cover-loading');
+  img.classList.remove('cover-loaded', 'cover-error');
   if (current !== wanted) {
     img.setAttribute('src', wanted);
     return;
@@ -6402,6 +6794,29 @@ function coverImageIsNearViewport(img, padding = 180) {
   const rect = img?.getBoundingClientRect?.();
   if (!rect || !scrollerRect) return true;
   return rect.bottom >= scrollerRect.top - padding && rect.top <= scrollerRect.bottom + padding;
+}
+
+function flushPrimaryCoverPrimeQueue() {
+  guidevaultPrimaryCoverPrimeTimer = 0;
+  const batch = [];
+  for (const img of guidevaultPrimaryCoverPrimeQueue) {
+    guidevaultPrimaryCoverPrimeQueue.delete(img);
+    if (!img?.isConnected || !coverImageIsNearViewport(img, GUIDEVAULT_COVER_VIEWPORT_PRIME_PADDING + 120)) continue;
+    batch.push(img);
+    if (batch.length >= GUIDEVAULT_PRIMARY_COVER_BATCH_SIZE) break;
+  }
+  batch.forEach(primeCoverImage);
+  if (guidevaultPrimaryCoverPrimeQueue.size) {
+    guidevaultPrimaryCoverPrimeTimer = window.setTimeout(flushPrimaryCoverPrimeQueue, GUIDEVAULT_PRIMARY_COVER_DELAY_MS);
+  }
+}
+
+function queuePrimaryCoverPrime(img) {
+  if (!img || !img.dataset.coverSrc) return;
+  if ((img.getAttribute('src') || '') === img.dataset.coverSrc) return;
+  guidevaultPrimaryCoverPrimeQueue.add(img);
+  if (guidevaultPrimaryCoverPrimeTimer) return;
+  guidevaultPrimaryCoverPrimeTimer = window.setTimeout(flushPrimaryCoverPrimeQueue, 0);
 }
 
 function flushSecondaryCoverPrimeQueue() {
@@ -6603,9 +7018,9 @@ function ensureCoverPrimeObserver() {
     entries.forEach(entry => {
       if (!(entry.isIntersecting || entry.intersectionRatio > 0)) return;
       if (isSecondaryCoverImage(entry.target)) queueSecondaryCoverPrime(entry.target);
-      else primeCoverImage(entry.target);
+      else queuePrimaryCoverPrime(entry.target);
     });
-  }, { root: libraryScrollElement(), rootMargin: '220px 0px 220px 0px', threshold: 0.01 });
+  }, { root: libraryScrollElement(), rootMargin: `${GUIDEVAULT_COVER_VIEWPORT_PRIME_PADDING}px 0px ${GUIDEVAULT_COVER_VIEWPORT_PRIME_PADDING}px 0px`, threshold: 0.01 });
   return coverPrimeObserver;
 }
 
@@ -6613,11 +7028,11 @@ function primeVisibleCoverImages(root = document) {
   const primary = [];
   const secondary = [];
   root.querySelectorAll?.('img[data-cover-src]').forEach(img => {
-    if (!coverImageIsNearViewport(img, 220)) return;
+    if (!coverImageIsNearViewport(img, GUIDEVAULT_COVER_VIEWPORT_PRIME_PADDING)) return;
     if (isSecondaryCoverImage(img)) secondary.push(img);
     else primary.push(img);
   });
-  primary.forEach(primeCoverImage);
+  primary.forEach(queuePrimaryCoverPrime);
   secondary.forEach(queueSecondaryCoverPrime);
 }
 
@@ -6626,13 +7041,17 @@ function initializeCoverImages(root = document) {
   root.querySelectorAll?.('img[data-cover-src]').forEach(img => {
     if (img.dataset.coverWatch !== '1') {
       img.dataset.coverWatch = '1';
-      img.loading = isSecondaryCoverImage(img) ? 'lazy' : 'eager';
+      img.loading = 'lazy';
       img.decoding = 'async';
       setCoverFetchPriority(img);
       img.classList.add('cover-loading');
+      img.closest?.('.cover-wrap')?.classList.add('cover-pending');
       img.addEventListener('error', () => {
         img.classList.add('cover-error');
         img.classList.remove('cover-loaded', 'cover-loading');
+        const wrap = img.closest?.('.cover-wrap');
+        wrap?.classList.add('cover-error');
+        wrap?.classList.remove('cover-ready');
         img.closest?.('.category-preview-strip')?.classList.add('category-preview-missing');
         scheduleCoverRetry(img);
       });
@@ -6643,6 +7062,9 @@ function initializeCoverImages(root = document) {
           setGuidevaultCoverResult(requested, false);
           img.classList.add('cover-missing');
           img.classList.remove('cover-loaded', 'cover-loading');
+          const wrap = img.closest?.('.cover-wrap');
+          wrap?.classList.add('cover-error');
+          wrap?.classList.remove('cover-ready', 'cover-pending');
           img.closest?.('.category-preview-strip')?.classList.add('category-preview-missing');
           return;
         }
@@ -6655,6 +7077,10 @@ function initializeCoverImages(root = document) {
         }
       });
       observer?.observe(img);
+    }
+    if (img.complete && img.naturalWidth > 1 && img.naturalHeight > 1) {
+      forceCoverRepaint(img);
+      scheduleColorscapeSampleForLoadedCover(img);
     }
   });
   requestAnimationFrame(() => primeVisibleCoverImages(root));
@@ -6909,10 +7335,10 @@ function wireGroupGridCategoryDelegation(host) {
   });
 }
 
-function categoryPreviewStripHtml(items, name, cardIndex = 0) {
+function categoryPreviewStripHtml(items, name, cardIndex = 0, kind = '') {
   const covers = categoryPreviewItems(items, 1);
   if (!covers.length) {
-    return `<div class="category-preview-strip single-cover" aria-hidden="true"><div class="category-preview-empty">${platformIconHtml(name, 'platform-icon large')}</div></div>`;
+    return `<div class="category-preview-strip single-cover" aria-hidden="true"><div class="category-preview-empty">${categoryDisplayIconHtml(kind, name, 'platform-icon large')}</div></div>`;
   }
   const item = covers[0];
   const url = coverUrl(item);
@@ -6949,7 +7375,7 @@ function renderGroupGrid(id, viewMode) {
     return `<article class="category-card category-card-redesign${specialCategoryClass}" data-kind="${escapeHtml(def.kind)}" data-category="${escapeForAttribute(name)}" data-alpha="${alphaKey(name)}" data-colorscape-cover="${escapeForAttribute(colorscapeCover)}">
       <div class="category-card-content">
         <div class="category-title-line">
-          <span class="category-platform-mark">${platformIconHtml(name, 'platform-icon large')}</span>
+          <span class="category-platform-mark">${categoryDisplayIconHtml(def.kind, name, 'platform-icon large')}</span>
           <div>
             <h3 class="category-title"><span>${escapeHtml(name)}</span></h3>
             <p>${escapeHtml(secondary)}</p>
@@ -6961,7 +7387,7 @@ function renderGroupGrid(id, viewMode) {
         </div>
         <small class="category-latest">Latest: ${escapeHtml(latest)}</small>
       </div>
-      ${categoryPreviewStripHtml(items, name, cardIndex)}
+      ${categoryPreviewStripHtml(items, name, cardIndex, def.kind)}
     </article>`;
   }).join('');
   $(id).innerHTML = overview + (cards || `<div class="empty-message">${def.empty} Set a Library Root folder in Settings and scan your collection.</div>`);
@@ -7034,7 +7460,7 @@ const SIDEBAR_CATEGORY_MODE_CONFIGS = {
     label: 'Manual Series',
     empty: 'No manual series or franchise values found yet.',
     fallback: 'Unsorted Manual Series',
-    iconFor: () => '<span class="category-mini-icon" aria-hidden="true">◦</span>',
+    iconFor: () => '<span class="category-mini-icon" aria-hidden="true">â—¦</span>',
     valueForItem: item => item?.franchise || item?.gameFranchise || item?.series || ''
   },
   'strategy-platform': {
@@ -7054,7 +7480,7 @@ const SIDEBAR_CATEGORY_MODE_CONFIGS = {
     label: 'Strategy Guide Types',
     empty: 'No strategy guide types found yet.',
     fallback: 'Unsorted Guide Type',
-    iconFor: () => '<span class="category-mini-icon" aria-hidden="true">◈</span>',
+    iconFor: () => '<span class="category-mini-icon" aria-hidden="true">â—ˆ</span>',
     valueForItem: item => sidebarGuideTypeValues(item)
   },
   'strategy-series': {
@@ -7062,7 +7488,7 @@ const SIDEBAR_CATEGORY_MODE_CONFIGS = {
     label: 'Strategy Game Series',
     empty: 'No strategy guide series or franchise values found yet.',
     fallback: 'Unsorted Strategy Series',
-    iconFor: () => '<span class="category-mini-icon" aria-hidden="true">◦</span>',
+    iconFor: () => '<span class="category-mini-icon" aria-hidden="true">â—¦</span>',
     valueForItem: item => item?.franchise || item?.gameFranchise || item?.series || ''
   },
   'magazine-title': {
@@ -7070,7 +7496,7 @@ const SIDEBAR_CATEGORY_MODE_CONFIGS = {
     label: 'Magazine Titles',
     empty: 'No magazine titles found yet.',
     fallback: 'Unsorted Magazines',
-    iconFor: () => '<span class="category-mini-icon" aria-hidden="true">▦</span>',
+    iconFor: () => '<span class="category-mini-icon" aria-hidden="true">â–¦</span>',
     valueForItem: item => item?.magazineTitle || item?.series || ''
   },
   'magazine-primary-system': {
@@ -7086,14 +7512,14 @@ const SIDEBAR_CATEGORY_MODE_CONFIGS = {
     label: 'Magazine Years',
     empty: 'No magazine years found yet.',
     fallback: 'Unknown Year',
-    iconFor: () => '<span class="category-mini-icon" aria-hidden="true">◷</span>',
+    iconFor: () => '<span class="category-mini-icon" aria-hidden="true">â—·</span>',
     valueForItem: item => sidebarYearLabelForItem(item)
   },
   'metadata-status': {
     label: 'Metadata Status',
     empty: 'No metadata status values found yet.',
     fallback: 'Unreviewed',
-    iconFor: () => '<span class="category-mini-icon" aria-hidden="true">◆</span>',
+    iconFor: () => '<span class="category-mini-icon" aria-hidden="true">â—†</span>',
     valueForItem: item => metadataStatusOf(item)
   }
 };
@@ -7141,6 +7567,20 @@ function sidebarCategoryCount(counts, category) {
   return counts?.get?.(sidebarCategoryCountKey(category)) || 0;
 }
 
+function categoryIsMagazinePublicationOnly(category) {
+  const target = sidebarCategoryCountKey(category);
+  if (!target) return false;
+  let magazineMatch = false;
+  let nonMagazineMatch = false;
+  for (const item of state.items || []) {
+    const matches = libraryCategoryKeysForItem(item).some(name => sidebarCategoryCountKey(name) === target);
+    if (!matches) continue;
+    if (item.kind === 'Magazine') magazineMatch = true;
+    else nonMagazineMatch = true;
+    if (magazineMatch && nonMagazineMatch) return false;
+  }
+  return magazineMatch && !nonMagazineMatch;
+}
 function categoryGroupMarkup(key, label, items, categories, options = {}) {
   const defaultCollapsed = options.defaultCollapsed !== undefined ? !!options.defaultCollapsed : true;
   const collapsed = isCategoryGroupCollapsed(key, defaultCollapsed);
@@ -7235,6 +7675,7 @@ function renderCategories() {
       if (!categories.length) return '';
       return categoryGroupMarkup(kind, label, items, categories, {
         groupKind: kind,
+        iconFor: kind === 'Magazine' ? (() => magazinePublicationIconHtml('category-mini-icon magazine-publication-icon')) : undefined,
         countFor: category => sidebarCategoryCount(counts, category),
         empty: `No ${label.toLowerCase()} categories found yet.`
       });
@@ -7244,6 +7685,7 @@ function renderCategories() {
     const categories = sortCategoriesForKind('Any', [...new Set(state.items.flatMap(libraryCategoryKeysForItem))]);
     markup = categoryGroupMarkup('Any', 'Platforms / Publications', state.items, categories, {
       groupKind: 'Any',
+      iconFor: category => categoryIsMagazinePublicationOnly(category) ? magazinePublicationIconHtml('category-mini-icon magazine-publication-icon') : platformIconHtml(category),
       countFor: category => sidebarCategoryCount(counts, category),
       empty: 'No platforms or publications found yet.',
       defaultCollapsed: false
@@ -7254,7 +7696,7 @@ function renderCategories() {
     const publishers = [...new Set(state.items.map(publisherValue).filter(Boolean))].sort((a,b)=>a.localeCompare(b));
     markup = categoryGroupMarkup('Publisher', 'Publishers', state.items, publishers, {
       groupKind: 'Publisher',
-      iconFor: () => '<span class="category-mini-icon" aria-hidden="true">◦</span>',
+      iconFor: () => '<span class="category-mini-icon" aria-hidden="true">â—¦</span>',
       countFor: publisher => sidebarCategoryCount(publisherCounts, publisher),
       empty: 'No publisher values found yet.',
       defaultCollapsed: false
@@ -7268,7 +7710,7 @@ function renderCategories() {
     });
     markup = categoryGroupMarkup('Decade', 'Decades', state.items, decades, {
       groupKind: 'Decade',
-      iconFor: () => '<span class="category-mini-icon" aria-hidden="true">◷</span>',
+      iconFor: () => '<span class="category-mini-icon" aria-hidden="true">â—·</span>',
       countFor: decade => sidebarCategoryCount(decadeCounts, decade),
       empty: 'No dated entries found yet.',
       defaultCollapsed: false
@@ -7320,7 +7762,7 @@ function measureVirtualGrid(host, current = {}) {
   };
 }
 
-function virtualGridWindowFor(vgrid) {
+function virtualGridWindowFor(vgrid, force = false) {
   const scroller = libraryScrollElement();
   const host = vgrid?.host;
   const list = vgrid?.items || [];
@@ -7330,13 +7772,34 @@ function virtualGridWindowFor(vgrid) {
   const hostTop = scrollTopForElementWithinScroller(host, scroller);
   vgrid.hostTop = hostTop;
   const topWithinGrid = Math.max(0, scroller.scrollTop - hostTop - 12);
-  const firstRow = Math.max(0, Math.floor(topWithinGrid / rowHeight) - GUIDEVAULT_GRID_VIRTUAL_BUFFER_ROWS);
-  const visibleRows = Math.ceil((scroller.clientHeight || window.innerHeight || 800) / rowHeight) + GUIDEVAULT_GRID_VIRTUAL_BUFFER_ROWS * 2;
+  const totalRows = Math.ceil(list.length / columns);
+  const visibleFirstRow = Math.max(0, Math.floor(topWithinGrid / rowHeight));
+  const visibleRowCount = Math.ceil((scroller.clientHeight || window.innerHeight || 800) / rowHeight);
+  const visibleLastRow = Math.min(totalRows - 1, visibleFirstRow + visibleRowCount);
+
+  if (!force && Number(vgrid.startIndex) >= 0 && Number(vgrid.endIndex) > Number(vgrid.startIndex)) {
+    const renderedFirstRow = Math.floor(Number(vgrid.startIndex || 0) / columns);
+    const renderedEndRowExclusive = Math.ceil(Number(vgrid.endIndex || 0) / columns);
+    const guardRows = 1;
+    const safeFirstRow = renderedFirstRow === 0 ? 0 : renderedFirstRow + guardRows;
+    const safeLastRow = renderedEndRowExclusive >= totalRows ? totalRows - 1 : renderedEndRowExclusive - guardRows - 1;
+    if (visibleFirstRow >= safeFirstRow && visibleLastRow <= safeLastRow) {
+      return {
+        startIndex: vgrid.startIndex,
+        endIndex: vgrid.endIndex,
+        topHeight: renderedFirstRow * rowHeight,
+        bottomHeight: Math.max(0, totalRows - renderedEndRowExclusive) * rowHeight,
+        reused: true
+      };
+    }
+  }
+
+  const firstRow = Math.max(0, visibleFirstRow - GUIDEVAULT_GRID_VIRTUAL_BUFFER_ROWS);
+  const visibleRows = visibleRowCount + GUIDEVAULT_GRID_VIRTUAL_BUFFER_ROWS * 2;
   const maxRowsByCards = Math.max(visibleRows, Math.floor(GUIDEVAULT_GRID_VIRTUAL_MAX_CARDS / columns));
   const startIndex = Math.min(list.length, firstRow * columns);
   const endRow = Math.ceil(startIndex / columns) + maxRowsByCards;
   const endIndex = Math.min(list.length, Math.max(startIndex + columns, endRow * columns));
-  const totalRows = Math.ceil(list.length / columns);
   const renderedRows = Math.ceil((endIndex - startIndex) / columns);
   const topHeight = firstRow * rowHeight;
   const bottomRows = Math.max(0, totalRows - firstRow - renderedRows);
@@ -7356,7 +7819,7 @@ function renderVirtualGridWindow(force = false) {
     vgrid.rowHeight = measured.rowHeight;
     vgrid.cardHeight = measured.cardHeight;
   }
-  const win = virtualGridWindowFor(vgrid);
+  const win = virtualGridWindowFor(vgrid, force || columnsChanged);
   if (!force && !columnsChanged && win.startIndex === vgrid.startIndex && win.endIndex === vgrid.endIndex) return;
   vgrid.startIndex = win.startIndex;
   vgrid.endIndex = win.endIndex;
@@ -7404,6 +7867,7 @@ function renderVirtualGrid(id, list) {
     startIndex: -1,
     endIndex: -1
   };
+  host.classList.remove('stable-grid');
   host.classList.add('virtualized-grid');
   host.innerHTML = list.slice(0, Math.min(list.length, GUIDEVAULT_GRID_INITIAL_RENDER)).map(item => cardMarkupForItem(item)).join('');
   initializeCoverImages(host);
@@ -7424,6 +7888,7 @@ function renderGrid(id, items) {
   const list = Array.isArray(items) ? items : [];
   if (!list.length) {
     clearVirtualGridIfHost(id);
+    host.classList.remove('stable-grid');
     host.innerHTML = `<div class="empty-message">No content found. Set a Library Root folder in Settings and scan for CBZ, CBR, or PDF files.</div>`;
     return;
   }
@@ -7434,6 +7899,7 @@ function renderGrid(id, items) {
   }
 
   clearVirtualGridIfHost(id);
+  host.classList.add('stable-grid');
   state.libraryRenderToken = (Number(state.libraryRenderToken || 0) + 1) % 1000000;
   const token = state.libraryRenderToken;
   const firstCount = Math.min(list.length, GUIDEVAULT_GRID_INITIAL_RENDER);
@@ -7540,11 +8006,11 @@ function renderKeybindsSettings() {
   const list = $('keybindsList');
   if (!list) return;
   const bindings = state.keybinds.bindings || loadKeybinds();
-  list.innerHTML = KEYBIND_DEFAULTS.map(def => {
+  list.innerHTML = KEYBIND_DEFAULTS.map((def) => {
     const keys = bindings[def.id]?.keys?.length ? bindings[def.id].keys : def.keys;
     return `<div class="keybind-row" data-keybind-id="${escapeForAttribute(def.id)}">
       <div class="keybind-main">
-        <h3>${escapeHtml(def.title)}</h3>
+        <div class="keybind-title-line"><h3>${escapeHtml(def.title)}</h3><span>${keys.length} binding${keys.length === 1 ? '' : 's'}</span></div>
         <div class="keybind-chip-line">${keys.map(key => `<span class="keybind-key-chip">${escapeHtml(key)}</span>`).join('')}</div>
         <p class="sub">${escapeHtml(def.description)}</p>
       </div>
@@ -7984,8 +8450,8 @@ function renderCustomizeSettings() {
     list.innerHTML = (settings.homeShelves || []).map((id) => {
       const opt = HOME_SHELF_OPTIONS.find(o => o.id === id) || HOME_SHELF_OPTIONS[0];
       return `<div class="customize-shelf-row" data-shelf-id="${escapeForAttribute(id)}">
-        <span class="customize-shelf-handle" draggable="true" role="button" aria-label="Drag ${escapeForAttribute(opt.label)} shelf" title="Drag to reorder">⠿</span>
-        <div><strong>${escapeHtml(opt.label)}</strong><p class="sub">${escapeHtml(opt.description)}</p></div>
+        <span class="customize-shelf-handle" draggable="true" role="button" aria-label="Drag ${escapeForAttribute(opt.label)} shelf" title="Drag to reorder">â ¿</span>
+        <div class="customize-shelf-copy"><strong>${escapeHtml(opt.label)}</strong><p class="sub">${escapeHtml(opt.description)}</p><span class="customize-shelf-pill">Visible on Home</span></div>
         <div class="customize-shelf-actions">
           <button class="danger" data-shelf-action="remove" type="button">Remove</button>
         </div>
@@ -8213,7 +8679,7 @@ function cardMarkupForItem(item) {
   const title = computed.title || displayTitle(item);
   return `<article class="card ${specialCardClass(item)} ${state.selected?.id === item.id ? 'selected' : ''}" data-id="${escapeForAttribute(itemId)}" data-alpha="${computed.alpha || alphaKey(title)}">
       <button class="favorite${favorite ? ' active' : ''}" type="button" data-id="${escapeForAttribute(itemId)}" aria-label="${favorite ? 'Remove from favorites' : 'Add to favorites'}" aria-pressed="${favorite ? 'true' : 'false'}" title="${favorite ? 'Remove from favorites' : 'Add to favorites'}">\u2605</button>
-      <div class="cover-wrap"><img decoding="async" loading="lazy" data-cover-src="${cover}" src="/assets/missing-cover.svg" alt="${escapeForAttribute(title)} cover" /></div>
+      <div class="cover-wrap"><img decoding="async" loading="lazy" fetchpriority="low" data-cover-src="${escapeForAttribute(cover)}" src="${GUIDEVAULT_TRANSPARENT_COVER_PLACEHOLDER}" alt="${escapeForAttribute(title)} cover" /></div>
       <div class="card-body">
         <div class="card-title">${escapeHtml(title)}</div>
         ${libraryCardPlatformMetaHtml(item)}
@@ -8734,7 +9200,7 @@ function refreshMetadataLockButtons() {
     const key = button.dataset.metadataLockKey || '';
     const locked = isMetadataFieldLocked(state.selected || {}, key);
     button.classList.toggle('locked', locked);
-    button.textContent = locked ? '🔒' : '🔓';
+    button.textContent = locked ? 'ðŸ”’' : 'ðŸ”“';
     button.setAttribute('aria-pressed', locked ? 'true' : 'false');
     button.title = locked
       ? 'Locked: this field is read-only and scraper, import, batch, and normalize actions cannot overwrite it.'
@@ -10044,7 +10510,7 @@ function openLibraryComparisonRowHtml(field, current, proposed) {
   const disabled = hasIncoming && !locked ? '' : 'disabled';
   return `<tr class="${differs ? 'different' : ''} ${!hasIncoming ? 'missing-incoming' : ''} ${locked ? 'locked-field' : ''}">
     <td><input type="checkbox" data-openlibrary-field="${escapeForAttribute(field.key)}" ${checked} ${disabled} /></td>
-    <td>${locked ? '<span class="metadata-lock-inline" title="Locked field - skipped by imports">🔒</span> ' : ''}${escapeHtml(field.label)}</td>
+    <td>${locked ? '<span class="metadata-lock-inline" title="Locked field - skipped by imports">ðŸ”’</span> ' : ''}${escapeHtml(field.label)}</td>
     <td>${escapeHtml(existing || '\u2014')}</td>
     <td>${escapeHtml(incoming || '\u2014')}</td>
   </tr>`;
@@ -10391,7 +10857,7 @@ function esrbComparisonRowHtml(field, current, proposed) {
   const disabled = hasIncoming && !locked ? '' : 'disabled';
   return `<tr class="${differs ? 'different' : ''} ${!hasIncoming ? 'missing-incoming' : ''} ${locked ? 'locked-field' : ''}">
     <td><input type="checkbox" data-esrb-field="${escapeForAttribute(field.key)}" ${checked} ${disabled} /></td>
-    <td>${locked ? '<span class="metadata-lock-inline" title="Locked field - skipped by imports">🔒</span> ' : ''}${escapeHtml(field.label)}</td>
+    <td>${locked ? '<span class="metadata-lock-inline" title="Locked field - skipped by imports">ðŸ”’</span> ' : ''}${escapeHtml(field.label)}</td>
     <td>${escapeHtml(existingDisplay)}</td>
     <td>${escapeHtml(incomingDisplay)}</td>
   </tr>`;
@@ -10601,7 +11067,7 @@ function igdbSearchPanelHtml() {
       </label>
       <button type="button" id="igdbRunSearchBtn" class="primary">Search</button>
     </div>
-    <p class="openlibrary-help">IGDB requires a Twitch/IGDB Client ID and Client Secret in Settings &gt; Server &gt; General &gt; Metadata Sources. Guidevault keeps this lookup separate from Open Library book metadata.</p>
+    <p class="openlibrary-help">IGDB requires a Twitch/IGDB Client ID and Client Secret in Settings &gt; Server &gt; Integrations &gt; IGDB. Guidevault keeps this lookup separate from Open Library book metadata.</p>
     <p id="igdbStatus" class="openlibrary-status igdb-status"></p>
     <div id="igdbResults" class="openlibrary-results igdb-results"></div>
   </section>`;
@@ -10781,7 +11247,7 @@ function igdbComparisonRowHtml(field, current, proposed) {
   const disabled = hasIncoming && !locked ? '' : 'disabled';
   return `<tr class="${differs ? 'different' : ''} ${!hasIncoming ? 'missing-incoming' : ''} ${locked ? 'locked-field' : ''}">
     <td><input type="checkbox" data-igdb-field="${escapeForAttribute(field.key)}" ${checked} ${disabled} /></td>
-    <td>${locked ? '<span class="metadata-lock-inline" title="Locked field - skipped by imports">🔒</span> ' : ''}${escapeHtml(field.label)}</td>
+    <td>${locked ? '<span class="metadata-lock-inline" title="Locked field - skipped by imports">ðŸ”’</span> ' : ''}${escapeHtml(field.label)}</td>
     <td>${escapeHtml(existingDisplay || '\u2014')}</td>
     <td>${escapeHtml(incomingDisplay || '\u2014')}</td>
   </tr>`;
@@ -11398,7 +11864,7 @@ function metadataManagerShowCoverPreview(id, anchor) {
   const year = String(item.year || item.coverDate || item.publicationDate || '').trim();
   preview.innerHTML = `
     <div class="metadata-cover-preview-art">
-      <img src="${coverUrl(item)}" alt="${escapeForAttribute(title)} cover" onerror="this.onerror=null;this.src='/assets/missing-cover.svg';" />
+      <img src="${coverUrl(item, { width: 320 })}" alt="${escapeForAttribute(title)} cover" onerror="this.onerror=null;this.src='/assets/missing-cover.svg';" />
     </div>
     <div class="metadata-cover-preview-caption">
       <strong>${escapeHtml(title)}</strong>
@@ -11689,7 +12155,7 @@ function renderMetadataManagerColumnPicker() {
           return `<label class="metadata-manager-column-option" title="${escapeForAttribute(column.description || '')}">
             <input type="checkbox" data-column-key="${escapeForAttribute(column.key)}" ${isVisible ? 'checked' : ''} />
             <span>${escapeHtml(column.label)}</span>
-            ${isVisible ? `<button class="ghost tiny metadata-column-move" type="button" data-column-move="-1" data-column-key="${escapeForAttribute(column.key)}" ${position <= 0 ? 'disabled' : ''} title="Move left">←</button><button class="ghost tiny metadata-column-move" type="button" data-column-move="1" data-column-key="${escapeForAttribute(column.key)}" ${position === visible.length - 1 ? 'disabled' : ''} title="Move right">→</button>` : ''}
+            ${isVisible ? `<button class="ghost tiny metadata-column-move" type="button" data-column-move="-1" data-column-key="${escapeForAttribute(column.key)}" ${position <= 0 ? 'disabled' : ''} title="Move left">â†</button><button class="ghost tiny metadata-column-move" type="button" data-column-move="1" data-column-key="${escapeForAttribute(column.key)}" ${position === visible.length - 1 ? 'disabled' : ''} title="Move right">â†’</button>` : ''}
           </label>`;
         }).join('')}
       </div>
@@ -11961,7 +12427,7 @@ function renderMetadataManager() {
   if (headerRow) {
     headerRow.innerHTML = `
       <th><input id="metadataManagerHeaderCheck" type="checkbox" aria-label="Select visible rows" /></th>
-      ${columns.map(column => `<th class="metadata-manager-column-header ${sort.key === column.key ? 'is-sorted' : ''}" draggable="true" data-column-key="${escapeForAttribute(column.key)}" title="Click to sort. Drag this header to reorder columns."><div class="metadata-manager-column-head"><button class="metadata-manager-sort-button" type="button" data-column-sort="${escapeForAttribute(column.key)}" aria-label="Sort by ${escapeForAttribute(column.label)}"><span>${escapeHtml(column.label)}</span><b>${sort.key === column.key ? (sort.direction === 'desc' ? '↓' : '↑') : '↕'}</b></button><span class="metadata-manager-column-drag-handle" aria-hidden="true" title="Drag to reorder">⋮⋮</span></div></th>`).join('')}
+      ${columns.map(column => `<th class="metadata-manager-column-header ${sort.key === column.key ? 'is-sorted' : ''}" draggable="true" data-column-key="${escapeForAttribute(column.key)}" title="Click to sort. Drag this header to reorder columns."><div class="metadata-manager-column-head"><button class="metadata-manager-sort-button" type="button" data-column-sort="${escapeForAttribute(column.key)}" aria-label="Sort by ${escapeForAttribute(column.label)}"><span>${escapeHtml(column.label)}</span><b>${sort.key === column.key ? (sort.direction === 'desc' ? 'â†“' : 'â†‘') : 'â†•'}</b></button><span class="metadata-manager-column-drag-handle" aria-hidden="true" title="Drag to reorder">â‹®â‹®</span></div></th>`).join('')}
     `;
   }
   const body = $('metadataManagerTableBody');
@@ -12214,6 +12680,148 @@ async function metadataManagerPersist(id, item, payload) {
   return { skippedLockedFields: lockFiltered.skipped || [] };
 }
 
+function metadataManagerBuildStateItemIndex() {
+  const index = new Map();
+  (state.items || []).forEach((item, position) => {
+    const id = metadataManagerItemId(item);
+    if (id && !index.has(id)) index.set(id, { item, position });
+  });
+  return index;
+}
+
+function metadataManagerYieldToBrowser() {
+  return new Promise(resolve => window.setTimeout(resolve, 0));
+}
+
+async function metadataManagerApplySavedRowsLocal(rows) {
+  const stateIndex = metadataManagerBuildStateItemIndex();
+  const selectedId = state.selected ? metadataManagerItemId(state.selected) : '';
+  let changed = 0;
+
+  for (let i = 0; i < (rows || []).length; i += 1) {
+    const row = rows[i];
+    const id = String(row?.id || '').trim();
+    if (!id) continue;
+    const slot = stateIndex.get(id);
+    if (!slot) continue;
+
+    const updated = mergeSavedMetadataClientSide(slot.item, {}, row.payload || {});
+    updated.id = updated.id || id;
+    updated.Id = updated.Id || id;
+    prepareLibraryItemComputedFields(updated);
+    state.items[slot.position] = updated;
+    slot.item = updated;
+    if (selectedId && selectedId === id) state.selected = updated;
+    changed += 1;
+
+    if (changed % 250 === 0) await metadataManagerYieldToBrowser();
+  }
+
+  if (changed) markLibraryIndexesDirty();
+  return changed;
+}
+
+async function metadataManagerRefreshServerMetadataCache(ids) {
+  const distinctIds = [...new Set((ids || []).map(id => String(id || '').trim()).filter(Boolean))];
+  if (!distinctIds.length) return { cacheUpdated: 0 };
+
+  const res = await fetch('/api/items/metadata/refresh-cache', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ ids: distinctIds })
+  });
+
+  if (!res.ok) {
+    let message = `HTTP ${res.status}`;
+    try { message = (await res.json()).error || message; } catch {}
+    throw new Error(message);
+  }
+
+  try { return await res.json(); } catch { return { cacheUpdated: 0 }; }
+}
+
+async function metadataManagerPersistBulk(entries) {
+  const rows = [];
+  let skippedLockedFields = 0;
+  const stateIndex = metadataManagerBuildStateItemIndex();
+
+  (entries || []).forEach(entry => {
+    const id = String(entry?.id || '').trim();
+    if (!id) return;
+    const item = entry.item || stateIndex.get(id)?.item || null;
+    const lockFiltered = filterLockedMetadataPayload(item, entry.payload || {});
+    const safePayload = normalizeClientMetadataPayload(lockFiltered.payload);
+    const hasChanges = Object.keys(safePayload || {}).length > 0;
+    skippedLockedFields += lockFiltered.skipped?.length || 0;
+    if (!hasChanges) return;
+    rows.push({ id, payload: safePayload });
+  });
+
+  if (!rows.length) return { saved: 0, skippedLockedFields, cacheUpdated: 0, missingIds: [] };
+
+  const chunkSize = 250;
+  let saved = 0;
+  let cacheUpdated = 0;
+  let missingCount = 0;
+  const missingIds = [];
+  const savedRows = [];
+
+  for (let i = 0; i < rows.length; i += chunkSize) {
+    const chunk = rows.slice(i, i + chunkSize);
+    if (rows.length > chunkSize) {
+      const done = Math.min(i + chunk.length, rows.length);
+      metadataManagerSetStatus(`Saving metadata batch ${Math.floor(i / chunkSize) + 1}/${Math.ceil(rows.length / chunkSize)} (${done} of ${rows.length})...`);
+    }
+
+    const res = await fetch('/api/items/metadata/bulk', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        updateCache: false,
+        updates: chunk.map(row => ({ id: row.id, payload: row.payload }))
+      })
+    });
+
+    if (!res.ok) {
+      let message = `HTTP ${res.status}`;
+      try { message = (await res.json()).error || message; } catch {}
+      throw new Error(message);
+    }
+
+    let data = null;
+    try { data = await res.json(); } catch { data = {}; }
+    saved += Number(data?.saved || chunk.length) || chunk.length;
+    cacheUpdated += Number(data?.cacheUpdated || 0) || 0;
+    missingCount += Number(data?.missingCount || 0) || 0;
+    if (Array.isArray(data?.missingIds)) missingIds.push(...data.missingIds);
+    savedRows.push(...chunk);
+    await metadataManagerYieldToBrowser();
+  }
+
+  metadataManagerSetStatus(`Applying saved metadata locally (${savedRows.length} row(s))...`);
+  const localUpdated = await metadataManagerApplySavedRowsLocal(savedRows);
+
+  let cacheRefreshFailed = '';
+  try {
+    metadataManagerSetStatus('Refreshing server metadata cache once after bulk save...');
+    const refresh = await metadataManagerRefreshServerMetadataCache(savedRows.map(row => row.id));
+    cacheUpdated += Number(refresh?.cacheUpdated || 0) || 0;
+  } catch (err) {
+    cacheRefreshFailed = err?.message || String(err || 'Unknown cache refresh error');
+    console.warn('Metadata cache refresh failed after bulk save:', err);
+  }
+
+  return {
+    saved,
+    cacheUpdated,
+    localUpdated,
+    skippedLockedFields,
+    missingCount,
+    missingIds,
+    cacheRefreshFailed
+  };
+}
+
 async function metadataManagerSaveDirtyRows() {
   const dirty = { ...(state.metadataManager.dirty || {}) };
   const ids = Object.keys(dirty);
@@ -12221,18 +12829,30 @@ async function metadataManagerSaveDirtyRows() {
     metadataManagerSetStatus('No edited rows to save.', '');
     return;
   }
-  metadataManagerSetStatus(`Saving ${ids.length} edited row(s)...`);
-  let saved = 0;
+
+  metadataManagerSetStatus(`Saving ${ids.length} edited row(s) in bulk batches...`);
+  const entries = [];
+  const stateIndex = metadataManagerBuildStateItemIndex();
   for (const id of ids) {
-    const item = (state.items || []).find(i => metadataManagerItemId(i) === id);
+    const item = stateIndex.get(id)?.item;
     if (!item) continue;
-    const payload = metadataManagerRowPayload(item, dirty[id]);
-    await metadataManagerPersist(id, item, payload);
-    saved += 1;
-    delete state.metadataManager.dirty[id];
+    entries.push({ id, item, payload: metadataManagerRowPayload(item, dirty[id]) });
   }
-  metadataManagerSetStatus(`Saved ${saved} edited row(s).`, 'success');
-  renderMetadataManager();
+
+  try {
+    const result = await metadataManagerPersistBulk(entries);
+    state.metadataManager.dirty = {};
+    if (ids.length > METADATA_MANAGER_DEFAULT_RENDER_LIMIT) metadataManagerResetRenderLimit();
+    const skippedText = result.skippedLockedFields ? ` ${result.skippedLockedFields} locked field value(s) were skipped.` : '';
+    const missingText = result.missingIds?.length ? ` ${result.missingIds.length} row(s) were saved but not currently loaded in the cache.` : '';
+    const cacheText = result.cacheRefreshFailed ? ` Saved metadata, but cache refresh failed: ${result.cacheRefreshFailed}` : '';
+    metadataManagerSetStatus(`Saved ${result.saved} edited row(s) in bulk batches.${skippedText}${missingText}${cacheText}`, result.cacheRefreshFailed ? 'error' : 'success');
+  } catch (err) {
+    metadataManagerSetStatus(`Bulk save failed: ${err?.message || err}`, 'error');
+    throw err;
+  } finally {
+    renderMetadataManager();
+  }
 }
 
 async function metadataManagerApplyBatch() {
@@ -12242,25 +12862,24 @@ async function metadataManagerApplyBatch() {
     return;
   }
   metadataManagerRenderBatchEditor();
-  const entries = metadataManagerBatchEntries();
-  if (!entries.length) {
+  const batchEntries = metadataManagerBatchEntries();
+  if (!batchEntries.length) {
     metadataManagerSetStatus('Enter at least one visible-column batch value to apply.', 'error');
     return;
   }
-  const fieldLabels = entries.map(entry => metadataManagerColumnDefinition(entry.field)?.label || entry.field).join(', ');
-  metadataManagerSetStatus(`Applying ${fieldLabels} to ${items.length} selected row(s)...`);
-  let saved = 0;
-  let skippedLocked = 0;
-  for (const item of items) {
-    const id = metadataManagerItemId(item);
-    const payload = metadataManagerBatchPayloadForItem(item, entries);
-    const result = await metadataManagerPersist(id, item, payload);
-    skippedLocked += result?.skippedLockedFields?.length || 0;
-    saved += 1;
-  }
+  const fieldLabels = batchEntries.map(entry => metadataManagerColumnDefinition(entry.field)?.label || entry.field).join(', ');
+  metadataManagerSetStatus(`Applying ${fieldLabels} to ${items.length} selected row(s) in bulk batches...`);
+  const entries = items.map(item => ({
+    id: metadataManagerItemId(item),
+    item,
+    payload: metadataManagerBatchPayloadForItem(item, batchEntries)
+  }));
+  const result = await metadataManagerPersistBulk(entries);
   state.metadataManager.dirty = {};
-  const skippedText = skippedLocked ? ` ${skippedLocked} locked field value(s) were skipped.` : '';
-  metadataManagerSetStatus(`Applied batch metadata to ${saved} row(s).${skippedText}`, 'success');
+  if (items.length > METADATA_MANAGER_DEFAULT_RENDER_LIMIT) metadataManagerResetRenderLimit();
+  const skippedText = result.skippedLockedFields ? ` ${result.skippedLockedFields} locked field value(s) were skipped.` : '';
+  const cacheText = result.cacheRefreshFailed ? ` Cache refresh failed: ${result.cacheRefreshFailed}` : '';
+  metadataManagerSetStatus(`Applied batch metadata to ${result.saved} row(s).${skippedText}${cacheText}`, result.cacheRefreshFailed ? 'error' : 'success');
   renderMetadataManager();
 }
 
@@ -12565,7 +13184,7 @@ function metadataBatchEsrbSearchPlan(item) {
 function metadataBatchFriendlySourceError(source, message = '') {
   const text = String(message || '').replace(/\s+/g, ' ').trim();
   if (source === 'igdb') {
-    if (/credentials are not configured/i.test(text)) return 'IGDB credentials are not configured. Add your Twitch Client ID and Client Secret in Settings > Server > General > Metadata Sources.';
+    if (/credentials are not configured/i.test(text)) return 'IGDB credentials are not configured. Add your Twitch Client ID and Client Secret in Settings > Server > Integrations > IGDB.';
     if (/twitch rejected|oauth|client id|client secret|credential|403|401|400/i.test(text)) return 'IGDB credentials were rejected by Twitch. Re-save the Twitch Developer Client ID and generated Client Secret, then use Test IGDB Credentials.';
     if (/failed to fetch|network|timeout/i.test(text)) return 'IGDB lookup could not reach Twitch/IGDB. Check the server network connection and try again.';
   }
@@ -13038,10 +13657,11 @@ async function metadataManagerApplyBatchSourceResults() {
   if (!results.length) { metadataManagerSetStatus('Run a batch lookup first.', 'error'); return; }
   const fieldMap = metadataBatchSelectedFieldMap();
   const mode = metadataBatchMode();
-  let saved = 0;
   let skipped = 0;
   let failed = 0;
-  metadataManagerSetStatus('Applying checked batch lookup results...', '');
+  const entries = [];
+  metadataManagerSetStatus('Applying checked batch lookup results in bulk batches...', '');
+
   for (const row of results) {
     const checked = document.querySelector(`.metadata-batch-row-check[data-batch-id="${CSS.escape(row.id || '')}"]`)?.checked ?? row.checked !== false;
     if (!checked) { row.applyStatus = 'Skipped'; skipped += 1; continue; }
@@ -13050,26 +13670,30 @@ async function metadataManagerApplyBatchSourceResults() {
     if (!Object.keys(built.payload).length) {
       row.applyStatus = 'Skipped - no selected changes';
       skipped += 1;
-      renderMetadataBatchSourceResults();
       continue;
     }
-    try {
-      await metadataManagerPersist(row.id, item, built.payload);
-      const updatedItem = (state.items || []).find(i => metadataManagerItemId(i) === row.id) || { ...item, ...built.payload };
-      row.item = updatedItem;
-      row.applyStatus = `Applied ${built.changedLabels.length} field(s)`;
-      row.checked = false;
-      saved += 1;
-    } catch (err) {
-      row.applyStatus = `Save failed: ${err?.message || err}`;
-      row.checked = true;
-      failed += 1;
-    }
-    renderMetadataBatchSourceResults();
-    await metadataBatchDelay(80);
+    entries.push({ row, item, built, id: row.id, payload: built.payload });
   }
-  state.metadataManager.dirty = {};
-  metadataManagerSetStatus(`Applied batch metadata to ${saved} row(s). Skipped ${skipped}. Failed ${failed}.`, failed ? 'error' : 'success');
+
+  try {
+    const result = await metadataManagerPersistBulk(entries);
+    entries.forEach(entry => {
+      const updatedItem = (state.items || []).find(i => metadataManagerItemId(i) === entry.id) || { ...entry.item, ...entry.built.payload };
+      entry.row.item = updatedItem;
+      entry.row.applyStatus = `Applied ${entry.built.changedLabels.length} field(s)`;
+      entry.row.checked = false;
+    });
+    state.metadataManager.dirty = {};
+    metadataManagerSetStatus(`Applied batch metadata to ${result.saved} row(s). Skipped ${skipped}. Failed ${failed}.`, failed ? 'error' : 'success');
+  } catch (err) {
+    failed = entries.length;
+    entries.forEach(entry => {
+      entry.row.applyStatus = `Save failed: ${err?.message || err}`;
+      entry.row.checked = true;
+    });
+    metadataManagerSetStatus(`Batch metadata apply failed: ${err?.message || err}`, 'error');
+  }
+
   renderMetadataManager();
   renderMetadataBatchSourceResults();
 }
@@ -13085,19 +13709,17 @@ async function metadataManagerNormalizeSelected() {
     metadataManagerSetStatus('Select rows to normalize first.', 'error');
     return;
   }
-  metadataManagerSetStatus(`Normalizing ${items.length} selected row(s)...`);
-  let saved = 0;
+  metadataManagerSetStatus(`Normalizing ${items.length} selected row(s) in bulk batches...`);
   let titleUpdates = 0;
-  for (const item of items) {
-    const id = metadataManagerItemId(item);
+  const entries = items.map(item => {
     const beforeName = metadataManagerItemName(item);
     const payload = metadataManagerNormalizedPayload(item);
     const afterName = payload.title || beforeName;
     if (String(afterName || '').trim() && String(afterName || '').trim() !== String(beforeName || '').trim()) titleUpdates += 1;
-    await metadataManagerPersist(id, item, payload);
-    saved += 1;
-  }
-  metadataManagerSetStatus(`Normalized ${saved} selected row(s). Updated ${titleUpdates} title/name value(s), filled missing language as English, kept region as US, and cleaned duplicate topic/tag values.`, 'success');
+    return { id: metadataManagerItemId(item), item, payload };
+  });
+  const result = await metadataManagerPersistBulk(entries);
+  metadataManagerSetStatus(`Normalized ${result.saved} selected row(s). Updated ${titleUpdates} title/name value(s), filled missing language as English, kept region as US, and cleaned duplicate topic/tag values.`, 'success');
   renderMetadataManager();
 }
 
@@ -13106,9 +13728,41 @@ function metadataManagerCsvValue(value) {
   return /[",\r\n]/.test(text) ? `"${text.replace(/"/g, '""')}"` : text;
 }
 
+function metadataManagerSyncFiltersFromControls() {
+  state.metadataManager = state.metadataManager || {};
+  const mappings = [
+    ['metadataManagerSearch', 'search'],
+    ['metadataManagerKind', 'filterKind'],
+    ['metadataManagerStatusFilter', 'statusFilter'],
+    ['metadataManagerMissing', 'missing'],
+    ['metadataManagerCategory', 'category']
+  ];
+  mappings.forEach(([id, field]) => {
+    const control = $(id);
+    if (control) state.metadataManager[field] = control.value || '';
+  });
+  return state.metadataManager;
+}
+
+function metadataManagerExportScopeSlug(kind = '') {
+  const cleaned = String(kind || '').trim().toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
+  return cleaned || 'all-metadata';
+}
+
 function metadataManagerExportCsv() {
-  const rows = metadataManagerEditableItems();
+  const manager = metadataManagerSyncFiltersFromControls();
+  const requestedKind = String(manager.filterKind || '').trim();
+  let rows = metadataManagerEditableItems();
+
+  // Hard guard the export scope from the live Type control. If the manager state ever
+  // gets stale, this prevents a Strategy Guide export from falling back to magazines/all rows.
+  if (requestedKind) rows = rows.filter(item => String(item?.kind || '').trim() === requestedKind);
+
   const columns = metadataManagerVisibleColumns();
+  if (!rows.length) {
+    metadataManagerSetStatus(requestedKind ? `No ${requestedKind} row(s) match the current Metadata Manager filters.` : 'No metadata rows match the current Metadata Manager filters.', 'error');
+    return;
+  }
   const header = ['id', ...columns.map(column => column.key)];
   const lines = [header.join(',')];
   rows.forEach(item => {
@@ -13121,12 +13775,15 @@ function metadataManagerExportCsv() {
   const blob = new Blob([new Uint8Array([0xEF, 0xBB, 0xBF]), csvText], { type: 'text/csv;charset=utf-8' });
   const link = document.createElement('a');
   link.href = URL.createObjectURL(blob);
-  link.download = `guidevault-metadata-${new Date().toISOString().slice(0,10)}.csv`;
+  const scope = metadataManagerExportScopeSlug(requestedKind);
+  link.download = `guidevault-metadata-${scope}-${new Date().toISOString().slice(0,10)}.csv`;
   document.body.appendChild(link);
   link.click();
   URL.revokeObjectURL(link.href);
   link.remove();
-  metadataManagerSetStatus(`Exported ${rows.length} visible row(s) with ${columns.length} visible column(s) to CSV.`, 'success');
+  const kinds = Array.from(new Set(rows.map(item => String(item?.kind || '').trim()).filter(Boolean))).sort();
+  const scopeLabel = requestedKind || (kinds.length === 1 ? kinds[0] : 'current filtered metadata');
+  metadataManagerSetStatus(`Exported ${rows.length} ${scopeLabel} row(s) with ${columns.length} visible column(s) to CSV.`, 'success');
 }
 
 function metadataManagerImportNormalizeKey(value) {
@@ -13141,7 +13798,7 @@ function metadataManagerImportNormalizeKey(value) {
 function metadataManagerImportIssueKey(value) {
   const text = String(value || '').trim();
   if (!text) return '';
-  const match = text.match(/(?:issue\s*#?|#)\s*0*([0-9]+[A-Za-z]?)/i) || text.match(/^0*([0-9]+[A-Za-z]?)$/);
+  const match = text.match(/(?:issue\s*#?|#)\s*0*([0-9]+[A-Za-z]?)\b/i) || text.match(/^0*([0-9]+[A-Za-z]?)$/);
   if (!match) return metadataManagerImportNormalizeKey(text);
   return String(match[1] || '').toLowerCase();
 }
@@ -13156,7 +13813,7 @@ function metadataManagerImportMagazineTitleKey(itemOrEntry) {
   ];
   const raw = candidates.find(value => String(value || '').trim()) || '';
   return metadataManagerImportNormalizeKey(String(raw)
-    .replace(/[‒–—-]\s*Issue\s*#?\s*\d+.*$/i, '')
+    .replace(/[â€’â€“â€”-]\s*Issue\s*#?\s*\d+.*$/i, '')
     .replace(/\s*#\s*\d+.*$/i, '')
     .replace(/\s*Issue\s*#?\s*\d+.*$/i, ''));
 }
@@ -13172,35 +13829,68 @@ function metadataManagerImportTitleKey(itemOrEntry) {
   return metadataManagerImportNormalizeKey(value);
 }
 
-function metadataManagerFindImportItem(entry) {
-  const items = state.items || [];
+function metadataManagerBuildImportLookup() {
+  const byId = new Map();
+  const magazineByIssue = new Map();
+  const titleByKind = new Map();
+
+  (state.items || []).forEach(item => {
+    const id = metadataManagerItemId(item);
+    if (id && !byId.has(id)) byId.set(id, item);
+
+    const kind = String(item?.kind || '').trim().toLowerCase();
+    const titleKey = metadataManagerImportTitleKey(item);
+    if (titleKey) {
+      const scopedKey = `${kind}|${titleKey}`;
+      if (!titleByKind.has(scopedKey)) titleByKind.set(scopedKey, []);
+      titleByKind.get(scopedKey).push(item);
+      const unscopedKey = `|${titleKey}`;
+      if (!titleByKind.has(unscopedKey)) titleByKind.set(unscopedKey, []);
+      titleByKind.get(unscopedKey).push(item);
+    }
+
+    if (kind === 'magazine') {
+      const magazineKey = metadataManagerImportMagazineTitleKey(item);
+      const issueKey = metadataManagerImportMagazineIssueKey(item);
+      if (magazineKey && issueKey) {
+        const key = `${magazineKey}|${issueKey}`;
+        if (!magazineByIssue.has(key)) magazineByIssue.set(key, []);
+        magazineByIssue.get(key).push(item);
+      }
+    }
+  });
+
+  return { byId, magazineByIssue, titleByKind };
+}
+
+function metadataManagerFindImportItem(entry, lookup = null) {
+  const indexes = lookup || metadataManagerBuildImportLookup();
   const id = String(entry?.id || entry?.Id || '').trim();
-  if (id) {
-    const byId = items.find(i => metadataManagerItemId(i) === id);
-    if (byId) return byId;
-  }
+  if (id && indexes.byId.has(id)) return indexes.byId.get(id);
 
   const entryKind = String(entry?.kind || entry?.type || '').trim().toLowerCase();
   const entryMagazineKey = metadataManagerImportMagazineTitleKey(entry);
   const entryIssueKey = metadataManagerImportMagazineIssueKey(entry);
   if (entryIssueKey && entryMagazineKey) {
-    const magazineMatch = items.find(item => {
-      if (String(item?.kind || '').toLowerCase() !== 'magazine') return false;
-      const itemIssueKey = metadataManagerImportMagazineIssueKey(item);
-      if (!itemIssueKey || itemIssueKey !== entryIssueKey) return false;
-      const itemMagazineKey = metadataManagerImportMagazineTitleKey(item);
-      return itemMagazineKey === entryMagazineKey || itemMagazineKey.includes(entryMagazineKey) || entryMagazineKey.includes(itemMagazineKey);
-    });
-    if (magazineMatch) return magazineMatch;
+    const exact = indexes.magazineByIssue.get(`${entryMagazineKey}|${entryIssueKey}`) || [];
+    if (exact.length === 1) return exact[0];
+    if (exact.length > 1) return exact[0];
+
+    for (const [key, matches] of indexes.magazineByIssue.entries()) {
+      const [itemMagazineKey, itemIssueKey] = key.split('|');
+      if (itemIssueKey !== entryIssueKey) continue;
+      if (itemMagazineKey === entryMagazineKey || itemMagazineKey.includes(entryMagazineKey) || entryMagazineKey.includes(itemMagazineKey)) {
+        if (matches.length) return matches[0];
+      }
+    }
   }
 
   const entryTitleKey = metadataManagerImportTitleKey(entry);
   if (entryTitleKey) {
-    const titleMatches = items.filter(item => {
-      if (entryKind && String(item?.kind || '').toLowerCase() !== entryKind) return false;
-      return metadataManagerImportTitleKey(item) === entryTitleKey;
-    });
-    if (titleMatches.length === 1) return titleMatches[0];
+    const scoped = indexes.titleByKind.get(`${entryKind}|${entryTitleKey}`) || [];
+    if (scoped.length === 1) return scoped[0];
+    const unscoped = indexes.titleByKind.get(`|${entryTitleKey}`) || [];
+    if (unscoped.length === 1) return unscoped[0];
   }
 
   return null;
@@ -13209,11 +13899,12 @@ function metadataManagerFindImportItem(entry) {
 function metadataManagerImportJsonFile(file) {
   if (!file) return;
   const reader = new FileReader();
-  reader.onload = () => {
+  reader.onload = async () => {
     try {
       const parsed = JSON.parse(String(reader.result || '[]'));
       const entries = Array.isArray(parsed) ? parsed : (Array.isArray(parsed.items) ? parsed.items : []);
       const validFields = metadataManagerValidColumnKeys();
+      const lookup = metadataManagerBuildImportLookup();
       const importAliases = {
         title: 'name',
         Name: 'name',
@@ -13226,11 +13917,15 @@ function metadataManagerImportJsonFile(file) {
       let matched = 0;
       let staged = 0;
       let changedFields = 0;
-      entries.forEach(entry => {
-        const item = metadataManagerFindImportItem(entry);
-        if (!item) return;
+      for (let entryIndex = 0; entryIndex < entries.length; entryIndex += 1) {
+        const entry = entries[entryIndex];
+        const item = metadataManagerFindImportItem(entry, lookup);
+        if (!item) {
+          if (entryIndex > 0 && entryIndex % 250 === 0) await metadataManagerYieldToBrowser();
+          continue;
+        }
         const id = metadataManagerItemId(item);
-        if (!id) return;
+        if (!id) continue;
         matched += 1;
         const changes = {};
         Object.entries(entry || {}).forEach(([rawField, rawValue]) => {
@@ -13249,9 +13944,14 @@ function metadataManagerImportJsonFile(file) {
           staged += 1;
           changedFields += Object.keys(changes).length;
         }
-      });
+        if (entryIndex > 0 && entryIndex % 250 === 0) {
+          metadataManagerSetStatus(`Import staging ${entryIndex}/${entries.length} record(s)...`);
+          await metadataManagerYieldToBrowser();
+        }
+      }
       const unmatched = Math.max(0, entries.length - matched);
       metadataManagerSetStatus(`Imported ${staged} row(s) with ${changedFields} field change(s). Matched ${matched} of ${entries.length} import record(s)${unmatched ? `; ${unmatched} unmatched` : ''}. Review and click Save Edited Rows.`, staged || matched ? 'success' : 'error');
+      if (staged > METADATA_MANAGER_DEFAULT_RENDER_LIMIT) metadataManagerResetRenderLimit();
       renderMetadataManager();
     } catch (err) {
       metadataManagerSetStatus(`Import failed: ${err?.message || err}`, 'error');
@@ -13894,7 +14594,7 @@ function renderDetails(item) {
   document.body.classList.toggle('strategy-detail-mode', item.kind === 'Strategy Guide');
   document.body.classList.toggle('magazine-detail-mode', item.kind === 'Magazine');
   document.body.classList.toggle('manual-detail-mode', item.kind === 'Manual');
-  $('detailCover').src = coverUrl(item);
+  $('detailCover').src = coverUrl(item, { width: 560 });
   applyColorscapeToDetail(item);
   if ($('readBtn')) $('readBtn').dataset.itemId = item.id || '';
   $('detailCover').classList.toggle('nes-detail-cover', specialCardClass(item).includes('nes-manual-card'));
@@ -13944,6 +14644,8 @@ function renderDetails(item) {
     }
   }
   updateMetadataTechnicalInfo(item);
+  renderDetailReviews(item);
+  loadPublicReviewsForItem(item);
   $('editTitle').value = item.title || '';
   $('editKind').value = item.kind || 'Manual';
   if ($('editMetadataStatus')) $('editMetadataStatus').value = metadataStatusOf(item);
@@ -14275,6 +14977,7 @@ function cleanupReaderResources(options = {}) {
   state.reader.animating = false;
   state.reader.overlayVisible = false;
   state.reader.advancedVisible = false;
+  state.reader.bookmarkMenuOpen = false;
   state.reader.magnifierSettingsVisible = false;
   state.reader.magnifierActive = false;
   ['pageLeftImage', 'pageRightImage'].forEach(id => {
@@ -14476,6 +15179,17 @@ function applyReaderBookSize(spread) {
   book.classList.add('reader-sized');
 }
 
+function setReaderImageSource(imgId, url = '') {
+  const img = typeof imgId === 'string' ? $(imgId) : imgId;
+  if (!img) return;
+  const next = String(url || '');
+  if (img.getAttribute('src') === next) return;
+  img.decoding = 'async';
+  img.loading = 'eager';
+  img.src = next;
+}
+
+
 function renderSpread(index, options = {}) {
   const spread = spreadForIndex(index);
   if (!spread) return;
@@ -14492,8 +15206,8 @@ function renderSpread(index, options = {}) {
   $('pageRight').classList.remove('blank-page');
 
   if (spread.isSingle) {
-    $('pageRightImage').src = spread.rightUrl;
-    $('pageLeftImage').src = '';
+    setReaderImageSource('pageRightImage', spread.rightUrl);
+    setReaderImageSource('pageLeftImage', '');
     if ($('pageLabel')) $('pageLabel').textContent = spread.label;
     updateReaderOverlay(spread);
     updateReaderPageStackEffect(spread);
@@ -14503,8 +15217,8 @@ function renderSpread(index, options = {}) {
   }
 
   if (spread.isAdaptiveSpread) {
-    $('pageLeftImage').src = '';
-    $('pageRightImage').src = spread.adaptiveUrl || spread.rightUrl || '';
+    setReaderImageSource('pageLeftImage', '');
+    setReaderImageSource('pageRightImage', spread.adaptiveUrl || spread.rightUrl || '');
     $('pageRight').classList.remove('blank-page');
     if ($('pageLabel')) $('pageLabel').textContent = spread.label;
     updateReaderOverlay(spread);
@@ -14514,8 +15228,8 @@ function renderSpread(index, options = {}) {
     return;
   }
 
-  $('pageLeftImage').src = spread.leftUrl;
-  $('pageRightImage').src = spread.rightUrl;
+  setReaderImageSource('pageLeftImage', spread.leftUrl);
+  setReaderImageSource('pageRightImage', spread.rightUrl);
   $('pageRight').classList.toggle('blank-page', spread.isBlankRight);
   if ($('pageLabel')) $('pageLabel').textContent = spread.label;
   updateReaderOverlay(spread);
@@ -14567,10 +15281,46 @@ function readerBookmarkKey() {
   return String(item.id || item.filePath || item.path || item.title || '').trim();
 }
 
-function getReaderBookmark() {
+function normalizeReaderBookmarkRecord(value = null, item = state.reader.item || {}) {
+  const pagesSource = Array.isArray(value?.pages)
+    ? value.pages
+    : (Number(value?.page) ? [{
+        page: value.page,
+        displayMode: value.displayMode,
+        savedAt: value.savedAt
+      }] : []);
+  const seen = new Set();
+  const pages = pagesSource
+    .map(entry => ({
+      page: Math.max(1, Math.min(Number(entry?.page) || 1, readerPageCount())),
+      displayMode: normalizeReaderDisplayMode(entry?.displayMode ?? state.reader.displayMode),
+      savedAt: entry?.savedAt || value?.savedAt || new Date().toISOString()
+    }))
+    .filter(entry => {
+      const key = String(entry.page);
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    })
+    .sort((a, b) => Number(a.page) - Number(b.page));
+  return {
+    itemId: value?.itemId || item?.id || '',
+    title: value?.title || item?.title || '',
+    pages,
+    updatedAt: value?.updatedAt || value?.savedAt || (pages[pages.length - 1]?.savedAt || '')
+  };
+}
+
+function getReaderBookmarkRecord() {
   const key = readerBookmarkKey();
-  if (!key) return null;
-  return loadReaderBookmarks()[key] || null;
+  if (!key) return normalizeReaderBookmarkRecord();
+  const bookmarks = loadReaderBookmarks();
+  return normalizeReaderBookmarkRecord(bookmarks[key], state.reader.item || {});
+}
+
+function getReaderBookmark() {
+  const page = currentReaderPageNumber();
+  return getReaderBookmarkRecord().pages.find(entry => Number(entry.page) === Number(page)) || null;
 }
 
 function currentReaderPageNumber() {
@@ -14582,23 +15332,89 @@ function bookmarkCurrentReaderPage() {
   if (!key || !state.reader.item) return;
   const page = currentReaderPageNumber();
   const bookmarks = loadReaderBookmarks();
-  const existing = bookmarks[key] || null;
-  const isSamePage = existing && Number(existing.page) === Number(page);
+  const record = normalizeReaderBookmarkRecord(bookmarks[key], state.reader.item);
+  const existingIndex = record.pages.findIndex(entry => Number(entry.page) === Number(page));
 
-  if (isSamePage) {
-    delete bookmarks[key];
+  if (existingIndex >= 0) {
+    record.pages.splice(existingIndex, 1);
   } else {
-    bookmarks[key] = {
-      itemId: state.reader.item.id || '',
-      title: state.reader.item.title || '',
+    record.pages.push({
       page,
       displayMode: normalizeReaderDisplayMode(state.reader.displayMode),
       savedAt: new Date().toISOString()
-    };
+    });
   }
+
+  record.pages.sort((a, b) => Number(a.page) - Number(b.page));
+  record.updatedAt = new Date().toISOString();
+  record.itemId = state.reader.item.id || record.itemId || '';
+  record.title = state.reader.item.title || record.title || '';
+
+  if (record.pages.length) bookmarks[key] = record;
+  else delete bookmarks[key];
 
   saveReaderBookmarks(bookmarks);
   updateReaderOverlay();
+}
+
+function readerBookmarkPageDescription(page) {
+  const numeric = Math.max(1, Math.min(Number(page) || 1, readerPageCount()));
+  const spread = spreadForIndex(numeric - 1);
+  return spread?.positionText || spread?.label || `Page ${numeric}`;
+}
+
+function setReaderBookmarkMenuVisible(visible) {
+  state.reader.bookmarkMenuOpen = !!visible && !!state.reader.overlayVisible;
+  updateReaderBookmarksUi();
+}
+
+function toggleReaderBookmarkMenu() {
+  setReaderBookmarkMenuVisible(!state.reader.bookmarkMenuOpen);
+}
+
+function jumpReaderToBookmarkedPage(page) {
+  setReaderBookmarkMenuVisible(false);
+  jumpReaderToPage(page);
+}
+
+function updateReaderBookmarksUi() {
+  const sliderPage = currentReaderPageNumber();
+  const record = getReaderBookmarkRecord();
+  const pages = record.pages || [];
+  const bookmark = pages.find(entry => Number(entry.page) === Number(sliderPage));
+  const bookmarkButton = $('readerBookmarkPage');
+  if (bookmarkButton) {
+    const samePage = !!bookmark;
+    bookmarkButton.classList.toggle('bookmarked', samePage);
+    bookmarkButton.setAttribute('aria-pressed', samePage ? 'true' : 'false');
+    bookmarkButton.setAttribute('aria-label', samePage ? `Remove bookmark on Page ${bookmark.page}` : 'Bookmark current page');
+    bookmarkButton.title = samePage ? `Remove bookmark on Page ${bookmark.page}` : 'Bookmark current page';
+  }
+
+  const toggle = $('readerBookmarksToggle');
+  if (toggle) {
+    toggle.disabled = !pages.length;
+    toggle.classList.toggle('has-bookmarks', !!pages.length);
+    toggle.setAttribute('aria-expanded', state.reader.bookmarkMenuOpen && pages.length ? 'true' : 'false');
+    toggle.title = pages.length ? `${pages.length} bookmarked page${pages.length === 1 ? '' : 's'}` : 'No bookmarked pages yet';
+    const count = $('readerBookmarkCount');
+    if (count) count.textContent = pages.length ? String(pages.length) : '';
+  }
+
+  const panel = $('readerBookmarksPanel');
+  const list = $('readerBookmarksList');
+  if (!panel || !list) return;
+  const open = !!state.reader.bookmarkMenuOpen && !!pages.length && !!state.reader.overlayVisible;
+  panel.classList.toggle('hidden', !open);
+  panel.classList.toggle('open', open);
+  if (!open) return;
+  list.innerHTML = pages.map(entry => {
+    const page = Math.max(1, Math.min(Number(entry.page) || 1, readerPageCount()));
+    const active = Number(page) === Number(sliderPage);
+    const saved = entry.savedAt ? new Date(entry.savedAt) : null;
+    const savedLabel = saved && !Number.isNaN(saved.getTime()) ? saved.toLocaleDateString([], { month: 'short', day: 'numeric' }) : '';
+    return `<button class="reader-bookmark-item${active ? ' active' : ''}" type="button" data-bookmark-page="${page}"><strong>Page ${page}</strong><span>${escapeHtml(readerBookmarkPageDescription(page))}</span>${savedLabel ? `<em>${escapeHtml(savedLabel)}</em>` : ''}</button>`;
+  }).join('');
 }
 
 async function exitReaderFullscreenOnly() {
@@ -14707,17 +15523,7 @@ function updateReaderOverlay(spread = null) {
   const transitionSelect = $('readerTransitionSelect');
   if (transitionSelect) transitionSelect.value = state.reader.transitionMode || 'stable';
 
-  const bookmark = getReaderBookmark();
-  const bookmarkButton = $('readerBookmarkPage');
-  if (bookmarkButton) {
-    const samePage = bookmark && Number(bookmark.page) === Number(sliderPage);
-    bookmarkButton.classList.toggle('bookmarked', !!samePage);
-    bookmarkButton.setAttribute('aria-pressed', samePage ? 'true' : 'false');
-    bookmarkButton.setAttribute('aria-label', samePage ? `Unbookmark Page ${bookmark.page}` : 'Bookmark current page');
-    bookmarkButton.title = samePage
-      ? `Unbookmark Page ${bookmark.page}`
-      : (bookmark ? `Saved bookmark: Page ${bookmark.page}. Click to bookmark the current page.` : 'Bookmark current page');
-  }
+  updateReaderBookmarksUi();
   updateReaderFullscreenUi();
   applyReaderZoom();
   updateReaderShadingControls();
@@ -14762,6 +15568,7 @@ function setReaderOverlayVisible(visible) {
   cancelReaderLongPress();
   if (!state.reader.overlayVisible) {
     state.reader.advancedVisible = false;
+    state.reader.bookmarkMenuOpen = false;
     state.reader.magnifierSettingsVisible = false;
   }
   const hud = $('readerHud');
@@ -16950,7 +17757,7 @@ async function showPage(index, dir) {
   if (!book.classList.contains('reader-sized')) applyReaderBookSize(fromSpread);
   lockReaderFrame(book);
 
-  const preloadTargets = [toSpread.leftUrl, toSpread.rightUrl].filter(Boolean);
+  const preloadTargets = [toSpread.leftUrl, toSpread.rightUrl, toSpread.adaptiveUrl].filter(Boolean);
   await Promise.all(preloadTargets.map(preloadReaderImage));
   if (!state.reader.animating) return;
 
@@ -17375,7 +18182,7 @@ function updateSettingsInsights() {
 const GUIDEVAULT_SETTINGS_GROUPS = {
   account: ['account', 'preferences', 'keybinds', 'reading-profiles', 'customize', 'devices'],
   insights: ['insights', 'insights-devices', 'statistics'],
-  server: ['server', 'metadata-manager', 'library', 'opds', 'media', 'email', 'users', 'tasks'],
+  server: ['server', 'integrations', 'metadata-manager', 'opds', 'media', 'email', 'users', 'tasks'],
   info: ['info', 'email-history']
 };
 
@@ -17501,7 +18308,7 @@ function showSettingsScreen(tab = 'account') {
 }
 function activateSettingsTab(tab = 'account') {
   if (tab === 'insights') tab = 'statistics';
-  const allowed = new Set(['account', 'preferences', 'keybinds', 'reading-profiles', 'customize', 'opds', 'devices', 'insights-devices', 'statistics', 'server', 'metadata-manager', 'library', 'media', 'email', 'users', 'tasks', 'info', 'email-history']);
+  const allowed = new Set(['account', 'preferences', 'keybinds', 'reading-profiles', 'customize', 'opds', 'devices', 'insights-devices', 'statistics', 'server', 'integrations', 'metadata-manager', 'media', 'email', 'users', 'tasks', 'info', 'email-history']);
   const active = allowed.has(tab) ? tab : 'account';
   state.settingsActiveTab = active;
   const activeGroup = settingsGroupForTab(active);
@@ -17523,21 +18330,23 @@ function activateSettingsTab(tab = 'account') {
   if ($('settingsOpdsPanel')) $('settingsOpdsPanel').classList.toggle('hidden', active !== 'opds');
   if ($('settingsDevicesPanel')) $('settingsDevicesPanel').classList.toggle('hidden', active !== 'devices');
   if ($('settingsServerPanel')) $('settingsServerPanel').classList.toggle('hidden', active !== 'server');
+  if ($('settingsIntegrationsPanel')) $('settingsIntegrationsPanel').classList.toggle('hidden', active !== 'integrations');
   if ($('settingsMediaPanel')) $('settingsMediaPanel').classList.toggle('hidden', active !== 'media');
   if ($('settingsEmailPanel')) $('settingsEmailPanel').classList.toggle('hidden', active !== 'email');
   if ($('settingsUsersPanel')) $('settingsUsersPanel').classList.toggle('hidden', active !== 'users');
   if ($('settingsTasksPanel')) $('settingsTasksPanel').classList.toggle('hidden', active !== 'tasks');
   if ($('settingsMetadataManagerPanel')) $('settingsMetadataManagerPanel').classList.toggle('hidden', active !== 'metadata-manager');
-  if ($('settingsImportPanel')) $('settingsImportPanel').classList.toggle('hidden', active !== 'library');
+  if ($('settingsImportPanel')) $('settingsImportPanel').classList.toggle('hidden', active !== 'media');
   if ($('settingsInfoPanel')) $('settingsInfoPanel').classList.toggle('hidden', active !== 'info');
   if ($('settingsEmailHistoryPanel')) $('settingsEmailHistoryPanel').classList.toggle('hidden', active !== 'email-history');
   if (active === 'preferences') renderPreferencesSettings();
   if (active === 'keybinds') renderKeybindsSettings();
   if (active === 'customize') renderCustomizeSettings();
   if (active === 'server') loadServerSettings(false);
+  if (active === 'integrations') loadServerSettings(false);
   if (active === 'media') loadServerSettings(false);
   if (active === 'email') { if (!state.serverSettings) loadServerSettings(false); loadEmailSettings(false); requestAnimationFrame(syncEmailTemplatePreview); }
-  if (active === 'users') loadUsersSettings(false);
+  if (active === 'users') { renderUsersLoadingState(); deferAfterVisiblePaint(() => openUsersSettingsPanel(), 120); }
   if (active === 'tasks') loadTaskSettings(false);
   if (active === 'statistics') renderStatistics();
   if (active === 'info') { trimSystemUpdateHistory(); loadSystemInfo(false); loadSystemPerformance(); checkStableUpdates(false); }
@@ -17546,9 +18355,8 @@ function activateSettingsTab(tab = 'account') {
   if (active === 'opds') { renderOpdsSettings(); syncOpdsSettingsFromServer(false); }
   if (active === 'devices' || active === 'insights-devices') { renderDeviceHistory(); sendDeviceHeartbeat({ refresh: true }); loadDeviceHistory(false); }
   if (active === 'metadata-manager') renderMetadataManager();
-  const libraryMode = active === 'library';
-  if ($('settingsImportTitle')) $('settingsImportTitle').textContent = 'Library';
-  if ($('settingsImportSub')) $('settingsImportSub').textContent = 'Manage stored library paths, rescan individual folders, and edit scan-in-place library entries.';
+  if ($('settingsImportTitle')) $('settingsImportTitle').textContent = 'Libraries';
+  if ($('settingsImportSub')) $('settingsImportSub').textContent = 'Save folder paths, rescan sources, and manage scan-in-place library entries. Source files stay where they already are.';
 }
 
 
@@ -17788,6 +18596,18 @@ if ($('readerMagnifierLongClick')) $('readerMagnifierLongClick').addEventListene
   el.addEventListener('pointercancel', cancelReaderLongPress);
 });
 if ($('readerBookmarkPage')) $('readerBookmarkPage').addEventListener('click', e => { e.preventDefault(); bookmarkCurrentReaderPage(); setReaderOverlayVisible(true); });
+if ($('readerBookmarksToggle')) $('readerBookmarksToggle').addEventListener('click', e => { e.preventDefault(); e.stopPropagation(); setReaderOverlayVisible(true); toggleReaderBookmarkMenu(); });
+if ($('readerBookmarksList')) $('readerBookmarksList').addEventListener('click', e => {
+  const button = e.target.closest?.('[data-bookmark-page]');
+  if (!button) return;
+  e.preventDefault();
+  jumpReaderToBookmarkedPage(button.dataset.bookmarkPage);
+});
+document.addEventListener('click', e => {
+  if (!state.reader?.bookmarkMenuOpen) return;
+  if (e.target.closest?.('.reader-bookmark-wrap')) return;
+  setReaderBookmarkMenuVisible(false);
+}, true);
 if ($('readerAdvancedSettings')) $('readerAdvancedSettings').addEventListener('click', e => { e.preventDefault(); toggleReaderAdvancedSettings(); setReaderOverlayVisible(true); });
 if ($('readerExitFullscreen')) $('readerExitFullscreen').addEventListener('click', e => { e.preventDefault(); exitReaderFullscreenOnly(); setReaderOverlayVisible(true); });
 if ($('readerExitLibrary')) $('readerExitLibrary').addEventListener('click', e => { e.preventDefault(); exitReaderToLibrary(); });
@@ -18177,6 +18997,7 @@ if ($('customSideNavItems')) $('customSideNavItems').addEventListener('click', e
   applyCustomSideNavItem(btn.dataset.customNavId || '');
 });
 if ($('serverSaveSettings')) $('serverSaveSettings').addEventListener('click', e => { e.preventDefault(); saveServerSettings('general'); });
+if ($('integrationsSaveSettings')) $('integrationsSaveSettings').addEventListener('click', e => { e.preventDefault(); saveServerSettings('integrations'); });
 if ($('igdbTestCredentials')) $('igdbTestCredentials').addEventListener('click', e => { e.preventDefault(); testIgdbCredentials(); });
 if ($('serverResetDefaults')) $('serverResetDefaults').addEventListener('click', e => { e.preventDefault(); resetServerDefaults(); });
 if ($('serverCreateBackup')) $('serverCreateBackup').addEventListener('click', e => { e.preventDefault(); createServerBackup(); });
@@ -18189,10 +19010,10 @@ if ($('emailTemplatePreset')) $('emailTemplatePreset').addEventListener('change'
 if ($('emailTemplateUploadButton')) $('emailTemplateUploadButton').addEventListener('click', e => { e.preventDefault(); $('emailTemplateFile')?.click(); });
 if ($('emailTemplateFile')) $('emailTemplateFile').addEventListener('change', e => uploadEmailTemplateFile(e.currentTarget.files?.[0]));
 if ($('emailHistoryRefresh')) $('emailHistoryRefresh').addEventListener('click', e => { e.preventDefault(); loadEmailHistory(true); });
-if ($('usersRefresh')) $('usersRefresh').addEventListener('click', e => { e.preventDefault(); loadUsersSettings(true); });
+if ($('usersRefresh')) $('usersRefresh').addEventListener('click', e => { e.preventDefault(); scheduleUsersSettingsLoad(true, 0); });
 if ($('usersInviteButton')) $('usersInviteButton').addEventListener('click', e => { e.preventDefault(); inviteUser(); });
 if ($('tasksSaveSettings')) $('tasksSaveSettings').addEventListener('click', e => { e.preventDefault(); saveTaskSettings(); });
-if ($('taskRunRescan')) $('taskRunRescan').addEventListener('click', async e => { e.preventDefault(); setTasksSettingsStatus('Fast rescan queued.', 'info'); await rescanLibrary(); });
+if ($('taskRunRescan')) $('taskRunRescan').addEventListener('click', async e => { e.preventDefault(); setTasksSettingsStatus('Rescan queued.', 'info'); await rescanLibrary(); });
 if ($('taskRunEnrich')) $('taskRunEnrich').addEventListener('click', async e => { e.preventDefault(); setTasksSettingsStatus('Fast metadata enrichment queued.', 'info'); await enrichLibraryMetadata(); });
 if ($('taskRunComicInfo')) $('taskRunComicInfo').addEventListener('click', async e => { e.preventDefault(); setTasksSettingsStatus('Legacy ComicInfo import queued.', 'info'); await importLegacyComicInfoMetadata(); });
 if ($('taskRunCleanup')) $('taskRunCleanup').addEventListener('click', async e => { e.preventDefault(); setTasksSettingsStatus('Cleanup queued.', 'info'); await cleanupLibrary(); });
@@ -18274,4 +19095,5 @@ installLibraryCardDelegates();
 installGlobalDetailDelegate();
 syncEmailTemplatePreview();
 initializeGuidevaultAuthAndApp();
+
 

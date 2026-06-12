@@ -1,4 +1,4 @@
-using System.Collections.Concurrent;
+﻿using System.Collections.Concurrent;
 using System.IO.Compression;
 using System.Security.Cryptography;
 using System.Text;
@@ -11,9 +11,12 @@ using System.Net;
 using System.Net.Mail;
 using System.Net.Http.Headers;
 using SharpCompress.Readers;
+using SixLabors.ImageSharp;
+using SixLabors.ImageSharp.Formats.Jpeg;
+using SixLabors.ImageSharp.Processing;
 
 var builder = WebApplication.CreateBuilder(args);
-const string GuidevaultVersion = "0.9.144";
+const string GuidevaultVersion = "0.9.103";
 var app = builder.Build();
 var metadataJsonOptions = new JsonSerializerOptions(JsonSerializerDefaults.Web) { PropertyNameCaseInsensitive = true };
 var options = app.Configuration.GetSection("Guidevault").Get<GuidevaultOptions>() ?? new GuidevaultOptions();
@@ -26,6 +29,7 @@ var serverSettingsPath = Path.Combine(contentRoot, "data", "config", "server.set
 var emailSettingsPath = Path.Combine(contentRoot, "data", "config", "email.settings.json");
 var emailHistoryPath = Path.Combine(contentRoot, "data", "config", "email.history.json");
 var usersSettingsPath = Path.Combine(contentRoot, "data", "config", "users.settings.json");
+var itemReviewsPath = Path.Combine(contentRoot, "data", "config", "item.reviews.json");
 var taskSettingsPath = Path.Combine(contentRoot, "data", "config", "task.settings.json");
 var customizeSettingsPath = Path.Combine(contentRoot, "data", "config", "customize.settings.json");
 var deviceHistoryPath = Path.Combine(contentRoot, "data", "config", "device.history.json");
@@ -55,13 +59,15 @@ var serverSettingsStore = new GuidevaultServerSettingsStore(serverSettingsPath, 
 var emailSettingsStore = new GuidevaultEmailSettingsStore(emailSettingsPath);
 var emailHistoryStore = new GuidevaultEmailHistoryStore(emailHistoryPath);
 var usersStore = new GuidevaultUsersStore(usersSettingsPath);
+var itemReviewStore = new GuidevaultItemReviewStore(itemReviewsPath);
 var taskSettingsStore = new GuidevaultTaskSettingsStore(taskSettingsPath);
 var customizeSettingsStore = new GuidevaultCustomizeSettingsStore(customizeSettingsPath);
 var deviceStore = new DeviceHistoryStore(deviceHistoryPath);
 var systemInfoStore = new SystemInfoStore(systemInfoPath, GuidevaultVersion);
 var indexCachePath = Path.Combine(contentRoot, "data", "cache", "library-index.json");
 var coverCachePath = Path.Combine(contentRoot, "data", "cache", "covers");
-ArchiveReader.ConfigureCoverCache(coverCachePath);
+var coverThumbnailCachePath = Path.Combine(contentRoot, "data", "cache", "cover-thumbs");
+ArchiveReader.ConfigureCoverCache(coverCachePath, coverThumbnailCachePath);
 var taskMonitor = new TaskMonitor();
 var cache = new LibraryCache(loadedSettings.Libraries, metadataStore, fileIdentityStore, indexCachePath, taskMonitor);
 var updateChecker = new StableUpdateChecker(options.Updates, GuidevaultVersion);
@@ -369,7 +375,7 @@ app.MapPost("/api/library/prewarm-covers", (string? kind, int? limit) =>
             {
                 if (string.IsNullOrWhiteSpace(item.Path) || !File.Exists(item.Path)) continue;
                 if (string.Equals(item.Format, "PDF", StringComparison.OrdinalIgnoreCase)) continue;
-                try { await ArchiveReader.GetCoverImageAsync(item.Path); }
+                try { await ArchiveReader.GetCoverThumbnailAsync(item.Path, 360); }
                 catch { /* best-effort warmup only */ }
             }
         }
@@ -832,6 +838,43 @@ app.MapGet("/api/items/{id}", async (string id) =>
     return item is null ? Results.NotFound() : Results.Ok(item);
 });
 
+app.MapGet("/api/items/{id}/reviews", (string id) =>
+{
+    if (string.IsNullOrWhiteSpace(id))
+        return Results.BadRequest(new { error = "Item id is required." });
+
+    return Results.Ok(new
+    {
+        itemId = id,
+        reviews = itemReviewStore.GetPublicForItem(id)
+    });
+});
+
+app.MapPut("/api/items/{id}/reviews", (string id, GuidevaultReviewRequest payload) =>
+{
+    if (string.IsNullOrWhiteSpace(id))
+        return Results.BadRequest(new { error = "Item id is required." });
+
+    if (payload is null)
+        return Results.BadRequest(new { error = "Review payload is required." });
+
+    var saved = itemReviewStore.Upsert(id, payload);
+    return Results.Ok(new
+    {
+        review = saved,
+        reviews = itemReviewStore.GetPublicForItem(id)
+    });
+});
+
+app.MapDelete("/api/reviews/{reviewId}", (string reviewId, string? user) =>
+{
+    if (string.IsNullOrWhiteSpace(reviewId))
+        return Results.BadRequest(new { error = "Review id is required." });
+
+    var deleted = itemReviewStore.Delete(reviewId, user);
+    return Results.Ok(new { deleted });
+});
+
 
 app.MapGet("/api/openlibrary/search", async (string? q, string? secondary, string? isbn, string? title, string? gameTitle, string? publisher, string? year, int? limit) =>
 {
@@ -973,6 +1016,112 @@ app.MapPut("/api/items/{id}/metadata", (string id, JsonElement payload) =>
         saved = true,
         message = "Metadata saved. The saved values will apply when this item is loaded."
     });
+});
+
+app.MapPost("/api/items/metadata/bulk", (JsonElement payload) =>
+{
+    try
+    {
+        var requests = BulkMetadataJsonReader.Read(payload);
+        if (requests.Count == 0)
+            return Results.BadRequest(new { error = "No metadata updates were supplied." });
+
+        var effectiveUpdates = requests
+            .Where(request => !string.IsNullOrWhiteSpace(request.Id))
+            .Select(request => new BulkMetadataUpdateRequest(
+                request.Id.Trim(),
+                metadataStore.PrepareIncomingOverride(request.Id.Trim(), request.Update, request.OverwriteLockedFields),
+                request.OverwriteLockedFields))
+            .ToArray();
+
+        if (effectiveUpdates.Length == 0)
+            return Results.BadRequest(new { error = "No valid metadata updates were supplied." });
+
+        metadataStore.MergeOverrides(effectiveUpdates);
+
+        var updateCache = true;
+        if (payload.ValueKind == JsonValueKind.Object)
+        {
+            foreach (var property in payload.EnumerateObject())
+            {
+                if (!property.Name.Equals("updateCache", StringComparison.OrdinalIgnoreCase)) continue;
+                if (property.Value.ValueKind == JsonValueKind.False) updateCache = false;
+                else if (property.Value.ValueKind == JsonValueKind.True) updateCache = true;
+                else if (property.Value.ValueKind == JsonValueKind.String && bool.TryParse(property.Value.GetString(), out var parsed)) updateCache = parsed;
+                break;
+            }
+        }
+
+        var cacheUpdated = 0;
+        var missingIds = new List<string>();
+
+        if (updateCache)
+        {
+            var cachedItems = cache.GetItemsSnapshot()
+                .Where(item => !string.IsNullOrWhiteSpace(item.Id))
+                .GroupBy(item => item.Id, StringComparer.OrdinalIgnoreCase)
+                .ToDictionary(group => group.Key, group => group.First(), StringComparer.OrdinalIgnoreCase);
+            var updatedItems = new List<LibraryItem>();
+
+            foreach (var request in effectiveUpdates)
+            {
+                if (!cachedItems.TryGetValue(request.Id, out var cached))
+                {
+                    missingIds.Add(request.Id);
+                    continue;
+                }
+
+                var updated = metadataStore.ApplyOverride(cached);
+                updated = MetadataStore.ApplyUpdateSnapshot(updated, request.Update);
+                updatedItems.Add(updated);
+            }
+
+            cacheUpdated = cache.ReplaceCachedItems(updatedItems, persist: false);
+        }
+
+        // Do not return the updated LibraryItem list here. Large JSON imports can update
+        // thousands of rows, and echoing all rows back can create a huge response and make
+        // the browser/app look like it crashed. The client applies saved rows locally and
+        // refreshes the server cache once after all chunks finish.
+        return Results.Ok(new
+        {
+            processed = requests.Count,
+            saved = effectiveUpdates.Length,
+            cacheUpdated,
+            cacheRefreshDeferred = !updateCache,
+            missingCount = missingIds.Count,
+            missingIds = missingIds.Take(25).ToArray(),
+            message = $"Saved {effectiveUpdates.Length} metadata row(s) in one bulk write."
+        });
+    }
+    catch (Exception ex)
+    {
+        app.Logger.LogError(ex, "Bulk metadata save failed.");
+        return Results.BadRequest(new { error = $"Bulk metadata save failed: {ex.Message}" });
+    }
+});
+
+app.MapPost("/api/items/metadata/refresh-cache", (JsonElement payload) =>
+{
+    try
+    {
+        var ids = MetadataIdListJsonReader.Read(payload);
+        if (ids.Count == 0)
+            return Results.BadRequest(new { error = "No item ids were supplied for metadata cache refresh." });
+
+        var cacheUpdated = cache.RefreshCachedMetadataOverrides(ids, persist: false);
+        return Results.Ok(new
+        {
+            requested = ids.Count,
+            cacheUpdated,
+            message = $"Refreshed cached metadata overrides for {cacheUpdated} row(s)."
+        });
+    }
+    catch (Exception ex)
+    {
+        app.Logger.LogError(ex, "Metadata cache refresh failed.");
+        return Results.BadRequest(new { error = $"Metadata cache refresh failed: {ex.Message}" });
+    }
 });
 
 app.MapPost("/api/items/{id}/metadata/native-export", async (string id, JsonElement payload) =>
@@ -1265,6 +1414,26 @@ app.MapGet("/api/items/{id}/cover", async (string id, HttpResponse response) =>
         fileDownloadName: null,
         lastModified: item.Modified,
         entityTag: new Microsoft.Net.Http.Headers.EntityTagHeaderValue($"\"{item.Id}-{item.Modified.ToUnixTimeSeconds()}\""),
+        enableRangeProcessing: true);
+});
+
+app.MapGet("/api/items/{id}/cover-thumb", async (string id, int? w, HttpResponse response) =>
+{
+    var item = cache.TryGetCachedItem(id) ?? (await cache.GetItemsAsync()).FirstOrDefault(i => i.Id == id);
+    if (item is null) return Results.NotFound();
+    response.Headers.CacheControl = "public, max-age=604800, immutable";
+    if (item.Format == "PDF") return Results.Redirect("/assets/pdf-cover.svg");
+
+    var width = Math.Clamp(w ?? 360, 120, 720);
+    var image = await ArchiveReader.GetCoverThumbnailAsync(item.Path, width);
+    if (image is null) return Results.Redirect("/assets/missing-cover.svg");
+
+    return Results.File(
+        image.Value.Bytes,
+        image.Value.ContentType,
+        fileDownloadName: null,
+        lastModified: item.Modified,
+        entityTag: new Microsoft.Net.Http.Headers.EntityTagHeaderValue($"\"{item.Id}-{item.Modified.ToUnixTimeSeconds()}-thumb-{width}\""),
         enableRangeProcessing: true);
 });
 
@@ -2244,7 +2413,7 @@ static string[] CategoryBuckets(LibraryItem item)
     void Add(string? value)
     {
         var text = (value ?? string.Empty).Trim();
-        if (string.IsNullOrWhiteSpace(text) || text == "—" || IsMultiPlatformBucket(text)) return;
+        if (string.IsNullOrWhiteSpace(text) || text == "â€”" || IsMultiPlatformBucket(text)) return;
         if (!buckets.Any(existing => string.Equals(existing, text, StringComparison.OrdinalIgnoreCase))) buckets.Add(text);
     }
 
@@ -2345,7 +2514,7 @@ static string OpdsItemDescription(LibraryItem item)
         item.Year,
         item.PageCount > 0 ? $"{item.PageCount} page(s)" : string.Empty
     }.Where(p => !string.IsNullOrWhiteSpace(p)).Distinct(StringComparer.OrdinalIgnoreCase);
-    return string.Join(" • ", parts);
+    return string.Join(" â€¢ ", parts);
 }
 
 static string OpdsSearchText(LibraryItem item) => string.Join(" ", new[]
@@ -3689,6 +3858,158 @@ public sealed class GuidevaultEmailHistoryRecord
     public DateTimeOffset SentAt { get; set; } = DateTimeOffset.UtcNow;
 }
 
+
+public sealed class GuidevaultItemReviewStore
+{
+    private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web) { WriteIndented = true };
+    private readonly object _gate = new();
+    private readonly string _path;
+    private GuidevaultItemReviewSettings _settings;
+
+    public GuidevaultItemReviewStore(string path)
+    {
+        _path = path;
+        Directory.CreateDirectory(Path.GetDirectoryName(_path)!);
+        _settings = Load();
+        _settings.Reviews ??= new List<GuidevaultReviewRecord>();
+        Save();
+    }
+
+    public IReadOnlyList<GuidevaultReviewRecord> GetPublicForItem(string itemId)
+    {
+        var cleanItemId = Clean(itemId);
+        lock (_gate)
+        {
+            return _settings.Reviews
+                .Where(r => string.Equals(r.ItemId, cleanItemId, StringComparison.OrdinalIgnoreCase)
+                    && string.Equals(NormalizeVisibility(r.Visibility), "public", StringComparison.OrdinalIgnoreCase))
+                .OrderByDescending(r => r.UpdatedAt)
+                .Select(Clone)
+                .ToArray();
+        }
+    }
+
+    public GuidevaultReviewRecord Upsert(string itemId, GuidevaultReviewRequest payload)
+    {
+        var cleanItemId = Clean(itemId);
+        var user = Clean(payload.User, "local user").ToLowerInvariant();
+        var now = DateTimeOffset.UtcNow;
+        lock (_gate)
+        {
+            var review = _settings.Reviews.FirstOrDefault(r => !string.IsNullOrWhiteSpace(payload.Id) && string.Equals(r.Id, payload.Id.Trim(), StringComparison.OrdinalIgnoreCase))
+                ?? _settings.Reviews.FirstOrDefault(r => string.Equals(r.ItemId, cleanItemId, StringComparison.OrdinalIgnoreCase) && string.Equals(r.User, user, StringComparison.OrdinalIgnoreCase));
+
+            if (review is null)
+            {
+                review = new GuidevaultReviewRecord
+                {
+                    Id = string.IsNullOrWhiteSpace(payload.Id) ? ("review-" + Guid.NewGuid().ToString("N"))[..32] : payload.Id.Trim(),
+                    ItemId = cleanItemId,
+                    User = user,
+                    CreatedAt = now
+                };
+                _settings.Reviews.Add(review);
+            }
+
+            review.ItemId = cleanItemId;
+            review.User = user;
+            review.UserDisplayName = Clean(payload.UserDisplayName, DisplayNameFromUser(user));
+            review.AvatarDataUrl = Limit(Clean(payload.AvatarDataUrl), 300_000);
+            review.Title = Limit(Clean(payload.Title), 240);
+            review.Kind = Limit(Clean(payload.Kind), 80);
+            review.Rating = Math.Clamp(payload.Rating, 1, 5);
+            review.Text = Limit(Clean(payload.Text), 2000);
+            review.Visibility = NormalizeVisibility(payload.Visibility);
+            review.UpdatedAt = now;
+            Save();
+            return Clone(review);
+        }
+    }
+
+    public bool Delete(string reviewId, string? user)
+    {
+        var id = Clean(reviewId);
+        var userKey = Clean(user).ToLowerInvariant();
+        lock (_gate)
+        {
+            var before = _settings.Reviews.Count;
+            _settings.Reviews = _settings.Reviews
+                .Where(r => !string.Equals(r.Id, id, StringComparison.OrdinalIgnoreCase)
+                    || (!string.IsNullOrWhiteSpace(userKey) && !string.Equals(r.User, userKey, StringComparison.OrdinalIgnoreCase)))
+                .ToList();
+            var deleted = _settings.Reviews.Count != before;
+            if (deleted) Save();
+            return deleted;
+        }
+    }
+
+    private GuidevaultItemReviewSettings Load()
+    {
+        try
+        {
+            if (File.Exists(_path))
+                return JsonSerializer.Deserialize<GuidevaultItemReviewSettings>(File.ReadAllText(_path), JsonOptions) ?? new GuidevaultItemReviewSettings();
+        }
+        catch { }
+        return new GuidevaultItemReviewSettings();
+    }
+
+    private void Save() => File.WriteAllText(_path, JsonSerializer.Serialize(_settings, JsonOptions));
+    private static string Clean(string? value, string fallback = "") => string.IsNullOrWhiteSpace(value) ? fallback : value.Trim();
+    private static string Limit(string value, int max) => value.Length <= max ? value : value[..max];
+    private static string NormalizeVisibility(string? value) => string.Equals(value, "public", StringComparison.OrdinalIgnoreCase) ? "public" : "private";
+    private static string DisplayNameFromUser(string user) => string.IsNullOrWhiteSpace(user) ? "Guidevault user" : user.Split('@')[0];
+    private static GuidevaultReviewRecord Clone(GuidevaultReviewRecord review) => new()
+    {
+        Id = review.Id,
+        ItemId = review.ItemId,
+        User = review.User,
+        UserDisplayName = review.UserDisplayName,
+        AvatarDataUrl = review.AvatarDataUrl,
+        Title = review.Title,
+        Kind = review.Kind,
+        Rating = review.Rating,
+        Text = review.Text,
+        Visibility = NormalizeVisibility(review.Visibility),
+        CreatedAt = review.CreatedAt,
+        UpdatedAt = review.UpdatedAt
+    };
+}
+
+public sealed class GuidevaultItemReviewSettings
+{
+    public List<GuidevaultReviewRecord> Reviews { get; set; } = new();
+}
+
+public sealed class GuidevaultReviewRecord
+{
+    public string Id { get; set; } = string.Empty;
+    public string ItemId { get; set; } = string.Empty;
+    public string User { get; set; } = string.Empty;
+    public string UserDisplayName { get; set; } = string.Empty;
+    public string AvatarDataUrl { get; set; } = string.Empty;
+    public string Title { get; set; } = string.Empty;
+    public string Kind { get; set; } = string.Empty;
+    public int Rating { get; set; } = 5;
+    public string Text { get; set; } = string.Empty;
+    public string Visibility { get; set; } = "private";
+    public DateTimeOffset CreatedAt { get; set; } = DateTimeOffset.UtcNow;
+    public DateTimeOffset UpdatedAt { get; set; } = DateTimeOffset.UtcNow;
+}
+
+public sealed class GuidevaultReviewRequest
+{
+    public string? Id { get; set; }
+    public string? User { get; set; }
+    public string? UserDisplayName { get; set; }
+    public string? AvatarDataUrl { get; set; }
+    public string? Title { get; set; }
+    public string? Kind { get; set; }
+    public int Rating { get; set; } = 5;
+    public string? Text { get; set; }
+    public string? Visibility { get; set; }
+}
+
 public sealed class GuidevaultUsersStore
 {
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web) { WriteIndented = true };
@@ -4890,6 +5211,174 @@ public static class ItemMetadataJsonReader
     private static bool HasText(string? value) => !string.IsNullOrWhiteSpace(value);
 }
 
+public sealed record BulkMetadataUpdateRequest(string Id, ItemMetadataUpdate Update, bool OverwriteLockedFields = false);
+
+public static class BulkMetadataJsonReader
+{
+    public static List<BulkMetadataUpdateRequest> Read(JsonElement payload)
+    {
+        var overwriteLockedFields = GetBool(payload, "overwriteLockedFields") ?? false;
+        var updates = ResolveUpdatesArray(payload);
+        if (updates.ValueKind != JsonValueKind.Array) return new List<BulkMetadataUpdateRequest>();
+
+        var results = new List<BulkMetadataUpdateRequest>();
+        foreach (var entry in updates.EnumerateArray())
+        {
+            if (entry.ValueKind != JsonValueKind.Object) continue;
+
+            var id = FirstText(GetString(entry, "id"), GetString(entry, "itemId"), GetString(entry, "Id"));
+            if (string.IsNullOrWhiteSpace(id)) continue;
+
+            var rowOverwriteLockedFields = GetBool(entry, "overwriteLockedFields") ?? overwriteLockedFields;
+            var metadataPayload = ResolveMetadataPayload(entry);
+            if (metadataPayload.ValueKind != JsonValueKind.Object) continue;
+
+            results.Add(new BulkMetadataUpdateRequest(id.Trim(), ItemMetadataJsonReader.Read(metadataPayload), rowOverwriteLockedFields));
+        }
+
+        return results;
+    }
+
+    private static JsonElement ResolveUpdatesArray(JsonElement payload)
+    {
+        if (payload.ValueKind == JsonValueKind.Array) return payload;
+        if (payload.ValueKind == JsonValueKind.Object)
+        {
+            if (TryGetProperty(payload, "updates", out var updates) && updates.ValueKind == JsonValueKind.Array) return updates;
+            if (TryGetProperty(payload, "items", out var items) && items.ValueKind == JsonValueKind.Array) return items;
+        }
+        return default;
+    }
+
+    private static JsonElement ResolveMetadataPayload(JsonElement entry)
+    {
+        if (TryGetProperty(entry, "payload", out var payload) && payload.ValueKind == JsonValueKind.Object) return payload;
+        if (TryGetProperty(entry, "metadata", out var metadata) && metadata.ValueKind == JsonValueKind.Object) return metadata;
+        return entry;
+    }
+
+    private static string? GetString(JsonElement json, string camelName)
+    {
+        if (!TryGetProperty(json, camelName, out var value)) return null;
+        return value.ValueKind switch
+        {
+            JsonValueKind.String => value.GetString(),
+            JsonValueKind.Number => value.ToString(),
+            JsonValueKind.True => "true",
+            JsonValueKind.False => "false",
+            _ => null
+        };
+    }
+
+    private static bool? GetBool(JsonElement json, string camelName)
+    {
+        if (!TryGetProperty(json, camelName, out var value)) return null;
+        if (value.ValueKind == JsonValueKind.True) return true;
+        if (value.ValueKind == JsonValueKind.False) return false;
+        if (value.ValueKind == JsonValueKind.String && bool.TryParse(value.GetString(), out var parsed)) return parsed;
+        return null;
+    }
+
+    private static bool TryGetProperty(JsonElement json, string camelName, out JsonElement value)
+    {
+        if (json.ValueKind == JsonValueKind.Object)
+        {
+            if (json.TryGetProperty(camelName, out value)) return true;
+            if (!string.IsNullOrWhiteSpace(camelName))
+            {
+                var pascal = char.ToUpperInvariant(camelName[0]) + camelName[1..];
+                if (json.TryGetProperty(pascal, out value)) return true;
+            }
+            foreach (var property in json.EnumerateObject())
+            {
+                if (property.Name.Equals(camelName, StringComparison.OrdinalIgnoreCase))
+                {
+                    value = property.Value;
+                    return true;
+                }
+            }
+        }
+        value = default;
+        return false;
+    }
+
+    private static string? FirstText(params string?[] values)
+        => values.FirstOrDefault(value => !string.IsNullOrWhiteSpace(value))?.Trim();
+}
+
+public static class MetadataIdListJsonReader
+{
+    public static List<string> Read(JsonElement payload)
+    {
+        var ids = new List<string>();
+
+        void AddId(JsonElement value)
+        {
+            var id = value.ValueKind switch
+            {
+                JsonValueKind.String => value.GetString(),
+                JsonValueKind.Number => value.ToString(),
+                _ => null
+            };
+            if (!string.IsNullOrWhiteSpace(id)) ids.Add(id.Trim());
+        }
+
+        if (payload.ValueKind == JsonValueKind.Array)
+        {
+            foreach (var entry in payload.EnumerateArray())
+            {
+                if (entry.ValueKind == JsonValueKind.Object)
+                {
+                    if (TryGetProperty(entry, "id", out var idValue) || TryGetProperty(entry, "itemId", out idValue) || TryGetProperty(entry, "Id", out idValue))
+                        AddId(idValue);
+                }
+                else
+                {
+                    AddId(entry);
+                }
+            }
+        }
+        else if (payload.ValueKind == JsonValueKind.Object)
+        {
+            if (TryGetProperty(payload, "ids", out var idsElement) && idsElement.ValueKind == JsonValueKind.Array)
+            {
+                foreach (var entry in idsElement.EnumerateArray()) AddId(entry);
+            }
+            else if (TryGetProperty(payload, "updates", out var updates) && updates.ValueKind == JsonValueKind.Array)
+            {
+                foreach (var entry in updates.EnumerateArray())
+                {
+                    if (entry.ValueKind == JsonValueKind.Object && (TryGetProperty(entry, "id", out var idValue) || TryGetProperty(entry, "itemId", out idValue) || TryGetProperty(entry, "Id", out idValue)))
+                        AddId(idValue);
+                }
+            }
+        }
+
+        return ids
+            .Where(id => !string.IsNullOrWhiteSpace(id))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+    }
+
+    private static bool TryGetProperty(JsonElement json, string camelName, out JsonElement value)
+    {
+        if (json.ValueKind == JsonValueKind.Object)
+        {
+            if (json.TryGetProperty(camelName, out value)) return true;
+            foreach (var property in json.EnumerateObject())
+            {
+                if (property.Name.Equals(camelName, StringComparison.OrdinalIgnoreCase))
+                {
+                    value = property.Value;
+                    return true;
+                }
+            }
+        }
+        value = default;
+        return false;
+    }
+}
+
 public sealed record FileIdentityRecord(string ItemId, string Path, string PreviousPath, DateTimeOffset RenamedAt);
 
 public sealed class FileIdentityStore
@@ -5416,73 +5905,95 @@ public sealed class MetadataStore
 
     public void MergeOverride(string id, ItemMetadataUpdate update)
     {
+        if (string.IsNullOrWhiteSpace(id)) return;
         lock (_gate)
         {
             _overrides.TryGetValue(id, out var existing);
-            _overrides[id] = new ItemMetadataUpdate(
-                Title: update.Title ?? existing?.Title,
-                Kind: update.Kind ?? existing?.Kind,
-                System: update.System ?? existing?.System,
-                Category: update.Category ?? existing?.Category,
-                Publisher: update.Publisher ?? existing?.Publisher,
-                Year: update.Year ?? existing?.Year,
-                Tags: update.Tags ?? existing?.Tags,
-                Summary: update.Summary ?? existing?.Summary,
-                Series: update.Series ?? existing?.Series,
-                Writer: update.Writer ?? existing?.Writer,
-                IssueNumber: update.IssueNumber ?? existing?.IssueNumber,
-                Rating: update.Rating ?? existing?.Rating,
-                WebLink: update.WebLink ?? existing?.WebLink,
-                Asin: update.Asin ?? existing?.Asin,
-                Isbn10: update.Isbn10 ?? existing?.Isbn10,
-                Isbn13: update.Isbn13 ?? existing?.Isbn13,
-                LanguageTag: update.LanguageTag ?? existing?.LanguageTag,
-                AssociatedPlatforms: update.AssociatedPlatforms ?? existing?.AssociatedPlatforms,
-                PlatformMatchTitle: update.PlatformMatchTitle ?? existing?.PlatformMatchTitle,
-                PlatformResolverSource: update.PlatformResolverSource ?? existing?.PlatformResolverSource,
-                PlatformResolverConfidence: update.PlatformResolverConfidence ?? existing?.PlatformResolverConfidence,
-                MagazineTitle: update.MagazineTitle ?? existing?.MagazineTitle,
-                Volume: update.Volume ?? existing?.Volume,
-                CoverDate: update.CoverDate ?? existing?.CoverDate,
-                PublicationDate: update.PublicationDate ?? existing?.PublicationDate,
-                Region: update.Region ?? existing?.Region,
-                PlatformFocus: update.PlatformFocus ?? existing?.PlatformFocus,
-                PrimarySystem: update.PrimarySystem ?? existing?.PrimarySystem,
-                MagazineCategory: update.MagazineCategory ?? existing?.MagazineCategory,
-                CoverSubject: update.CoverSubject ?? existing?.CoverSubject,
-                BarcodeUpcIssn: update.BarcodeUpcIssn ?? existing?.BarcodeUpcIssn,
-                FeaturedGames: update.FeaturedGames ?? existing?.FeaturedGames,
-                FeaturedPlatforms: update.FeaturedPlatforms ?? existing?.FeaturedPlatforms,
-                SpecialFeatures: update.SpecialFeatures ?? existing?.SpecialFeatures,
-                IncludedExtras: update.IncludedExtras ?? existing?.IncludedExtras,
-                GameTitle: update.GameTitle ?? existing?.GameTitle,
-                GuideType: update.GuideType ?? existing?.GuideType,
-                Edition: update.Edition ?? existing?.Edition,
-                Franchise: update.Franchise ?? existing?.Franchise,
-                Developer: update.Developer ?? existing?.Developer,
-                GamePublisher: update.GamePublisher ?? existing?.GamePublisher,
-                GameReleaseYear: update.GameReleaseYear ?? existing?.GameReleaseYear,
-                Genre: update.Genre ?? existing?.Genre,
-                CoveredGames: update.CoveredGames ?? existing?.CoveredGames,
-                CoveredPlatforms: update.CoveredPlatforms ?? existing?.CoveredPlatforms,
-                GuideTopics: update.GuideTopics ?? existing?.GuideTopics,
-                CharactersCovered: update.CharactersCovered ?? existing?.CharactersCovered,
-                LocationsCovered: update.LocationsCovered ?? existing?.LocationsCovered,
-                ManualTitle: update.ManualTitle ?? existing?.ManualTitle,
-                ManualType: update.ManualType ?? existing?.ManualType,
-                IncludedSections: update.IncludedSections ?? existing?.IncludedSections,
-                ControlScheme: update.ControlScheme ?? existing?.ControlScheme,
-                ItemsCovered: update.ItemsCovered ?? existing?.ItemsCovered,
-                WarrantySupport: update.WarrantySupport ?? existing?.WarrantySupport,
-                PageCount: update.PageCount ?? existing?.PageCount,
-                MetadataSource: update.MetadataSource ?? existing?.MetadataSource,
-                MetadataStatus: update.MetadataStatus ?? existing?.MetadataStatus,
-                Notes: update.Notes ?? existing?.Notes,
-                Removed: update.Removed ?? existing?.Removed,
-                MetadataLocks: MetadataLockHelper.MergeLocks(existing?.MetadataLocks, update.MetadataLocks));
+            _overrides[id] = MergeMetadataUpdate(existing, update);
             Persist();
         }
     }
+
+    public void MergeOverrides(IEnumerable<BulkMetadataUpdateRequest> updates)
+    {
+        if (updates is null) return;
+        lock (_gate)
+        {
+            var changed = false;
+            foreach (var request in updates)
+            {
+                if (string.IsNullOrWhiteSpace(request.Id)) continue;
+                _overrides.TryGetValue(request.Id, out var existing);
+                _overrides[request.Id] = MergeMetadataUpdate(existing, request.Update);
+                changed = true;
+            }
+
+            if (changed) Persist();
+        }
+    }
+
+    private static ItemMetadataUpdate MergeMetadataUpdate(ItemMetadataUpdate? existing, ItemMetadataUpdate update)
+        => new(
+            Title: update.Title ?? existing?.Title,
+            Kind: update.Kind ?? existing?.Kind,
+            System: update.System ?? existing?.System,
+            Category: update.Category ?? existing?.Category,
+            Publisher: update.Publisher ?? existing?.Publisher,
+            Year: update.Year ?? existing?.Year,
+            Tags: update.Tags ?? existing?.Tags,
+            Summary: update.Summary ?? existing?.Summary,
+            Series: update.Series ?? existing?.Series,
+            Writer: update.Writer ?? existing?.Writer,
+            IssueNumber: update.IssueNumber ?? existing?.IssueNumber,
+            Rating: update.Rating ?? existing?.Rating,
+            WebLink: update.WebLink ?? existing?.WebLink,
+            Asin: update.Asin ?? existing?.Asin,
+            Isbn10: update.Isbn10 ?? existing?.Isbn10,
+            Isbn13: update.Isbn13 ?? existing?.Isbn13,
+            LanguageTag: update.LanguageTag ?? existing?.LanguageTag,
+            AssociatedPlatforms: update.AssociatedPlatforms ?? existing?.AssociatedPlatforms,
+            PlatformMatchTitle: update.PlatformMatchTitle ?? existing?.PlatformMatchTitle,
+            PlatformResolverSource: update.PlatformResolverSource ?? existing?.PlatformResolverSource,
+            PlatformResolverConfidence: update.PlatformResolverConfidence ?? existing?.PlatformResolverConfidence,
+            MagazineTitle: update.MagazineTitle ?? existing?.MagazineTitle,
+            Volume: update.Volume ?? existing?.Volume,
+            CoverDate: update.CoverDate ?? existing?.CoverDate,
+            PublicationDate: update.PublicationDate ?? existing?.PublicationDate,
+            Region: update.Region ?? existing?.Region,
+            PlatformFocus: update.PlatformFocus ?? existing?.PlatformFocus,
+            PrimarySystem: update.PrimarySystem ?? existing?.PrimarySystem,
+            MagazineCategory: update.MagazineCategory ?? existing?.MagazineCategory,
+            CoverSubject: update.CoverSubject ?? existing?.CoverSubject,
+            BarcodeUpcIssn: update.BarcodeUpcIssn ?? existing?.BarcodeUpcIssn,
+            FeaturedGames: update.FeaturedGames ?? existing?.FeaturedGames,
+            FeaturedPlatforms: update.FeaturedPlatforms ?? existing?.FeaturedPlatforms,
+            SpecialFeatures: update.SpecialFeatures ?? existing?.SpecialFeatures,
+            IncludedExtras: update.IncludedExtras ?? existing?.IncludedExtras,
+            GameTitle: update.GameTitle ?? existing?.GameTitle,
+            GuideType: update.GuideType ?? existing?.GuideType,
+            Edition: update.Edition ?? existing?.Edition,
+            Franchise: update.Franchise ?? existing?.Franchise,
+            Developer: update.Developer ?? existing?.Developer,
+            GamePublisher: update.GamePublisher ?? existing?.GamePublisher,
+            GameReleaseYear: update.GameReleaseYear ?? existing?.GameReleaseYear,
+            Genre: update.Genre ?? existing?.Genre,
+            CoveredGames: update.CoveredGames ?? existing?.CoveredGames,
+            CoveredPlatforms: update.CoveredPlatforms ?? existing?.CoveredPlatforms,
+            GuideTopics: update.GuideTopics ?? existing?.GuideTopics,
+            CharactersCovered: update.CharactersCovered ?? existing?.CharactersCovered,
+            LocationsCovered: update.LocationsCovered ?? existing?.LocationsCovered,
+            ManualTitle: update.ManualTitle ?? existing?.ManualTitle,
+            ManualType: update.ManualType ?? existing?.ManualType,
+            IncludedSections: update.IncludedSections ?? existing?.IncludedSections,
+            ControlScheme: update.ControlScheme ?? existing?.ControlScheme,
+            ItemsCovered: update.ItemsCovered ?? existing?.ItemsCovered,
+            WarrantySupport: update.WarrantySupport ?? existing?.WarrantySupport,
+            PageCount: update.PageCount ?? existing?.PageCount,
+            MetadataSource: update.MetadataSource ?? existing?.MetadataSource,
+            MetadataStatus: update.MetadataStatus ?? existing?.MetadataStatus,
+            Notes: update.Notes ?? existing?.Notes,
+            Removed: update.Removed ?? existing?.Removed,
+            MetadataLocks: MetadataLockHelper.MergeLocks(existing?.MetadataLocks, update.MetadataLocks));
 }
 
 
@@ -5602,6 +6113,58 @@ public sealed class LibraryCache
         list[index] = updated;
         _items = list;
         if (persist) SavePersistedCache(_items);
+    }
+
+    public int ReplaceCachedItems(IEnumerable<LibraryItem> updatedItems, bool persist = true)
+    {
+        if (_items is null || updatedItems is null) return 0;
+        var updates = updatedItems
+            .Where(item => item is not null && !string.IsNullOrWhiteSpace(item.Id))
+            .GroupBy(item => item.Id, StringComparer.OrdinalIgnoreCase)
+            .ToDictionary(group => group.Key, group => group.Last(), StringComparer.OrdinalIgnoreCase);
+
+        if (updates.Count == 0) return 0;
+
+        var changed = 0;
+        var list = _items
+            .Select(item =>
+            {
+                if (!updates.TryGetValue(item.Id, out var updated)) return item;
+                changed++;
+                return updated;
+            })
+            .ToList();
+
+        if (changed == 0) return 0;
+        _items = list;
+        if (persist) SavePersistedCache(_items);
+        return changed;
+    }
+
+    public int RefreshCachedMetadataOverrides(IEnumerable<string> ids, bool persist = true)
+    {
+        if (_items is null || ids is null) return 0;
+        var idSet = ids
+            .Where(id => !string.IsNullOrWhiteSpace(id))
+            .Select(id => id.Trim())
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+        if (idSet.Count == 0) return 0;
+
+        var changed = 0;
+        var list = _items
+            .Select(item =>
+            {
+                if (string.IsNullOrWhiteSpace(item.Id) || !idSet.Contains(item.Id)) return item;
+                changed++;
+                return _metadataStore.ApplyOverride(item);
+            })
+            .ToList();
+
+        if (changed == 0) return 0;
+        _items = list;
+        if (persist) SavePersistedCache(_items);
+        return changed;
     }
 
     public void RemoveCachedItem(string id, bool persist = true)
@@ -6757,7 +7320,7 @@ public static class MetadataInferer
         var suffix = new List<string>();
         if (!string.IsNullOrWhiteSpace(issueNumber)) suffix.Add($"Issue #{issueNumber}");
         if (!string.IsNullOrWhiteSpace(coverDate)) suffix.Add(coverDate);
-        return suffix.Count == 0 ? magazineTitle : $"{magazineTitle} — {string.Join(" • ", suffix)}";
+        return suffix.Count == 0 ? magazineTitle : $"{magazineTitle} â€” {string.Join(" â€¢ ", suffix)}";
     }
 
     private static string ExtractIssueNumber(string value)
@@ -6865,7 +7428,7 @@ public static class MetadataInferer
         var features = new List<string>();
         void AddIf(string key, string label) { if (value.Contains(key)) features.Add(label); }
         AddIf("e3", "E3 coverage");
-        AddIf("buyer", "Buyer’s guide");
+        AddIf("buyer", "Buyerâ€™s guide");
         AddIf("holiday", "Holiday guide");
         AddIf("preview", "Previews");
         AddIf("review", "Reviews");
@@ -8016,13 +8579,17 @@ public static class ArchiveReader
     private static readonly ConcurrentDictionary<string, string[]> EntryCache = new();
     private static readonly ConcurrentDictionary<string, Lazy<Task<(byte[] Bytes, string ContentType)?>>> CoverCache = new(StringComparer.OrdinalIgnoreCase);
     private static readonly SemaphoreSlim CoverReadGate = new(6, 6);
+    private static readonly SemaphoreSlim CoverThumbnailGate = new(3, 3);
     private static string CoverCacheDirectory = Path.Combine(AppContext.BaseDirectory, "data", "cache", "covers");
+    private static string CoverThumbnailCacheDirectory = Path.Combine(AppContext.BaseDirectory, "data", "cache", "cover-thumbs");
     private static readonly string[] KnownCoverCacheExtensions = [".jpg", ".jpeg", ".png", ".webp", ".gif", ".bmp"];
 
-    public static void ConfigureCoverCache(string cacheDirectory)
+    public static void ConfigureCoverCache(string cacheDirectory, string? thumbnailCacheDirectory = null)
     {
         if (!string.IsNullOrWhiteSpace(cacheDirectory)) CoverCacheDirectory = cacheDirectory;
+        if (!string.IsNullOrWhiteSpace(thumbnailCacheDirectory)) CoverThumbnailCacheDirectory = thumbnailCacheDirectory;
         try { Directory.CreateDirectory(CoverCacheDirectory); } catch { }
+        try { Directory.CreateDirectory(CoverThumbnailCacheDirectory); } catch { }
     }
 
     public static void ClearCache()
@@ -8059,13 +8626,36 @@ public static class ArchiveReader
         }
         catch { }
 
+        var thumbFiles = 0;
+        long thumbBytes = 0;
+        try
+        {
+            if (Directory.Exists(CoverThumbnailCacheDirectory))
+            {
+                foreach (var file in Directory.EnumerateFiles(CoverThumbnailCacheDirectory, "*.jpg"))
+                {
+                    try
+                    {
+                        var info = new FileInfo(file);
+                        thumbFiles++;
+                        thumbBytes += info.Length;
+                    }
+                    catch { }
+                }
+            }
+        }
+        catch { }
+
         return new
         {
             imageEntryCacheCount = EntryCache.Count,
             inFlightCoverReads = CoverCache.Count,
             diskCoverCachePath = CoverCacheDirectory,
             diskCoverCacheFiles = diskFiles,
-            diskCoverCacheBytes = diskBytes
+            diskCoverCacheBytes = diskBytes,
+            diskCoverThumbnailCachePath = CoverThumbnailCacheDirectory,
+            diskCoverThumbnailCacheFiles = thumbFiles,
+            diskCoverThumbnailCacheBytes = thumbBytes
         };
     }
 
@@ -8079,6 +8669,13 @@ public static class ArchiveReader
             if (Directory.Exists(CoverCacheDirectory))
             {
                 foreach (var file in Directory.EnumerateFiles(CoverCacheDirectory, key + ".*"))
+                {
+                    try { File.Delete(file); } catch { }
+                }
+            }
+            if (Directory.Exists(CoverThumbnailCacheDirectory))
+            {
+                foreach (var file in Directory.EnumerateFiles(CoverThumbnailCacheDirectory, key + "_w*.jpg"))
                 {
                     try { File.Delete(file); } catch { }
                 }
@@ -8631,6 +9228,67 @@ public static class ArchiveReader
         return null;
     }
 
+    public static async Task<(byte[] Bytes, string ContentType)?> GetCoverThumbnailAsync(string archivePath, int maxWidth = 360)
+    {
+        if (Path.GetExtension(archivePath).Equals(".pdf", StringComparison.OrdinalIgnoreCase))
+            return null;
+
+        maxWidth = Math.Clamp(maxWidth, 120, 720);
+        var key = $"{CoverCacheKey(archivePath)}_w{maxWidth}";
+        var cached = await TryReadCoverThumbnailFromDiskAsync(key);
+        if (cached is not null) return cached;
+
+        // Use the normal cover cache/extraction path first, then derive a small
+        // persistent JPEG thumbnail.  This keeps large archive pages out of the
+        // browser grid and makes the second pass through a library effectively
+        // instant.
+        var cover = await GetCoverImageAsync(archivePath);
+        if (cover is null) return null;
+
+        await CoverThumbnailGate.WaitAsync();
+        try
+        {
+            cached = await TryReadCoverThumbnailFromDiskAsync(key);
+            if (cached is not null) return cached;
+
+            var thumb = await CreateCoverThumbnailAsync(cover.Value.Bytes, maxWidth);
+            if (thumb is null) return cover;
+
+            await TryWriteCoverThumbnailToDiskAsync(key, thumb.Value.Bytes);
+            return thumb;
+        }
+        finally
+        {
+            CoverThumbnailGate.Release();
+        }
+    }
+
+    private static async Task<(byte[] Bytes, string ContentType)?> CreateCoverThumbnailAsync(byte[] bytes, int maxWidth)
+    {
+        try
+        {
+            await using var input = new MemoryStream(bytes);
+            using var image = await Image.LoadAsync(input);
+            if (image.Width <= 0 || image.Height <= 0) return null;
+
+            var targetWidth = Math.Min(maxWidth, image.Width);
+            var scale = targetWidth / (double)Math.Max(1, image.Width);
+            var targetHeight = Math.Max(1, (int)Math.Round(image.Height * scale));
+            if (targetWidth != image.Width || targetHeight != image.Height)
+            {
+                image.Mutate(x => x.Resize(targetWidth, targetHeight));
+            }
+
+            await using var output = new MemoryStream();
+            await image.SaveAsJpegAsync(output, new JpegEncoder { Quality = 74 });
+            return (output.ToArray(), "image/jpeg");
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
     public static async Task<(byte[] Bytes, string ContentType)?> GetCoverImageAsync(string archivePath)
     {
         if (Path.GetExtension(archivePath).Equals(".pdf", StringComparison.OrdinalIgnoreCase))
@@ -8773,6 +9431,35 @@ public static class ArchiveReader
         catch
         {
             return Convert.ToHexString(SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(archivePath))).ToLowerInvariant();
+        }
+    }
+
+    private static async Task<(byte[] Bytes, string ContentType)?> TryReadCoverThumbnailFromDiskAsync(string key)
+    {
+        try
+        {
+            Directory.CreateDirectory(CoverThumbnailCacheDirectory);
+            var file = Path.Combine(CoverThumbnailCacheDirectory, key + ".jpg");
+            if (!File.Exists(file)) return null;
+            return (await File.ReadAllBytesAsync(file), "image/jpeg");
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    private static async Task TryWriteCoverThumbnailToDiskAsync(string key, byte[] bytes)
+    {
+        try
+        {
+            Directory.CreateDirectory(CoverThumbnailCacheDirectory);
+            var path = Path.Combine(CoverThumbnailCacheDirectory, key + ".jpg");
+            if (!File.Exists(path)) await File.WriteAllBytesAsync(path, bytes);
+        }
+        catch
+        {
+            // Thumbnail cache is a performance optimization. Never fail a cover request because it could not persist.
         }
     }
 
@@ -10145,7 +10832,7 @@ static class EsrbRatingMetadataClient
         var values = new List<string>();
         for (var i = start; i < lines.Length && values.Count < 4; i++)
         {
-            var line = lines[i].Trim(' ', '•', '-', '*');
+            var line = lines[i].Trim(' ', 'â€¢', '-', '*');
             if (line.Equals("Rating Summary", StringComparison.OrdinalIgnoreCase) || line.Equals("Assigned Rating Info", StringComparison.OrdinalIgnoreCase) || line.Equals("Explore More Games", StringComparison.OrdinalIgnoreCase)) break;
             if (line.Equals("No Interactive Elements", StringComparison.OrdinalIgnoreCase)) return ["No Interactive Elements"];
             if (line.Equals("Users Interact", StringComparison.OrdinalIgnoreCase) || line.StartsWith("In-Game Purchases", StringComparison.OrdinalIgnoreCase) || line.Contains("Online Interactions", StringComparison.OrdinalIgnoreCase))
@@ -10243,7 +10930,7 @@ static class EsrbRatingMetadataClient
     private static string[] SplitList(string value)
     {
         return CleanDistinct(Regex.Split(value ?? string.Empty, @",|;|\||\s+/\s+")
-            .Select(v => Regex.Replace(Clean(v.Trim(' ', '.', '•', '-', '*')), @"^(?:and|or)\s+", string.Empty, RegexOptions.IgnoreCase).Trim())
+            .Select(v => Regex.Replace(Clean(v.Trim(' ', '.', 'â€¢', '-', '*')), @"^(?:and|or)\s+", string.Empty, RegexOptions.IgnoreCase).Trim())
             .Where(v => !string.IsNullOrWhiteSpace(v)));
     }
 
@@ -10449,5 +11136,6 @@ static class GuidevaultLibraryIoGate
 
 static class GuidevaultBuildInfo
 {
-    public const string Version = "0.9.144";
+    public const string Version = "0.9.103";
 }
+

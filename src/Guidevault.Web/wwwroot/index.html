@@ -1,4 +1,4 @@
-<!doctype html>
+﻿<!doctype html>
 <html lang="en">
 <head>
   <meta charset="utf-8" />
@@ -6,7 +6,7 @@
   <title>Guidevault</title>
   <link rel="icon" type="image/x-icon" href="/assets/favicon.ico?v=0.9.144" />
   <link rel="shortcut icon" type="image/x-icon" href="/assets/favicon.ico?v=0.9.144" />
-  <link rel="stylesheet" href="/styles.css?v=0.9.144-platform-icons-trueup" />
+  <link rel="stylesheet" href="/styles.css?v=0.9.103-platform-icons-trueup" />
 </head>
 <body class="right-collapsed auth-locked">
   <section id="loginView" class="login-view" aria-labelledby="loginTitle">
@@ -65,7 +65,7 @@
         <button class="settings-nav settings-nav-group" data-settings-tab="server" data-settings-group="server" aria-expanded="true" aria-controls="settingsSubmenuServer" type="button"><span class="settings-nav-icon">&#x2699;</span><span class="settings-nav-text">Server</span><span class="settings-nav-chevron" aria-hidden="true">&#x203A;</span></button>
         <div id="settingsSubmenuServer" class="settings-submenu" data-settings-parent="server" aria-label="Server settings subsections">
           <button id="settingsServerGeneralNav" class="settings-subnav" data-settings-tab="server" type="button">General</button>
-          <button id="settingsLibraryNav" class="settings-subnav" data-settings-tab="library" type="button">Library</button>
+          <button id="settingsIntegrationsNav" class="settings-subnav" data-settings-tab="integrations" type="button">Integrations</button>
           <button id="settingsMediaNav" class="settings-subnav" data-settings-tab="media" type="button">Media</button>
           <button id="settingsOpdsNav" class="settings-subnav" data-settings-tab="opds" type="button">OPDS / Auth Keys</button>
           <button id="settingsEmailNav" class="settings-subnav" data-settings-tab="email" type="button">Email</button>
@@ -175,13 +175,18 @@
               </div>
             </aside>
             <div class="detail-main-column">
-              <div class="tabs"><button class="tab active" data-tab="overview">Overview</button><button class="tab" data-tab="metadata">Metadata</button><button class="tab" data-tab="file-name">File &amp; Metadata</button><button class="tab" data-tab="reading-profile">Reading Profile</button><button class="tab" data-tab="notes">Notes</button></div>
+              <div class="tabs"><button class="tab active" data-tab="overview">Overview</button><button class="tab" data-tab="reviews">Reviews</button><button class="tab" data-tab="metadata">Metadata</button><button class="tab" data-tab="file-name">File &amp; Metadata</button><button class="tab" data-tab="reading-profile">Reading Profile</button><button class="tab" data-tab="notes">Notes</button></div>
               <section id="overviewPanel" class="tab-panel">
                 <p id="description"></p>
                 <div id="meta" class="detail-meta-list"></div>
                 <h3>Tags</h3>
                 <div id="tagList" class="tags"></div>
                 <img id="detailEsrbIcon" class="detail-esrb-icon hidden" alt="ESRB rating" />
+              </section>
+              <section id="reviewsPanel" class="tab-panel hidden">
+                <div id="detailReviewsContent" class="detail-reviews-content">
+                  <article class="detail-review-empty"><h3>No public reviews yet</h3><p class="sub">Public profile reviews for this item will appear here.</p></article>
+                </div>
               </section>
               <section id="metadataPanel" class="tab-panel hidden">
                 <div class="edit-grid">
@@ -1249,23 +1254,8 @@
                   <p class="sub">Creates a point-in-time backup using the configured backup directory.</p>
                 </div>
               </section>
-              <section class="server-general-section metadata-source-section">
-                <div class="server-general-section-head">
-                  <span class="server-section-icon">&#x25C8;</span>
-                  <div>
-                    <h2>Metadata Sources</h2>
-                    <p class="sub">Configure external lookup providers. Open Library does not require a key; IGDB uses Twitch application credentials for game metadata lookups.</p>
-                    <p class="field-help metadata-source-note">For IGDB, paste the Twitch Developer app Client ID and generated Client Secret. Guidevault uses server-to-server client credentials, so the OAuth redirect URL is not used by the lookup.</p>
-                  </div>
-                </div>
-                <div class="server-settings-grid server-metadata-source-grid">
-                  <label for="igdbClientId">IGDB Client ID<input id="igdbClientId" type="text" autocomplete="off" placeholder="Twitch Developer Client ID" /><span class="field-help">Use the Client ID from your Twitch Developer application.</span></label>
-                  <label for="igdbClientSecret">IGDB Client Secret<input id="igdbClientSecret" type="password" autocomplete="new-password" placeholder="Twitch Developer Client Secret" /><span class="field-help">Use the generated Client Secret value. Stored locally in Guidevault config; treat it like a password.</span></label>
-                </div>
-              </section>
               <div class="settings-actions inline-actions server-general-actions">
                 <button id="serverSaveSettings" class="primary" type="button">Save General Settings</button>
-                <button id="igdbTestCredentials" class="ghost" type="button">Test IGDB Credentials</button>
               </div>
               <p id="serverSettingsStatus" class="sub account-status" aria-live="polite"></p>
             </article>
@@ -1276,17 +1266,65 @@
             </div>
           </section>
 
-          <section id="settingsMediaPanel" class="settings-section-panel hidden">
-            <div class="settings-title-row">
+          <section id="settingsIntegrationsPanel" class="settings-section-panel hidden integrations-settings-panel">
+            <div class="settings-title-row integrations-title-row">
+              <div>
+                <div class="settings-page-kicker">SERVER</div>
+                <h1>Integrations</h1>
+                <p class="sub">Connect Guidevault to external metadata and service providers without mixing provider credentials into general server settings.</p>
+              </div>
+            </div>
+            <div class="integrations-grid">
+              <article class="settings-card integration-source-card integration-openlibrary-card">
+                <div class="integration-card-head">
+                  <span class="integration-source-icon">OL</span>
+                  <div><h2>Open Library</h2><p class="sub">Book-style metadata lookup for guides and ISBN-based records. No credentials are required.</p></div>
+                </div>
+                <div class="integration-chip-row"><span>Enabled by default</span><span>No API key</span><span>Books / ISBNs</span></div>
+              </article>
+              <article class="settings-card integration-source-card integration-esrb-card">
+                <div class="integration-card-head">
+                  <span class="integration-source-icon">ER</span>
+                  <div><h2>ESRB.org</h2><p class="sub">Official rating lookup for games. Used by manual and strategy-guide metadata when a title needs an ESRB rating.</p></div>
+                </div>
+                <div class="integration-chip-row"><span>Enabled by default</span><span>No API key</span><span>Game ratings</span></div>
+              </article>
+              <article class="settings-card integration-source-card integration-igdb-card">
+                <div class="integration-card-head">
+                  <span class="integration-source-icon">IG</span>
+                  <div>
+                    <h2>IGDB</h2>
+                    <p class="sub">Game metadata lookup using Twitch Developer application credentials.</p>
+                    <p class="field-help metadata-source-note">Paste the Twitch Developer app Client ID and generated Client Secret. Guidevault uses server-to-server client credentials, so the OAuth redirect URL is not used by the lookup.</p>
+                  </div>
+                </div>
+                <div class="server-settings-grid server-metadata-source-grid integrations-credential-grid">
+                  <label for="igdbClientId">IGDB Client ID<input id="igdbClientId" type="text" autocomplete="off" placeholder="Twitch Developer Client ID" /><span class="field-help">Use the Client ID from your Twitch Developer application.</span></label>
+                  <label for="igdbClientSecret">IGDB Client Secret<input id="igdbClientSecret" type="password" autocomplete="new-password" placeholder="Twitch Developer Client Secret" /><span class="field-help">Use the generated Client Secret value. Stored locally in Guidevault config; treat it like a password.</span></label>
+                </div>
+                <div class="settings-actions inline-actions integrations-actions">
+                  <button id="integrationsSaveSettings" class="primary" type="button">Save Integrations</button>
+                  <button id="igdbTestCredentials" class="ghost blue-gradient-action" type="button">Test IGDB Credentials</button>
+                </div>
+                <p id="integrationsSettingsStatus" class="sub account-status" aria-live="polite"></p>
+              </article>
+            </div>
+          </section>
+
+          <section id="settingsMediaPanel" class="settings-section-panel hidden media-settings-panel">
+            <div class="settings-title-row media-title-row">
               <div>
                 <div class="settings-page-kicker">SERVER</div>
                 <h1>Media</h1>
-                <p class="sub">Configure server-side media support folders used by Guidevault.</p>
+                <p class="sub">Manage media support folders, library paths, and scan-in-place sources from one consolidated area.</p>
               </div>
             </div>
-            <article class="settings-card server-settings-card">
-              <label for="mediaBookmarksDirectory">Bookmarks Directory<input id="mediaBookmarksDirectory" type="text" placeholder="data/bookmarks" /></label>
-              <p class="sub">This is where server-side bookmark exports and future shared bookmark files can be stored.</p>
+            <article class="settings-card server-settings-card media-support-card">
+              <div class="server-general-section-head">
+                <span class="server-section-icon">&#x1F516;</span>
+                <div><h2>Support Folders</h2><p class="sub">Server-side paths used by Guidevault features that store local data outside your source archives.</p></div>
+              </div>
+              <label for="mediaBookmarksDirectory">Bookmarks Directory<input id="mediaBookmarksDirectory" type="text" placeholder="data/bookmarks" /><span class="field-help">Stores bookmark exports and future shared bookmark data.</span></label>
               <div class="settings-actions inline-actions">
                 <button id="mediaSaveSettings" class="primary" type="button">Save Media Settings</button>
               </div>
@@ -1300,10 +1338,6 @@
                 <div class="settings-page-kicker">SERVER</div>
                 <h1>Email</h1>
                 <p class="sub">Configure long-term transactional delivery, test outbound email, and manage invite templates.</p>
-              </div>
-              <div class="email-health-card">
-                <strong id="emailProviderSummary">Transactional</strong>
-                <span id="emailProviderSummaryText">Recommended for reliable invite delivery.</span>
               </div>
             </div>
             <article class="settings-card notice-card email-notice-card">For reliable long-term delivery, use a transactional provider with an API key. SMTP remains available for providers that still support app/service credentials.</article>
@@ -1433,35 +1467,33 @@
             <article class="settings-card ad-hoc-task-card refined-ad-hoc-card">
               <div class="settings-card-heading-row"><div><h2>Ad-hoc Tasks</h2><p class="sub">Run one-time maintenance without changing recurring schedules.</p></div></div>
               <div class="ad-hoc-task-tile-grid">
-                <button id="taskRunRescan" class="task-action-tile" type="button"><strong>Fast Rescan</strong><span>Scan changed files and refresh metadata.</span></button>
-                <button id="taskRunEnrich" class="task-action-tile" type="button"><strong>Fast Metadata Enrichment</strong><span>Import Guidevault JSON from packages without the slow legacy ComicInfo fallback.</span></button>
+                <button id="taskRunRescan" class="task-action-tile" type="button"><strong>Rescan</strong><span>Scan changed files and refresh metadata.</span></button>
                 <button id="taskRunComicInfo" class="task-action-tile" type="button"><strong>Legacy ComicInfo Import</strong><span>Optional slower pass for older CBZ ComicInfo.xml metadata.</span></button>
-                <button id="taskRunCleanup" class="task-action-tile" type="button"><strong>General Cleanup</strong><span>Remove stale indexed entries and cache leftovers.</span></button>
                 <button id="taskRunBackup" class="task-action-tile" type="button"><strong>Backup Database</strong><span>Create a backup of config and index data.</span></button>
                 <button id="taskRunTrim" class="task-action-tile" type="button"><strong>Clear Reading Cache</strong><span>Trim archive and cover request caches.</span></button>
               </div>
             </article>
           </section>
-          <section id="settingsImportPanel" class="settings-section-panel hidden">
-            <div class="settings-title-row">
-              <div>
-                <h1 id="settingsImportTitle">Import</h1>
-                <p id="settingsImportSub" class="sub">Build multiple libraries by scanning existing folders in place. Source files stay where they already are.</p>
+          <section id="settingsImportPanel" class="settings-section-panel hidden media-library-panel">
+            <article class="settings-card media-library-card">
+              <div class="settings-card-heading-row media-library-heading">
+                <div>
+                  <div class="settings-page-kicker">MEDIA</div>
+                  <h2 id="settingsImportTitle">Libraries</h2>
+                  <p id="settingsImportSub" class="sub">Save folder paths, rescan sources, and manage scan-in-place library entries. Source files stay where they already are.</p>
+                </div>
+                <div class="settings-actions inline-actions media-library-actions">
+                  <button id="settingsRescanLibrary" class="ghost blue-gradient-action" type="button">&#x27F3; Rescan</button>
+                  <button id="settingsAddLibrary" class="primary" type="button">&#xFF0B; Add Library</button>
+                </div>
               </div>
-              <div class="settings-actions inline-actions">
-                <button id="settingsRescanLibrary" class="ghost">&#x27F3; Fast Rescan</button>
-                <button id="settingsEnrichMetadata" class="ghost">&#x2726; Enrich Metadata</button>
-                <button id="settingsCleanupLibrary" class="ghost">&#x1F9F9; Cleanup</button>
-                <button id="settingsAddLibrary" class="primary">&#xFF0B; Add Library</button>
-              </div>
-            </div>
             <div class="libraries-table-wrap">
               <table class="libraries-table">
                 <thead><tr><th>Name</th><th>Type</th><th>Folder</th><th>Actions</th></tr></thead>
                 <tbody id="librariesTableBody"></tbody>
               </table>
             </div>
-            <p id="settingsLibraryStatus" class="sub"></p>
+            <p id="settingsLibraryStatus" class="sub account-status"></p>
             <div class="settings-library-card compact hidden" id="libraryEditor">
               <h3 id="libraryEditorTitle">Add Library</h3>
               <label for="libraryNameInput">Library name</label>
@@ -1483,6 +1515,7 @@
                 <button id="libraryEditorCancel" class="ghost">Cancel</button>
               </div>
             </div>
+            </article>
           </section>
           <section id="settingsEmailHistoryPanel" class="settings-section-panel hidden email-history-panel">
             <div class="settings-title-row">
@@ -1574,6 +1607,254 @@
               <h2>Update History</h2>
             </div>
             <div class="system-update-list">
+              <details class="system-update-entry" open>
+                <summary>
+                  <span>Guidevault 0.9.166 - Metadata Export Filter Guard</span>
+                  <em>Installed</em>
+                </summary>
+                <ul>
+                  <li>Fixed Metadata Manager CSV export so it re-reads the active filter controls before exporting.</li>
+                  <li>Added a hard Type guard so Strategy Guide exports cannot fall back to Magazine or all-content rows if the export state is stale.</li>
+                  <li>Export filenames now include the active metadata scope, such as strategy-guide, manual, or magazine.</li>
+                </ul>
+              </details>
+              <details class="system-update-entry" open>
+                <summary>
+                  <span>Guidevault 0.9.165 - Bookmark Arrow Style Match</span>
+                  <em>Installed</em>
+                </summary>
+                <ul>
+                  <li>Adjusted the reader bookmark dropdown control to better match the compact dark arrow button style used elsewhere in the UI.</li>
+                  <li>Replaced the solid triangle with a clearer down-chevron icon inside a filled rounded button.</li>
+                </ul>
+              </details>
+              <details class="system-update-entry" open>
+                <summary>
+                  <span>Guidevault 0.9.164 - Solid Bookmark Caret</span>
+                  <em>Installed</em>
+                </summary>
+                <ul>
+                  <li>Updated the reader bookmark dropdown arrow to use a true solid triangle for better visibility.</li>
+                  <li>Keeps the compact arrow control beside the bookmark button while making the caret more obvious.</li>
+                </ul>
+              </details>
+              <details class="system-update-entry" open>
+                <summary>
+                  <span>Guidevault 0.9.163 - Filled Bookmark Arrow</span>
+                  <em>Installed</em>
+                </summary>
+                <ul>
+                  <li>Updated the reader bookmark dropdown control to use a filled caret icon instead of the thin text caret.</li>
+                  <li>Keeps the compact arrow treatment beside the bookmark button while improving visual clarity.</li>
+                </ul>
+              </details>
+              <details class="system-update-entry" open>
+                <summary>
+                  <span>Guidevault 0.9.162 - Reader Bookmark Arrow Stability</span>
+                  <em>Installed</em>
+                </summary>
+                <ul>
+                  <li>Changed the reader bookmark menu control into a compact arrow beside the bookmark icon.</li>
+                  <li>Backed out the aggressive reader prewarming/cache changes from 0.9.161 that made page turns feel more sluggish.</li>
+                  <li>Kept the bookmarked-pages menu and multi-page bookmark jump behavior.</li>
+                </ul>
+              </details>
+              <details class="system-update-entry" open>
+                <summary>
+                  <span>Guidevault 0.9.161 - Reader Bookmark Menu</span>
+                  <em>Installed</em>
+                </summary>
+                <ul>
+                  <li>Added a bookmarked-pages dropdown next to the reader bookmark button.</li>
+                  <li>Bookmarks now support multiple saved pages per item and can jump directly to a selected page.</li>
+                  <li>Improved reader responsiveness with capped preload waits, adjacent page prewarming, image source reuse, and transition lag guarding.</li>
+                </ul>
+              </details>
+              <details class="system-update-entry" open>
+                <summary>
+                  <span>Guidevault 0.9.160 - Users Menu Responsiveness</span>
+                  <em>Installed</em>
+                </summary>
+                <ul>
+                  <li>Made the Server &gt; Users panel paint immediately before refreshing account data in the background.</li>
+                  <li>Added cached Users-panel rendering so returning to the tab does not rebuild the same controls unnecessarily.</li>
+                  <li>Debounced and deferred Users refreshes to avoid visible click-freeze when switching settings tabs.</li>
+                </ul>
+              </details>
+              <details class="system-update-entry" open>
+                <summary>
+                  <span>Guidevault 0.9.159 - Integration Cleanup</span>
+                  <em>Installed</em>
+                </summary>
+                <ul>
+                  <li>Added ESRB.org to Server &gt; Integrations as a default metadata/rating source.</li>
+                  <li>Removed redundant summary cards from the Media, Integrations, and Email title rows.</li>
+                  <li>Kept media scanning and library path actions in the Media section while simplifying the surrounding layout.</li>
+                </ul>
+              </details>
+              <details class="system-update-entry" open>
+                <summary>
+                  <span>Guidevault 0.9.158 - Server Media Visual Pass</span>
+                  <em>Installed</em>
+                </summary>
+                <ul>
+                  <li>Moved Library path management under Server &gt; Media and removed the separate Library menu item.</li>
+                  <li>Added Server &gt; Integrations and relocated IGDB metadata source settings there.</li>
+                  <li>Removed redundant metadata enrich and cleanup action buttons, renamed Fast Rescan to Rescan, and polished Server, Media, OPDS, Email, Users, and Tasks panels.</li>
+                  <li>Reduced perceived freeze when opening Users by deferring the backend load until after the tab paints.</li>
+                </ul>
+              </details>
+              <details class="system-update-entry">
+                <summary>
+                  <span>Guidevault 0.9.157 - Review Target Preview</span>
+                  <em>Installed</em>
+                </summary>
+                <ul>
+                  <li>Added selected-item cover previews to the profile Write a Review area so users can confirm exactly what they are reviewing.</li>
+                  <li>Updated recently read magazine options to include issue, volume, and number context where available.</li>
+                  <li>Changed the review rating label to be content-type aware, such as Manual Rating, Guide Rating, or Magazine Rating.</li>
+                  <li>Updated the Reviews tab rating summary background so the backmost container honors Color Scape while preserving the existing rating gradients.</li>
+                </ul>
+              </details>
+              <details class="system-update-entry" open>
+                <summary>
+                  <span>Guidevault 0.9.156 - Color-Coded Review Ratings</span>
+                  <em>Installed</em>
+                </summary>
+                <ul>
+                  <li>Added a red-to-yellow-to-green color scale for review ratings, where low ratings trend red, mid ratings trend yellow, and high ratings trend green.</li>
+                  <li>Applied the rating color to the large Reviews tab average score and summary stars.</li>
+                  <li>Applied the same rating color scale to individual review cards and profile review rating displays.</li>
+                </ul>
+              </details>
+              <details class="system-update-entry" open>
+                <summary>
+                  <span>Guidevault 0.9.155 - Review Rating Summary</span>
+                  <em>Installed</em>
+                </summary>
+                <ul>
+                  <li>Promoted the Reviews tab rating summary into a larger score-focused highlight container.</li>
+                  <li>Removed the explanatory public/private review text from the Reviews tab header.</li>
+                  <li>Reviewer avatars now use the saved profile image when available, with a generic account icon fallback.</li>
+                </ul>
+              </details>
+              <details class="system-update-entry">
+                <summary>
+                  <span>Guidevault 0.9.154 - Public Reviews Tab</span>
+                  <em>Installed</em>
+                </summary>
+                <ul>
+                  <li>Added a Reviews tab next to Overview on the item details page.</li>
+                  <li>Added Public / Private visibility to the profile Write a Review editor.</li>
+                  <li>Public reviews are persisted and shown on the reviewed item's Details &gt; Reviews tab; private reviews stay visible only in the user's profile.</li>
+                </ul>
+              </details>
+              <details class="system-update-entry" open>
+                <summary>
+                  <span>Guidevault 0.9.153 - Account Menu Number Cleanup</span>
+                  <em>Installed</em>
+                </summary>
+                <ul>
+                  <li>Removed the numbered badges from Account &gt; Customize &gt; Home shelf rows while keeping drag-to-reorder behavior unchanged.</li>
+                  <li>Removed the numbered badges from Account &gt; Key Binds rows for a cleaner, less busy shortcut layout.</li>
+                  <li>Tightened the affected grid layouts so the remaining labels, chips, and action buttons align cleanly without the number column.</li>
+                </ul>
+              </details>
+              <details class="system-update-entry" open>
+                <summary>
+                  <span>Guidevault 0.9.152 - Account Menu Visual Pass</span>
+                  <em>Installed</em>
+                </summary>
+                <ul>
+                  <li>Refreshed Account &gt; Preferences with a cleaner Colorscape card layout, stronger hierarchy, and grouped child toggles.</li>
+                  <li>Polished Account &gt; Key Binds with numbered shortcut rows, binding-count badges, larger action buttons, and glass card spacing.</li>
+                  <li>Updated Reading Profiles with clearer preset cards, selected/default badges, compact display/transition chips, and improved form controls.</li>
+                  <li>Refined Customize Home and Side Nav panels with a segmented tab control, ordered shelf cards, clearer pinned-item builder surfaces, and stronger helper cards.</li>
+                  <li>Updated Devices with cleaner email-device rows, improved connected-client cards, better fact tiles, and more consistent account-menu visual styling.</li>
+                </ul>
+              </details>
+              <details class="system-update-entry" open>
+                <summary>
+                  <span>Guidevault 0.9.151 - Cover Placeholder Stability</span>
+                  <em>Installed</em>
+                </summary>
+                <ul>
+                  <li>Stopped unloaded grid cover images from flashing as raw white browser rectangles while thumbnail requests are pending.</li>
+                  <li>Added a stable dark poster well behind each library card so uncached covers fade in cleanly once the real thumbnail has loaded.</li>
+                  <li>Marked cover wrappers as pending, ready, or error during image loading so the card surface stays visually consistent while scrolling.</li>
+                  <li>Kept the persistent thumbnail cache behavior from 0.9.150 intact.</li>
+                </ul>
+              </details>
+              <details class="system-update-entry" open>
+                <summary>
+                  <span>Guidevault 0.9.150 - Persistent Cover Thumbnails</span>
+                  <em>Installed</em>
+                </summary>
+                <ul>
+                  <li>Added persistent server-side cover thumbnails for library grids so magazine shelves no longer need to download/decode full archive cover pages for every card.</li>
+                  <li>Changed grid, shelf, metadata-preview, and detail-cover requests to use bounded thumbnail sizes while keeping the full cover endpoint available for reader/OPDS-style use.</li>
+                  <li>Updated background cover prewarming to generate the thumbnail cache instead of warming full-size covers that do not help grid scrolling.</li>
+                  <li>Added cover-thumbnail cache diagnostics under System performance data.</li>
+                </ul>
+              </details>
+              <details class="system-update-entry" open>
+                <summary>
+                  <span>Guidevault 0.9.149 - Stable Grid and Cover Loading</span>
+                  <em>Installed</em>
+                </summary>
+                <ul>
+                  <li>Changed large library grids to favor stable progressive rendering instead of constantly recycling visible cards while scrolling.</li>
+                  <li>Throttled cover requests so visible covers load first without flooding the server/browser with hundreds of competing image loads.</li>
+                  <li>Removed forced cover repaint pulses and hover transform churn that could make the interface feel flickery or unstable on large magazine libraries.</li>
+                  <li>Kept magazine publication/platform icon behavior from 0.9.148 intact.</li>
+                </ul>
+              </details>
+              <details class="system-update-entry" open>
+                <summary>
+                  <span>Guidevault 0.9.148 - Magazine Icon and Grid Smoothness</span>
+                  <em>Installed</em>
+                </summary>
+                <ul>
+                  <li>Stopped magazine publication/title categories from matching platform icons, so names like <code>Saturn+</code> display consistently as magazine publications.</li>
+                  <li>Kept true platform/system category views using platform icons, including magazine primary-system/platform-focus browsing.</li>
+                  <li>Reduced library-grid flicker by adding a larger virtual scroll buffer and hysteresis so cards are not destroyed/recreated on every small scroll movement.</li>
+                  <li>Started visible grid cards directly with their cover URL instead of briefly painting the missing-cover placeholder first.</li>
+                </ul>
+              </details>
+              <details class="system-update-entry" open>
+                <summary>
+                  <span>Guidevault 0.9.147 - Bulk Metadata Save Stability</span>
+                  <em>Installed</em>
+                </summary>
+                <ul>
+                  <li>Stopped large Metadata Manager saves from writing the browser metadata override cache once per row, which could freeze the tab during JSON imports.</li>
+                  <li>Deferred server cache refresh during chunked bulk saves and refreshed cached metadata once after all chunks complete.</li>
+                  <li>Optimized JSON import matching with lookup indexes and added browser-yield points during large import/save operations.</li>
+                </ul>
+              </details>
+              <details class="system-update-entry" open>
+                <summary>
+                  <span>Guidevault 0.9.146 - Bulk Metadata Save Hotfix</span>
+                  <em>Installed</em>
+                </summary>
+                <ul>
+                  <li>Changed large Metadata Manager saves to send bounded 250-row batches instead of one huge browser/server round trip.</li>
+                  <li>Stopped the bulk metadata endpoint from echoing every updated library item back to the browser after save.</li>
+                  <li>Added server-side error handling around bulk metadata saves so failures return a visible error instead of looking like an app crash.</li>
+                </ul>
+              </details>
+              <details class="system-update-entry" open>
+                <summary>
+                  <span>Guidevault 0.9.145 - Bulk Metadata Import Save</span>
+                  <em>Installed</em>
+                </summary>
+                <ul>
+                  <li>Added a dedicated bulk metadata save endpoint so Metadata Manager imports can save many edited rows with one request.</li>
+                  <li>Changed Metadata Manager Save Edited Rows, Normalize Selected, batch apply, and provider batch apply to use one bulk write instead of one save per row.</li>
+                  <li>Reduced metadata override disk writes from one full <code>metadata.overrides.json</code> rewrite per row to one rewrite per bulk operation.</li>
+                  <li>Updated the active in-memory library cache in batches so large JSON imports do not repeatedly rebuild client and server state row-by-row.</li>
+                </ul>
+              </details>
               <details class="system-update-entry" open>
                 <summary>
                   <span>Guidevault 0.9.144 - Platform Icon Source True-Up</span>
@@ -1882,11 +2163,22 @@
                 </label>
               </div>
               <div class="reader-tray-actions reader-tray-right-actions">
-                <button id="readerBookmarkPage" class="reader-tray-button reader-icon-button reader-bookmark-button" type="button" aria-label="Bookmark current page" aria-pressed="false" title="Bookmark current page">
-                  <svg class="reader-bookmark-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
-                    <path d="M7 4.5c0-.83.67-1.5 1.5-1.5h7c.83 0 1.5.67 1.5 1.5v16.2l-5-3.15-5 3.15V4.5Z"></path>
-                  </svg>
-                </button>
+                <div class="reader-bookmark-wrap">
+                  <button id="readerBookmarkPage" class="reader-tray-button reader-icon-button reader-bookmark-button" type="button" aria-label="Bookmark current page" aria-pressed="false" title="Bookmark current page">
+                    <svg class="reader-bookmark-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+                      <path d="M7 4.5c0-.83.67-1.5 1.5-1.5h7c.83 0 1.5.67 1.5 1.5v16.2l-5-3.15-5 3.15V4.5Z"></path>
+                    </svg>
+                  </button>
+                  <button id="readerBookmarksToggle" class="reader-bookmark-arrow" type="button" aria-label="Show bookmarked pages" aria-expanded="false" title="Show bookmarked pages">
+                    <svg class="reader-bookmark-caret-chevron" viewBox="0 0 16 16" aria-hidden="true" focusable="false">
+                      <path d="M4.25 6.5 8 10.25 11.75 6.5" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"></path>
+                    </svg>
+                  </button>
+                  <div id="readerBookmarksPanel" class="reader-bookmarks-panel hidden" role="menu" aria-label="Bookmarked pages">
+                    <div class="reader-panel-title">Bookmarked Pages</div>
+                    <div id="readerBookmarksList" class="reader-bookmarks-list"></div>
+                  </div>
+                </div>
                 <div class="reader-advanced-wrap">
                   <button id="readerAdvancedSettings" class="reader-tray-button reader-icon-button reader-advanced-button" type="button" aria-label="Advanced reader settings" aria-expanded="false" title="Advanced reader settings">&#x2699;</button>
                   <div id="readerAdvancedPanel" class="reader-advanced-panel hidden" role="group" aria-label="Advanced reader settings">
@@ -1997,6 +2289,7 @@
   </dialog>
 
 
-  <script src="/app.js?v=0.9.144-platform-icons-trueup"></script>
+  <script src="/app.js?v=0.9.103-platform-icons-trueup"></script>
 </body>
 </html>
+

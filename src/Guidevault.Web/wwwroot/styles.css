@@ -17286,3 +17286,1296 @@ body.left-collapsed #mainLibraryNav{
 body.left-collapsed #mainLibraryNav .nav{
   margin-bottom:6px!important;
 }
+
+/* Guidevault 0.9.148 - magazine publication icons and smoother grid covers */
+.magazine-publication-icon{
+  width:18px;
+  height:18px;
+  display:inline-grid;
+  place-items:center;
+  flex:0 0 auto;
+  margin-right:5px;
+  border-radius:6px;
+  background:linear-gradient(160deg,rgba(80,155,255,.20),rgba(123,92,255,.12));
+  color:#9fd0ff;
+  font-size:13px;
+  font-weight:900;
+  line-height:1;
+  box-shadow:inset 0 0 0 1px rgba(150,205,255,.18),0 3px 8px rgba(0,0,0,.22);
+}
+.magazine-publication-icon.tiny{
+  width:16px;
+  height:16px;
+  margin-right:5px;
+  font-size:11px;
+  border-radius:5px;
+}
+.magazine-publication-icon.large{
+  width:40px;
+  height:40px;
+  margin:0;
+  font-size:24px;
+  border-radius:13px;
+}
+.category-platform-mark .magazine-publication-icon.large,
+.category-preview-empty .magazine-publication-icon.large{
+  width:40px!important;
+  height:40px!important;
+  margin:0!important;
+}
+.category-preview-empty .magazine-publication-icon.large{
+  width:52px!important;
+  height:52px!important;
+  font-size:30px;
+  border-radius:16px;
+}
+.card .cover-wrap img{
+  background:#0c1420;
+}
+.virtualized-grid .card{
+  contain:layout paint style;
+}
+
+/* Guidevault 0.9.149 - stable large-library grid and calmer cover loading */
+.grid.stable-grid,
+#grid.stable-grid{
+  overflow-anchor:none!important;
+}
+.grid.stable-grid .card,
+#grid.stable-grid .card,
+#recentGrid .card{
+  contain:layout paint style!important;
+  transform:none!important;
+  will-change:auto!important;
+  transition:border-color .12s ease, box-shadow .12s ease, background .12s ease!important;
+}
+.grid.stable-grid .card:hover,
+.grid.stable-grid .card.selected,
+#grid.stable-grid .card:hover,
+#grid.stable-grid .card.selected{
+  transform:none!important;
+}
+.grid.stable-grid .cover-wrap,
+#grid.stable-grid .cover-wrap{
+  background:linear-gradient(180deg,#0d1722,#090f16)!important;
+}
+.grid.stable-grid .cover-wrap img,
+#grid.stable-grid .cover-wrap img{
+  transition:none!important;
+  animation:none!important;
+  transform:none!important;
+  will-change:auto!important;
+  image-rendering:auto;
+}
+.grid.stable-grid .cover-wrap img.cover-loading,
+#grid.stable-grid .cover-wrap img.cover-loading{
+  opacity:1!important;
+}
+.grid.stable-grid .cover-wrap img[src^="data:image/gif"],
+#grid.stable-grid .cover-wrap img[src^="data:image/gif"]{
+  opacity:0!important;
+}
+
+
+/* Guidevault 0.9.151 - hide raw browser image surface during cover loads.
+   Chromium can briefly paint an unloaded <img> as a white rectangle while the
+   thumbnail request/decode is pending. Keep the cover art invisible until the
+   real thumbnail fires load, and show the stable dark poster well instead. */
+.card .cover-wrap,
+#grid .card .cover-wrap,
+#recentGrid .card .cover-wrap{
+  position:relative!important;
+  background:
+    radial-gradient(circle at 50% 28%,rgba(57,82,111,.18),transparent 42%),
+    linear-gradient(180deg,#0d1722 0%,#081019 100%)!important;
+  overflow:hidden!important;
+  isolation:isolate;
+}
+.card .cover-wrap::before,
+#grid .card .cover-wrap::before,
+#recentGrid .card .cover-wrap::before{
+  content:"";
+  position:absolute;
+  inset:0;
+  z-index:0;
+  background:
+    linear-gradient(135deg,rgba(255,255,255,.035),rgba(255,255,255,0) 42%),
+    repeating-linear-gradient(135deg,rgba(255,255,255,.025) 0 1px,transparent 1px 12px),
+    linear-gradient(180deg,#111d2a,#070d14);
+  opacity:1;
+  transition:opacity .14s ease;
+  pointer-events:none;
+}
+.card .cover-wrap.cover-ready::before,
+#grid .card .cover-wrap.cover-ready::before,
+#recentGrid .card .cover-wrap.cover-ready::before{
+  opacity:0;
+}
+.card .cover-wrap img,
+#grid .card .cover-wrap img,
+#recentGrid .card .cover-wrap img{
+  position:relative!important;
+  z-index:1!important;
+  background:transparent!important;
+  opacity:0!important;
+  visibility:visible!important;
+  transition:opacity .14s ease!important;
+}
+.card .cover-wrap img.cover-loaded,
+#grid .card .cover-wrap img.cover-loaded,
+#recentGrid .card .cover-wrap img.cover-loaded{
+  opacity:1!important;
+}
+.card .cover-wrap img.cover-loading:not(.cover-loaded),
+.card .cover-wrap img.cover-error:not(.cover-loaded),
+.card .cover-wrap img[src^="data:image/gif"],
+#grid .card .cover-wrap img.cover-loading:not(.cover-loaded),
+#grid .card .cover-wrap img.cover-error:not(.cover-loaded),
+#grid .card .cover-wrap img[src^="data:image/gif"],
+#recentGrid .card .cover-wrap img.cover-loading:not(.cover-loaded),
+#recentGrid .card .cover-wrap img.cover-error:not(.cover-loaded),
+#recentGrid .card .cover-wrap img[src^="data:image/gif"]{
+  opacity:0!important;
+}
+
+/* Guidevault 0.9.152 - Account menu visual pass */
+#settingsPreferencesPanel,
+#settingsKeybindsPanel,
+#settingsReadingProfilesPanel,
+#settingsCustomizePanel,
+#settingsDevicesPanel{
+  --account-accent:#5bbcff;
+  --account-accent-2:#7c5cff;
+  --account-panel:rgba(9,18,29,.78);
+  --account-panel-strong:rgba(15,28,43,.9);
+  --account-line:rgba(138,188,235,.22);
+  --account-line-strong:rgba(91,188,255,.38);
+  --account-muted:#9fb3c9;
+}
+#settingsPreferencesPanel .settings-title-row,
+#settingsKeybindsPanel .settings-title-row,
+#settingsReadingProfilesPanel .settings-title-row,
+#settingsCustomizePanel .settings-title-row,
+#settingsDevicesPanel .settings-title-row{
+  position:relative;
+  overflow:hidden;
+  align-items:flex-start!important;
+  margin:0 0 22px!important;
+  padding:24px 26px!important;
+  border:1px solid var(--account-line)!important;
+  border-radius:24px!important;
+  background:
+    radial-gradient(circle at 8% 0%,rgba(91,188,255,.28),transparent 34%),
+    radial-gradient(circle at 96% 12%,rgba(124,92,255,.20),transparent 34%),
+    linear-gradient(135deg,rgba(16,31,48,.96),rgba(8,17,27,.92) 60%,rgba(6,13,22,.96))!important;
+  box-shadow:0 24px 70px rgba(0,0,0,.28),inset 0 1px 0 rgba(255,255,255,.06)!important;
+}
+#settingsPreferencesPanel .settings-title-row::after,
+#settingsKeybindsPanel .settings-title-row::after,
+#settingsReadingProfilesPanel .settings-title-row::after,
+#settingsCustomizePanel .settings-title-row::after,
+#settingsDevicesPanel .settings-title-row::after{
+  content:"";
+  position:absolute;
+  inset:auto 22px 0 22px;
+  height:1px;
+  background:linear-gradient(90deg,transparent,rgba(91,188,255,.75),rgba(124,92,255,.6),transparent);
+  pointer-events:none;
+}
+#settingsPreferencesPanel .settings-title-row h1,
+#settingsKeybindsPanel .settings-title-row h1,
+#settingsReadingProfilesPanel .settings-title-row h1,
+#settingsCustomizePanel .settings-title-row h1,
+#settingsDevicesPanel .settings-title-row h1{
+  margin:4px 0 8px!important;
+  font-size:36px!important;
+  letter-spacing:-.035em!important;
+  color:#f4fbff!important;
+}
+#settingsPreferencesPanel .settings-title-row .sub,
+#settingsKeybindsPanel .settings-title-row .sub,
+#settingsReadingProfilesPanel .settings-title-row .sub,
+#settingsCustomizePanel .settings-title-row .sub,
+#settingsDevicesPanel .settings-title-row .sub{
+  max-width:820px;
+  color:#a9bed5!important;
+  font-size:15px!important;
+  line-height:1.55!important;
+}
+#settingsPreferencesPanel .settings-card,
+#settingsKeybindsPanel .settings-card,
+#settingsReadingProfilesPanel .settings-card,
+#settingsCustomizePanel .settings-card,
+#settingsDevicesPanel .settings-card,
+#settingsDevicesPanel .device-client-card{
+  border:1px solid var(--account-line)!important;
+  background:
+    linear-gradient(180deg,rgba(17,32,48,.92),rgba(8,17,27,.94))!important;
+  border-radius:22px!important;
+  box-shadow:0 22px 58px rgba(0,0,0,.24),inset 0 1px 0 rgba(255,255,255,.045)!important;
+}
+#settingsPreferencesPanel label,
+#settingsReadingProfilesPanel label,
+#settingsCustomizePanel label,
+#settingsDevicesPanel label{
+  color:#dcecff!important;
+  letter-spacing:.01em;
+}
+#settingsPreferencesPanel input,
+#settingsPreferencesPanel select,
+#settingsReadingProfilesPanel input,
+#settingsReadingProfilesPanel select,
+#settingsCustomizePanel input,
+#settingsCustomizePanel select,
+#settingsDevicesPanel input,
+#settingsDevicesPanel select{
+  border-color:rgba(146,190,232,.28)!important;
+  background:rgba(5,13,22,.72)!important;
+  color:#f0f8ff!important;
+  border-radius:13px!important;
+}
+#settingsPreferencesPanel input:focus,
+#settingsPreferencesPanel select:focus,
+#settingsReadingProfilesPanel input:focus,
+#settingsReadingProfilesPanel select:focus,
+#settingsCustomizePanel input:focus,
+#settingsCustomizePanel select:focus,
+#settingsDevicesPanel input:focus,
+#settingsDevicesPanel select:focus{
+  border-color:rgba(91,188,255,.78)!important;
+  box-shadow:0 0 0 4px rgba(91,188,255,.16)!important;
+}
+#settingsPreferencesPanel .settings-card-kicker,
+#settingsKeybindsPanel .settings-page-kicker,
+#settingsCustomizePanel .settings-page-kicker,
+#settingsDevicesPanel .opds-section-kicker{
+  display:inline-flex!important;
+  align-items:center!important;
+  width:max-content!important;
+  padding:6px 10px!important;
+  border:1px solid rgba(91,188,255,.28)!important;
+  border-radius:999px!important;
+  background:rgba(91,188,255,.10)!important;
+  color:#9bd7ff!important;
+  font-size:11px!important;
+  font-weight:900!important;
+  letter-spacing:.11em!important;
+  text-transform:uppercase!important;
+}
+
+/* Preferences */
+#settingsPreferencesPanel .preferences-settings-grid{
+  grid-template-columns:minmax(0,1fr)!important;
+  max-width:1040px!important;
+}
+#settingsPreferencesPanel .preferences-card{
+  padding:22px!important;
+}
+#settingsPreferencesPanel .preference-toggle-row{
+  border:1px solid rgba(145,186,228,.18)!important;
+  border-radius:18px!important;
+  background:linear-gradient(135deg,rgba(12,25,39,.9),rgba(7,15,25,.88))!important;
+  padding:18px 20px!important;
+  margin:0 0 12px!important;
+}
+#settingsPreferencesPanel .preference-toggle-row-master{
+  border-color:rgba(91,188,255,.42)!important;
+  background:
+    radial-gradient(circle at 0 0,rgba(91,188,255,.18),transparent 40%),
+    linear-gradient(135deg,rgba(13,33,52,.96),rgba(8,17,27,.92))!important;
+}
+#settingsPreferencesPanel .preference-toggle-row h3{
+  margin:0 0 4px!important;
+  color:#f2f8ff!important;
+  font-size:20px!important;
+}
+#settingsPreferencesPanel .colorscape-child-settings{
+  position:relative;
+  margin:16px 0 0 18px!important;
+  padding-left:22px!important;
+  border-left:1px solid rgba(91,188,255,.28)!important;
+}
+#settingsPreferencesPanel .colorscape-subsection-title{
+  margin:18px 0 10px!important;
+  color:#9bd7ff!important;
+  font-size:12px!important;
+  font-weight:900!important;
+  letter-spacing:.13em!important;
+  text-transform:uppercase!important;
+}
+#settingsPreferencesPanel .colorscape-menu-toggle-grid{
+  display:grid!important;
+  grid-template-columns:repeat(3,minmax(0,1fr))!important;
+  gap:12px!important;
+}
+#settingsPreferencesPanel .colorscape-menu-toggle-grid .preference-toggle-row{
+  display:flex!important;
+  align-items:flex-start!important;
+  min-height:128px!important;
+}
+#settingsPreferencesPanel .colorscape-preview-note{
+  margin-top:14px!important;
+  padding:12px 14px!important;
+  border:1px solid rgba(91,188,255,.18)!important;
+  border-radius:14px!important;
+  background:rgba(91,188,255,.07)!important;
+}
+
+/* Key Binds */
+#settingsKeybindsPanel .keybinds-card{
+  background:transparent!important;
+  border:0!important;
+  box-shadow:none!important;
+  padding:0!important;
+}
+#settingsKeybindsPanel .keybinds-list{
+  max-width:1120px!important;
+  gap:12px!important;
+}
+#settingsKeybindsPanel .keybind-row{
+  display:grid!important;
+  grid-template-columns:minmax(0,1fr) auto!important;
+  gap:18px!important;
+  align-items:center!important;
+  padding:18px!important;
+  border:1px solid rgba(138,188,235,.22)!important;
+  border-radius:20px!important;
+  background:
+    linear-gradient(135deg,rgba(16,31,47,.94),rgba(8,17,27,.94))!important;
+  box-shadow:0 18px 48px rgba(0,0,0,.20),inset 0 1px 0 rgba(255,255,255,.04)!important;
+}
+#settingsKeybindsPanel .keybind-row:hover{
+  border-color:rgba(91,188,255,.48)!important;
+  box-shadow:0 20px 56px rgba(0,0,0,.24),0 0 28px rgba(91,188,255,.08)!important;
+}
+#settingsKeybindsPanel .keybind-number{
+  width:42px;
+  height:42px;
+  display:grid;
+  place-items:center;
+  border-radius:14px;
+  background:linear-gradient(135deg,rgba(91,188,255,.22),rgba(124,92,255,.18));
+  border:1px solid rgba(91,188,255,.30);
+  color:#c8efff;
+  font-weight:950;
+  font-size:14px;
+}
+#settingsKeybindsPanel .keybind-title-line{
+  display:flex;
+  align-items:center;
+  gap:10px;
+  flex-wrap:wrap;
+  margin-bottom:8px;
+}
+#settingsKeybindsPanel .keybind-title-line h3{
+  margin:0!important;
+  font-size:21px!important;
+}
+#settingsKeybindsPanel .keybind-title-line span{
+  padding:3px 9px;
+  border-radius:999px;
+  border:1px solid rgba(91,188,255,.24);
+  color:#9bd7ff;
+  background:rgba(91,188,255,.08);
+  font-size:12px;
+  font-weight:900;
+}
+#settingsKeybindsPanel .keybind-key-chip{
+  min-height:30px!important;
+  border-radius:10px!important;
+  background:linear-gradient(135deg,#2566a8,#5bbcff)!important;
+  border:1px solid rgba(255,255,255,.14)!important;
+  box-shadow:0 8px 22px rgba(91,188,255,.12)!important;
+}
+#settingsKeybindsPanel .keybind-actions{
+  gap:10px!important;
+}
+#settingsKeybindsPanel .keybind-action{
+  width:38px!important;
+  height:38px!important;
+  border:1px solid rgba(138,188,235,.22)!important;
+  background:rgba(7,15,25,.72)!important;
+  border-radius:12px!important;
+}
+
+
+/* Guidevault 0.9.153 - account menu number cleanup */
+#settingsKeybindsPanel .keybind-number,
+#settingsCustomizePanel .customize-shelf-order{
+  display:none!important;
+}
+#settingsKeybindsPanel .keybind-main,
+#settingsCustomizePanel .customize-shelf-copy{
+  min-width:0!important;
+}
+
+/* Reading Profiles */
+#settingsReadingProfilesPanel .reading-profile-grid.refined{
+  grid-template-columns:minmax(460px,1.15fr) minmax(360px,.85fr)!important;
+  gap:18px!important;
+}
+#settingsReadingProfilesPanel .reading-profile-card{
+  padding:22px!important;
+}
+#settingsReadingProfilesPanel .reading-profile-card-header{
+  padding-bottom:16px!important;
+  border-bottom:1px solid rgba(138,188,235,.16)!important;
+}
+#settingsReadingProfilesPanel .reading-profile-form-grid{
+  gap:14px!important;
+}
+#settingsReadingProfilesPanel .reading-profile-zoom-row{
+  border:1px solid rgba(138,188,235,.16)!important;
+  border-radius:14px!important;
+  background:rgba(5,13,22,.46)!important;
+  padding:10px 12px!important;
+}
+#settingsReadingProfilesPanel .reading-profile-check-row{
+  border:1px solid rgba(138,188,235,.20)!important;
+  border-radius:16px!important;
+  background:rgba(91,188,255,.07)!important;
+  padding:14px!important;
+  align-self:end!important;
+}
+#settingsReadingProfilesPanel .reading-profile-preset-list{
+  gap:12px!important;
+}
+#settingsReadingProfilesPanel .reading-profile-preset-row{
+  display:grid!important;
+  grid-template-columns:minmax(0,1fr) auto auto!important;
+  gap:14px!important;
+  align-items:center!important;
+  border-radius:18px!important;
+  padding:15px!important;
+  background:linear-gradient(135deg,rgba(10,22,35,.9),rgba(6,14,24,.92))!important;
+  border-color:rgba(138,188,235,.22)!important;
+}
+#settingsReadingProfilesPanel .reading-profile-preset-row.active,
+#settingsReadingProfilesPanel .reading-profile-preset-row:hover{
+  border-color:rgba(91,188,255,.58)!important;
+  background:
+    radial-gradient(circle at 0 0,rgba(91,188,255,.16),transparent 44%),
+    linear-gradient(135deg,rgba(13,33,52,.96),rgba(7,16,26,.92))!important;
+}
+#settingsReadingProfilesPanel .reading-profile-preset-main{min-width:0;}
+#settingsReadingProfilesPanel .reading-profile-preset-main b{
+  font-size:16px!important;
+  color:#f0f8ff!important;
+}
+#settingsReadingProfilesPanel .reading-profile-preset-main em{
+  max-width:420px;
+  white-space:nowrap;
+  overflow:hidden;
+  text-overflow:ellipsis;
+}
+#settingsReadingProfilesPanel .reading-profile-preset-visual{
+  display:flex;
+  flex-direction:column;
+  gap:5px;
+  min-width:120px;
+}
+#settingsReadingProfilesPanel .reading-profile-preset-visual span{
+  padding:4px 8px;
+  border-radius:999px;
+  background:rgba(91,188,255,.08);
+  border:1px solid rgba(91,188,255,.16);
+  color:#bee8ff;
+  font-size:11px;
+  font-weight:850;
+  text-align:center;
+}
+#settingsReadingProfilesPanel .reading-profile-preset-badges{
+  display:flex;
+  flex-direction:column;
+  gap:6px;
+  align-items:flex-end;
+}
+#settingsReadingProfilesPanel .reading-profile-effective-card{
+  padding:18px 20px!important;
+  border-style:dashed!important;
+  background:linear-gradient(135deg,rgba(91,188,255,.07),rgba(8,17,27,.86))!important;
+}
+
+/* Customize */
+#settingsCustomizePanel .customize-tabs{
+  width:max-content;
+  max-width:100%;
+  gap:6px!important;
+  padding:6px!important;
+  border:1px solid rgba(138,188,235,.22)!important;
+  border-radius:18px!important;
+  background:rgba(4,11,19,.72)!important;
+  margin:0 0 18px!important;
+}
+#settingsCustomizePanel .customize-tab{
+  border-radius:13px!important;
+  color:#abc8df!important;
+}
+#settingsCustomizePanel .customize-tab.active{
+  background:linear-gradient(135deg,#2566a8,#5bbcff)!important;
+  color:#fff!important;
+}
+#settingsCustomizePanel .customize-tab-panel{
+  padding:22px!important;
+}
+#settingsCustomizePanel .customize-home-header{
+  padding-bottom:16px!important;
+  border-bottom:1px solid rgba(138,188,235,.16)!important;
+}
+#settingsCustomizePanel .customize-add-shelf{
+  padding:10px!important;
+  border:1px solid rgba(138,188,235,.16)!important;
+  border-radius:16px!important;
+  background:rgba(5,13,22,.48)!important;
+}
+#settingsCustomizePanel .customize-shelf-list{
+  gap:12px!important;
+}
+#settingsCustomizePanel .customize-shelf-row{
+  grid-template-columns:34px minmax(0,1fr) auto!important;
+  gap:14px!important;
+  padding:16px!important;
+  border-radius:18px!important;
+  border-color:rgba(138,188,235,.22)!important;
+  background:linear-gradient(135deg,rgba(12,25,39,.92),rgba(6,14,24,.92))!important;
+}
+#settingsCustomizePanel .customize-shelf-row:hover{
+  border-color:rgba(91,188,255,.52)!important;
+}
+#settingsCustomizePanel .customize-shelf-order{
+  width:38px;
+  height:38px;
+  display:grid;
+  place-items:center;
+  border-radius:12px;
+  background:rgba(91,188,255,.10);
+  border:1px solid rgba(91,188,255,.22);
+  color:#9bd7ff;
+  font-weight:950;
+}
+#settingsCustomizePanel .customize-shelf-handle{
+  display:grid!important;
+  place-items:center!important;
+  width:30px!important;
+  height:38px!important;
+  border-radius:10px!important;
+  background:rgba(255,255,255,.035)!important;
+}
+#settingsCustomizePanel .customize-shelf-copy strong{
+  font-size:18px!important;
+}
+#settingsCustomizePanel .customize-shelf-pill{
+  display:inline-flex;
+  width:max-content;
+  margin-top:8px;
+  padding:4px 9px;
+  border-radius:999px;
+  background:rgba(91,188,255,.10);
+  border:1px solid rgba(91,188,255,.18);
+  color:#a9ddff;
+  font-size:11px;
+  font-weight:900;
+}
+#settingsCustomizePanel .side-nav-layout-grid{
+  display:grid!important;
+  grid-template-columns:minmax(0,1.1fr) minmax(320px,.9fr)!important;
+  gap:16px!important;
+}
+#settingsCustomizePanel .side-nav-builder-card{
+  border:1px solid rgba(138,188,235,.20)!important;
+  border-radius:20px!important;
+  background:rgba(5,13,22,.42)!important;
+  padding:18px!important;
+}
+#settingsCustomizePanel .side-nav-card-heading{
+  padding-bottom:14px!important;
+  border-bottom:1px solid rgba(138,188,235,.14)!important;
+}
+#settingsCustomizePanel .side-nav-card-icon{
+  width:42px;
+  height:42px;
+  display:grid;
+  place-items:center;
+  border-radius:14px;
+  background:linear-gradient(135deg,rgba(91,188,255,.22),rgba(124,92,255,.16));
+  border:1px solid rgba(91,188,255,.24);
+  color:#eaf7ff;
+}
+#settingsCustomizePanel .side-nav-help-grid > div{
+  border:1px solid rgba(138,188,235,.16)!important;
+  border-radius:14px!important;
+  background:rgba(91,188,255,.06)!important;
+  padding:12px!important;
+}
+
+/* Devices */
+#settingsDevicesPanel .device-title-row .device-add-button,
+#settingsDevicesPanel .device-actions .ghost,
+#settingsDevicesPanel .settings-title-row .primary{
+  align-self:flex-start!important;
+}
+#settingsDevicesPanel .device-email-card{
+  padding:0!important;
+  overflow:hidden!important;
+}
+#settingsDevicesPanel .device-email-editor{
+  margin:18px!important;
+  border-radius:18px!important;
+  background:linear-gradient(135deg,rgba(91,188,255,.10),rgba(124,92,255,.08))!important;
+  border-color:rgba(91,188,255,.28)!important;
+}
+#settingsDevicesPanel .device-table-wrap{
+  border-radius:20px!important;
+  overflow:hidden!important;
+}
+#settingsDevicesPanel .device-email-table{
+  border-collapse:separate!important;
+  border-spacing:0!important;
+}
+#settingsDevicesPanel .device-email-table th{
+  background:rgba(5,13,22,.76)!important;
+  color:#a9ddff!important;
+  letter-spacing:.08em!important;
+  text-transform:uppercase!important;
+  font-size:11px!important;
+}
+#settingsDevicesPanel .device-email-table td{
+  background:rgba(10,22,35,.52)!important;
+}
+#settingsDevicesPanel .device-email-table tbody tr:hover td{
+  background:rgba(91,188,255,.08)!important;
+}
+#settingsDevicesPanel .device-email-name-cell{
+  display:inline-flex;
+  align-items:center;
+  gap:10px;
+}
+#settingsDevicesPanel .device-email-name-cell .gv-device-icon{
+  width:22px;
+  height:22px;
+  color:#9bd7ff;
+}
+#settingsDevicesPanel .device-email-address{
+  color:#cbd9e7;
+  font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+  font-size:13px;
+}
+#settingsDevicesPanel .device-section-break{
+  margin:26px 0!important;
+  border-top:1px solid rgba(138,188,235,.16)!important;
+}
+#settingsDevicesPanel .device-client-grid{
+  gap:16px!important;
+}
+#settingsDevicesPanel .device-client-card{
+  position:relative;
+  overflow:hidden;
+  padding:18px!important;
+}
+#settingsDevicesPanel .device-client-card::before{
+  content:"";
+  position:absolute;
+  inset:0;
+  pointer-events:none;
+  background:radial-gradient(circle at 0 0,rgba(91,188,255,.12),transparent 38%);
+}
+#settingsDevicesPanel .device-card-title{
+  position:relative;
+  padding-bottom:12px!important;
+  border-bottom:1px solid rgba(138,188,235,.14)!important;
+}
+#settingsDevicesPanel .device-card-title .gv-device-icon{
+  width:30px!important;
+  height:30px!important;
+  padding:7px!important;
+  border-radius:12px!important;
+  background:rgba(91,188,255,.10)!important;
+  border:1px solid rgba(91,188,255,.20)!important;
+}
+#settingsDevicesPanel .device-card-badges{
+  position:relative;
+  margin-top:12px!important;
+}
+#settingsDevicesPanel .device-card-facts{
+  position:relative;
+  gap:10px!important;
+}
+#settingsDevicesPanel .device-card-fact{
+  border:1px solid rgba(138,188,235,.14)!important;
+  border-radius:12px!important;
+  background:rgba(5,13,22,.42)!important;
+  padding:10px!important;
+}
+#settingsDevicesPanel .device-card-footer{
+  position:relative;
+  border-top-color:rgba(138,188,235,.14)!important;
+}
+@media(max-width:1100px){
+  #settingsPreferencesPanel .colorscape-menu-toggle-grid,
+  #settingsCustomizePanel .side-nav-layout-grid,
+  #settingsReadingProfilesPanel .reading-profile-grid.refined{
+    grid-template-columns:1fr!important;
+  }
+}
+@media(max-width:760px){
+  #settingsKeybindsPanel .keybind-row,
+  #settingsCustomizePanel .customize-shelf-row,
+  #settingsReadingProfilesPanel .reading-profile-preset-row{
+    grid-template-columns:1fr!important;
+  }
+  #settingsKeybindsPanel .keybind-number,
+  #settingsCustomizePanel .customize-shelf-order{
+    width:max-content;
+    min-width:42px;
+  }
+}
+
+/* Guidevault 0.9.154 - public item reviews */
+.detail-reviews-content{
+  display:grid;
+  gap:16px;
+}
+.detail-reviews-header{
+  display:flex;
+  align-items:flex-start;
+  justify-content:space-between;
+  gap:16px;
+  padding:16px;
+  border:1px solid rgba(98,189,255,.18);
+  border-radius:16px;
+  background:
+    radial-gradient(circle at 0% 0%,rgba(47,129,255,.12),transparent 42%),
+    linear-gradient(180deg,rgba(16,30,50,.78),rgba(7,16,29,.84));
+}
+.detail-reviews-header h3{
+  margin:0 0 4px;
+  color:#f6f8ff;
+}
+.detail-reviews-header .sub{
+  margin:0;
+}
+.detail-reviews-summary{
+  display:flex;
+  flex-wrap:wrap;
+  justify-content:flex-end;
+  gap:8px;
+  min-width:190px;
+}
+.detail-reviews-summary span{
+  display:inline-flex;
+  align-items:center;
+  gap:4px;
+  padding:7px 10px;
+  border:1px solid rgba(128,172,232,.18);
+  border-radius:999px;
+  background:rgba(8,18,30,.72);
+  color:#bcd4f0;
+  font-size:12px;
+  font-weight:800;
+}
+.detail-reviews-summary strong{
+  color:#39d353;
+}
+.detail-review-list{
+  display:grid;
+  gap:12px;
+}
+.detail-review-card{
+  display:grid;
+  grid-template-columns:46px minmax(0,1fr);
+  gap:14px;
+  padding:15px;
+  border:1px solid rgba(128,172,232,.16);
+  border-radius:16px;
+  background:linear-gradient(180deg,rgba(16,30,50,.76),rgba(7,16,29,.82));
+  box-shadow:0 18px 46px rgba(0,0,0,.18),inset 0 1px 0 rgba(255,255,255,.035);
+}
+.detail-review-avatar{
+  width:46px;
+  height:46px;
+  border-radius:14px;
+  display:grid;
+  place-items:center;
+  color:#dff1ff;
+  font-weight:900;
+  letter-spacing:.04em;
+  border:1px solid rgba(98,189,255,.28);
+  background:linear-gradient(135deg,rgba(47,129,255,.42),rgba(216,82,255,.22));
+}
+.detail-review-main{
+  min-width:0;
+}
+.detail-review-head{
+  display:flex;
+  align-items:flex-start;
+  justify-content:space-between;
+  gap:12px;
+}
+.detail-review-head strong{
+  display:block;
+  color:#f6f8ff;
+  font-size:14px;
+}
+.detail-review-head em{
+  display:block;
+  color:#8fa3bb;
+  font-size:12px;
+  font-style:normal;
+  margin-top:2px;
+}
+.detail-review-head span{
+  color:#39d353;
+  white-space:nowrap;
+  font-weight:900;
+}
+.detail-review-card p{
+  margin:10px 0 0;
+  color:#d8e6f7;
+  line-height:1.48;
+  white-space:pre-wrap;
+}
+.detail-review-empty{
+  padding:22px;
+  border:1px dashed rgba(128,172,232,.22);
+  border-radius:16px;
+  background:rgba(8,18,30,.52);
+  text-align:center;
+}
+.detail-review-empty h3{
+  margin:0 0 6px;
+  color:#f6f8ff;
+}
+.detail-review-loading{
+  margin:0;
+  padding:8px 12px;
+  border-radius:12px;
+  background:rgba(98,189,255,.08);
+  border:1px solid rgba(98,189,255,.14);
+}
+.profile-review-visibility{
+  display:inline-flex;
+  width:max-content;
+  margin-top:6px;
+  padding:3px 8px;
+  border-radius:999px;
+  font-size:11px;
+  font-weight:900;
+  letter-spacing:.02em;
+  border:1px solid rgba(128,172,232,.18);
+  background:rgba(8,18,30,.72);
+  color:#aec5de;
+}
+.profile-review-visibility.public{
+  border-color:rgba(57,211,83,.30);
+  color:#a7f3b8;
+  background:rgba(57,211,83,.10);
+}
+.profile-review-visibility.private{
+  border-color:rgba(216,82,255,.28);
+  color:#efc3ff;
+  background:rgba(216,82,255,.10);
+}
+@media(max-width:900px){
+  .detail-reviews-header{display:grid;}
+  .detail-reviews-summary{justify-content:flex-start;min-width:0;}
+}
+
+/* Guidevault 0.9.155 - review score highlight and reviewer avatars */
+.detail-reviews-header{
+  align-items:center!important;
+  padding:0!important;
+  overflow:hidden!important;
+  border-color:rgba(98,189,255,.24)!important;
+  background:
+    radial-gradient(circle at 12% 20%,rgba(57,211,83,.18),transparent 26%),
+    radial-gradient(circle at 88% 0%,rgba(98,189,255,.18),transparent 34%),
+    linear-gradient(135deg,rgba(16,30,50,.90),rgba(7,16,29,.94))!important;
+}
+.detail-reviews-summary{
+  width:100%!important;
+  min-width:0!important;
+  display:grid!important;
+  grid-template-columns:minmax(160px,240px) minmax(0,1fr)!important;
+  align-items:center!important;
+  gap:0!important;
+  justify-content:stretch!important;
+}
+.detail-review-score-main{
+  min-height:128px;
+  display:grid;
+  place-items:center;
+  align-content:center;
+  gap:4px;
+  padding:18px 22px;
+  border-right:1px solid rgba(128,172,232,.16);
+  background:
+    radial-gradient(circle at 50% 20%,rgba(57,211,83,.18),transparent 42%),
+    rgba(8,18,30,.56);
+}
+.detail-review-score-main strong{
+  color:#6dfc8a!important;
+  font-size:56px;
+  line-height:.92;
+  letter-spacing:-.065em;
+  font-weight:950;
+  text-shadow:0 0 30px rgba(57,211,83,.22);
+}
+.detail-review-score-main.is-empty strong{
+  color:#8fa3bb!important;
+}
+.detail-review-score-main span,
+.detail-review-score-context span,
+.detail-review-score-context em{
+  all:unset;
+  display:block;
+}
+.detail-review-score-main span{
+  color:#bcd4f0;
+  font-size:13px;
+  font-weight:900;
+  letter-spacing:.08em;
+  text-transform:uppercase;
+}
+.detail-review-score-context{
+  display:grid;
+  gap:8px;
+  padding:20px 24px;
+}
+.detail-review-score-context span{
+  color:#39d353;
+  font-size:26px;
+  line-height:1;
+  letter-spacing:.03em;
+  font-weight:950;
+}
+.detail-review-score-context em{
+  color:#f6f8ff;
+  font-size:22px;
+  line-height:1.12;
+  font-style:normal;
+  font-weight:900;
+  letter-spacing:-.025em;
+}
+.detail-review-avatar{
+  overflow:hidden;
+  box-shadow:0 12px 26px rgba(0,0,0,.22),inset 0 1px 0 rgba(255,255,255,.10);
+}
+.detail-review-avatar.has-image{
+  padding:0;
+  background:#08121f;
+  border-color:rgba(170,205,255,.24);
+}
+.detail-review-avatar.has-image img{
+  width:100%;
+  height:100%;
+  display:block;
+  object-fit:cover;
+}
+.detail-review-avatar.is-generic svg{
+  width:25px;
+  height:25px;
+  fill:#dff1ff;
+  opacity:.92;
+  filter:drop-shadow(0 4px 12px rgba(0,0,0,.28));
+}
+@media(max-width:760px){
+  .detail-reviews-summary{grid-template-columns:1fr!important;}
+  .detail-review-score-main{min-height:112px;border-right:0;border-bottom:1px solid rgba(128,172,232,.16);}
+  .detail-review-score-main strong{font-size:48px;}
+  .detail-review-score-context span{font-size:22px;}
+  .detail-review-score-context em{font-size:18px;}
+}
+
+
+/* Guidevault 0.9.156 - color-coded review ratings */
+.detail-review-score-main{
+  background:
+    radial-gradient(circle at 50% 20%,var(--review-rating-soft,rgba(57,211,83,.18)),transparent 42%),
+    rgba(8,18,30,.56)!important;
+}
+.detail-review-score-main strong{
+  color:var(--review-rating-color,#6dfc8a)!important;
+  text-shadow:0 0 30px var(--review-rating-glow,rgba(57,211,83,.22))!important;
+}
+.detail-review-score-context span,
+.detail-review-rating,
+.detail-review-summary-stars,
+.profile-review-rating{
+  color:var(--review-rating-color,#39d353)!important;
+  text-shadow:0 0 18px var(--review-rating-glow,rgba(57,211,83,.20));
+}
+.detail-review-summary-stars,
+.detail-review-rating,
+.profile-review-rating{
+  white-space:nowrap;
+  font-weight:950;
+}
+.detail-review-head .detail-review-rating,
+.profile-review-card-head .profile-review-rating{
+  color:var(--review-rating-color,#39d353)!important;
+}
+.detail-review-score-context{
+  background:linear-gradient(135deg,var(--review-rating-soft,rgba(57,211,83,.08)),transparent 58%);
+}
+
+/* Guidevault 0.9.157 - review target preview and Colorscape review summary polish */
+.profile-review-selected-preview{
+  display:grid;
+  grid-template-columns:86px minmax(0,1fr);
+  align-items:center;
+  gap:14px;
+  padding:14px;
+  border:1px solid rgba(98,189,255,.24);
+  border-radius:18px;
+  background:
+    radial-gradient(circle at 16% 0%,rgba(98,189,255,.14),transparent 34%),
+    linear-gradient(135deg,rgba(16,30,50,.82),rgba(7,16,29,.88));
+  box-shadow:inset 0 1px 0 rgba(255,255,255,.045),0 18px 40px rgba(0,0,0,.18);
+}
+.profile-review-selected-preview.is-empty{
+  grid-template-columns:58px minmax(0,1fr);
+  opacity:.86;
+}
+.profile-review-selected-cover{
+  width:86px;
+  height:116px;
+  border-radius:13px;
+  overflow:hidden;
+  display:grid;
+  place-items:center;
+  background:#07111d;
+  border:1px solid rgba(170,205,255,.18);
+  box-shadow:0 14px 30px rgba(0,0,0,.28),inset 0 1px 0 rgba(255,255,255,.08);
+}
+.profile-review-selected-preview.is-empty .profile-review-selected-cover,
+.profile-review-selected-cover.fallback{
+  width:58px;
+  height:58px;
+  border-radius:16px;
+  color:#9bd7ff;
+  font-weight:950;
+  letter-spacing:.08em;
+  background:linear-gradient(135deg,rgba(47,129,255,.22),rgba(216,82,255,.14));
+}
+.profile-review-selected-cover img{
+  width:100%;
+  height:100%;
+  display:block;
+  object-fit:cover;
+  background:#07111d;
+}
+.profile-review-selected-copy{
+  min-width:0;
+  display:grid;
+  gap:4px;
+}
+.profile-review-selected-copy span,
+.profile-review-selected-preview.is-empty span{
+  color:#8fb6d8;
+  font-size:11px;
+  font-weight:950;
+  letter-spacing:.12em;
+  text-transform:uppercase;
+}
+.profile-review-selected-copy strong,
+.profile-review-selected-preview.is-empty strong{
+  color:#f6f8ff;
+  font-size:17px;
+  line-height:1.12;
+  font-weight:950;
+  overflow:hidden;
+  text-overflow:ellipsis;
+  white-space:nowrap;
+}
+.profile-review-selected-copy em{
+  color:#b9cee5;
+  font-size:13px;
+  font-style:normal;
+  font-weight:760;
+}
+body.colorscape-active.detail-page-mode .detail-reviews-header{
+  border-color:rgba(var(--colorscape-rgb),.42)!important;
+  background:
+    radial-gradient(circle at 12% 20%,var(--review-rating-soft,rgba(57,211,83,.18)),transparent 26%),
+    radial-gradient(circle at 88% 0%,rgba(98,189,255,.18),transparent 34%),
+    linear-gradient(135deg,rgba(var(--colorscape-rgb),.30),rgba(16,30,50,.91) 44%,rgba(7,16,29,.96))!important;
+  box-shadow:0 22px 60px rgba(0,0,0,.26),0 0 42px rgba(var(--colorscape-rgb),.12)!important;
+}
+@media(max-width:760px){
+  .profile-review-selected-preview{grid-template-columns:70px minmax(0,1fr);}
+  .profile-review-selected-cover{width:70px;height:96px;}
+  .profile-review-selected-copy strong{font-size:15px;}
+}
+
+
+/* v0.9.158 — Server / Media / Integrations visual pass */
+.integrations-title-row,
+.media-title-row{
+  align-items:flex-start!important;
+}
+.integrations-health-card,
+.media-health-card{
+  min-width:190px;
+  border:1px solid rgba(126,184,255,.22);
+  border-radius:18px;
+  background:linear-gradient(145deg,rgba(29,70,125,.56),rgba(11,24,42,.82));
+  box-shadow:0 18px 44px rgba(0,0,0,.24), inset 0 1px 0 rgba(255,255,255,.08);
+  padding:13px 15px;
+  color:#eaf5ff;
+  display:grid;
+  gap:5px;
+}
+.integrations-health-card strong,
+.media-health-card strong{
+  font-size:13px;
+  letter-spacing:.09em;
+  text-transform:uppercase;
+  color:#b7dcff;
+}
+.integrations-health-card span,
+.media-health-card span{font-size:12.5px;color:#94acc6;line-height:1.35;}
+.integrations-grid{display:grid;grid-template-columns:minmax(280px,.7fr) minmax(420px,1.3fr);gap:18px;align-items:start;}
+.integration-source-card{
+  position:relative;
+  overflow:hidden;
+  background:linear-gradient(150deg,rgba(13,31,55,.9),rgba(7,17,31,.96));
+  border-color:rgba(126,184,255,.18);
+}
+.integration-source-card::before{
+  content:"";
+  position:absolute;
+  inset:0;
+  pointer-events:none;
+  background:radial-gradient(circle at top left,rgba(75,151,255,.20),transparent 38%),radial-gradient(circle at bottom right,rgba(158,99,255,.16),transparent 42%);
+}
+.integration-source-card > *{position:relative;z-index:1;}
+.integration-card-head{display:flex;gap:14px;align-items:flex-start;margin-bottom:14px;}
+.integration-card-head h2{margin:0 0 4px;font-size:25px;}
+.integration-source-icon{
+  width:46px;height:46px;flex:0 0 46px;border-radius:16px;display:grid;place-items:center;
+  font-weight:950;letter-spacing:.04em;color:#eaf5ff;
+  background:linear-gradient(135deg,#207dff,#6ecbff 52%,#9b6cff);
+  border:1px solid rgba(190,224,255,.38);
+  box-shadow:0 12px 30px rgba(32,125,255,.24);
+}
+.integration-chip-row{display:flex;flex-wrap:wrap;gap:8px;margin-top:12px;}
+.integration-chip-row span{
+  border:1px solid rgba(143,191,255,.18);border-radius:999px;padding:6px 10px;
+  color:#c9ddf3;background:rgba(16,37,65,.72);font-size:12px;font-weight:800;
+}
+.integrations-credential-grid{grid-template-columns:repeat(2,minmax(220px,1fr));}
+.integrations-actions{margin-top:14px!important;}
+.media-support-card,
+.media-library-card{
+  position:relative;
+  background:linear-gradient(145deg,rgba(13,30,52,.88),rgba(7,17,31,.96));
+  border-color:rgba(126,184,255,.18);
+  box-shadow:0 18px 46px rgba(0,0,0,.22), inset 0 1px 0 rgba(255,255,255,.05);
+}
+.media-support-card{margin-bottom:18px;}
+.media-support-card label{display:grid;gap:7px;color:#dfeaff;font-weight:850;}
+.media-library-panel{margin-top:0;}
+.media-library-card{padding:18px!important;}
+.media-library-heading{align-items:flex-start;}
+.media-library-heading h2{font-size:25px;}
+.media-library-actions{justify-content:flex-end;}
+.media-library-card .libraries-table-wrap{
+  border-radius:16px;
+  border:1px solid rgba(126,184,255,.16);
+  background:rgba(7,17,31,.55);
+  overflow:hidden;
+}
+.media-library-card .libraries-table th{
+  background:linear-gradient(180deg,rgba(39,78,130,.42),rgba(16,34,60,.78));
+  color:#dcecff;
+}
+.media-library-card .libraries-table td{background:rgba(8,19,34,.55);}
+.media-library-card .settings-library-card{
+  margin-top:16px;
+  border-radius:18px;
+  border:1px solid rgba(126,184,255,.18);
+  background:linear-gradient(145deg,rgba(14,32,55,.92),rgba(8,18,32,.96));
+}
+.blue-gradient-action,
+#settingsRescanLibrary,
+#igdbTestCredentials,
+#opdsGenerateKey,
+#opdsCreateKey,
+.opds-rotate-key{
+  background:linear-gradient(135deg,#1675ff,#45b7ff 55%,#7568ff)!important;
+  color:#ffffff!important;
+  border-color:rgba(151,213,255,.42)!important;
+  box-shadow:0 10px 26px rgba(22,117,255,.22), inset 0 1px 0 rgba(255,255,255,.22)!important;
+}
+.blue-gradient-action:hover,
+#settingsRescanLibrary:hover,
+#igdbTestCredentials:hover,
+#opdsGenerateKey:hover,
+#opdsCreateKey:hover,
+.opds-rotate-key:hover{
+  filter:brightness(1.08);
+  transform:translateY(-1px);
+}
+#settingsOpdsPanel .opds-key-card,
+#settingsOpdsPanel .opds-auth-card,
+#settingsOpdsPanel .opds-toggle-card{
+  background:linear-gradient(145deg,rgba(11,28,52,.92),rgba(6,16,30,.98));
+  border-color:rgba(78,164,255,.2);
+  box-shadow:0 18px 48px rgba(0,0,0,.24), inset 0 1px 0 rgba(255,255,255,.05);
+}
+#settingsEmailPanel .settings-card,
+#settingsUsersPanel .settings-card,
+#settingsTasksPanel .settings-card{
+  border-color:rgba(126,184,255,.17);
+  box-shadow:0 16px 42px rgba(0,0,0,.2), inset 0 1px 0 rgba(255,255,255,.045);
+}
+#settingsEmailPanel .settings-title-row,
+#settingsUsersPanel .settings-title-row,
+#settingsTasksPanel .settings-title-row{
+  border:1px solid rgba(126,184,255,.14);
+  border-radius:20px;
+  padding:16px 18px;
+  background:linear-gradient(135deg,rgba(19,49,87,.62),rgba(7,18,33,.52));
+  margin-bottom:18px;
+}
+.refined-user-card.users-loading-card{
+  opacity:.92;
+  animation:usersLoadingPulse 1.4s ease-in-out infinite alternate;
+}
+.user-avatar-badge.generic{background:linear-gradient(135deg,rgba(61,136,255,.28),rgba(74,198,255,.16));}
+@keyframes usersLoadingPulse{from{filter:brightness(.98)}to{filter:brightness(1.12)}}
+.task-action-tile{
+  background:linear-gradient(145deg,rgba(12,34,63,.88),rgba(7,18,33,.96));
+}
+.task-action-tile strong{color:#f2f8ff;}
+@media(max-width:1050px){.integrations-grid{grid-template-columns:1fr}.integrations-credential-grid{grid-template-columns:1fr}}
+@media(max-width:720px){.integrations-health-card,.media-health-card{width:100%}.media-library-heading{display:grid}.media-library-actions{justify-content:flex-start}}
+
+/* v0.9.159 — Server integration cleanup */
+.integration-igdb-card{grid-column:1 / -1;}
+.integration-esrb-card .integration-source-icon{
+  background:linear-gradient(135deg,#3a8dff,#65ddff 52%,#39d98a);
+  box-shadow:0 12px 30px rgba(57,217,138,.18),0 0 24px rgba(58,141,255,.18);
+}
+@media(max-width:1050px){.integration-igdb-card{grid-column:auto;}}
+/* v0.9.160 — Users panel responsiveness */
+.users-settings-panel{content-visibility:auto;contain-intrinsic-size:900px;}
+.users-inline-loading{margin:0;padding:10px 12px;border:1px solid rgba(126,184,255,.14);border-radius:12px;background:rgba(8,22,40,.54);}
+#settingsUsersPanel .users-list{min-height:72px;}
+
+/* Guidevault 0.9.165 - Bookmark arrow style match */
+.reader-bookmark-wrap{position:relative!important;display:inline-flex!important;align-items:center!important;gap:2px!important;isolation:isolate!important;}
+.reader-bookmark-arrow{appearance:none!important;border:1px solid rgba(255,255,255,.06)!important;background:linear-gradient(180deg,rgba(18,31,47,.96),rgba(10,20,32,.98))!important;color:#edf6ff!important;min-width:28px!important;width:28px!important;height:36px!important;padding:0!important;margin-left:0!important;border-radius:10px!important;display:inline-grid!important;place-items:center!important;cursor:pointer!important;line-height:1!important;box-shadow:0 8px 18px rgba(0,0,0,.22)!important;}
+.reader-bookmark-arrow:hover,.reader-bookmark-arrow:focus-visible,.reader-bookmark-arrow.has-bookmarks:hover{background:linear-gradient(180deg,rgba(35,68,104,.98),rgba(18,42,70,.98))!important;border-color:rgba(105,164,255,.42)!important;color:#ffffff!important;box-shadow:0 0 0 2px rgba(47,129,255,.16)!important,0 10px 22px rgba(0,0,0,.24)!important;}
+.reader-bookmark-arrow:disabled{opacity:.38!important;cursor:not-allowed!important;background:linear-gradient(180deg,rgba(18,31,47,.76),rgba(10,20,32,.82))!important;border-color:rgba(255,255,255,.04)!important;box-shadow:none!important;}
+.reader-bookmark-arrow.has-bookmarks{color:#f4f9ff!important;}
+.reader-bookmark-caret-chevron{display:block!important;width:12px!important;height:12px!important;overflow:visible!important;transform:translateY(1px)!important;filter:drop-shadow(0 1px 0 rgba(0,0,0,.18));}
+.reader-bookmarks-panel{position:absolute!important;right:0!important;bottom:calc(100% + 10px)!important;width:min(320px,calc(100vw - 32px))!important;max-height:min(48vh,360px)!important;overflow:hidden!important;border:1px solid rgba(113,166,235,.34)!important;border-radius:16px!important;background:linear-gradient(180deg,rgba(13,24,38,.98),rgba(6,12,20,.98))!important;box-shadow:0 22px 70px rgba(0,0,0,.48),0 0 0 1px rgba(255,255,255,.04) inset!important;backdrop-filter:blur(16px)!important;padding:12px!important;z-index:80!important;}
+.reader-bookmarks-panel .reader-panel-title{margin:0 0 8px!important;color:#eaf4ff!important;font-weight:900!important;letter-spacing:.02em!important;}
+.reader-bookmarks-list{display:flex!important;flex-direction:column!important;gap:7px!important;max-height:290px!important;overflow:auto!important;padding-right:2px!important;}
+.reader-bookmark-item{width:100%;border:1px solid rgba(255,255,255,.08);border-radius:12px;background:rgba(255,255,255,.045);color:#dcecff;text-align:left;padding:9px 10px;display:grid;grid-template-columns:auto 1fr auto;align-items:center;gap:8px;cursor:pointer;}
+.reader-bookmark-item:hover,.reader-bookmark-item.active{border-color:rgba(94,158,255,.66);background:linear-gradient(135deg,rgba(47,129,255,.20),rgba(255,255,255,.05));}
+.reader-bookmark-item strong{font-size:13px;color:#fff;white-space:nowrap;}
+.reader-bookmark-item span{font-size:12px;color:#9fb4ce;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.reader-bookmark-item em{font-style:normal;font-size:11px;color:#79adff;white-space:nowrap;}
+@media (prefers-reduced-motion:reduce){.reader-hud,.reader-bookmarks-panel,.reader-view .page-shell{transition:none!important;animation:none!important;}}
