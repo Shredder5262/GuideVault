@@ -17399,8 +17399,7 @@ body.left-collapsed #mainLibraryNav .nav{
   inset:0;
   z-index:0;
   background:
-    linear-gradient(135deg,rgba(255,255,255,.035),rgba(255,255,255,0) 42%),
-    repeating-linear-gradient(135deg,rgba(255,255,255,.025) 0 1px,transparent 1px 12px),
+    linear-gradient(135deg,rgba(255,255,255,.018),rgba(255,255,255,0) 42%),
     linear-gradient(180deg,#111d2a,#070d14);
   opacity:1;
   transition:opacity .14s ease;
