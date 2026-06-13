@@ -1,12 +1,12 @@
-<!doctype html>
+﻿<!doctype html>
 <html lang="en">
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Guidevault</title>
-  <link rel="icon" type="image/x-icon" href="/assets/favicon.ico?v=0.9.175" />
-  <link rel="shortcut icon" type="image/x-icon" href="/assets/favicon.ico?v=0.9.175" />
-  <link rel="stylesheet" href="/styles.css?v=0.9.175-email-events-workspace" />
+  <link rel="icon" type="image/x-icon" href="/assets/favicon.ico?v=0.9.176" />
+  <link rel="shortcut icon" type="image/x-icon" href="/assets/favicon.ico?v=0.9.176" />
+  <link rel="stylesheet" href="/styles.css?v=0.9.175-windows-safe-file-organizer" />
 </head>
 <body class="right-collapsed auth-locked">
   <section id="loginView" class="login-view" aria-labelledby="loginTitle">
@@ -1765,6 +1765,17 @@
             <div class="system-update-list">
               <details class="system-update-entry" open>
                 <summary>
+                  <span>Guidevault 0.9.176 - Windows-Safe File Organizer</span>
+                  <em>Installed</em>
+                </summary>
+                <ul>
+                  <li>Updated Server &gt; Files rename/move templates to sanitize filenames with a Windows-safe character set even when GuideVault runs in a Linux container.</li>
+                  <li>Replaced illegal filename characters such as colons with safe separators before moving files on Windows-backed Docker volumes.</li>
+                  <li>Cleaned up empty filename template separators and blocked proposed 8.3-style short-name aliases before applying bulk file moves.</li>
+                </ul>
+              </details>
+              <details class="system-update-entry" open>
+                <summary>
                   <span>Guidevault 0.9.175 - Email Relocation and System Events</span>
                   <em>Installed</em>
                 </summary>
@@ -2537,6 +2548,7 @@
   </dialog>
 
 
-  <script src="/app.js?v=0.9.175-email-events-workspace"></script>
+  <script src="/app.js?v=0.9.175-windows-safe-file-organizer"></script>
 </body>
 </html>
+

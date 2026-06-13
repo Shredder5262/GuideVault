@@ -1,4 +1,4 @@
-const state = {
+﻿const state = {
   items: [], filtered: [], selected: null, filter: 'All Content', categoryFilter: '', viewMode: 'all', activeTab: 'overview', customFilter: null,
   reader: { item: null, pages: [], index: 0, animating: false, displayMode: 2, transitionMode: 'stable', overlayVisible: false, advancedVisible: false, bookmarkMenuOpen: false, magnifierSettingsVisible: false, scrubbing: false, shading: null, zoom: 100, fullscreenOnOpen: false, magnifier: null, magnifierActive: false, longPressTimer: null, suppressHitClickUntil: 0, backgrounds: [], background: '', backgroundBrightness: 72 },
   libraryPath: '',
@@ -19762,4 +19762,5 @@ installLibraryCardDelegates();
 installGlobalDetailDelegate();
 syncEmailTemplatePreview();
 initializeGuidevaultAuthAndApp();
+
 

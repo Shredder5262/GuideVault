@@ -2899,6 +2899,13 @@ static List<FileOrganizationPlan> BuildFileOrganizationPlans(IEnumerable<string>
             continue;
         }
 
+        var proposedFileName = Path.GetFileName(destinationPath);
+        if (GuidevaultNativeMetadata.IsLikelyDosShortFileName(proposedFileName))
+        {
+            plans.Add(new FileOrganizationPlan(item.Id, item.Kind, item.Title, item.FileName, currentPath, destinationPath, relativePath, "Blocked", "Proposed filename looks like a Windows 8.3 short-name alias. Adjust the template or metadata before applying."));
+            continue;
+        }
+
         if (string.Equals(currentPath, destinationPath, StringComparison.OrdinalIgnoreCase))
         {
             plans.Add(new FileOrganizationPlan(item.Id, item.Kind, item.Title, item.FileName, currentPath, destinationPath, relativePath, "Unchanged", "File already matches this organization template."));
@@ -2977,7 +2984,8 @@ static string BuildOrganizationRelativePath(LibraryItem item, string template)
         ["Extension"] = ext
     };
 
-    var rendered = Regex.Replace(template ?? string.Empty, "\\{([A-Za-z0-9_]+)\\}", match => values.TryGetValue(match.Groups[1].Value, out var value) ? value : string.Empty);
+    var rendered = Regex.Replace(template ?? string.Empty, "\\{([A-Za-z0-9_]+)\\}", match =>
+        values.TryGetValue(match.Groups[1].Value, out var value) ? NormalizeOrganizationTokenValue(value) : string.Empty);
     rendered = rendered.Replace('\\', '/');
     var parts = rendered.Split('/', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
         .Select(SanitizePathPart)
@@ -2991,10 +2999,27 @@ static string BuildOrganizationRelativePath(LibraryItem item, string template)
     return string.Join('/', parts);
 }
 
+static string NormalizeOrganizationTokenValue(string? value)
+{
+    var text = value ?? string.Empty;
+    if (string.IsNullOrWhiteSpace(text)) return string.Empty;
+
+    // GuideVault often runs inside a Linux container while organizing files on Windows bind mounts.
+    // Use a Windows-safe character set here instead of the container OS invalid-character list so
+    // characters like ':' cannot create invalid or host-mangled filenames on Windows-backed volumes.
+    text = Regex.Replace(text, @"[\\/:*?""<>|]+", " - ");
+    text = Regex.Replace(text, "[\x00-\x1F]+", " ");
+    text = Regex.Replace(text, @"\s+", " ").Trim();
+    text = Regex.Replace(text, @"\s*-\s*(?:-\s*)+", " - ");
+    return text.Trim(' ', '.', '-');
+}
+
 static string SanitizePathPart(string value)
 {
-    var cleaned = new string((value ?? string.Empty).Select(ch => Path.GetInvalidFileNameChars().Contains(ch) ? '-' : ch).ToArray());
-    cleaned = Regex.Replace(cleaned, "\\s+", " ").Trim(' ', '.', '-');
+    var cleaned = NormalizeOrganizationTokenValue(value);
+    cleaned = Regex.Replace(cleaned, @"\s+-\s+-\s+", " - ");
+    cleaned = Regex.Replace(cleaned, @"(\s+-\s*)+(?=\.[A-Za-z0-9]{1,8}$)", string.Empty);
+    cleaned = Regex.Replace(cleaned, @"\s+", " ").Trim(' ', '.', '-');
     return string.IsNullOrWhiteSpace(cleaned) ? "Unsorted" : cleaned;
 }
 
