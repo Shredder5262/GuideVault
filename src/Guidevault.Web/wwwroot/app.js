@@ -1,4 +1,4 @@
-﻿const state = {
+const state = {
   items: [], filtered: [], selected: null, filter: 'All Content', categoryFilter: '', viewMode: 'all', activeTab: 'overview', customFilter: null,
   reader: { item: null, pages: [], index: 0, animating: false, displayMode: 2, transitionMode: 'stable', overlayVisible: false, advancedVisible: false, bookmarkMenuOpen: false, magnifierSettingsVisible: false, scrubbing: false, shading: null, zoom: 100, fullscreenOnOpen: false, magnifier: null, magnifierActive: false, longPressTimer: null, suppressHitClickUntil: 0, backgrounds: [], background: '', backgroundBrightness: 72 },
   libraryPath: '',
@@ -100,10 +100,11 @@ const GUIDEVAULT_LIBRARY_CHUNK_YIELD_MS = 30;
 const GUIDEVAULT_STARTUP_STATUS_HIDE_MS = 2400;
 const GUIDEVAULT_LIBRARY_SEARCH_DEBOUNCE_MS = 180;
 const GUIDEVAULT_SORT_COLLATOR = new Intl.Collator(undefined, { numeric: true, sensitivity: 'base' });
-const GUIDEVAULT_APP_VERSION = '0.9.181';
+const GUIDEVAULT_APP_VERSION = '0.9.183';
 const GUIDEVAULT_FILENAME_SCHEMA_KEY = 'guidevault.filenameRename.schema.v1';
 const GUIDEVAULT_FILE_ORGANIZATION_TEMPLATE_PRESETS_KEY = 'guidevault.fileOrganization.templatePresets.v2';
 const GUIDEVAULT_FILE_ORGANIZATION_TEMPLATE_PRESETS_LEGACY_KEY = 'guidevault.fileOrganization.templatePresets.v1';
+const SERVER_FILES_PREVIEW_RENDER_LIMIT = 175;
 const GUIDEVAULT_DEFAULT_FILENAME_SCHEMA = '{title}';
 const GUIDEVAULT_STABLE_TAG_FEED_URL = 'https://api.github.com/repos/Shredder5262/GuideVault/tags';
 const GUIDEVAULT_RELEASES_URL = 'https://github.com/Shredder5262/GuideVault/releases';
@@ -19309,6 +19310,13 @@ function serverFilesSetStatus(targetId, message = '', tone = '') {
   el.classList.toggle('error', tone === 'error');
 }
 
+function serverFilesPaintNextFrame() {
+  return new Promise(resolve => {
+    const frame = typeof requestAnimationFrame === 'function' ? requestAnimationFrame : callback => setTimeout(callback, 16);
+    frame(() => frame(resolve));
+  });
+}
+
 function serverFilesRefreshSummary() {
   const summary = $('serverFilesSummary');
   if (summary) summary.textContent = serverFilesSelectedSummaryText();
@@ -19434,6 +19442,7 @@ function serverFilesClearSelection() {
   const files = serverFilesEnsureState();
   files.selectedIds = [];
   state.serverFilesPreview = [];
+  state.serverFilesPreviewShowAll = false;
   if ($('serverFilesPreviewTable')) $('serverFilesPreviewTable').innerHTML = '';
   if ($('serverFilesWriteBackResults')) $('serverFilesWriteBackResults').innerHTML = '';
   if ($('serverFilesApplyPreview')) $('serverFilesApplyPreview').disabled = true;
@@ -19866,9 +19875,15 @@ function serverFilesTemplatesPayload() {
   };
 }
 
-function serverFilesPreviewRowsHtml(rows = []) {
+function serverFilesPreviewRowsHtml(rows = [], options = {}) {
   if (!rows.length) return '<p class="sub">No preview rows yet.</p>';
-  return `<table class="server-files-before-after-table"><thead><tr><th>Type</th><th>Title</th><th>Before</th><th>After</th><th>Status</th></tr></thead><tbody>${rows.map(row => {
+  const total = rows.length;
+  const showAll = options.showAll === true || total <= SERVER_FILES_PREVIEW_RENDER_LIMIT;
+  const visibleRows = showAll ? rows : rows.slice(0, SERVER_FILES_PREVIEW_RENDER_LIMIT);
+  const note = total > visibleRows.length
+    ? `<div class="server-files-preview-note"><strong>Showing ${visibleRows.length} of ${total} preview rows for speed.</strong><span>Apply Previewed Moves still uses the full validated preview result.</span><button class="ghost" type="button" data-server-files-preview-show-all="true">Show All Rows</button></div>`
+    : '';
+  return `${note}<table class="server-files-before-after-table"><thead><tr><th>Type</th><th>Title</th><th>Before</th><th>After</th><th>Status</th></tr></thead><tbody>${visibleRows.map(row => {
     const currentPath = row.currentPath || '';
     const proposedPath = row.proposedPath || '';
     const currentName = row.fileName || serverFilesBaseName(currentPath);
@@ -19883,27 +19898,48 @@ function serverFilesPreviewRowsHtml(rows = []) {
   }).join('')}</tbody></table>`;
 }
 
+function serverFilesRenderPreviewRows(showAll = false) {
+  const table = $('serverFilesPreviewTable');
+  if (!table) return;
+  state.serverFilesPreviewShowAll = !!showAll;
+  table.innerHTML = serverFilesPreviewRowsHtml(state.serverFilesPreview || [], { showAll: state.serverFilesPreviewShowAll });
+}
+
 async function serverFilesPreviewSelected() {
   const ids = serverFilesCurrentSelectedIds();
+  const previewBtn = $('serverFilesPreviewSelected');
+  const applyBtn = $('serverFilesApplyPreview');
   serverFilesRefreshSummary();
   if (!ids.length) {
     serverFilesSetStatus('serverFilesOrganizeStatus', 'Select one or more files from the Files workspace list first.', 'error');
     return;
   }
+  state.serverFilesPreviewShowAll = false;
+  state.serverFilesPreview = [];
+  if (previewBtn) previewBtn.disabled = true;
+  if (applyBtn) applyBtn.disabled = true;
+  if ($('serverFilesPreviewTable')) $('serverFilesPreviewTable').innerHTML = `<div class="server-files-preview-loading"><strong>Building preview for ${ids.length} selected file(s)...</strong><span>Checking proposed paths and conflicts without moving anything.</span></div>`;
   serverFilesSetStatus('serverFilesOrganizeStatus', `Building preview for ${ids.length} selected file(s)...`, '');
-  const res = await fetch('/api/items/files/organize/preview', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ ids, templates: serverFilesTemplatesPayload() })
-  });
-  let data = null;
-  try { data = await res.json(); } catch {}
-  if (!res.ok) throw new Error(data?.error || `Preview failed. HTTP ${res.status}`);
-  state.serverFilesPreview = data?.results || [];
-  if ($('serverFilesPreviewTable')) $('serverFilesPreviewTable').innerHTML = serverFilesPreviewRowsHtml(state.serverFilesPreview);
-  const applyBtn = $('serverFilesApplyPreview');
-  if (applyBtn) applyBtn.disabled = !(data?.readyToApply > 0);
-  serverFilesSetStatus('serverFilesOrganizeStatus', data?.message || `Previewed ${state.serverFilesPreview.length} file(s).`, data?.readyToApply ? 'success' : '');
+  await serverFilesPaintNextFrame();
+  try {
+    const res = await fetch('/api/items/files/organize/preview', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ids, templates: serverFilesTemplatesPayload() })
+    });
+    let data = null;
+    try { data = await res.json(); } catch {}
+    if (!res.ok) throw new Error(data?.error || `Preview failed. HTTP ${res.status}`);
+    state.serverFilesPreview = data?.results || [];
+    serverFilesRenderPreviewRows(false);
+    if (applyBtn) applyBtn.disabled = !(data?.readyToApply > 0);
+    const cappedMessage = state.serverFilesPreview.length > SERVER_FILES_PREVIEW_RENDER_LIMIT
+      ? ` Showing the first ${SERVER_FILES_PREVIEW_RENDER_LIMIT} rows in the table for speed.`
+      : '';
+    serverFilesSetStatus('serverFilesOrganizeStatus', `${data?.message || `Previewed ${state.serverFilesPreview.length} file(s).`}${cappedMessage}`, data?.readyToApply ? 'success' : '');
+  } finally {
+    if (previewBtn) previewBtn.disabled = false;
+  }
 }
 
 async function serverFilesApplyPreview() {
@@ -20078,7 +20114,15 @@ document.querySelectorAll('[data-server-files-token]').forEach(btn => btn.addEve
   e.preventDefault();
   serverFilesInsertTemplateToken(btn.dataset.serverFilesToken || '');
 }));
-if ($('serverFilesPreviewSelected')) $('serverFilesPreviewSelected').addEventListener('click', async () => { try { await serverFilesPreviewSelected(); } catch (err) { console.error(err); serverFilesSetStatus('serverFilesOrganizeStatus', `Preview failed: ${err?.message || err}`, 'error'); } });
+
+if ($('serverFilesPreviewTable')) $('serverFilesPreviewTable').addEventListener('click', e => {
+  const btn = e.target.closest?.('[data-server-files-preview-show-all]');
+  if (!btn) return;
+  e.preventDefault();
+  serverFilesRenderPreviewRows(true);
+  serverFilesSetStatus('serverFilesOrganizeStatus', `Showing all ${(state.serverFilesPreview || []).length} preview row(s).`, 'success');
+});
+if ($('serverFilesPreviewSelected')) $('serverFilesPreviewSelected').addEventListener('click', async () => { try { await serverFilesPreviewSelected(); } catch (err) { console.error(err); serverFilesSetStatus('serverFilesOrganizeStatus', `Preview failed: ${err?.message || err}`, 'error'); if ($('serverFilesPreviewTable')) $('serverFilesPreviewTable').innerHTML = `<p class="sub">Preview failed: ${escapeHtml(err?.message || String(err || 'Unknown error'))}</p>`; if ($('serverFilesApplyPreview')) $('serverFilesApplyPreview').disabled = true; } });
 if ($('serverFilesApplyPreview')) $('serverFilesApplyPreview').addEventListener('click', async () => { try { await serverFilesApplyPreview(); } catch (err) { console.error(err); serverFilesSetStatus('serverFilesOrganizeStatus', `Apply failed: ${err?.message || err}`, 'error'); } });
 if ($('serverFilesWriteBackSelected')) $('serverFilesWriteBackSelected').addEventListener('click', async () => { try { await metadataManagerWriteBackSelected('files'); } catch (err) { console.error(err); serverFilesSetStatus('serverFilesWriteBackStatus', `Write-back failed: ${err?.message || err}`, 'error'); } });
 if ($('metadataManagerRunSourceLookup')) $('metadataManagerRunSourceLookup').addEventListener('click', async e => { e.preventDefault(); try { await metadataManagerRunBatchSourceLookup(); } catch (err) { console.error(err); metadataManagerSetStatus(`Batch source lookup failed: ${err?.message || err}`, 'error'); } });
@@ -20138,5 +20182,4 @@ installLibraryCardDelegates();
 installGlobalDetailDelegate();
 syncEmailTemplatePreview();
 initializeGuidevaultAuthAndApp();
-
 

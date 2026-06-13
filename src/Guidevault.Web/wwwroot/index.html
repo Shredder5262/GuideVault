@@ -1,12 +1,12 @@
-﻿<!doctype html>
+<!doctype html>
 <html lang="en">
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Guidevault</title>
-  <link rel="icon" type="image/x-icon" href="/assets/favicon.ico?v=0.9.182" />
-  <link rel="shortcut icon" type="image/x-icon" href="/assets/favicon.ico?v=0.9.182" />
-  <link rel="stylesheet" href="/styles.css?v=0.9.181-template-builder" />
+  <link rel="icon" type="image/x-icon" href="/assets/favicon.ico?v=0.9.183" />
+  <link rel="shortcut icon" type="image/x-icon" href="/assets/favicon.ico?v=0.9.183" />
+  <link rel="stylesheet" href="/styles.css?v=0.9.183-file-template-ui" />
 </head>
 <body class="right-collapsed auth-locked">
   <section id="loginView" class="login-view" aria-labelledby="loginTitle">
@@ -1348,12 +1348,15 @@
                     <input id="serverFilesMagazineTemplate" class="server-files-template-input" spellcheck="false" value="Magazines/{MagazineSeries}/{Year}/{MagazineSeries} - {IssuePart}{Extension}" />
                   </label>
                 </div>
-                <div class="server-files-token-builder" aria-label="File name template builder">
-                  <div>
-                    <strong>Template Builder</strong>
-                    <span>Click a template field, then use the grouped buttons below. Optional part tokens stay blank when metadata is missing.</span>
-                  </div>
-                  <div class="server-files-token-help">Volume is the raw magazine volume field. Number currently maps to the issue/number field. Use Volume Part, Issue Part, Number Part, or Edition Part when you only want text to appear if that metadata exists.</div>
+                <details class="server-files-token-builder server-files-token-dropdown" aria-label="File name template builder">
+                  <summary class="server-files-token-summary">
+                    <span>
+                      <strong>Template Builder</strong>
+                      <em>Open field buttons for Common, Manuals, Strategy Guides, and Magazines.</em>
+                    </span>
+                    <b aria-hidden="true">&#x25BE;</b>
+                  </summary>
+                  <div class="server-files-token-help">Click into a template field first, then insert tokens from the grouped buttons. Volume is the raw magazine volume field. Number currently maps to the issue/number field. Use Volume Part, Issue Part, Number Part, or Edition Part when you only want text to appear if that metadata exists.</div>
                   <div class="server-files-token-groups">
                     <section class="server-files-token-group" aria-label="Common template fields">
                       <h4>Common</h4>
@@ -1412,7 +1415,7 @@
                       </div>
                     </section>
                   </div>
-                </div>
+                </details>
                 <p class="field-help">The preview below shows the exact current file name/path and proposed file name/path before anything is applied.</p>
                 <div class="settings-actions inline-actions server-files-actions">
                   <button id="serverFilesPreviewSelected" class="primary" type="button">Preview Selected</button>
@@ -1436,20 +1439,6 @@
                 </div>
                 <p id="serverFilesWriteBackStatus" class="sub account-status" aria-live="polite"></p>
                 <div id="serverFilesWriteBackResults" class="server-files-preview-table compact"></div>
-              </article>
-
-              <article class="settings-card server-files-card validation-card">
-                <div class="file-metadata-card-heading">
-                  <h3>File Validation</h3>
-                  <p class="sub">First-pass workspace for future missing-file, broken-archive, duplicate, stale-metadata, and orphaned-cache checks.</p>
-                </div>
-                <ul class="server-files-roadmap-list">
-                  <li>Missing files and unavailable paths</li>
-                  <li>Broken archives and unreadable page sets</li>
-                  <li>Files without embedded Guidevault JSON</li>
-                  <li>Files with stale embedded Guidevault JSON</li>
-                  <li>Duplicate file candidates and orphaned cache cleanup</li>
-                </ul>
               </article>
             </div>
           </section>
@@ -1814,6 +1803,17 @@
               <h2>Update History</h2>
             </div>
             <div class="system-update-list">
+              <details class="system-update-entry" open>
+                <summary>
+                  <span>Guidevault 0.9.183 - File Template Builder Dropdown</span>
+                  <em>Installed</em>
+                </summary>
+                <ul>
+                  <li>Changed the file Template Builder token area into a collapsible dropdown so it does not dominate the Files workspace.</li>
+                  <li>Made Preview Selected paint an immediate loading panel, then render large preview results with a capped fast table and optional Show All Rows action.</li>
+                  <li>Removed the placeholder File Validation card from the Files page.</li>
+                </ul>
+              </details>
               <details class="system-update-entry" open>
                 <summary>
                   <span>Guidevault 0.9.182 - File Template Builder Cleanup</span>
@@ -2652,7 +2652,6 @@
   </dialog>
 
 
-  <script src="/app.js?v=0.9.181-template-builder"></script>
+  <script src="/app.js?v=0.9.183-file-template-ui"></script>
 </body>
 </html>
-

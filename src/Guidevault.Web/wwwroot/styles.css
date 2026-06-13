@@ -19483,3 +19483,71 @@ body.colorscape-active.detail-page-mode .library-data-plain-list dt{
 
 
 /* Guidevault 0.9.182 - Template builder cleanup */
+
+/* Guidevault 0.9.183 - File template dropdown and faster previews */
+
+.server-files-token-dropdown{
+  display:block!important;
+  padding:0!important;
+  overflow:hidden;
+}
+.server-files-token-summary{
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  gap:12px;
+  min-height:48px;
+  padding:13px 16px;
+  cursor:pointer;
+  list-style:none;
+  user-select:none;
+}
+.server-files-token-summary::-webkit-details-marker{display:none;}
+.server-files-token-summary span{
+  display:grid;
+  gap:2px;
+}
+.server-files-token-summary strong{
+  margin:0!important;
+  color:#f7fbff;
+}
+.server-files-token-summary em{
+  color:#93a8c3;
+  font-style:normal;
+  font-size:.82rem;
+  font-weight:650;
+}
+.server-files-token-summary b{
+  color:#bfdbfe;
+  transition:transform .16s ease;
+}
+.server-files-token-dropdown[open] .server-files-token-summary b{transform:rotate(180deg);}
+.server-files-token-dropdown .server-files-token-help,
+.server-files-token-dropdown .server-files-token-groups{
+  margin:0 14px 12px;
+}
+.server-files-preview-loading,
+.server-files-preview-note{
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  gap:12px;
+  padding:12px 14px;
+  color:#dbeafe;
+  border-bottom:1px solid rgba(255,255,255,.08);
+  background:rgba(88,166,255,.08);
+}
+.server-files-preview-loading{
+  flex-direction:column;
+  align-items:flex-start;
+  border-bottom:0;
+}
+.server-files-preview-loading strong,
+.server-files-preview-note strong{color:#f7fbff;}
+.server-files-preview-loading span,
+.server-files-preview-note span{color:#9fb1c7;font-size:.84rem;}
+.server-files-preview-note button{min-height:34px;border-radius:10px!important;white-space:nowrap;}
+@media(max-width:700px){
+  .server-files-token-summary,
+  .server-files-preview-note{align-items:flex-start;flex-direction:column;}
+}
