@@ -16,7 +16,7 @@ using SixLabors.ImageSharp.Formats.Jpeg;
 using SixLabors.ImageSharp.Processing;
 
 var builder = WebApplication.CreateBuilder(args);
-const string GuidevaultVersion = "0.9.184";
+const string GuidevaultVersion = "0.9.185";
 var app = builder.Build();
 var metadataJsonOptions = new JsonSerializerOptions(JsonSerializerDefaults.Web) { PropertyNameCaseInsensitive = true };
 var options = app.Configuration.GetSection("Guidevault").Get<GuidevaultOptions>() ?? new GuidevaultOptions();
@@ -9398,7 +9398,7 @@ public static class ArchiveReader
     private static string CoverCacheDirectory = Path.Combine(AppContext.BaseDirectory, "data", "cache", "covers");
     private static string CoverThumbnailCacheDirectory = Path.Combine(AppContext.BaseDirectory, "data", "cache", "cover-thumbs");
     private static readonly string[] KnownCoverCacheExtensions = [".jpg", ".jpeg", ".png", ".webp", ".gif", ".bmp"];
-    private const string CoverCacheVersion = "cover-natural-sort-v3";
+    private const string CoverCacheVersion = "cover-comicinfo-frontcover-v1";
 
     public static void ConfigureCoverCache(string cacheDirectory, string? thumbnailCacheDirectory = null)
     {
@@ -10170,9 +10170,13 @@ public static class ArchiveReader
 
         // Covers must be chosen from the same normalized page list the reader uses.
         // Some archives store entries out of page order, so never trust raw ZIP/RAR
-        // order for the cover. Prefer explicit/front-style names, then 00/000, then
-        // 01/001, then the normal natural page sort.
-        var candidateKeys = GetCoverCandidateEntries(archivePath).Take(12).ToArray();
+        // order for the cover. Prefer an explicit ComicInfo FrontCover page when
+        // available, then explicit/front-style names, then 00/000, then 01/001,
+        // then the normal natural page sort.
+        var imageEntries = GetImageEntries(archivePath);
+        if (imageEntries.Length == 0) return null;
+
+        var candidateKeys = (await GetCoverCandidateEntriesAsync(archivePath, imageEntries)).Take(16).ToArray();
         if (candidateKeys.Length == 0) return null;
 
         // Prefer System.IO.Compression for normal CBZ files because it is fast and
@@ -10468,14 +10472,86 @@ public static class ArchiveReader
            && entry.Length > 0
            && IsImageEntryName(entry.Name);
 
-    private static IEnumerable<string> GetCoverCandidateEntries(string archivePath)
+    private static async Task<IEnumerable<string>> GetCoverCandidateEntriesAsync(string archivePath, IReadOnlyList<string> imageEntries)
     {
-        return GetImageEntries(archivePath)
+        var preferred = new List<string>();
+        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+        foreach (var entry in await GetComicInfoFrontCoverEntriesAsync(archivePath, imageEntries))
+        {
+            if (seen.Add(entry)) preferred.Add(entry);
+        }
+
+        foreach (var entry in imageEntries
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .OrderBy(CoverCandidatePriority)
             .ThenBy(entry => NaturalSortKey(Path.GetFileName(entry)))
             .ThenBy(NaturalSortKey)
-            .ThenBy(entry => entry, StringComparer.OrdinalIgnoreCase);
+            .ThenBy(entry => entry, StringComparer.OrdinalIgnoreCase))
+        {
+            if (seen.Add(entry)) preferred.Add(entry);
+        }
+
+        return preferred;
+    }
+
+    private static async Task<IReadOnlyList<string>> GetComicInfoFrontCoverEntriesAsync(string archivePath, IReadOnlyList<string> imageEntries)
+    {
+        if (imageEntries.Count == 0) return [];
+
+        try
+        {
+            var xml = await ReadTextEntryAsync(archivePath, "comicinfo.xml");
+            if (string.IsNullOrWhiteSpace(xml)) return [];
+
+            var doc = XDocument.Parse(xml);
+            var pageElements = doc.Descendants()
+                .Where(e => string.Equals(e.Name.LocalName, "Page", StringComparison.OrdinalIgnoreCase)
+                         || string.Equals(e.Name.LocalName, "ComicPageInfo", StringComparison.OrdinalIgnoreCase))
+                .ToArray();
+
+            if (pageElements.Length == 0) return [];
+
+            string ReadPageValue(XElement element, string name)
+            {
+                var attribute = element.Attributes().FirstOrDefault(a => string.Equals(a.Name.LocalName, name, StringComparison.OrdinalIgnoreCase));
+                if (attribute is not null) return attribute.Value.Trim();
+
+                var child = element.Elements().FirstOrDefault(e => string.Equals(e.Name.LocalName, name, StringComparison.OrdinalIgnoreCase));
+                return child?.Value.Trim() ?? string.Empty;
+            }
+
+            var output = new List<string>();
+            var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+            foreach (var page in pageElements)
+            {
+                var type = ReadPageValue(page, "Type");
+                if (!type.Equals("FrontCover", StringComparison.OrdinalIgnoreCase)) continue;
+
+                var key = Normalize(ReadPageValue(page, "Key"));
+                if (!string.IsNullOrWhiteSpace(key))
+                {
+                    var keyed = imageEntries.FirstOrDefault(entry =>
+                        string.Equals(Normalize(entry), key, StringComparison.OrdinalIgnoreCase)
+                        || string.Equals(Path.GetFileName(Normalize(entry)), Path.GetFileName(key), StringComparison.OrdinalIgnoreCase));
+                    if (!string.IsNullOrWhiteSpace(keyed) && seen.Add(keyed)) output.Add(keyed);
+                }
+
+                var image = ReadPageValue(page, "Image");
+                if (int.TryParse(image, out var index) && index >= 0 && index < imageEntries.Count)
+                {
+                    var indexed = imageEntries[index];
+                    if (seen.Add(indexed)) output.Add(indexed);
+                }
+            }
+
+            return output;
+        }
+        catch
+        {
+            return [];
+        }
     }
 
     private static int CoverCandidatePriority(string entryKey)
@@ -11998,5 +12074,5 @@ static class GuidevaultLibraryIoGate
 
 static class GuidevaultBuildInfo
 {
-    public const string Version = "0.9.184";
+    public const string Version = "0.9.185";
 }

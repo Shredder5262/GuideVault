@@ -4,9 +4,9 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Guidevault</title>
-  <link rel="icon" type="image/x-icon" href="/assets/favicon.ico?v=0.9.184" />
-  <link rel="shortcut icon" type="image/x-icon" href="/assets/favicon.ico?v=0.9.184" />
-  <link rel="stylesheet" href="/styles.css?v=0.9.184-cover-alpha-page" />
+  <link rel="icon" type="image/x-icon" href="/assets/favicon.ico?v=0.9.185" />
+  <link rel="shortcut icon" type="image/x-icon" href="/assets/favicon.ico?v=0.9.185" />
+  <link rel="stylesheet" href="/styles.css?v=0.9.185-comicinfo-cover-page" />
 </head>
 <body class="right-collapsed auth-locked">
   <section id="loginView" class="login-view" aria-labelledby="loginTitle">
@@ -1805,6 +1805,17 @@
             <div class="system-update-list">
               <details class="system-update-entry" open>
                 <summary>
+                  <span>Guidevault 0.9.185 - ComicInfo Cover Page Support</span>
+                  <em>Installed</em>
+                </summary>
+                <ul>
+                  <li>Cover extraction now honors ComicInfo.xml page metadata when a page is marked as FrontCover.</li>
+                  <li>ComicInfo FrontCover selection runs before filename heuristics, making inconsistent magazine scans more reliable when embedded page metadata exists.</li>
+                  <li>Bumped the cover cache key so affected covers and thumbnails rebuild after update.</li>
+                </ul>
+              </details>
+              <details class="system-update-entry" open>
+                <summary>
                   <span>Guidevault 0.9.184 - Cover Page Zero Letter Fix</span>
                   <em>Installed</em>
                 </summary>
@@ -2662,6 +2673,6 @@
   </dialog>
 
 
-  <script src="/app.js?v=0.9.184-cover-alpha-page"></script>
+  <script src="/app.js?v=0.9.185-comicinfo-cover-page"></script>
 </body>
 </html>
