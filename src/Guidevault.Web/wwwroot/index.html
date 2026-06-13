@@ -4,9 +4,9 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Guidevault</title>
-  <link rel="icon" type="image/x-icon" href="/assets/favicon.ico?v=0.9.185" />
-  <link rel="shortcut icon" type="image/x-icon" href="/assets/favicon.ico?v=0.9.185" />
-  <link rel="stylesheet" href="/styles.css?v=0.9.185-comicinfo-cover-page" />
+  <link rel="icon" type="image/x-icon" href="/assets/favicon.ico?v=0.9.186" />
+  <link rel="shortcut icon" type="image/x-icon" href="/assets/favicon.ico?v=0.9.186" />
+  <link rel="stylesheet" href="/styles.css?v=0.9.186-cover-picker" />
 </head>
 <body class="right-collapsed auth-locked">
   <section id="loginView" class="login-view" aria-labelledby="loginTitle">
@@ -358,6 +358,7 @@
                   <h3>Library Data</h3>
                   <p class="sub">Read-only file, scan, cache, page-count, and metadata-source details for the selected item. File organization and metadata write-back live under Settings &gt; Server &gt; Files.</p>
                   <div id="metadataTechnicalInfo" class="metadata-technical-info hidden"></div>
+                  <div id="metadataCoverPicker" class="metadata-cover-picker hidden" aria-live="polite"></div>
                 </article>
               </section>
             </div>
@@ -1805,6 +1806,17 @@
             <div class="system-update-list">
               <details class="system-update-entry" open>
                 <summary>
+                  <span>Guidevault 0.9.186 - Library Data Cover Picker</span>
+                  <em>Installed</em>
+                </summary>
+                <ul>
+                  <li>Added a Library Data cover picker that reads image pages from CBZ/CBR archives and lets you manually choose the cover page.</li>
+                  <li>Manual cover selections are stored in Guidevault data as explicit cover overrides, so they take priority over ComicInfo.xml and filename heuristics.</li>
+                  <li>Added lightweight page thumbnail endpoints for the cover picker and cache-busts cover URLs after a cover override changes.</li>
+                </ul>
+              </details>
+              <details class="system-update-entry" open>
+                <summary>
                   <span>Guidevault 0.9.185 - ComicInfo Cover Page Support</span>
                   <em>Installed</em>
                 </summary>
@@ -2673,6 +2685,6 @@
   </dialog>
 
 
-  <script src="/app.js?v=0.9.185-comicinfo-cover-page"></script>
+  <script src="/app.js?v=0.9.186-cover-picker"></script>
 </body>
 </html>

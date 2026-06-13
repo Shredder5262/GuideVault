@@ -16,13 +16,14 @@ using SixLabors.ImageSharp.Formats.Jpeg;
 using SixLabors.ImageSharp.Processing;
 
 var builder = WebApplication.CreateBuilder(args);
-const string GuidevaultVersion = "0.9.185";
+const string GuidevaultVersion = "0.9.186";
 var app = builder.Build();
 var metadataJsonOptions = new JsonSerializerOptions(JsonSerializerDefaults.Web) { PropertyNameCaseInsensitive = true };
 var options = app.Configuration.GetSection("Guidevault").Get<GuidevaultOptions>() ?? new GuidevaultOptions();
 var contentRoot = app.Environment.ContentRootPath;
 var configPath = Path.Combine(contentRoot, "data", "config", "library.settings.json");
 var metadataPath = Path.Combine(contentRoot, "data", "config", "metadata.overrides.json");
+var coverOverridePath = Path.Combine(contentRoot, "data", "config", "cover.overrides.json");
 var fileIdentityPath = Path.Combine(contentRoot, "data", "config", "file.identity-map.json");
 var opdsSettingsPath = Path.Combine(contentRoot, "data", "config", "opds.settings.json");
 var serverSettingsPath = Path.Combine(contentRoot, "data", "config", "server.settings.json");
@@ -54,6 +55,7 @@ loadedSettings = loadedSettings.Normalize(contentRoot, options.LibraryPath);
 LibrarySettingsStore.Save(configPath, loadedSettings);
 
 var metadataStore = new MetadataStore(metadataPath);
+var coverOverrideStore = new ItemCoverOverrideStore(coverOverridePath);
 var fileIdentityStore = new FileIdentityStore(fileIdentityPath);
 var opdsStore = new OpdsSettingsStore(opdsSettingsPath);
 var serverSettingsStore = new GuidevaultServerSettingsStore(serverSettingsPath, contentRoot);
@@ -408,7 +410,7 @@ app.MapPost("/api/library/prewarm-covers", (string? kind, int? limit) =>
             {
                 if (string.IsNullOrWhiteSpace(item.Path) || !File.Exists(item.Path)) continue;
                 if (string.Equals(item.Format, "PDF", StringComparison.OrdinalIgnoreCase)) continue;
-                try { await ArchiveReader.GetCoverThumbnailAsync(item.Path, 360); }
+                try { await ArchiveReader.GetCoverThumbnailAsync(item.Path, 360, coverOverrideStore.Get(item.Id)?.EntryKey); }
                 catch { /* best-effort warmup only */ }
             }
         }
@@ -1653,6 +1655,7 @@ app.MapDelete("/api/items/{id}", (string id) =>
     // Keep this instant: do not call GetItemsAsync() here because that can wait
     // behind a scan or cold-load the full index.
     metadataStore.RemoveOverride(id);
+    coverOverrideStore.Remove(id);
     cache.RemoveCachedItem(id, persist: false);
     return Results.Ok(new { removedId = id, mode = "removed-from-index", rescanWillRediscover = true, pathPreserved = true });
 });
@@ -1664,7 +1667,8 @@ app.MapGet("/api/items/{id}/cover", async (string id, HttpResponse response) =>
     response.Headers.CacheControl = "public, max-age=604800, immutable";
     if (item.Format == "PDF") return Results.Redirect("/assets/pdf-cover.svg");
 
-    var image = await ArchiveReader.GetCoverImageAsync(item.Path);
+    var coverOverride = coverOverrideStore.Get(item.Id);
+    var image = await ArchiveReader.GetCoverImageAsync(item.Path, coverOverride?.EntryKey);
     if (image is null) return Results.Redirect("/assets/missing-cover.svg");
 
     return Results.File(
@@ -1684,7 +1688,8 @@ app.MapGet("/api/items/{id}/cover-thumb", async (string id, int? w, HttpResponse
     if (item.Format == "PDF") return Results.Redirect("/assets/pdf-cover.svg");
 
     var width = Math.Clamp(w ?? 360, 120, 720);
-    var image = await ArchiveReader.GetCoverThumbnailAsync(item.Path, width);
+    var coverOverride = coverOverrideStore.Get(item.Id);
+    var image = await ArchiveReader.GetCoverThumbnailAsync(item.Path, width, coverOverride?.EntryKey);
     if (image is null) return Results.Redirect("/assets/missing-cover.svg");
 
     return Results.File(
@@ -1738,6 +1743,106 @@ app.MapGet("/api/items/{id}/page/{page:int}", async (string id, int page, HttpRe
     return image is null
         ? Results.NotFound()
         : Results.File(image.Value.Bytes, image.Value.ContentType, enableRangeProcessing: true);
+});
+
+app.MapGet("/api/items/{id}/page/{page:int}/thumb", async (string id, int page, int? w, HttpResponse response) =>
+{
+    var item = cache.TryGetCachedItem(id) ?? (await cache.GetItemsAsync()).FirstOrDefault(i => i.Id == id);
+    if (item is null) return Results.NotFound();
+    response.Headers.CacheControl = "private, max-age=3600";
+    if (item.Format == "PDF") return Results.BadRequest(new { error = "PDF pages are handled through the browser PDF viewer in this prototype." });
+
+    var width = Math.Clamp(w ?? 180, 80, 360);
+    var image = await ArchiveReader.GetImagePageThumbnailAsync(item.Path, page, width);
+    return image is null
+        ? Results.NotFound()
+        : Results.File(image.Value.Bytes, image.Value.ContentType, enableRangeProcessing: true);
+});
+
+app.MapGet("/api/items/{id}/cover-options", async (string id) =>
+{
+    var item = cache.TryGetCachedItem(id) ?? (await cache.GetItemsAsync()).FirstOrDefault(i => i.Id == id);
+    if (item is null) return Results.NotFound(new { error = "Item not found." });
+    if (item.Format == "PDF") return Results.BadRequest(new { error = "PDF covers use the browser/PDF cover placeholder and do not expose archive image pages." });
+
+    var entries = ArchiveReader.GetImageEntryKeys(item.Path);
+    var selected = coverOverrideStore.Get(item.Id);
+    var selectedIndex = -1;
+    if (selected is not null)
+    {
+        selectedIndex = Array.FindIndex(entries, entry => string.Equals(entry, selected.EntryKey, StringComparison.OrdinalIgnoreCase));
+    }
+
+    return Results.Ok(new
+    {
+        itemId = item.Id,
+        itemTitle = item.Title,
+        pageCount = entries.Length,
+        hasManualOverride = selected is not null,
+        selectedEntryKey = selected?.EntryKey ?? string.Empty,
+        selectedIndex,
+        selectedUpdatedAt = selected?.UpdatedAt,
+        entries = entries.Select((entry, index) => new
+        {
+            index,
+            entryKey = entry,
+            fileName = Path.GetFileName(entry),
+            folder = Path.GetDirectoryName(entry)?.Replace('\\', '/') ?? string.Empty,
+            imageUrl = $"/api/items/{Uri.EscapeDataString(item.Id)}/page/{index}",
+            thumbnailUrl = $"/api/items/{Uri.EscapeDataString(item.Id)}/page/{index}/thumb?w=180",
+            isSelected = selected is not null && string.Equals(entry, selected.EntryKey, StringComparison.OrdinalIgnoreCase)
+        })
+    });
+});
+
+app.MapPut("/api/items/{id}/cover-selection", async (string id, JsonElement payload) =>
+{
+    var item = cache.TryGetCachedItem(id) ?? (await cache.GetItemsAsync()).FirstOrDefault(i => i.Id == id);
+    if (item is null) return Results.NotFound(new { error = "Item not found." });
+    if (item.Format == "PDF") return Results.BadRequest(new { error = "PDF cover selection is not supported." });
+
+    var entries = ArchiveReader.GetImageEntryKeys(item.Path);
+    if (entries.Length == 0) return Results.BadRequest(new { error = "No image pages were found in this archive." });
+
+    string? entryKey = null;
+    if (payload.ValueKind == JsonValueKind.Object)
+    {
+        if (payload.TryGetProperty("entryKey", out var entryProp) && entryProp.ValueKind == JsonValueKind.String)
+            entryKey = entryProp.GetString();
+        if (string.IsNullOrWhiteSpace(entryKey) && payload.TryGetProperty("pageIndex", out var pageProp) && pageProp.TryGetInt32(out var pageIndex) && pageIndex >= 0 && pageIndex < entries.Length)
+            entryKey = entries[pageIndex];
+    }
+
+    entryKey = (entryKey ?? string.Empty).Replace('\\', '/').Trim();
+    var selectedIndex = Array.FindIndex(entries, entry => string.Equals(entry, entryKey, StringComparison.OrdinalIgnoreCase));
+    if (selectedIndex < 0)
+        return Results.BadRequest(new { error = "Selected cover page was not found in this archive." });
+
+    var record = coverOverrideStore.Set(item.Id, entries[selectedIndex], selectedIndex, Path.GetFileName(entries[selectedIndex]));
+    ArchiveReader.ClearCoverCacheForPath(item.Path);
+    RecordSystemEvent("Metadata", "Cover override saved", $"Set manual cover page for {item.Title} to {record.DisplayName}.", "api", item.Id, item.Title);
+    return Results.Ok(new
+    {
+        itemId = item.Id,
+        itemTitle = item.Title,
+        hasManualOverride = true,
+        selectedEntryKey = record.EntryKey,
+        selectedIndex = record.PageIndex,
+        selectedFileName = record.DisplayName,
+        selectedUpdatedAt = record.UpdatedAt,
+        message = $"Cover set to page {record.PageIndex + 1}: {record.DisplayName}."
+    });
+});
+
+app.MapDelete("/api/items/{id}/cover-selection", async (string id) =>
+{
+    var item = cache.TryGetCachedItem(id) ?? (await cache.GetItemsAsync()).FirstOrDefault(i => i.Id == id);
+    if (item is null) return Results.NotFound(new { error = "Item not found." });
+
+    coverOverrideStore.Remove(item.Id);
+    ArchiveReader.ClearCoverCacheForPath(item.Path);
+    RecordSystemEvent("Metadata", "Cover override cleared", $"Returned {item.Title} to automatic cover selection.", "api", item.Id, item.Title);
+    return Results.Ok(new { itemId = item.Id, hasManualOverride = false, message = "Manual cover selection cleared. Guidevault will use automatic cover detection again." });
 });
 
 app.MapGet("/api/items/{id}/file", async (string id) =>
@@ -1962,7 +2067,8 @@ app.MapGet("/opds/items/{id}/cover", async (HttpRequest request, string id) =>
     if (item is null) return Results.NotFound(new { error = "Item not found." });
     if (item.Format == "PDF") return Results.Redirect("/assets/pdf-cover.svg");
 
-    var image = await ArchiveReader.GetCoverImageAsync(item.Path);
+    var coverOverride = coverOverrideStore.Get(item.Id);
+    var image = await ArchiveReader.GetCoverImageAsync(item.Path, coverOverride?.EntryKey);
     return image is null
         ? Results.Redirect("/assets/missing-cover.svg")
         : Results.File(image.Value.Bytes, image.Value.ContentType, enableRangeProcessing: true);
@@ -5580,6 +5686,89 @@ public static class LibrarySettingsStore
         Directory.CreateDirectory(Path.GetDirectoryName(path)!);
         File.WriteAllText(path, JsonSerializer.Serialize(settings, JsonOptions));
     }
+}
+
+
+public sealed record ItemCoverOverrideRecord(
+    string ItemId,
+    string EntryKey,
+    int PageIndex,
+    string DisplayName,
+    DateTimeOffset UpdatedAt,
+    string Source = "manual");
+
+public sealed class ItemCoverOverrideStore
+{
+    private readonly string _path;
+    private readonly object _gate = new();
+    private readonly JsonSerializerOptions _jsonOptions = new(JsonSerializerDefaults.Web) { WriteIndented = true, PropertyNameCaseInsensitive = true };
+    private Dictionary<string, ItemCoverOverrideRecord> _overrides;
+
+    public ItemCoverOverrideStore(string path)
+    {
+        _path = path;
+        Directory.CreateDirectory(Path.GetDirectoryName(_path)!);
+        _overrides = Load();
+    }
+
+    public ItemCoverOverrideRecord? Get(string id)
+    {
+        if (string.IsNullOrWhiteSpace(id)) return null;
+        lock (_gate)
+        {
+            return _overrides.TryGetValue(id.Trim(), out var record) ? record : null;
+        }
+    }
+
+    public ItemCoverOverrideRecord Set(string id, string entryKey, int pageIndex, string? displayName = null)
+    {
+        var normalizedId = (id ?? string.Empty).Trim();
+        if (string.IsNullOrWhiteSpace(normalizedId)) throw new ArgumentException("Item id is required.", nameof(id));
+        var normalizedEntry = (entryKey ?? string.Empty).Replace('\\', '/').Trim();
+        if (string.IsNullOrWhiteSpace(normalizedEntry)) throw new ArgumentException("Cover entry is required.", nameof(entryKey));
+
+        var record = new ItemCoverOverrideRecord(
+            normalizedId,
+            normalizedEntry,
+            Math.Max(0, pageIndex),
+            string.IsNullOrWhiteSpace(displayName) ? Path.GetFileName(normalizedEntry) : displayName.Trim(),
+            DateTimeOffset.UtcNow,
+            "manual");
+
+        lock (_gate)
+        {
+            _overrides[normalizedId] = record;
+            Persist();
+        }
+
+        return record;
+    }
+
+    public void Remove(string id)
+    {
+        if (string.IsNullOrWhiteSpace(id)) return;
+        lock (_gate)
+        {
+            if (_overrides.Remove(id.Trim())) Persist();
+        }
+    }
+
+    private Dictionary<string, ItemCoverOverrideRecord> Load()
+    {
+        try
+        {
+            if (!File.Exists(_path)) return new(StringComparer.OrdinalIgnoreCase);
+            var loaded = JsonSerializer.Deserialize<Dictionary<string, ItemCoverOverrideRecord>>(File.ReadAllText(_path), _jsonOptions)
+                ?? new Dictionary<string, ItemCoverOverrideRecord>(StringComparer.OrdinalIgnoreCase);
+            return new Dictionary<string, ItemCoverOverrideRecord>(loaded, StringComparer.OrdinalIgnoreCase);
+        }
+        catch
+        {
+            return new Dictionary<string, ItemCoverOverrideRecord>(StringComparer.OrdinalIgnoreCase);
+        }
+    }
+
+    private void Persist() => File.WriteAllText(_path, JsonSerializer.Serialize(_overrides, _jsonOptions));
 }
 
 public sealed record LibraryItem(
@@ -9398,7 +9587,7 @@ public static class ArchiveReader
     private static string CoverCacheDirectory = Path.Combine(AppContext.BaseDirectory, "data", "cache", "covers");
     private static string CoverThumbnailCacheDirectory = Path.Combine(AppContext.BaseDirectory, "data", "cache", "cover-thumbs");
     private static readonly string[] KnownCoverCacheExtensions = [".jpg", ".jpeg", ".png", ".webp", ".gif", ".bmp"];
-    private const string CoverCacheVersion = "cover-comicinfo-frontcover-v1";
+    private const string CoverCacheVersion = "cover-manual-override-v1";
 
     public static void ConfigureCoverCache(string cacheDirectory, string? thumbnailCacheDirectory = null)
     {
@@ -10044,13 +10233,13 @@ public static class ArchiveReader
         return null;
     }
 
-    public static async Task<(byte[] Bytes, string ContentType)?> GetCoverThumbnailAsync(string archivePath, int maxWidth = 360)
+    public static async Task<(byte[] Bytes, string ContentType)?> GetCoverThumbnailAsync(string archivePath, int maxWidth = 360, string? preferredEntryKey = null)
     {
         if (Path.GetExtension(archivePath).Equals(".pdf", StringComparison.OrdinalIgnoreCase))
             return null;
 
         maxWidth = Math.Clamp(maxWidth, 120, 720);
-        var key = $"{CoverCacheKey(archivePath)}_w{maxWidth}";
+        var key = $"{CoverCacheKey(archivePath, preferredEntryKey)}_w{maxWidth}";
         var cached = await TryReadCoverThumbnailFromDiskAsync(key);
         if (cached is not null) return cached;
 
@@ -10058,7 +10247,7 @@ public static class ArchiveReader
         // persistent JPEG thumbnail.  This keeps large archive pages out of the
         // browser grid and makes the second pass through a library effectively
         // instant.
-        var cover = await GetCoverImageAsync(archivePath);
+        var cover = await GetCoverImageAsync(archivePath, preferredEntryKey);
         if (cover is null) return null;
 
         await CoverThumbnailGate.WaitAsync();
@@ -10105,14 +10294,14 @@ public static class ArchiveReader
         }
     }
 
-    public static async Task<(byte[] Bytes, string ContentType)?> GetCoverImageAsync(string archivePath)
+    public static async Task<(byte[] Bytes, string ContentType)?> GetCoverImageAsync(string archivePath, string? preferredEntryKey = null)
     {
         if (Path.GetExtension(archivePath).Equals(".pdf", StringComparison.OrdinalIgnoreCase))
             return null;
 
-        var key = CoverCacheKey(archivePath);
+        var key = CoverCacheKey(archivePath, preferredEntryKey);
         var lazy = CoverCache.GetOrAdd(key, _ => new Lazy<Task<(byte[] Bytes, string ContentType)?>>(
-            () => LoadCoverImageAsync(archivePath, key),
+            () => LoadCoverImageAsync(archivePath, key, preferredEntryKey),
             LazyThreadSafetyMode.ExecutionAndPublication));
         try
         {
@@ -10126,7 +10315,7 @@ public static class ArchiveReader
         }
     }
 
-    private static async Task<(byte[] Bytes, string ContentType)?> LoadCoverImageAsync(string archivePath, string key)
+    private static async Task<(byte[] Bytes, string ContentType)?> LoadCoverImageAsync(string archivePath, string key, string? preferredEntryKey = null)
     {
         var cached = await TryReadCoverFromDiskAsync(key);
         if (cached is not null) return cached;
@@ -10140,7 +10329,7 @@ public static class ArchiveReader
             cached = await TryReadCoverFromDiskAsync(key);
             if (cached is not null) return cached;
 
-            var image = await GetCoverImageFromArchiveAsync(archivePath);
+            var image = await GetCoverImageFromArchiveAsync(archivePath, preferredEntryKey);
             if (image is null)
             {
                 CoverCache.TryRemove(key, out _);
@@ -10163,7 +10352,7 @@ public static class ArchiveReader
     }
 
 
-    private static async Task<(byte[] Bytes, string ContentType)?> GetCoverImageFromArchiveAsync(string archivePath)
+    private static async Task<(byte[] Bytes, string ContentType)?> GetCoverImageFromArchiveAsync(string archivePath, string? preferredEntryKey = null)
     {
         var ext = Path.GetExtension(archivePath);
         if (ext.Equals(".pdf", StringComparison.OrdinalIgnoreCase)) return null;
@@ -10176,7 +10365,21 @@ public static class ArchiveReader
         var imageEntries = GetImageEntries(archivePath);
         if (imageEntries.Length == 0) return null;
 
-        var candidateKeys = (await GetCoverCandidateEntriesAsync(archivePath, imageEntries)).Take(16).ToArray();
+        var candidates = new List<string>();
+        var seenCandidates = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var normalizedPreferred = Normalize(preferredEntryKey ?? string.Empty).Trim();
+        if (!string.IsNullOrWhiteSpace(normalizedPreferred))
+        {
+            var matchedPreferred = imageEntries.FirstOrDefault(entry => string.Equals(entry, normalizedPreferred, StringComparison.OrdinalIgnoreCase));
+            if (!string.IsNullOrWhiteSpace(matchedPreferred) && seenCandidates.Add(matchedPreferred)) candidates.Add(matchedPreferred);
+        }
+        foreach (var entry in await GetCoverCandidateEntriesAsync(archivePath, imageEntries))
+        {
+            if (seenCandidates.Add(entry)) candidates.Add(entry);
+            if (candidates.Count >= 16) break;
+        }
+
+        var candidateKeys = candidates.Take(16).ToArray();
         if (candidateKeys.Length == 0) return null;
 
         // Prefer System.IO.Compression for normal CBZ files because it is fast and
@@ -10251,17 +10454,18 @@ public static class ArchiveReader
         return best;
     }
 
-    private static string CoverCacheKey(string archivePath)
+    private static string CoverCacheKey(string archivePath, string? preferredEntryKey = null)
     {
+        var preferred = Normalize(preferredEntryKey ?? string.Empty).Trim();
         try
         {
             var info = new FileInfo(archivePath);
-            var raw = $"{CoverCacheVersion}|{info.FullName}|{info.Length}|{info.LastWriteTimeUtc.Ticks}";
+            var raw = $"{CoverCacheVersion}|{info.FullName}|{info.Length}|{info.LastWriteTimeUtc.Ticks}|{preferred}";
             return Convert.ToHexString(SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(raw))).ToLowerInvariant();
         }
         catch
         {
-            return Convert.ToHexString(SHA256.HashData(System.Text.Encoding.UTF8.GetBytes($"{CoverCacheVersion}|{archivePath}"))).ToLowerInvariant();
+            return Convert.ToHexString(SHA256.HashData(System.Text.Encoding.UTF8.GetBytes($"{CoverCacheVersion}|{archivePath}|{preferred}"))).ToLowerInvariant();
         }
     }
 
@@ -10401,6 +10605,16 @@ public static class ArchiveReader
         }
 
         return null;
+    }
+
+    public static string[] GetImageEntryKeys(string archivePath) => GetImageEntries(archivePath).ToArray();
+
+    public static async Task<(byte[] Bytes, string ContentType)?> GetImagePageThumbnailAsync(string archivePath, int pageIndex, int maxWidth = 180)
+    {
+        var page = await GetImagePageAsync(archivePath, pageIndex);
+        if (page is null) return null;
+        var thumb = await CreateCoverThumbnailAsync(page.Value.Bytes, Math.Clamp(maxWidth, 80, 360));
+        return thumb ?? page;
     }
 
     private static string[] GetImageEntries(string archivePath)
@@ -12074,5 +12288,5 @@ static class GuidevaultLibraryIoGate
 
 static class GuidevaultBuildInfo
 {
-    public const string Version = "0.9.185";
+    public const string Version = "0.9.186";
 }

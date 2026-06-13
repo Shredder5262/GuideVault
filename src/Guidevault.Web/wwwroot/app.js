@@ -100,7 +100,7 @@ const GUIDEVAULT_LIBRARY_CHUNK_YIELD_MS = 30;
 const GUIDEVAULT_STARTUP_STATUS_HIDE_MS = 2400;
 const GUIDEVAULT_LIBRARY_SEARCH_DEBOUNCE_MS = 180;
 const GUIDEVAULT_SORT_COLLATOR = new Intl.Collator(undefined, { numeric: true, sensitivity: 'base' });
-const GUIDEVAULT_APP_VERSION = '0.9.185';
+const GUIDEVAULT_APP_VERSION = '0.9.186';
 const GUIDEVAULT_FILENAME_SCHEMA_KEY = 'guidevault.filenameRename.schema.v1';
 const GUIDEVAULT_FILE_ORGANIZATION_TEMPLATE_PRESETS_KEY = 'guidevault.fileOrganization.templatePresets.v2';
 const GUIDEVAULT_FILE_ORGANIZATION_TEMPLATE_PRESETS_LEGACY_KEY = 'guidevault.fileOrganization.templatePresets.v1';
@@ -127,6 +127,7 @@ const GUIDEVAULT_CATEGORY_PREVIEW_PREWARM_BATCH_SIZE = 16;
 const GUIDEVAULT_CATEGORY_PREVIEW_PREWARM_DELAY_MS = 42;
 const GUIDEVAULT_CATEGORY_VISIBLE_COVER_EAGER_LIMIT = 16;
 const GUIDEVAULT_COVER_RESULT_CACHE_KEY = 'guidevault.coverResultCache.v1';
+const GUIDEVAULT_COVER_OVERRIDE_BUST_KEY = 'guidevault.coverOverrideBust.v1';
 const GUIDEVAULT_COVER_RESULT_CACHE_LIMIT = 1600;
 const GUIDEVAULT_TRANSPARENT_COVER_PLACEHOLDER = 'data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///ywAAAAAAQABAAACAUwAOw==';
 const GUIDEVAULT_GRID_COVER_THUMB_WIDTH = 360;
@@ -5514,7 +5515,7 @@ function activateTab(tab) {
   state.activeTab = tab || 'overview';
   document.querySelectorAll('.tab').forEach(b => b.classList.toggle('active', b.dataset.tab === state.activeTab));
   document.querySelectorAll('.tab-panel').forEach(p => p.classList.toggle('hidden', p.id !== `${state.activeTab}Panel`));
-  if (state.activeTab === 'library-data') updateMetadataFileMaintenance();
+  if (state.activeTab === 'library-data') { updateMetadataFileMaintenance(); loadCoverPickerForSelected(); }
   if (state.activeTab === 'reviews' && state.selected) loadPublicReviewsForItem(state.selected, true);
 }
 
@@ -6711,8 +6712,43 @@ function count(kind) {
   }
   return state._countCache?.[kind] || 0;
 }
+function readCoverOverrideBustMap() {
+  try {
+    const parsed = JSON.parse(localStorage.getItem(GUIDEVAULT_COVER_OVERRIDE_BUST_KEY) || '{}') || {};
+    return parsed && typeof parsed === 'object' ? parsed : {};
+  } catch {
+    return {};
+  }
+}
+
+function writeCoverOverrideBustMap(map) {
+  try { localStorage.setItem(GUIDEVAULT_COVER_OVERRIDE_BUST_KEY, JSON.stringify(map || {})); } catch {}
+}
+
+function setCoverOverrideBust(itemOrId, value = '') {
+  const id = typeof itemOrId === 'string' ? itemOrId : (itemOrId?.id || itemOrId?.Id || '');
+  const key = String(id || '').trim();
+  if (!key) return '';
+  const map = readCoverOverrideBustMap();
+  map[key] = String(value || Date.now());
+  writeCoverOverrideBustMap(map);
+  return map[key];
+}
+
+function clearCoverOverrideBust(itemOrId) {
+  const id = typeof itemOrId === 'string' ? itemOrId : (itemOrId?.id || itemOrId?.Id || '');
+  const key = String(id || '').trim();
+  if (!key) return;
+  const map = readCoverOverrideBustMap();
+  if (Object.prototype.hasOwnProperty.call(map, key)) {
+    delete map[key];
+    writeCoverOverrideBustMap(map);
+  }
+}
+
 function coverUrl(item, options = {}) {
-  const id = encodeURIComponent(item?.id || item?.Id || '');
+  const rawId = item?.id || item?.Id || '';
+  const id = encodeURIComponent(rawId);
   if (!id) return '';
   const modified = item?.modified || item?.Modified || '';
   const size = item?.sizeBytes || item?.SizeBytes || '';
@@ -6721,6 +6757,9 @@ function coverUrl(item, options = {}) {
   const width = Math.max(120, Math.min(720, Number(options?.width || GUIDEVAULT_GRID_COVER_THUMB_WIDTH) || GUIDEVAULT_GRID_COVER_THUMB_WIDTH));
   const query = new URLSearchParams();
   if (!useFull) query.set('w', String(width));
+  query.set('cv', GUIDEVAULT_APP_VERSION);
+  const overrideBust = readCoverOverrideBustMap()[String(rawId || '').trim()] || item?.coverOverrideBust || item?.CoverOverrideBust || '';
+  if (overrideBust) query.set('co', String(overrideBust));
   if (stamp) query.set('v', String(stamp));
   const path = useFull ? `/api/items/${id}/cover` : `/api/items/${id}/cover-thumb`;
   const qs = query.toString();
@@ -14524,12 +14563,205 @@ function updateMetadataTechnicalInfo(item) {
   panel.classList.toggle('hidden', !rows.length);
   if (!rows.length) {
     panel.innerHTML = '';
+  } else {
+    panel.innerHTML = `
+      <dl class="metadata-technical-list library-data-flat-list">
+        ${rows.map(([k, v]) => metaRow(k, v, false)).join('')}
+      </dl>`;
+  }
+  resetMetadataCoverPicker(item);
+}
+
+const GUIDEVAULT_COVER_PICKER_INITIAL_LIMIT = 72;
+
+function metadataCoverPickerItemId(item = state.selected) {
+  return String(item?.id || item?.Id || '').trim();
+}
+
+function resetMetadataCoverPicker(item) {
+  const panel = $('metadataCoverPicker');
+  if (!panel) return;
+  const id = metadataCoverPickerItemId(item);
+  const format = String(item?.format || item?.Format || '').toUpperCase();
+  if (!id || format === 'PDF') {
+    panel.classList.add('hidden');
+    panel.innerHTML = '';
     return;
   }
+  panel.classList.remove('hidden');
+  panel._coverPickerData = data;
+  panel.dataset.itemId = id;
+  panel.dataset.loaded = '0';
   panel.innerHTML = `
-    <dl class="metadata-technical-list library-data-flat-list">
-      ${rows.map(([k, v]) => metaRow(k, v, false)).join('')}
-    </dl>`;
+    <div class="metadata-cover-picker-head">
+      <div>
+        <h4>Cover Page Override</h4>
+        <p class="sub">Read the archive image list and choose the exact page Guidevault should use as this item's cover.</p>
+      </div>
+      <div class="metadata-cover-picker-actions">
+        <button class="ghost tiny" type="button" data-cover-picker-load>Load Pages</button>
+        <button class="ghost tiny" type="button" data-cover-picker-clear disabled>Use Auto Cover</button>
+      </div>
+    </div>
+    <div class="metadata-cover-picker-status">Open Library Data and load pages to choose a cover.</div>`;
+  if (state.activeTab === 'library-data') loadCoverPickerForSelected();
+}
+
+function coverPickerPageLabel(entry = {}) {
+  const n = Number(entry.index || 0) + 1;
+  return `Page ${String(n).padStart(3, '0')}`;
+}
+
+function renderCoverPickerEntries(data = {}, showAll = false) {
+  const panel = $('metadataCoverPicker');
+  if (!panel) return;
+  const entries = Array.isArray(data.entries) ? data.entries : [];
+  const id = String(data.itemId || metadataCoverPickerItemId()).trim();
+  const visible = showAll ? entries : entries.slice(0, GUIDEVAULT_COVER_PICKER_INITIAL_LIMIT);
+  const selectedIndex = Number(data.selectedIndex ?? -1);
+  const selectedText = data.hasManualOverride && selectedIndex >= 0
+    ? `Manual cover: page ${selectedIndex + 1} / ${entries.length}`
+    : `Automatic cover detection is active. ${entries.length ? 'Select a page below to override it.' : ''}`;
+
+  panel.classList.remove('hidden');
+  panel.dataset.itemId = id;
+  panel.dataset.loaded = '1';
+  panel.dataset.showAll = showAll ? '1' : '0';
+  panel.innerHTML = `
+    <div class="metadata-cover-picker-head">
+      <div>
+        <h4>Cover Page Override</h4>
+        <p class="sub">${escapeHtml(selectedText)}</p>
+      </div>
+      <div class="metadata-cover-picker-actions">
+        <button class="ghost tiny" type="button" data-cover-picker-load>Reload Pages</button>
+        <button class="ghost tiny" type="button" data-cover-picker-clear${data.hasManualOverride ? '' : ' disabled'}>Use Auto Cover</button>
+      </div>
+    </div>
+    <div class="metadata-cover-picker-status">${escapeHtml(entries.length ? `${entries.length} image page(s) found in this archive.` : 'No image pages found in this archive.')}</div>
+    ${entries.length ? `<div class="metadata-cover-picker-grid">
+      ${visible.map(entry => `
+        <button class="metadata-cover-choice${entry.isSelected ? ' selected' : ''}" type="button" data-cover-picker-select="${escapeForAttribute(entry.entryKey || '')}" data-cover-picker-page="${escapeForAttribute(entry.index)}" title="${escapeForAttribute(entry.entryKey || '')}">
+          <span class="metadata-cover-choice-img"><img src="${escapeForAttribute((entry.thumbnailUrl || '').replace('/api/items/', `/api/items/`))}" alt="${escapeForAttribute(coverPickerPageLabel(entry))}" loading="lazy" onerror="this.onerror=null;this.src='/assets/missing-cover.svg';" /></span>
+          <strong>${escapeHtml(coverPickerPageLabel(entry))}</strong>
+          <em>${escapeHtml(entry.fileName || entry.entryKey || '')}</em>
+        </button>`).join('')}
+    </div>` : ''}
+    ${entries.length > visible.length ? `<button class="ghost tiny metadata-cover-picker-show-all" type="button" data-cover-picker-show-all>Show All ${entries.length} Pages</button>` : ''}`;
+}
+
+async function loadCoverPickerForSelected(force = false) {
+  const panel = $('metadataCoverPicker');
+  const item = state.selected;
+  const id = metadataCoverPickerItemId(item);
+  if (!panel || !id || state.activeTab !== 'library-data') return;
+  if (String(item?.format || '').toUpperCase() === 'PDF') return;
+  if (!force && panel.dataset.itemId === id && panel.dataset.loaded === '1') return;
+  panel.classList.remove('hidden');
+  panel.dataset.itemId = id;
+  panel.innerHTML = `
+    <div class="metadata-cover-picker-head"><div><h4>Cover Page Override</h4><p class="sub">Reading image entries from the archive...</p></div></div>
+    <div class="metadata-cover-picker-status">Loading cover choices...</div>`;
+  try {
+    const res = await fetch(`/api/items/${encodeURIComponent(id)}/cover-options`, { cache: 'no-store' });
+    let data = null;
+    try { data = await res.json(); } catch {}
+    if (!res.ok) throw new Error(data?.error || `Cover options failed. HTTP ${res.status}`);
+    renderCoverPickerEntries(data, false);
+  } catch (err) {
+    console.error('Cover picker load failed', err);
+    panel.innerHTML = `
+      <div class="metadata-cover-picker-head"><div><h4>Cover Page Override</h4><p class="sub">Unable to read cover pages.</p></div><div class="metadata-cover-picker-actions"><button class="ghost tiny" type="button" data-cover-picker-load>Try Again</button></div></div>
+      <div class="metadata-cover-picker-status error">${escapeHtml(err?.message || String(err || 'Unknown error'))}</div>`;
+  }
+}
+
+function refreshSelectedCoverImages() {
+  const item = state.selected;
+  if (!item) return;
+  const newDetailCover = $('detailCover');
+  if (newDetailCover) newDetailCover.src = coverUrl(item, { width: 560 });
+  document.querySelectorAll(`img[data-cover-src]`).forEach(img => {
+    const card = img.closest?.('[data-id]');
+    const cardId = card?.dataset?.id || '';
+    if (cardId && cardId !== metadataCoverPickerItemId(item)) return;
+    const next = coverUrl(item, { width: Number(img.dataset.coverWidth || GUIDEVAULT_GRID_COVER_THUMB_WIDTH) || GUIDEVAULT_GRID_COVER_THUMB_WIDTH });
+    img.dataset.coverSrc = next;
+    img.src = next;
+  });
+}
+
+async function saveCoverPickerSelection(entryKey = '', pageIndex = null) {
+  const id = metadataCoverPickerItemId();
+  if (!id || !entryKey) return;
+  const panel = $('metadataCoverPicker');
+  try {
+    if (panel) panel.querySelectorAll('button').forEach(btn => { btn.disabled = true; });
+    const res = await fetch(`/api/items/${encodeURIComponent(id)}/cover-selection`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ entryKey, pageIndex })
+    });
+    let data = null;
+    try { data = await res.json(); } catch {}
+    if (!res.ok) throw new Error(data?.error || `Cover save failed. HTTP ${res.status}`);
+    setCoverOverrideBust(id, data?.selectedUpdatedAt || Date.now());
+    if (state.selected) state.selected.coverOverrideBust = readCoverOverrideBustMap()[id];
+    setStatus(data?.message || 'Cover override saved.');
+    refreshSelectedCoverImages();
+    await loadCoverPickerForSelected(true);
+  } catch (err) {
+    console.error('Cover selection failed', err);
+    setStatus(`Unable to save cover override: ${err?.message || err}`);
+    if (panel) {
+      const status = panel.querySelector('.metadata-cover-picker-status');
+      if (status) {
+        status.textContent = `Unable to save cover override: ${err?.message || err}`;
+        status.classList.add('error');
+      }
+    }
+  }
+}
+
+async function clearCoverPickerSelection() {
+  const id = metadataCoverPickerItemId();
+  if (!id) return;
+  const panel = $('metadataCoverPicker');
+  try {
+    if (panel) panel.querySelectorAll('button').forEach(btn => { btn.disabled = true; });
+    const res = await fetch(`/api/items/${encodeURIComponent(id)}/cover-selection`, { method: 'DELETE', cache: 'no-store' });
+    let data = null;
+    try { data = await res.json(); } catch {}
+    if (!res.ok) throw new Error(data?.error || `Cover clear failed. HTTP ${res.status}`);
+    setCoverOverrideBust(id, Date.now());
+    if (state.selected) state.selected.coverOverrideBust = readCoverOverrideBustMap()[id];
+    setStatus(data?.message || 'Manual cover override cleared.');
+    refreshSelectedCoverImages();
+    await loadCoverPickerForSelected(true);
+  } catch (err) {
+    console.error('Cover override clear failed', err);
+    setStatus(`Unable to clear cover override: ${err?.message || err}`);
+  }
+}
+
+function handleMetadataCoverPickerClick(e) {
+  const load = e.target.closest?.('[data-cover-picker-load]');
+  if (load) { e.preventDefault(); loadCoverPickerForSelected(true); return; }
+  const clear = e.target.closest?.('[data-cover-picker-clear]');
+  if (clear && !clear.disabled) { e.preventDefault(); clearCoverPickerSelection(); return; }
+  const showAll = e.target.closest?.('[data-cover-picker-show-all]');
+  if (showAll) {
+    e.preventDefault();
+    const panel = $('metadataCoverPicker');
+    if (panel?._coverPickerData) renderCoverPickerEntries(panel._coverPickerData, true);
+    else loadCoverPickerForSelected(true);
+    return;
+  }
+  const choice = e.target.closest?.('[data-cover-picker-select]');
+  if (choice) {
+    e.preventDefault();
+    saveCoverPickerSelection(choice.dataset.coverPickerSelect || '', Number(choice.dataset.coverPickerPage || -1));
+  }
 }
 
 function isEsrbIconEligible(item) {
@@ -20164,6 +20396,7 @@ document.addEventListener('pointerup', metadataManagerHandlePreviewPointerEnd);
 document.addEventListener('pointercancel', metadataManagerHandlePreviewPointerEnd);
 document.addEventListener('keydown', e => { if (e.key === 'Escape') metadataManagerHandlePreviewPointerEnd(); });
 window.addEventListener('scroll', metadataManagerHandlePreviewPointerEnd, true);
+if ($('metadataCoverPicker')) $('metadataCoverPicker').addEventListener('click', handleMetadataCoverPickerClick);
 if ($('settingsRescanLibrary')) $('settingsRescanLibrary').addEventListener('click', async e => { e.preventDefault(); await rescanLibrary(); });
 if ($('settingsCleanupLibrary')) $('settingsCleanupLibrary').addEventListener('click', async e => { e.preventDefault(); await cleanupLibrary(); });
 if ($('settingsEnrichMetadata')) $('settingsEnrichMetadata').addEventListener('click', async e => { e.preventDefault(); await enrichLibraryMetadata(); });
