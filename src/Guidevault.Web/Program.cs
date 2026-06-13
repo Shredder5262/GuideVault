@@ -1,4 +1,4 @@
-using System.Collections.Concurrent;
+﻿using System.Collections.Concurrent;
 using System.IO.Compression;
 using System.Security.Cryptography;
 using System.Text;
@@ -14,9 +14,10 @@ using SharpCompress.Readers;
 using SixLabors.ImageSharp;
 using SixLabors.ImageSharp.Formats.Jpeg;
 using SixLabors.ImageSharp.Processing;
+using Microsoft.AspNetCore.Mvc;
 
 var builder = WebApplication.CreateBuilder(args);
-const string GuidevaultVersion = "0.9.188";
+const string GuidevaultVersion = "0.9.191";
 var app = builder.Build();
 var metadataJsonOptions = new JsonSerializerOptions(JsonSerializerDefaults.Web) { PropertyNameCaseInsensitive = true };
 var options = app.Configuration.GetSection("Guidevault").Get<GuidevaultOptions>() ?? new GuidevaultOptions();
@@ -1854,7 +1855,7 @@ app.MapDelete("/api/items/{id}/cover-selection", async (string id) =>
     return Results.Ok(new { itemId = item.Id, hasManualOverride = false, message = "Manual cover selection cleared. Guidevault will use automatic cover detection again." });
 });
 
-app.MapDelete("/api/items/{id}/archive-page", async (string id, JsonElement payload) =>
+app.MapDelete("/api/items/{id}/archive-page", async (string id, [FromBody] JsonElement payload) =>
 {
     var item = cache.TryGetCachedItem(id) ?? (await cache.GetItemsAsync()).FirstOrDefault(i => i.Id == id);
     if (item is null) return Results.NotFound(new { error = "Item not found." });
@@ -1890,7 +1891,7 @@ app.MapDelete("/api/items/{id}/archive-page", async (string id, JsonElement payl
 
     try
     {
-        var deleted = await ArchiveReader.DeleteImageEntryAsync(item.Path, selectedEntry);
+        var deleted = ArchiveReader.DeleteImageEntry(item.Path, selectedEntry);
         if (!deleted) return Results.BadRequest(new { error = "Selected page could not be deleted from the archive." });
 
         var manual = coverOverrideStore.Get(item.Id);
@@ -10691,7 +10692,7 @@ public static class ArchiveReader
 
     public static string[] GetImageEntryKeys(string archivePath) => GetImageEntries(archivePath).ToArray();
 
-    public static async Task<bool> DeleteImageEntryAsync(string archivePath, string entryKey)
+    public static bool DeleteImageEntry(string archivePath, string entryKey)
     {
         var normalizedEntry = Normalize(entryKey ?? string.Empty).Trim();
         if (string.IsNullOrWhiteSpace(normalizedEntry)) return false;
@@ -12393,5 +12394,6 @@ static class GuidevaultLibraryIoGate
 
 static class GuidevaultBuildInfo
 {
-    public const string Version = "0.9.188";
+    public const string Version = "0.9.191";
 }
+

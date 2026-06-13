@@ -1,12 +1,12 @@
-<!doctype html>
+﻿<!doctype html>
 <html lang="en">
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Guidevault</title>
-  <link rel="icon" type="image/x-icon" href="/assets/favicon.ico?v=0.9.188" />
-  <link rel="shortcut icon" type="image/x-icon" href="/assets/favicon.ico?v=0.9.188" />
-  <link rel="stylesheet" href="/styles.css?v=0.9.188-cover-picker-delete-page" />
+  <link rel="icon" type="image/x-icon" href="/assets/favicon.ico?v=0.9.190" />
+  <link rel="shortcut icon" type="image/x-icon" href="/assets/favicon.ico?v=0.9.190" />
+  <link rel="stylesheet" href="/styles.css?v=0.9.191-delete-warning-fix" />
 </head>
 <body class="right-collapsed auth-locked">
   <section id="loginView" class="login-view" aria-labelledby="loginTitle">
@@ -1806,6 +1806,25 @@
             <div class="system-update-list">
               <details class="system-update-entry" open>
                 <summary>
+                  <span>Guidevault 0.9.190 - Archive Delete Build Warning Cleanup</span>
+                  <em>Installed</em>
+                </summary>
+                <ul>
+                  <li>Removed an unnecessary async marker from the archive page delete helper so release builds complete without CS1998.</li>
+                  <li>Kept the delete-page endpoint behavior unchanged while cleaning up the compile warning.</li>
+                </ul>
+              </details>
+              <details class="system-update-entry" open>
+                <summary>
+                  <span>Guidevault 0.9.189 - Delete Endpoint Startup Fix</span>
+                  <em>Installed</em>
+                </summary>
+                <ul>
+                  <li>Explicitly marked the archive page delete payload as a request body so ASP.NET endpoint routing starts correctly.</li>
+                </ul>
+              </details>
+              <details class="system-update-entry" open>
+                <summary>
                   <span>Guidevault 0.9.188 - Cover Picker Show All and Page Delete</span>
                   <em>Installed</em>
                 </summary>
@@ -2707,6 +2726,7 @@
   </dialog>
 
 
-  <script src="/app.js?v=0.9.188-cover-picker-delete-page"></script>
+  <script src="/app.js?v=0.9.191-delete-warning-fix"></script>
 </body>
 </html>
+
