@@ -100,7 +100,7 @@ const GUIDEVAULT_LIBRARY_CHUNK_YIELD_MS = 30;
 const GUIDEVAULT_STARTUP_STATUS_HIDE_MS = 2400;
 const GUIDEVAULT_LIBRARY_SEARCH_DEBOUNCE_MS = 180;
 const GUIDEVAULT_SORT_COLLATOR = new Intl.Collator(undefined, { numeric: true, sensitivity: 'base' });
-const GUIDEVAULT_APP_VERSION = '0.9.179';
+const GUIDEVAULT_APP_VERSION = '0.9.180';
 const GUIDEVAULT_FILENAME_SCHEMA_KEY = 'guidevault.filenameRename.schema.v1';
 const GUIDEVAULT_FILE_ORGANIZATION_TEMPLATE_PRESETS_KEY = 'guidevault.fileOrganization.templatePresets.v1';
 const GUIDEVAULT_DEFAULT_FILENAME_SCHEMA = '{title}';
@@ -11726,7 +11726,7 @@ const METADATA_MANAGER_ALL_COLUMNS = [
 const METADATA_MANAGER_KIND_FILTERS = ['Manual', 'Strategy Guide', 'Magazine'];
 const METADATA_MANAGER_AUTO_COLUMNS_BY_KIND = {
   Manual: ['kind','metadataStatus','name','gameTitle','category','series','languageTag','region','year','publisher','rating','manualTitle','manualType','includedSections','includedExtras','controlScheme','itemsCovered','metadataSource'],
-  'Strategy Guide': ['kind','metadataStatus','name','gameTitle','category','associatedPlatforms','series','languageTag','region','publisher','writer','publicationDate','isbn10','isbn13','guideType','edition','franchise','gameReleaseYear','genre','coveredGames','coveredPlatforms','guideTopics','metadataSource'],
+  'Strategy Guide': ['kind','metadataStatus','name','gameTitle','category','associatedPlatforms','series','languageTag','region','publisher','writer','publicationDate','isbn10','isbn13','guideType','edition','franchise','gameReleaseYear','genre','coveredGames','coveredPlatforms','guideTopics','metadataSource','platformMatchTitle','platformResolverSource','charactersCovered','locationsCovered','developer','gamePublisher','pageCount','rating','topics'],
   Magazine: ['kind','metadataStatus','name','magazineTitle','issueNumber','volume','coverDate','year','publisher','region','languageTag','platformFocus','primarySystem','magazineCategory','coverSubject','featuredGames','featuredPlatforms','specialFeatures','includedExtras','tags','metadataSource']
 };
 
@@ -14771,6 +14771,9 @@ function renderDetails(item) {
   const detectedSystem = detailSystemLabelForItem(item);
   if (item.kind === 'Magazine') {
     $('detailSub').textContent = magazineDetailSubtitleText(item) || [detectedSystem, item.coverDate || item.year || 'Unknown'].map(v => guidevaultCleanDisplayText(v)).filter(Boolean).join(' - ');
+  } else if (item.kind === 'Strategy Guide') {
+    const strategyGameYear = guidevaultCleanDisplayText(item.gameReleaseYear || item.GameReleaseYear || '');
+    $('detailSub').textContent = [detectedSystem, strategyGameYear || 'Unknown'].filter(Boolean).join(' - ');
   } else {
     $('detailSub').textContent = [detectedSystem, item.year || 'Unknown'].filter(Boolean).join(' - ');
   }

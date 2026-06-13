@@ -16,7 +16,7 @@ using SixLabors.ImageSharp.Formats.Jpeg;
 using SixLabors.ImageSharp.Processing;
 
 var builder = WebApplication.CreateBuilder(args);
-const string GuidevaultVersion = "0.9.179";
+const string GuidevaultVersion = "0.9.180";
 var app = builder.Build();
 var metadataJsonOptions = new JsonSerializerOptions(JsonSerializerDefaults.Web) { PropertyNameCaseInsensitive = true };
 var options = app.Configuration.GetSection("Guidevault").Get<GuidevaultOptions>() ?? new GuidevaultOptions();
@@ -11911,6 +11911,6 @@ static class GuidevaultLibraryIoGate
 
 static class GuidevaultBuildInfo
 {
-    public const string Version = "0.9.179";
+    public const string Version = "0.9.180";
 }
 
