@@ -1,4 +1,4 @@
-﻿using System.Collections.Concurrent;
+using System.Collections.Concurrent;
 using System.IO.Compression;
 using System.Security.Cryptography;
 using System.Text;
@@ -17,7 +17,7 @@ using SixLabors.ImageSharp.Processing;
 using Microsoft.AspNetCore.Mvc;
 
 var builder = WebApplication.CreateBuilder(args);
-const string GuidevaultVersion = "0.9.193";
+const string GuidevaultVersion = "0.9.195";
 var app = builder.Build();
 var metadataJsonOptions = new JsonSerializerOptions(JsonSerializerDefaults.Web) { PropertyNameCaseInsensitive = true };
 var options = app.Configuration.GetSection("Guidevault").Get<GuidevaultOptions>() ?? new GuidevaultOptions();
@@ -1769,7 +1769,18 @@ app.MapGet("/api/items/{id}/cover", async (string id, HttpResponse response) =>
     if (item.Format == "PDF") return Results.Redirect("/assets/pdf-cover.svg");
 
     var coverOverride = coverOverrideStore.Get(item.Id);
-    var image = await ArchiveReader.GetCoverImageAsync(item.Path, coverOverride?.EntryKey);
+    var image = await ArchiveReader.GetCachedCoverImageAsync(item.Path, coverOverride?.EntryKey);
+    if (image is null)
+    {
+        if (GuidevaultLibraryIoGate.IsBusy)
+        {
+            response.Headers.CacheControl = "no-store";
+            response.Headers["Retry-After"] = "15";
+            return Results.StatusCode(503);
+        }
+
+        image = await ArchiveReader.GetCoverImageAsync(item.Path, coverOverride?.EntryKey);
+    }
     if (image is null) return Results.Redirect("/assets/missing-cover.svg");
 
     return Results.File(
@@ -1790,7 +1801,18 @@ app.MapGet("/api/items/{id}/cover-thumb", async (string id, int? w, HttpResponse
 
     var width = Math.Clamp(w ?? 360, 120, 720);
     var coverOverride = coverOverrideStore.Get(item.Id);
-    var image = await ArchiveReader.GetCoverThumbnailAsync(item.Path, width, coverOverride?.EntryKey);
+    var image = await ArchiveReader.GetCachedCoverThumbnailAsync(item.Path, width, coverOverride?.EntryKey);
+    if (image is null)
+    {
+        if (GuidevaultLibraryIoGate.IsBusy)
+        {
+            response.Headers.CacheControl = "no-store";
+            response.Headers["Retry-After"] = "15";
+            return Results.StatusCode(503);
+        }
+
+        image = await ArchiveReader.GetCoverThumbnailAsync(item.Path, width, coverOverride?.EntryKey);
+    }
     if (image is null) return Results.Redirect("/assets/missing-cover.svg");
 
     return Results.File(
@@ -1852,6 +1874,11 @@ app.MapGet("/api/items/{id}/page/{page:int}/thumb", async (string id, int page, 
     if (item is null) return Results.NotFound();
     response.Headers.CacheControl = "private, max-age=3600";
     if (item.Format == "PDF") return Results.BadRequest(new { error = "PDF pages are handled through the browser PDF viewer in this prototype." });
+    if (GuidevaultLibraryIoGate.IsBusy)
+    {
+        response.Headers["Retry-After"] = "15";
+        return Results.StatusCode(503);
+    }
 
     var width = Math.Clamp(w ?? 180, 80, 360);
     var image = await ArchiveReader.GetImagePageThumbnailAsync(item.Path, page, width);
@@ -1865,6 +1892,7 @@ app.MapGet("/api/items/{id}/cover-options", async (string id) =>
     var item = cache.TryGetCachedItem(id) ?? (await cache.GetItemsAsync()).FirstOrDefault(i => i.Id == id);
     if (item is null) return Results.NotFound(new { error = "Item not found." });
     if (item.Format == "PDF") return Results.BadRequest(new { error = "PDF covers use the browser/PDF cover placeholder and do not expose archive image pages." });
+    if (GuidevaultLibraryIoGate.IsBusy) return Results.Conflict(new { error = "A library scan or file operation is currently running. Load cover pages after that task finishes so the archive reader does not compete with the scan." });
 
     var entries = ArchiveReader.GetImageEntryKeys(item.Path);
     var selected = coverOverrideStore.Get(item.Id);
@@ -2251,7 +2279,12 @@ app.MapGet("/opds/items/{id}/cover", async (HttpRequest request, string id) =>
     if (item.Format == "PDF") return Results.Redirect("/assets/pdf-cover.svg");
 
     var coverOverride = coverOverrideStore.Get(item.Id);
-    var image = await ArchiveReader.GetCoverImageAsync(item.Path, coverOverride?.EntryKey);
+    var image = await ArchiveReader.GetCachedCoverImageAsync(item.Path, coverOverride?.EntryKey);
+    if (image is null)
+    {
+        if (GuidevaultLibraryIoGate.IsBusy) return Results.StatusCode(503);
+        image = await ArchiveReader.GetCoverImageAsync(item.Path, coverOverride?.EntryKey);
+    }
     return image is null
         ? Results.Redirect("/assets/missing-cover.svg")
         : Results.File(image.Value.Bytes, image.Value.ContentType, enableRangeProcessing: true);
@@ -9767,8 +9800,8 @@ public static class ArchiveReader
     private static readonly string[] ImageExtensions = [".jpg", ".jpeg", ".png", ".webp", ".gif", ".bmp"];
     private static readonly ConcurrentDictionary<string, string[]> EntryCache = new();
     private static readonly ConcurrentDictionary<string, Lazy<Task<(byte[] Bytes, string ContentType)?>>> CoverCache = new(StringComparer.OrdinalIgnoreCase);
-    private static readonly SemaphoreSlim CoverReadGate = new(6, 6);
-    private static readonly SemaphoreSlim CoverThumbnailGate = new(3, 3);
+    private static readonly SemaphoreSlim CoverReadGate = new(2, 2);
+    private static readonly SemaphoreSlim CoverThumbnailGate = new(1, 1);
     private static string CoverCacheDirectory = Path.Combine(AppContext.BaseDirectory, "data", "cache", "covers");
     private static string CoverThumbnailCacheDirectory = Path.Combine(AppContext.BaseDirectory, "data", "cache", "cover-thumbs");
     private static readonly string[] KnownCoverCacheExtensions = [".jpg", ".jpeg", ".png", ".webp", ".gif", ".bmp"];
@@ -10071,10 +10104,16 @@ public static class ArchiveReader
             var ext = Path.GetExtension(archivePath).ToLowerInvariant();
             if (requested == "cbz")
             {
-                if (ext == ".pdf")
-                    return new ArchiveConversionResult(false, "PDF to CBZ conversion is not available without a PDF rasterizer. Export the PDF pages externally first, then import as CBZ.", archivePath, sourceFileName, sourceFormat, sourceBytes, string.Empty, string.Empty, "CBZ", 0, false);
-
                 var destination = UniqueSiblingPath(archivePath, ext == ".cbz" ? ".converted.cbz" : ".cbz");
+
+                if (ext == ".pdf")
+                {
+                    var pageCount = await CreateCbzFromPdfAsync(archivePath, destination, metadataFileName, guidevaultJson);
+                    ClearCacheForWrittenArchive(destination);
+                    var outputBytes = new FileInfo(destination).Length;
+                    return new ArchiveConversionResult(true, $"Created {Path.GetFileName(destination)} as a CBZ copy with {pageCount} rasterized page image(s). The original PDF was not deleted.", archivePath, sourceFileName, sourceFormat, sourceBytes, destination, Path.GetFileName(destination), "CBZ", outputBytes, true);
+                }
+
                 if (ext == ".cbz") await RepackCbzAsync(archivePath, destination, metadataFileName, guidevaultJson);
                 else await CreateCbzFromReadableArchiveAsync(archivePath, destination, metadataFileName, guidevaultJson);
                 ClearCacheForWrittenArchive(destination);
@@ -10122,6 +10161,161 @@ public static class ArchiveReader
         {
             return new ArchiveConversionResult(false, $"Conversion failed: {ex.Message}", archivePath, sourceFileName, sourceFormat, sourceBytes, string.Empty, string.Empty, requested.ToUpperInvariant(), 0, false);
         }
+    }
+
+    private static async Task<int> CreateCbzFromPdfAsync(string sourcePath, string destinationPath, string metadataFileName, string guidevaultJson)
+    {
+        var directory = Path.GetDirectoryName(destinationPath) ?? Directory.GetCurrentDirectory();
+        Directory.CreateDirectory(directory);
+        var tempArchivePath = Path.Combine(directory, $".{Path.GetFileName(destinationPath)}.{Guid.NewGuid():N}.tmp");
+        var tempPagesPath = Path.Combine(directory, $".{Path.GetFileNameWithoutExtension(destinationPath)}.{Guid.NewGuid():N}.pages");
+
+        try
+        {
+            Directory.CreateDirectory(tempPagesPath);
+            var rasterize = await RasterizePdfToImageFilesAsync(sourcePath, tempPagesPath);
+            if (!rasterize.Success || rasterize.ImagePaths.Count == 0)
+                throw new InvalidOperationException(rasterize.Message);
+
+            using (var output = ZipFile.Open(tempArchivePath, ZipArchiveMode.Create))
+            {
+                var pageNumber = 1;
+                foreach (var imagePath in rasterize.ImagePaths.OrderBy(path => NaturalSortKey(Path.GetFileName(path))))
+                {
+                    var extension = Path.GetExtension(imagePath).ToLowerInvariant();
+                    if (string.IsNullOrWhiteSpace(extension) || !ImageExtensions.Contains(extension)) extension = ".jpg";
+                    var entryName = $"{pageNumber:0000}{extension}";
+                    var entry = output.CreateEntry(entryName, CompressionLevel.NoCompression);
+                    await using var input = File.OpenRead(imagePath);
+                    await using var dest = entry.Open();
+                    await input.CopyToAsync(dest);
+                    pageNumber++;
+                }
+
+                if (!string.IsNullOrWhiteSpace(guidevaultJson))
+                    await WriteZipTextEntryAsync(output, metadataFileName, guidevaultJson);
+            }
+
+            if (File.Exists(destinationPath)) File.Delete(destinationPath);
+            File.Move(tempArchivePath, destinationPath);
+            return rasterize.ImagePaths.Count;
+        }
+        finally
+        {
+            TryDeleteFile(tempArchivePath);
+            TryDeleteDirectory(tempPagesPath);
+        }
+    }
+
+    private sealed record PdfRasterizeResult(bool Success, string Message, IReadOnlyList<string> ImagePaths);
+
+    private static async Task<PdfRasterizeResult> RasterizePdfToImageFilesAsync(string sourcePath, string outputDirectory)
+    {
+        var attempts = new List<string>();
+
+        async Task<PdfRasterizeResult?> TryToolAsync(string displayName, string executable, IReadOnlyList<string> args)
+        {
+            if (!CommandExists(executable)) return null;
+
+            var run = await RunProcessAsync(executable, args, TimeSpan.FromMinutes(30));
+            var images = Directory.EnumerateFiles(outputDirectory)
+                .Where(path => IsImageEntryName(path))
+                .OrderBy(path => NaturalSortKey(Path.GetFileName(path)))
+                .ToArray();
+
+            if (run.ExitCode == 0 && images.Length > 0)
+                return new PdfRasterizeResult(true, $"Rasterized PDF with {displayName}.", images);
+
+            attempts.Add($"{displayName}: exit {run.ExitCode}. {run.Output}".Trim());
+            foreach (var file in Directory.EnumerateFiles(outputDirectory)) TryDeleteFile(file);
+            return null;
+        }
+
+        var prefix = Path.Combine(outputDirectory, "page");
+        var pdftoppmWithQuality = await TryToolAsync("Poppler pdftoppm", "pdftoppm", ["-jpeg", "-r", "180", "-jpegopt", "quality=92", sourcePath, prefix]);
+        if (pdftoppmWithQuality is not null) return pdftoppmWithQuality;
+
+        var pdftoppm = await TryToolAsync("Poppler pdftoppm", "pdftoppm", ["-jpeg", "-r", "180", sourcePath, prefix]);
+        if (pdftoppm is not null) return pdftoppm;
+
+        var pdftocairo = await TryToolAsync("Poppler pdftocairo", "pdftocairo", ["-jpeg", "-r", "180", sourcePath, prefix]);
+        if (pdftocairo is not null) return pdftocairo;
+
+        var mutool = await TryToolAsync("MuPDF mutool", "mutool", ["draw", "-r", "180", "-o", Path.Combine(outputDirectory, "page-%04d.jpg"), sourcePath]);
+        if (mutool is not null) return mutool;
+
+        var ghostscript = await TryToolAsync("Ghostscript", "gs", ["-dNOPAUSE", "-dBATCH", "-sDEVICE=jpeg", "-r180", "-dJPEGQ=92", $"-sOutputFile={Path.Combine(outputDirectory, "page-%04d.jpg")}", sourcePath]);
+        if (ghostscript is not null) return ghostscript;
+
+        var magick = await TryToolAsync("ImageMagick", "magick", ["-density", "180", sourcePath, "-quality", "92", Path.Combine(outputDirectory, "page-%04d.jpg")]);
+        if (magick is not null) return magick;
+
+        var details = attempts.Count > 0 ? $" Tried: {string.Join(" | ", attempts)}" : string.Empty;
+        return new PdfRasterizeResult(false, "PDF to CBZ needs a PDF rasterizer inside the GuideVault runtime. Install Poppler/pdftoppm in the container image, or make pdftoppm, pdftocairo, mutool, gs, or magick available on PATH." + details, []);
+    }
+
+    private sealed record ProcessRunResult(int ExitCode, string Output);
+
+    private static async Task<ProcessRunResult> RunProcessAsync(string fileName, IReadOnlyList<string> arguments, TimeSpan timeout)
+    {
+        using var process = new Process();
+        process.StartInfo.FileName = fileName;
+        process.StartInfo.RedirectStandardOutput = true;
+        process.StartInfo.RedirectStandardError = true;
+        process.StartInfo.UseShellExecute = false;
+        process.StartInfo.CreateNoWindow = true;
+        foreach (var argument in arguments) process.StartInfo.ArgumentList.Add(argument);
+
+        try
+        {
+            if (!process.Start()) return new ProcessRunResult(-1, $"Unable to start {fileName}.");
+            var outputTask = process.StandardOutput.ReadToEndAsync();
+            var errorTask = process.StandardError.ReadToEndAsync();
+            var waitTask = process.WaitForExitAsync();
+            var completed = await Task.WhenAny(waitTask, Task.Delay(timeout));
+            if (completed != waitTask)
+            {
+                try { process.Kill(entireProcessTree: true); } catch { }
+                return new ProcessRunResult(-1, $"{fileName} timed out after {timeout.TotalMinutes:0} minutes.");
+            }
+
+            var output = string.Join(" ", new[] { await outputTask, await errorTask }.Where(value => !string.IsNullOrWhiteSpace(value))).Trim();
+            if (output.Length > 800) output = output[..800] + "...";
+            return new ProcessRunResult(process.ExitCode, output);
+        }
+        catch (Exception ex)
+        {
+            return new ProcessRunResult(-1, ex.Message);
+        }
+    }
+
+    private static bool CommandExists(string executable)
+    {
+        if (string.IsNullOrWhiteSpace(executable)) return false;
+        if (Path.IsPathFullyQualified(executable)) return File.Exists(executable);
+
+        var path = Environment.GetEnvironmentVariable("PATH") ?? string.Empty;
+        var candidates = RuntimeInformation.IsOSPlatform(OSPlatform.Windows)
+            ? new[] { executable, executable + ".exe", executable + ".cmd", executable + ".bat" }
+            : new[] { executable };
+
+        foreach (var directory in path.Split(Path.PathSeparator, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+        {
+            foreach (var candidate in candidates)
+            {
+                try
+                {
+                    var fullPath = Path.Combine(directory, candidate);
+                    if (File.Exists(fullPath)) return true;
+                }
+                catch
+                {
+                    // Ignore malformed PATH entries.
+                }
+            }
+        }
+
+        return false;
     }
 
     private static async Task RepackCbzAsync(string sourcePath, string destinationPath, string metadataFileName, string guidevaultJson)
@@ -10571,6 +10765,19 @@ public static class ArchiveReader
         EntryCache.TryRemove(archivePath, out _);
     }
 
+    private static void TryDeleteDirectory(string path)
+    {
+        try
+        {
+            if (!string.IsNullOrWhiteSpace(path) && Directory.Exists(path))
+                Directory.Delete(path, recursive: true);
+        }
+        catch
+        {
+            // Best-effort cleanup only.
+        }
+    }
+
     private static void TryDeleteFile(string path)
     {
         try
@@ -10680,6 +10887,25 @@ public static class ArchiveReader
         return null;
     }
 
+    public static Task<(byte[] Bytes, string ContentType)?> GetCachedCoverImageAsync(string archivePath, string? preferredEntryKey = null)
+    {
+        if (Path.GetExtension(archivePath).Equals(".pdf", StringComparison.OrdinalIgnoreCase))
+            return Task.FromResult<(byte[] Bytes, string ContentType)?>(null);
+
+        var key = CoverCacheKey(archivePath, preferredEntryKey);
+        return TryReadCoverFromDiskAsync(key);
+    }
+
+    public static Task<(byte[] Bytes, string ContentType)?> GetCachedCoverThumbnailAsync(string archivePath, int maxWidth = 360, string? preferredEntryKey = null)
+    {
+        if (Path.GetExtension(archivePath).Equals(".pdf", StringComparison.OrdinalIgnoreCase))
+            return Task.FromResult<(byte[] Bytes, string ContentType)?>(null);
+
+        maxWidth = Math.Clamp(maxWidth, 120, 720);
+        var key = $"{CoverCacheKey(archivePath, preferredEntryKey)}_w{maxWidth}";
+        return TryReadCoverThumbnailFromDiskAsync(key);
+    }
+
     public static async Task<(byte[] Bytes, string ContentType)?> GetCoverThumbnailAsync(string archivePath, int maxWidth = 360, string? preferredEntryKey = null)
     {
         if (Path.GetExtension(archivePath).Equals(".pdf", StringComparison.OrdinalIgnoreCase))
@@ -10775,6 +11001,12 @@ public static class ArchiveReader
         {
             cached = await TryReadCoverFromDiskAsync(key);
             if (cached is not null) return cached;
+
+            // Do not open large archives for new cover extraction while a scan or
+            // archive write is already walking the same mounted library files.
+            // Endpoint handlers return 503 during this window so the browser retries
+            // instead of permanently caching a missing-cover placeholder.
+            if (GuidevaultLibraryIoGate.IsBusy) return null;
 
             var image = await GetCoverImageFromArchiveAsync(archivePath, preferredEntryKey);
             if (image is null)
@@ -12758,6 +12990,5 @@ static class GuidevaultLibraryIoGate
 
 static class GuidevaultBuildInfo
 {
-    public const string Version = "0.9.193";
+    public const string Version = "0.9.195";
 }
-

@@ -1,12 +1,12 @@
-﻿<!doctype html>
+<!doctype html>
 <html lang="en">
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Guidevault</title>
-  <link rel="icon" type="image/x-icon" href="/assets/favicon.ico?v=0.9.192" />
-  <link rel="shortcut icon" type="image/x-icon" href="/assets/favicon.ico?v=0.9.192" />
-  <link rel="stylesheet" href="/styles.css?v=0.9.193-pdf-conversion-build-fix" />
+  <link rel="icon" type="image/x-icon" href="/assets/favicon.ico?v=0.9.195" />
+  <link rel="shortcut icon" type="image/x-icon" href="/assets/favicon.ico?v=0.9.195" />
+  <link rel="stylesheet" href="/styles.css?v=0.9.195-pdf-conversion-build-fix" />
 </head>
 <body class="right-collapsed auth-locked">
   <section id="loginView" class="login-view" aria-labelledby="loginTitle">
@@ -1453,7 +1453,7 @@
                 </div>
                 <div class="server-files-writeback-callout">
                   <strong>Conversions are copy-first.</strong>
-                  <span>GuideVault creates a new CBZ/PDF/optimized CBZ beside the source file and leaves the original untouched. Run a rescan when you want the new copy indexed.</span>
+                  <span>GuideVault creates a new CBZ/PDF/optimized CBZ beside the source file and leaves the original untouched. PDF to CBZ needs a PDF rasterizer in the runtime. Run a rescan when you want the new copy indexed.</span>
                 </div>
                 <div class="settings-actions inline-actions server-files-actions">
                   <button id="serverFilesConvertCbz" class="primary" type="button">Convert Selected to CBZ</button>
@@ -1461,7 +1461,7 @@
                   <button id="serverFilesOptimizeArchive" class="ghost" type="button">Optimize / Repack Selected</button>
                   <button class="ghost" type="button" disabled title="CBR/RAR creation requires external RAR tooling and is intentionally not bundled.">Convert to CBR</button>
                 </div>
-                <p class="field-help">Optimize/Repack normalizes archive order and ZIP compression into a new CBZ copy. JPEG-heavy archives may not shrink much because the images are already compressed.</p>
+                <p class="field-help">Optimize/Repack normalizes archive order and ZIP compression into a new CBZ copy. PDF to CBZ rasterizes PDF pages into numbered images when a runtime rasterizer is available. JPEG-heavy archives may not shrink much because the images are already compressed.</p>
                 <p id="serverFilesConvertStatus" class="sub account-status" aria-live="polite"></p>
                 <div id="serverFilesConvertResults" class="server-files-preview-table compact"></div>
               </article>
@@ -1828,6 +1828,28 @@
               <h2>Update History</h2>
             </div>
             <div class="system-update-list">
+              <details class="system-update-entry" open>
+                <summary>
+                  <span>Guidevault 0.9.195 - PDF to CBZ Rasterizer Support</span>
+                  <em>Installed</em>
+                </summary>
+                <ul>
+                  <li>Added PDF-to-CBZ conversion support through available PDF rasterizers such as Poppler pdftoppm/pdftocairo, MuPDF mutool, Ghostscript, or ImageMagick.</li>
+                  <li>PDF conversion now creates numbered image pages inside a copy-first CBZ when a rasterizer is present in the runtime.</li>
+                  <li>Updated the Format Conversion panel help text so PDF rasterizer requirements are clearer.</li>
+                </ul>
+              </details>
+              <details class="system-update-entry" open>
+                <summary>
+                  <span>Guidevault 0.9.194 - Scan and Cover Load Throttle</span>
+                  <em>Installed</em>
+                </summary>
+                <ul>
+                  <li>Deferred uncached cover extraction while a library scan or archive write is active so thumbnail generation does not compete with rescans on mounted libraries.</li>
+                  <li>Reduced burst cover-generation concurrency and extended browser retry behavior for covers that are temporarily deferred during scans.</li>
+                  <li>Blocked on-demand cover page enumeration while scans are running to keep Library Data actions from hammering the same archive files.</li>
+                </ul>
+              </details>
               <details class="system-update-entry" open>
                 <summary>
                   <span>Guidevault 0.9.192 - PDF Conversion Build Fix</span>
@@ -2770,7 +2792,6 @@
   </dialog>
 
 
-  <script src="/app.js?v=0.9.193-pdf-conversion-build-fix"></script>
+  <script src="/app.js?v=0.9.195-pdf-conversion-build-fix"></script>
 </body>
 </html>
-

@@ -1,4 +1,4 @@
-﻿const state = {
+const state = {
   items: [], filtered: [], selected: null, filter: 'All Content', categoryFilter: '', viewMode: 'all', activeTab: 'overview', customFilter: null,
   reader: { item: null, pages: [], index: 0, animating: false, displayMode: 2, transitionMode: 'stable', overlayVisible: false, advancedVisible: false, bookmarkMenuOpen: false, magnifierSettingsVisible: false, scrubbing: false, shading: null, zoom: 100, fullscreenOnOpen: false, magnifier: null, magnifierActive: false, longPressTimer: null, suppressHitClickUntil: 0, backgrounds: [], background: '', backgroundBrightness: 72 },
   libraryPath: '',
@@ -100,7 +100,7 @@ const GUIDEVAULT_LIBRARY_CHUNK_YIELD_MS = 30;
 const GUIDEVAULT_STARTUP_STATUS_HIDE_MS = 2400;
 const GUIDEVAULT_LIBRARY_SEARCH_DEBOUNCE_MS = 180;
 const GUIDEVAULT_SORT_COLLATOR = new Intl.Collator(undefined, { numeric: true, sensitivity: 'base' });
-const GUIDEVAULT_APP_VERSION = '0.9.193';
+const GUIDEVAULT_APP_VERSION = '0.9.195';
 const GUIDEVAULT_FILENAME_SCHEMA_KEY = 'guidevault.filenameRename.schema.v1';
 const GUIDEVAULT_FILE_ORGANIZATION_TEMPLATE_PRESETS_KEY = 'guidevault.fileOrganization.templatePresets.v2';
 const GUIDEVAULT_FILE_ORGANIZATION_TEMPLATE_PRESETS_LEGACY_KEY = 'guidevault.fileOrganization.templatePresets.v1';
@@ -114,11 +114,11 @@ const GUIDEVAULT_COLORSCAPE_CACHE_KEY = 'guidevault.colorscapeCache.v1';
 const GUIDEVAULT_COLORSCAPE_CACHE_LIMIT = 900;
 const GUIDEVAULT_COLORSCAPE_MENU_BATCH_SIZE = 2;
 const GUIDEVAULT_COLORSCAPE_MENU_SAMPLE_DELAY_MS = 700;
-const GUIDEVAULT_SECONDARY_COVER_DELAY_MS = 2600;
-const GUIDEVAULT_SECONDARY_COVER_BATCH_SIZE = 4;
-const GUIDEVAULT_PRIMARY_COVER_BATCH_SIZE = 10;
-const GUIDEVAULT_PRIMARY_COVER_DELAY_MS = 70;
-const GUIDEVAULT_COVER_VIEWPORT_PRIME_PADDING = 950;
+const GUIDEVAULT_SECONDARY_COVER_DELAY_MS = 3200;
+const GUIDEVAULT_SECONDARY_COVER_BATCH_SIZE = 2;
+const GUIDEVAULT_PRIMARY_COVER_BATCH_SIZE = 5;
+const GUIDEVAULT_PRIMARY_COVER_DELAY_MS = 180;
+const GUIDEVAULT_COVER_VIEWPORT_PRIME_PADDING = 520;
 const GUIDEVAULT_CATEGORY_PRIMARY_PREWARM_LIMIT = 96;
 const GUIDEVAULT_CATEGORY_PRIMARY_PREWARM_BATCH_SIZE = 8;
 const GUIDEVAULT_CATEGORY_PRIMARY_PREWARM_DELAY_MS = 110;
@@ -6824,14 +6824,14 @@ function scheduleCoverRetry(img) {
   if (!img) return;
   const baseUrl = img.dataset.coverSrc || img.src;
   const attempts = Number(img.dataset.coverAttempts || '0') || 0;
-  if (!baseUrl || attempts >= 4) return;
+  if (!baseUrl || attempts >= 14) return;
   img.dataset.coverAttempts = String(attempts + 1);
   img.classList.add('cover-loading');
   img.classList.remove('cover-loaded', 'cover-error');
   const wrap = img.closest?.('.cover-wrap');
   wrap?.classList.add('cover-pending');
   wrap?.classList.remove('cover-ready');
-  const delay = 900 + attempts * 1300;
+  const delay = Math.min(30000, 1200 + attempts * 2200);
   window.setTimeout(() => {
     if (!img.isConnected) return;
     img.src = coverRetryUrl(baseUrl);
@@ -20368,7 +20368,7 @@ async function serverFilesConvertSelected(targetFormat = 'cbz') {
   const buttons = ['serverFilesConvertCbz','serverFilesConvertPdf','serverFilesOptimizeArchive'].map(id => $(id)).filter(Boolean);
   buttons.forEach(btn => { btn.disabled = true; });
   serverFilesSetStatus('serverFilesConvertStatus', `Creating ${actionLabel} copy files for ${ids.length} selected item(s)...`, '');
-  if ($('serverFilesConvertResults')) $('serverFilesConvertResults').innerHTML = `<div class="server-files-preview-loading"><strong>Converting ${ids.length} selected file(s)...</strong><span>Large image archives may take a while because pages have to be read and rewritten.</span></div>`;
+  if ($('serverFilesConvertResults')) $('serverFilesConvertResults').innerHTML = `<div class="server-files-preview-loading"><strong>Converting ${ids.length} selected file(s)...</strong><span>Large image archives and PDFs may take a while because pages have to be read, rasterized, and rewritten.</span></div>`;
   try {
     const res = await fetch('/api/items/files/convert', {
       method: 'POST',
@@ -20578,5 +20578,4 @@ installLibraryCardDelegates();
 installGlobalDetailDelegate();
 syncEmailTemplatePreview();
 initializeGuidevaultAuthAndApp();
-
 
