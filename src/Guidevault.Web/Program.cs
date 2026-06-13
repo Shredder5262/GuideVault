@@ -16,7 +16,7 @@ using SixLabors.ImageSharp.Formats.Jpeg;
 using SixLabors.ImageSharp.Processing;
 
 var builder = WebApplication.CreateBuilder(args);
-const string GuidevaultVersion = "0.9.187";
+const string GuidevaultVersion = "0.9.188";
 var app = builder.Build();
 var metadataJsonOptions = new JsonSerializerOptions(JsonSerializerDefaults.Web) { PropertyNameCaseInsensitive = true };
 var options = app.Configuration.GetSection("Guidevault").Get<GuidevaultOptions>() ?? new GuidevaultOptions();
@@ -1773,11 +1773,20 @@ app.MapGet("/api/items/{id}/cover-options", async (string id) =>
         selectedIndex = Array.FindIndex(entries, entry => string.Equals(entry, selected.EntryKey, StringComparison.OrdinalIgnoreCase));
     }
 
+    var archiveExtension = Path.GetExtension(item.Path);
+    var canDeletePages = archiveExtension.Equals(".cbz", StringComparison.OrdinalIgnoreCase) || archiveExtension.Equals(".zip", StringComparison.OrdinalIgnoreCase);
+    var archiveStamp = "0";
+    try { archiveStamp = File.GetLastWriteTimeUtc(item.Path).Ticks.ToString(); } catch { }
+
     return Results.Ok(new
     {
         itemId = item.Id,
         itemTitle = item.Title,
         pageCount = entries.Length,
+        canDeletePages,
+        deletePageHint = canDeletePages
+            ? "Deleting a page rewrites the source CBZ/ZIP archive after confirmation."
+            : "Page deletion is available only for writable CBZ/ZIP archives. CBR/RAR archives are preview-only.",
         hasManualOverride = selected is not null,
         selectedEntryKey = selected?.EntryKey ?? string.Empty,
         selectedIndex,
@@ -1788,8 +1797,8 @@ app.MapGet("/api/items/{id}/cover-options", async (string id) =>
             entryKey = entry,
             fileName = Path.GetFileName(entry),
             folder = Path.GetDirectoryName(entry)?.Replace('\\', '/') ?? string.Empty,
-            imageUrl = $"/api/items/{Uri.EscapeDataString(item.Id)}/page/{index}",
-            thumbnailUrl = $"/api/items/{Uri.EscapeDataString(item.Id)}/page/{index}/thumb?w=180",
+            imageUrl = $"/api/items/{Uri.EscapeDataString(item.Id)}/page/{index}?v={archiveStamp}",
+            thumbnailUrl = $"/api/items/{Uri.EscapeDataString(item.Id)}/page/{index}/thumb?w=180&v={archiveStamp}",
             isSelected = selected is not null && string.Equals(entry, selected.EntryKey, StringComparison.OrdinalIgnoreCase)
         })
     });
@@ -1843,6 +1852,79 @@ app.MapDelete("/api/items/{id}/cover-selection", async (string id) =>
     ArchiveReader.ClearCoverCacheForPath(item.Path);
     RecordSystemEvent("Metadata", "Cover override cleared", $"Returned {item.Title} to automatic cover selection.", "api", item.Id, item.Title);
     return Results.Ok(new { itemId = item.Id, hasManualOverride = false, message = "Manual cover selection cleared. Guidevault will use automatic cover detection again." });
+});
+
+app.MapDelete("/api/items/{id}/archive-page", async (string id, JsonElement payload) =>
+{
+    var item = cache.TryGetCachedItem(id) ?? (await cache.GetItemsAsync()).FirstOrDefault(i => i.Id == id);
+    if (item is null) return Results.NotFound(new { error = "Item not found." });
+    if (item.Format == "PDF") return Results.BadRequest(new { error = "PDF page deletion is not supported." });
+
+    var extension = Path.GetExtension(item.Path);
+    if (!extension.Equals(".cbz", StringComparison.OrdinalIgnoreCase) && !extension.Equals(".zip", StringComparison.OrdinalIgnoreCase))
+    {
+        return Results.BadRequest(new { error = "Page deletion is currently supported only for writable CBZ/ZIP archives. CBR/RAR archives can be previewed, but Guidevault will not rewrite them." });
+    }
+
+    if (!File.Exists(item.Path)) return Results.NotFound(new { error = "Source archive was not found." });
+
+    var entries = ArchiveReader.GetImageEntryKeys(item.Path);
+    if (entries.Length == 0) return Results.BadRequest(new { error = "No image pages were found in this archive." });
+
+    string? entryKey = null;
+    if (payload.ValueKind == JsonValueKind.Object)
+    {
+        if (payload.TryGetProperty("entryKey", out var entryProp) && entryProp.ValueKind == JsonValueKind.String)
+            entryKey = entryProp.GetString();
+        if (string.IsNullOrWhiteSpace(entryKey) && payload.TryGetProperty("pageIndex", out var pageProp) && pageProp.TryGetInt32(out var pageIndex) && pageIndex >= 0 && pageIndex < entries.Length)
+            entryKey = entries[pageIndex];
+    }
+
+    entryKey = (entryKey ?? string.Empty).Replace('\\', '/').Trim();
+    var selectedIndex = Array.FindIndex(entries, entry => string.Equals(entry, entryKey, StringComparison.OrdinalIgnoreCase));
+    if (selectedIndex < 0)
+        return Results.BadRequest(new { error = "Selected page was not found in this archive." });
+
+    var selectedEntry = entries[selectedIndex];
+    var selectedFileName = Path.GetFileName(selectedEntry);
+
+    try
+    {
+        var deleted = await ArchiveReader.DeleteImageEntryAsync(item.Path, selectedEntry);
+        if (!deleted) return Results.BadRequest(new { error = "Selected page could not be deleted from the archive." });
+
+        var manual = coverOverrideStore.Get(item.Id);
+        var removedManualOverride = manual is not null && string.Equals(manual.EntryKey, selectedEntry, StringComparison.OrdinalIgnoreCase);
+        if (removedManualOverride) coverOverrideStore.Remove(item.Id);
+
+        ArchiveReader.ClearCoverCacheForPath(item.Path);
+        cache.Invalidate();
+        RecordSystemEvent("Metadata", "Archive page deleted", $"Deleted page {selectedIndex + 1} ({selectedFileName}) from {item.Title}.", "api", item.Id, item.Title);
+
+        return Results.Ok(new
+        {
+            itemId = item.Id,
+            itemTitle = item.Title,
+            deletedEntryKey = selectedEntry,
+            deletedIndex = selectedIndex,
+            deletedFileName = selectedFileName,
+            removedManualOverride,
+            selectedUpdatedAt = DateTimeOffset.UtcNow,
+            message = $"Deleted page {selectedIndex + 1}: {selectedFileName}."
+        });
+    }
+    catch (InvalidDataException ex)
+    {
+        return Results.BadRequest(new { error = $"The archive could not be updated as a ZIP/CBZ file: {ex.Message}" });
+    }
+    catch (UnauthorizedAccessException)
+    {
+        return Results.BadRequest(new { error = "Guidevault does not have permission to modify this archive." });
+    }
+    catch (IOException ex)
+    {
+        return Results.BadRequest(new { error = $"The archive could not be modified: {ex.Message}" });
+    }
 });
 
 app.MapGet("/api/items/{id}/file", async (string id) =>
@@ -10609,6 +10691,29 @@ public static class ArchiveReader
 
     public static string[] GetImageEntryKeys(string archivePath) => GetImageEntries(archivePath).ToArray();
 
+    public static async Task<bool> DeleteImageEntryAsync(string archivePath, string entryKey)
+    {
+        var normalizedEntry = Normalize(entryKey ?? string.Empty).Trim();
+        if (string.IsNullOrWhiteSpace(normalizedEntry)) return false;
+
+        var extension = Path.GetExtension(archivePath);
+        if (!extension.Equals(".cbz", StringComparison.OrdinalIgnoreCase) && !extension.Equals(".zip", StringComparison.OrdinalIgnoreCase))
+            throw new InvalidDataException("Only CBZ/ZIP archives can be rewritten by Guidevault.");
+
+        if (!File.Exists(archivePath)) return false;
+
+        using (var zip = ZipFile.Open(archivePath, ZipArchiveMode.Update))
+        {
+            var entry = zip.Entries.FirstOrDefault(e => string.Equals(Normalize(e.FullName), normalizedEntry, StringComparison.OrdinalIgnoreCase));
+            if (entry is null || !IsImageEntryName(entry.FullName)) return false;
+            entry.Delete();
+        }
+
+        ClearCoverCacheForPath(archivePath);
+        EntryCache.TryRemove(archivePath, out _);
+        return true;
+    }
+
     public static async Task<(byte[] Bytes, string ContentType)?> GetImagePageThumbnailAsync(string archivePath, int pageIndex, int maxWidth = 180)
     {
         var page = await GetImagePageAsync(archivePath, pageIndex);
@@ -12288,5 +12393,5 @@ static class GuidevaultLibraryIoGate
 
 static class GuidevaultBuildInfo
 {
-    public const string Version = "0.9.187";
+    public const string Version = "0.9.188";
 }

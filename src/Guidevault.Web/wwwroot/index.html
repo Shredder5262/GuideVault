@@ -4,9 +4,9 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Guidevault</title>
-  <link rel="icon" type="image/x-icon" href="/assets/favicon.ico?v=0.9.187" />
-  <link rel="shortcut icon" type="image/x-icon" href="/assets/favicon.ico?v=0.9.187" />
-  <link rel="stylesheet" href="/styles.css?v=0.9.187-cover-picker-ondemand" />
+  <link rel="icon" type="image/x-icon" href="/assets/favicon.ico?v=0.9.188" />
+  <link rel="shortcut icon" type="image/x-icon" href="/assets/favicon.ico?v=0.9.188" />
+  <link rel="stylesheet" href="/styles.css?v=0.9.188-cover-picker-delete-page" />
 </head>
 <body class="right-collapsed auth-locked">
   <section id="loginView" class="login-view" aria-labelledby="loginTitle">
@@ -1806,6 +1806,17 @@
             <div class="system-update-list">
               <details class="system-update-entry" open>
                 <summary>
+                  <span>Guidevault 0.9.188 - Cover Picker Show All and Page Delete</span>
+                  <em>Installed</em>
+                </summary>
+                <ul>
+                  <li>Fixed Show All Pages in the Library Data cover picker so the full loaded archive page list expands correctly.</li>
+                  <li>Added Delete Highlighted Page for writable CBZ/ZIP archives with a confirmation prompt before modifying the source file.</li>
+                  <li>Refreshes cover/page caches after a page delete and keeps CBR/RAR archives preview-only.</li>
+                </ul>
+              </details>
+              <details class="system-update-entry" open>
+                <summary>
                   <span>Guidevault 0.9.187 - On-Demand Cover Picker Loading</span>
                   <em>Installed</em>
                 </summary>
@@ -2696,6 +2707,6 @@
   </dialog>
 
 
-  <script src="/app.js?v=0.9.187-cover-picker-ondemand"></script>
+  <script src="/app.js?v=0.9.188-cover-picker-delete-page"></script>
 </body>
 </html>

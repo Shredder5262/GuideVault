@@ -100,7 +100,7 @@ const GUIDEVAULT_LIBRARY_CHUNK_YIELD_MS = 30;
 const GUIDEVAULT_STARTUP_STATUS_HIDE_MS = 2400;
 const GUIDEVAULT_LIBRARY_SEARCH_DEBOUNCE_MS = 180;
 const GUIDEVAULT_SORT_COLLATOR = new Intl.Collator(undefined, { numeric: true, sensitivity: 'base' });
-const GUIDEVAULT_APP_VERSION = '0.9.187';
+const GUIDEVAULT_APP_VERSION = '0.9.188';
 const GUIDEVAULT_FILENAME_SCHEMA_KEY = 'guidevault.filenameRename.schema.v1';
 const GUIDEVAULT_FILE_ORGANIZATION_TEMPLATE_PRESETS_KEY = 'guidevault.fileOrganization.templatePresets.v2';
 const GUIDEVAULT_FILE_ORGANIZATION_TEMPLATE_PRESETS_LEGACY_KEY = 'guidevault.fileOrganization.templatePresets.v1';
@@ -14601,6 +14601,7 @@ function resetMetadataCoverPicker(item) {
       <div class="metadata-cover-picker-actions">
         <button class="ghost tiny" type="button" data-cover-picker-load>Load Pages</button>
         <button class="ghost tiny" type="button" data-cover-picker-clear disabled>Use Auto Cover</button>
+        <button class="ghost tiny danger" type="button" data-cover-picker-delete disabled>Delete Highlighted Page</button>
       </div>
     </div>
     <div class="metadata-cover-picker-status">Cover page choices are loaded on demand so normal library cover loading stays fast.</div>`;
@@ -14622,14 +14623,22 @@ function renderCoverPickerEntries(data = {}, showAll = false) {
   const id = String(data.itemId || metadataCoverPickerItemId()).trim();
   const visible = showAll ? entries : entries.slice(0, GUIDEVAULT_COVER_PICKER_INITIAL_LIMIT);
   const selectedIndex = Number(data.selectedIndex ?? -1);
+  const selectedEntry = selectedIndex >= 0 ? entries[selectedIndex] : entries.find(entry => entry?.isSelected);
+  const hasHighlightedPage = !!selectedEntry;
+  const canDeletePages = data.canDeletePages === true;
   const selectedText = data.hasManualOverride && selectedIndex >= 0
-    ? `Manual cover: page ${selectedIndex + 1} / ${entries.length}`
-    : `Automatic cover detection is active. ${entries.length ? 'Select a page below to override it.' : ''}`;
+    ? `Manual cover: page ${selectedIndex + 1} / ${entries.length}. Delete Highlighted Page will remove that selected archive image after confirmation.`
+    : `Automatic cover detection is active. ${entries.length ? 'Select a page below to override it; the selected page can then be deleted if needed.' : ''}`;
+  const deleteDisabled = !(entries.length && hasHighlightedPage && canDeletePages);
+  const deleteTitle = canDeletePages
+    ? (hasHighlightedPage ? `Delete ${selectedEntry?.fileName || selectedEntry?.entryKey || 'selected page'}` : 'Select/highlight a page before deleting.')
+    : (data.deletePageHint || 'Page deletion is available only for writable CBZ/ZIP archives.');
 
   panel.classList.remove('hidden');
   panel.dataset.itemId = id;
   panel.dataset.loaded = '1';
   panel.dataset.showAll = showAll ? '1' : '0';
+  panel._coverPickerData = data;
   panel.innerHTML = `
     <div class="metadata-cover-picker-head">
       <div>
@@ -14639,9 +14648,10 @@ function renderCoverPickerEntries(data = {}, showAll = false) {
       <div class="metadata-cover-picker-actions">
         <button class="ghost tiny" type="button" data-cover-picker-load>Reload Pages</button>
         <button class="ghost tiny" type="button" data-cover-picker-clear${data.hasManualOverride ? '' : ' disabled'}>Use Auto Cover</button>
+        <button class="ghost tiny danger" type="button" data-cover-picker-delete${deleteDisabled ? ' disabled' : ''} title="${escapeForAttribute(deleteTitle)}">Delete Highlighted Page</button>
       </div>
     </div>
-    <div class="metadata-cover-picker-status">${escapeHtml(entries.length ? `${entries.length} image page(s) found in this archive.` : 'No image pages found in this archive.')}</div>
+    <div class="metadata-cover-picker-status">${escapeHtml(entries.length ? `${entries.length} image page(s) found in this archive. ${data.deletePageHint || ''}`.trim() : 'No image pages found in this archive.')}</div>
     ${entries.length ? `<div class="metadata-cover-picker-grid">
       ${visible.map(entry => `
         <button class="metadata-cover-choice${entry.isSelected ? ' selected' : ''}" type="button" data-cover-picker-select="${escapeForAttribute(entry.entryKey || '')}" data-cover-picker-page="${escapeForAttribute(entry.index)}" title="${escapeForAttribute(entry.entryKey || '')}">
@@ -14653,7 +14663,7 @@ function renderCoverPickerEntries(data = {}, showAll = false) {
     ${entries.length > visible.length ? `<button class="ghost tiny metadata-cover-picker-show-all" type="button" data-cover-picker-show-all>Show All ${entries.length} Pages</button>` : ''}`;
 }
 
-async function loadCoverPickerForSelected(force = false) {
+async function loadCoverPickerForSelected(force = false, showAll = false) {
   const panel = $('metadataCoverPicker');
   const item = state.selected;
   const id = metadataCoverPickerItemId(item);
@@ -14670,7 +14680,7 @@ async function loadCoverPickerForSelected(force = false) {
     let data = null;
     try { data = await res.json(); } catch {}
     if (!res.ok) throw new Error(data?.error || `Cover options failed. HTTP ${res.status}`);
-    renderCoverPickerEntries(data, false);
+    renderCoverPickerEntries(data, showAll);
   } catch (err) {
     console.error('Cover picker load failed', err);
     panel.innerHTML = `
@@ -14712,7 +14722,7 @@ async function saveCoverPickerSelection(entryKey = '', pageIndex = null) {
     if (state.selected) state.selected.coverOverrideBust = readCoverOverrideBustMap()[id];
     setStatus(data?.message || 'Cover override saved.');
     refreshSelectedCoverImages();
-    await loadCoverPickerForSelected(true);
+    await loadCoverPickerForSelected(true, panel?.dataset?.showAll === '1');
   } catch (err) {
     console.error('Cover selection failed', err);
     setStatus(`Unable to save cover override: ${err?.message || err}`);
@@ -14740,10 +14750,66 @@ async function clearCoverPickerSelection() {
     if (state.selected) state.selected.coverOverrideBust = readCoverOverrideBustMap()[id];
     setStatus(data?.message || 'Manual cover override cleared.');
     refreshSelectedCoverImages();
-    await loadCoverPickerForSelected(true);
+    await loadCoverPickerForSelected(true, panel?.dataset?.showAll === '1');
   } catch (err) {
     console.error('Cover override clear failed', err);
     setStatus(`Unable to clear cover override: ${err?.message || err}`);
+  }
+}
+
+async function deleteCoverPickerHighlightedPage() {
+  const id = metadataCoverPickerItemId();
+  const panel = $('metadataCoverPicker');
+  const data = panel?._coverPickerData || {};
+  const entries = Array.isArray(data.entries) ? data.entries : [];
+  const selectedIndex = Number(data.selectedIndex ?? -1);
+  const selectedEntry = selectedIndex >= 0 ? entries[selectedIndex] : entries.find(entry => entry?.isSelected);
+  if (!id || !selectedEntry?.entryKey) {
+    setStatus('Select a cover page before deleting a page.');
+    return;
+  }
+  if (data.canDeletePages !== true) {
+    setStatus(data.deletePageHint || 'Page deletion is available only for writable CBZ/ZIP archives.');
+    return;
+  }
+  const pageNumber = Number(selectedEntry.index ?? selectedIndex ?? 0) + 1;
+  const fileName = selectedEntry.fileName || selectedEntry.entryKey || `page ${pageNumber}`;
+  const ok = window.confirm(`Delete this page from the source archive?\n\nPage ${pageNumber}: ${fileName}\n\nThis permanently rewrites the CBZ/ZIP file. This cannot be undone from Guidevault.`);
+  if (!ok) return;
+
+  try {
+    if (panel) panel.querySelectorAll('button').forEach(btn => { btn.disabled = true; });
+    const res = await fetch(`/api/items/${encodeURIComponent(id)}/archive-page`, {
+      method: 'DELETE',
+      headers: { 'Content-Type': 'application/json' },
+      cache: 'no-store',
+      body: JSON.stringify({ entryKey: selectedEntry.entryKey, pageIndex: selectedEntry.index })
+    });
+    let result = null;
+    try { result = await res.json(); } catch {}
+    if (!res.ok) throw new Error(result?.error || `Page delete failed. HTTP ${res.status}`);
+    setCoverOverrideBust(id, result?.selectedUpdatedAt || Date.now());
+    if (state.selected) {
+      state.selected.coverOverrideBust = readCoverOverrideBustMap()[id];
+      if (Number(state.selected.pageCount || state.selected.PageCount || 0) > 0) {
+        state.selected.pageCount = Math.max(0, Number(state.selected.pageCount || state.selected.PageCount || 0) - 1);
+        state.selected.PageCount = state.selected.pageCount;
+      }
+    }
+    setStatus(result?.message || 'Page deleted.');
+    refreshSelectedCoverImages();
+    await loadCoverPickerForSelected(true, panel?.dataset?.showAll === '1');
+  } catch (err) {
+    console.error('Cover picker page delete failed', err);
+    setStatus(`Unable to delete page: ${err?.message || err}`);
+    if (panel) {
+      const status = panel.querySelector('.metadata-cover-picker-status');
+      if (status) {
+        status.textContent = `Unable to delete page: ${err?.message || err}`;
+        status.classList.add('error');
+      }
+      panel.querySelectorAll('button').forEach(btn => { btn.disabled = false; });
+    }
   }
 }
 
@@ -14752,12 +14818,14 @@ function handleMetadataCoverPickerClick(e) {
   if (load) { e.preventDefault(); loadCoverPickerForSelected(true); return; }
   const clear = e.target.closest?.('[data-cover-picker-clear]');
   if (clear && !clear.disabled) { e.preventDefault(); clearCoverPickerSelection(); return; }
+  const del = e.target.closest?.('[data-cover-picker-delete]');
+  if (del && !del.disabled) { e.preventDefault(); deleteCoverPickerHighlightedPage(); return; }
   const showAll = e.target.closest?.('[data-cover-picker-show-all]');
   if (showAll) {
     e.preventDefault();
     const panel = $('metadataCoverPicker');
     if (panel?._coverPickerData) renderCoverPickerEntries(panel._coverPickerData, true);
-    else loadCoverPickerForSelected(true);
+    else loadCoverPickerForSelected(true, true);
     return;
   }
   const choice = e.target.closest?.('[data-cover-picker-select]');
