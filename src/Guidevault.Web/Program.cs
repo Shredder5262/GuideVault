@@ -17,7 +17,7 @@ using SixLabors.ImageSharp.Processing;
 using Microsoft.AspNetCore.Mvc;
 
 var builder = WebApplication.CreateBuilder(args);
-const string GuidevaultVersion = "0.9.195";
+const string GuidevaultVersion = "0.9.196";
 var app = builder.Build();
 var metadataJsonOptions = new JsonSerializerOptions(JsonSerializerDefaults.Web) { PropertyNameCaseInsensitive = true };
 var options = app.Configuration.GetSection("Guidevault").Get<GuidevaultOptions>() ?? new GuidevaultOptions();
@@ -10110,15 +10110,15 @@ public static class ArchiveReader
                 {
                     var pageCount = await CreateCbzFromPdfAsync(archivePath, destination, metadataFileName, guidevaultJson);
                     ClearCacheForWrittenArchive(destination);
-                    var outputBytes = new FileInfo(destination).Length;
-                    return new ArchiveConversionResult(true, $"Created {Path.GetFileName(destination)} as a CBZ copy with {pageCount} rasterized page image(s). The original PDF was not deleted.", archivePath, sourceFileName, sourceFormat, sourceBytes, destination, Path.GetFileName(destination), "CBZ", outputBytes, true);
+                    var pdfCbzOutputBytes = new FileInfo(destination).Length;
+                    return new ArchiveConversionResult(true, $"Created {Path.GetFileName(destination)} as a CBZ copy with {pageCount} rasterized page image(s). The original PDF was not deleted.", archivePath, sourceFileName, sourceFormat, sourceBytes, destination, Path.GetFileName(destination), "CBZ", pdfCbzOutputBytes, true);
                 }
 
                 if (ext == ".cbz") await RepackCbzAsync(archivePath, destination, metadataFileName, guidevaultJson);
                 else await CreateCbzFromReadableArchiveAsync(archivePath, destination, metadataFileName, guidevaultJson);
                 ClearCacheForWrittenArchive(destination);
-                var outputBytes = new FileInfo(destination).Length;
-                return new ArchiveConversionResult(true, $"Created {Path.GetFileName(destination)} as a CBZ copy. The original file was not deleted.", archivePath, sourceFileName, sourceFormat, sourceBytes, destination, Path.GetFileName(destination), "CBZ", outputBytes, true);
+                var cbzOutputBytes = new FileInfo(destination).Length;
+                return new ArchiveConversionResult(true, $"Created {Path.GetFileName(destination)} as a CBZ copy. The original file was not deleted.", archivePath, sourceFileName, sourceFormat, sourceBytes, destination, Path.GetFileName(destination), "CBZ", cbzOutputBytes, true);
             }
 
             if (requested == "optimize")
@@ -10130,10 +10130,10 @@ public static class ArchiveReader
                 if (ext is ".cbz" or ".zip") await RepackCbzAsync(archivePath, destination, metadataFileName, guidevaultJson);
                 else await CreateCbzFromReadableArchiveAsync(archivePath, destination, metadataFileName, guidevaultJson);
                 ClearCacheForWrittenArchive(destination);
-                var outputBytes = new FileInfo(destination).Length;
-                var delta = sourceBytes > 0 ? sourceBytes - outputBytes : 0;
+                var optimizedOutputBytes = new FileInfo(destination).Length;
+                var delta = sourceBytes > 0 ? sourceBytes - optimizedOutputBytes : 0;
                 var deltaText = delta > 0 ? $" Saved {FormatBytes(delta)}." : delta < 0 ? $" Output is {FormatBytes(Math.Abs(delta))} larger; image files were already compressed." : " Size was unchanged.";
-                return new ArchiveConversionResult(true, $"Created optimized CBZ copy: {Path.GetFileName(destination)}.{deltaText} The original file was not deleted.", archivePath, sourceFileName, sourceFormat, sourceBytes, destination, Path.GetFileName(destination), "Optimized CBZ", outputBytes, true);
+                return new ArchiveConversionResult(true, $"Created optimized CBZ copy: {Path.GetFileName(destination)}.{deltaText} The original file was not deleted.", archivePath, sourceFileName, sourceFormat, sourceBytes, destination, Path.GetFileName(destination), "Optimized CBZ", optimizedOutputBytes, true);
             }
 
             if (requested == "pdf")
@@ -10147,8 +10147,8 @@ public static class ArchiveReader
 
                 var destination = UniqueSiblingPath(archivePath, ".pdf");
                 await CreatePdfFromImageArchiveAsync(archivePath, destination, imageEntries);
-                var outputBytes = new FileInfo(destination).Length;
-                return new ArchiveConversionResult(true, $"Created {Path.GetFileName(destination)} as a PDF copy. The original file was not deleted.", archivePath, sourceFileName, sourceFormat, sourceBytes, destination, Path.GetFileName(destination), "PDF", outputBytes, true);
+                var pdfOutputBytes = new FileInfo(destination).Length;
+                return new ArchiveConversionResult(true, $"Created {Path.GetFileName(destination)} as a PDF copy. The original file was not deleted.", archivePath, sourceFileName, sourceFormat, sourceBytes, destination, Path.GetFileName(destination), "PDF", pdfOutputBytes, true);
             }
 
             return new ArchiveConversionResult(false, $"Unsupported conversion target: {targetFormat}.", archivePath, sourceFileName, sourceFormat, sourceBytes, string.Empty, string.Empty, requested.ToUpperInvariant(), 0, false);
@@ -12990,5 +12990,5 @@ static class GuidevaultLibraryIoGate
 
 static class GuidevaultBuildInfo
 {
-    public const string Version = "0.9.195";
+    public const string Version = "0.9.196";
 }

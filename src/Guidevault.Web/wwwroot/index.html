@@ -4,9 +4,9 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Guidevault</title>
-  <link rel="icon" type="image/x-icon" href="/assets/favicon.ico?v=0.9.195" />
-  <link rel="shortcut icon" type="image/x-icon" href="/assets/favicon.ico?v=0.9.195" />
-  <link rel="stylesheet" href="/styles.css?v=0.9.195-pdf-conversion-build-fix" />
+  <link rel="icon" type="image/x-icon" href="/assets/favicon.ico?v=0.9.196" />
+  <link rel="shortcut icon" type="image/x-icon" href="/assets/favicon.ico?v=0.9.196" />
+  <link rel="stylesheet" href="/styles.css?v=0.9.196-conversion-build-cleanup" />
 </head>
 <body class="right-collapsed auth-locked">
   <section id="loginView" class="login-view" aria-labelledby="loginTitle">
@@ -1830,6 +1830,16 @@
             <div class="system-update-list">
               <details class="system-update-entry" open>
                 <summary>
+                  <span>Guidevault 0.9.196 - Conversion Build Cleanup</span>
+                  <em>Installed</em>
+                </summary>
+                <ul>
+                  <li>Fixed a compile error in the format conversion helper caused by duplicate local variable names in the CBZ/PDF conversion result paths.</li>
+                  <li>Kept the PDF-to-CBZ rasterizer support from 0.9.195 unchanged.</li>
+                </ul>
+              </details>
+              <details class="system-update-entry" open>
+                <summary>
                   <span>Guidevault 0.9.195 - PDF to CBZ Rasterizer Support</span>
                   <em>Installed</em>
                 </summary>
@@ -2792,6 +2802,6 @@
   </dialog>
 
 
-  <script src="/app.js?v=0.9.195-pdf-conversion-build-fix"></script>
+  <script src="/app.js?v=0.9.196-conversion-build-cleanup"></script>
 </body>
 </html>
