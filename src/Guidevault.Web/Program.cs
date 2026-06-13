@@ -16,7 +16,7 @@ using SixLabors.ImageSharp.Formats.Jpeg;
 using SixLabors.ImageSharp.Processing;
 
 var builder = WebApplication.CreateBuilder(args);
-const string GuidevaultVersion = "0.9.183";
+const string GuidevaultVersion = "0.9.184";
 var app = builder.Build();
 var metadataJsonOptions = new JsonSerializerOptions(JsonSerializerDefaults.Web) { PropertyNameCaseInsensitive = true };
 var options = app.Configuration.GetSection("Guidevault").Get<GuidevaultOptions>() ?? new GuidevaultOptions();
@@ -9398,7 +9398,7 @@ public static class ArchiveReader
     private static string CoverCacheDirectory = Path.Combine(AppContext.BaseDirectory, "data", "cache", "covers");
     private static string CoverThumbnailCacheDirectory = Path.Combine(AppContext.BaseDirectory, "data", "cache", "cover-thumbs");
     private static readonly string[] KnownCoverCacheExtensions = [".jpg", ".jpeg", ".png", ".webp", ".gif", ".bmp"];
-    private const string CoverCacheVersion = "cover-natural-sort-v2";
+    private const string CoverCacheVersion = "cover-natural-sort-v3";
 
     public static void ConfigureCoverCache(string cacheDirectory, string? thumbnailCacheDirectory = null)
     {
@@ -10489,7 +10489,10 @@ public static class ArchiveReader
             || compact.EndsWith("cover", StringComparison.OrdinalIgnoreCase))
             return 0;
 
-        var pageMatch = Regex.Match(compact, @"^(?:page|pg|p|scan|img|image)?0*(\d+)$", RegexOptions.IgnoreCase);
+        // Many scanned magazines use inconsistent front-page names such as
+        // 000a.jpg, Page 000a.jpg, p000a.jpg, or scan000a.jpg. Treat these as
+        // page zero so the cover does not incorrectly jump to 001.jpg.
+        var pageMatch = Regex.Match(compact, @"^(?:page|pg|p|scan|img|image)?0*(\d+)([a-z]+)?$", RegexOptions.IgnoreCase);
         if (pageMatch.Success && int.TryParse(pageMatch.Groups[1].Value, out var pageNumber))
         {
             if (pageNumber == 0) return 1;
@@ -11995,5 +11998,5 @@ static class GuidevaultLibraryIoGate
 
 static class GuidevaultBuildInfo
 {
-    public const string Version = "0.9.183";
+    public const string Version = "0.9.184";
 }
