@@ -4,9 +4,9 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Guidevault</title>
-  <link rel="icon" type="image/x-icon" href="/assets/favicon.ico?v=0.9.176" />
-  <link rel="shortcut icon" type="image/x-icon" href="/assets/favicon.ico?v=0.9.176" />
-  <link rel="stylesheet" href="/styles.css?v=0.9.175-windows-safe-file-organizer" />
+  <link rel="icon" type="image/x-icon" href="/assets/favicon.ico?v=0.9.177" />
+  <link rel="shortcut icon" type="image/x-icon" href="/assets/favicon.ico?v=0.9.177" />
+  <link rel="stylesheet" href="/styles.css?v=0.9.175-file-template-presets" />
 </head>
 <body class="right-collapsed auth-locked">
   <section id="loginView" class="login-view" aria-labelledby="loginTitle">
@@ -1317,7 +1317,19 @@
                   <h3>Organize Files</h3>
                   <p class="sub">Preview bulk rename and move paths from metadata. Files stay inside their current library root.</p>
                 </div>
-                <div class="server-files-section-label"><span>Rename / Move Templates</span><em>Choose a template field, then use the builder buttons below.</em></div>
+                <div class="server-files-section-label"><span>Rename / Move Templates</span><em>Choose a saved template set, edit it, then save your preferred layout.</em></div>
+                <div class="server-files-template-preset-row" aria-label="Saved file organization templates">
+                  <label for="serverFilesTemplatePresetSelect">Saved Template
+                    <select id="serverFilesTemplatePresetSelect"></select>
+                  </label>
+                  <label for="serverFilesTemplatePresetName">Template Name
+                    <input id="serverFilesTemplatePresetName" type="text" placeholder="My file layout" />
+                  </label>
+                  <div class="settings-actions inline-actions server-files-template-preset-actions">
+                    <button id="serverFilesSaveTemplatePreset" class="primary" type="button">Save Template</button>
+                    <button id="serverFilesDeleteTemplatePreset" class="ghost" type="button">Delete Template</button>
+                  </div>
+                </div>
                 <div class="server-files-template-grid">
                   <label for="serverFilesManualTemplate">Manual template
                     <input id="serverFilesManualTemplate" class="server-files-template-input" spellcheck="false" value="Manuals/{Platform}/{GameTitle}/{Title} - Manual{Extension}" />
@@ -1763,6 +1775,17 @@
               <h2>Update History</h2>
             </div>
             <div class="system-update-list">
+              <details class="system-update-entry" open>
+                <summary>
+                  <span>Guidevault 0.9.177 - File Template Presets</span>
+                  <em>Installed</em>
+                </summary>
+                <ul>
+                  <li>Added saved template sets for Server &gt; Files rename/move organization.</li>
+                  <li>Fixed organization preview generation so custom templates use cleaner title tokens and avoid duplicating content type/year text that was already baked into a filename.</li>
+                  <li>Added a built-in Publisher / Title / Type / ISBN / Year template set for strategy guide cleanup workflows.</li>
+                </ul>
+              </details>
               <details class="system-update-entry" open>
                 <summary>
                   <span>Guidevault 0.9.176 - Windows-Safe File Organizer</span>
@@ -2548,7 +2571,7 @@
   </dialog>
 
 
-  <script src="/app.js?v=0.9.175-windows-safe-file-organizer"></script>
+  <script src="/app.js?v=0.9.175-file-template-presets"></script>
 </body>
 </html>
 

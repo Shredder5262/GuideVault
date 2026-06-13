@@ -102,6 +102,7 @@ const GUIDEVAULT_LIBRARY_SEARCH_DEBOUNCE_MS = 180;
 const GUIDEVAULT_SORT_COLLATOR = new Intl.Collator(undefined, { numeric: true, sensitivity: 'base' });
 const GUIDEVAULT_APP_VERSION = '0.9.175';
 const GUIDEVAULT_FILENAME_SCHEMA_KEY = 'guidevault.filenameRename.schema.v1';
+const GUIDEVAULT_FILE_ORGANIZATION_TEMPLATE_PRESETS_KEY = 'guidevault.fileOrganization.templatePresets.v1';
 const GUIDEVAULT_DEFAULT_FILENAME_SCHEMA = '{title}';
 const GUIDEVAULT_STABLE_TAG_FEED_URL = 'https://api.github.com/repos/Shredder5262/GuideVault/tags';
 const GUIDEVAULT_RELEASES_URL = 'https://github.com/Shredder5262/GuideVault/releases';
@@ -19333,6 +19334,7 @@ function serverFilesRowsHtml(items = []) {
 
 function renderServerFilesWorkspace() {
   if (!$('settingsFilesPanel')) return;
+  hydrateServerFilesTemplatePresets(false);
   const files = serverFilesEnsureState();
   if ($('serverFilesSearch')) $('serverFilesSearch').value = files.search || '';
   const selectedKinds = new Set(serverFilesSelectedKinds());
@@ -19463,6 +19465,180 @@ function serverFilesTrackTemplateTarget(input) {
   files.templateTargetId = input.id;
 }
 
+function serverFilesDefaultTemplatePresets() {
+  return [
+    {
+      id: 'guidevault-default',
+      name: 'GuideVault Default',
+      templates: {
+        manual: 'Manuals/{Platform}/{GameTitle}/{Title} - Manual{Extension}',
+        strategyGuide: 'Strategy Guides/{Platform}/{GameTitle}/{Title}{Extension}',
+        magazine: 'Magazines/{MagazineSeries}/{Year}/{MagazineSeries} - Issue {IssueNumber}{Extension}'
+      },
+      builtIn: true
+    },
+    {
+      id: 'publisher-title-type-year',
+      name: 'Publisher / Title - Type - ISBN - Year',
+      templates: {
+        manual: '{Publisher}/{Title} - {ContentType} - {Year}{Extension}',
+        strategyGuide: '{Publisher}/{Title} - {ContentType} - {ISBN10} - {Year}{Extension}',
+        magazine: '{Publisher}/{MagazineSeries} - Issue {IssueNumber} - {Year}{Extension}'
+      },
+      builtIn: true
+    },
+    {
+      id: 'flat-clean-name',
+      name: 'Flat Clean Name',
+      templates: {
+        manual: '{Title}{Extension}',
+        strategyGuide: '{Title}{Extension}',
+        magazine: '{MagazineSeries} - Issue {IssueNumber}{Extension}'
+      },
+      builtIn: true
+    }
+  ];
+}
+
+function serverFilesDefaultTemplates() {
+  return serverFilesDefaultTemplatePresets()[0].templates;
+}
+
+function normalizeServerFilesTemplatePreset(value = {}, fallbackId = '') {
+  const defaultTemplates = serverFilesDefaultTemplates();
+  const id = String(value.id || fallbackId || `template-${Date.now()}`).trim() || `template-${Date.now()}`;
+  const name = String(value.name || 'Custom Template').trim() || 'Custom Template';
+  const templates = value.templates || {};
+  return {
+    id,
+    name,
+    builtIn: value.builtIn === true,
+    updatedAt: value.updatedAt || new Date().toISOString(),
+    templates: {
+      manual: String(templates.manual || defaultTemplates.manual || '').trim() || defaultTemplates.manual,
+      strategyGuide: String(templates.strategyGuide || defaultTemplates.strategyGuide || '').trim() || defaultTemplates.strategyGuide,
+      magazine: String(templates.magazine || defaultTemplates.magazine || '').trim() || defaultTemplates.magazine
+    }
+  };
+}
+
+function loadServerFilesTemplatePresets() {
+  const builtIns = serverFilesDefaultTemplatePresets().map(preset => normalizeServerFilesTemplatePreset(preset, preset.id));
+  const stateValue = { selectedId: 'guidevault-default', presets: Object.fromEntries(builtIns.map(preset => [preset.id, preset])) };
+  try {
+    const raw = localStorage.getItem(GUIDEVAULT_FILE_ORGANIZATION_TEMPLATE_PRESETS_KEY);
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      if (parsed && typeof parsed === 'object') {
+        if (parsed.presets && typeof parsed.presets === 'object') {
+          Object.entries(parsed.presets).forEach(([id, preset]) => {
+            const normalized = normalizeServerFilesTemplatePreset({ ...(preset || {}), id: preset?.id || id }, id);
+            stateValue.presets[normalized.id] = normalized;
+          });
+        }
+        if (parsed.selectedId && stateValue.presets[parsed.selectedId]) stateValue.selectedId = parsed.selectedId;
+      }
+    }
+  } catch {}
+  return stateValue;
+}
+
+function saveServerFilesTemplatePresets(presetsState) {
+  const normalized = presetsState || loadServerFilesTemplatePresets();
+  try { localStorage.setItem(GUIDEVAULT_FILE_ORGANIZATION_TEMPLATE_PRESETS_KEY, JSON.stringify(normalized)); } catch {}
+  return normalized;
+}
+
+function serverFilesSetTemplateInputs(templates = {}) {
+  const defaults = serverFilesDefaultTemplates();
+  const manual = $('serverFilesManualTemplate');
+  const strategy = $('serverFilesStrategyTemplate');
+  const magazine = $('serverFilesMagazineTemplate');
+  if (manual) manual.value = String(templates.manual || defaults.manual || '').trim() || defaults.manual;
+  if (strategy) strategy.value = String(templates.strategyGuide || defaults.strategyGuide || '').trim() || defaults.strategyGuide;
+  if (magazine) magazine.value = String(templates.magazine || defaults.magazine || '').trim() || defaults.magazine;
+  if ($('serverFilesApplyPreview')) $('serverFilesApplyPreview').disabled = true;
+}
+
+function serverFilesCurrentTemplateName() {
+  const name = String($('serverFilesTemplatePresetName')?.value || '').trim();
+  return name || 'Custom File Template';
+}
+
+function renderServerFilesTemplatePresetOptions() {
+  const select = $('serverFilesTemplatePresetSelect');
+  if (!select) return;
+  const presetsState = loadServerFilesTemplatePresets();
+  const presets = Object.values(presetsState.presets || {}).sort((a, b) => {
+    if (a.builtIn !== b.builtIn) return a.builtIn ? -1 : 1;
+    return String(a.name || '').localeCompare(String(b.name || ''), undefined, { sensitivity: 'base' });
+  });
+  select.innerHTML = presets.map(preset => `<option value="${escapeForAttribute(preset.id)}">${escapeHtml(preset.name || preset.id)}</option>`).join('');
+  select.value = presetsState.presets[presetsState.selectedId] ? presetsState.selectedId : 'guidevault-default';
+  const selected = presetsState.presets[select.value];
+  if ($('serverFilesTemplatePresetName') && selected) $('serverFilesTemplatePresetName').value = selected.name || '';
+}
+
+function hydrateServerFilesTemplatePresets(forceApply = false) {
+  const select = $('serverFilesTemplatePresetSelect');
+  if (!select) return;
+  const firstHydrate = !select.dataset.hydrated;
+  renderServerFilesTemplatePresetOptions();
+  const presetsState = loadServerFilesTemplatePresets();
+  const selected = presetsState.presets[select.value] || presetsState.presets['guidevault-default'];
+  if ((forceApply || firstHydrate) && selected) serverFilesSetTemplateInputs(selected.templates || {});
+  select.dataset.hydrated = 'true';
+}
+
+function serverFilesApplySelectedTemplatePreset() {
+  const select = $('serverFilesTemplatePresetSelect');
+  if (!select) return;
+  const presetsState = loadServerFilesTemplatePresets();
+  const preset = presetsState.presets[select.value];
+  if (!preset) return;
+  presetsState.selectedId = preset.id;
+  saveServerFilesTemplatePresets(presetsState);
+  if ($('serverFilesTemplatePresetName')) $('serverFilesTemplatePresetName').value = preset.name || '';
+  serverFilesSetTemplateInputs(preset.templates || {});
+  if ($('serverFilesPreviewTable')) $('serverFilesPreviewTable').innerHTML = '<p class="sub">Template loaded. Preview selected files to see the updated before/after plan.</p>';
+  serverFilesSetStatus('serverFilesOrganizeStatus', `Loaded template set: ${preset.name}.`, 'success');
+}
+
+function serverFilesSaveTemplatePreset() {
+  const presetsState = loadServerFilesTemplatePresets();
+  const select = $('serverFilesTemplatePresetSelect');
+  const currentId = String(select?.value || '').trim();
+  const existing = presetsState.presets[currentId];
+  const name = serverFilesCurrentTemplateName();
+  let id = currentId && existing && !existing.builtIn ? currentId : `custom-${Date.now()}`;
+  const preset = normalizeServerFilesTemplatePreset({ id, name, templates: serverFilesTemplatesPayload(), builtIn: false }, id);
+  presetsState.presets[id] = preset;
+  presetsState.selectedId = id;
+  saveServerFilesTemplatePresets(presetsState);
+  renderServerFilesTemplatePresetOptions();
+  if ($('serverFilesTemplatePresetSelect')) $('serverFilesTemplatePresetSelect').value = id;
+  if ($('serverFilesTemplatePresetName')) $('serverFilesTemplatePresetName').value = preset.name;
+  serverFilesSetStatus('serverFilesOrganizeStatus', `Saved template set: ${preset.name}.`, 'success');
+}
+
+function serverFilesDeleteTemplatePreset() {
+  const select = $('serverFilesTemplatePresetSelect');
+  if (!select) return;
+  const presetsState = loadServerFilesTemplatePresets();
+  const id = String(select.value || '').trim();
+  const preset = presetsState.presets[id];
+  if (!preset) return;
+  if (preset.builtIn) {
+    serverFilesSetStatus('serverFilesOrganizeStatus', 'Built-in template sets cannot be deleted. Save a custom copy first.', 'error');
+    return;
+  }
+  delete presetsState.presets[id];
+  presetsState.selectedId = 'guidevault-default';
+  saveServerFilesTemplatePresets(presetsState);
+  hydrateServerFilesTemplatePresets(true);
+  serverFilesSetStatus('serverFilesOrganizeStatus', `Deleted template set: ${preset.name}.`, 'success');
+}
+
 function serverFilesCurrentTemplateInput() {
   const files = serverFilesEnsureState();
   const targetId = files.templateTargetId || document.activeElement?.id || 'serverFilesManualTemplate';
@@ -19487,10 +19663,11 @@ function serverFilesInsertTemplateToken(token = '') {
 }
 
 function serverFilesTemplatesPayload() {
+  const defaults = serverFilesDefaultTemplates();
   return {
-    manual: $('serverFilesManualTemplate')?.value || 'Manuals/{Platform}/{GameTitle}/{Title} - Manual{Extension}',
-    strategyGuide: $('serverFilesStrategyTemplate')?.value || 'Strategy Guides/{Platform}/{GameTitle}/{Title}{Extension}',
-    magazine: $('serverFilesMagazineTemplate')?.value || 'Magazines/{MagazineSeries}/{Year}/{MagazineSeries} - Issue {IssueNumber}{Extension}'
+    manual: String($('serverFilesManualTemplate')?.value || '').trim() || defaults.manual,
+    strategyGuide: String($('serverFilesStrategyTemplate')?.value || '').trim() || defaults.strategyGuide,
+    magazine: String($('serverFilesMagazineTemplate')?.value || '').trim() || defaults.magazine
   };
 }
 
@@ -19678,6 +19855,9 @@ if ($('metadataManagerOpenFilesWorkspace')) $('metadataManagerOpenFilesWorkspace
 if ($('serverFilesRefreshSelection')) $('serverFilesRefreshSelection').addEventListener('click', renderServerFilesWorkspace);
 if ($('serverFilesSearch')) $('serverFilesSearch').addEventListener('input', e => serverFilesUpdateSearch(e.currentTarget.value));
 document.querySelectorAll('[data-server-files-kind]').forEach(input => input.addEventListener('change', serverFilesUpdateKinds));
+if ($('serverFilesTemplatePresetSelect')) $('serverFilesTemplatePresetSelect').addEventListener('change', serverFilesApplySelectedTemplatePreset);
+if ($('serverFilesSaveTemplatePreset')) $('serverFilesSaveTemplatePreset').addEventListener('click', e => { e.preventDefault(); serverFilesSaveTemplatePreset(); });
+if ($('serverFilesDeleteTemplatePreset')) $('serverFilesDeleteTemplatePreset').addEventListener('click', e => { e.preventDefault(); serverFilesDeleteTemplatePreset(); });
 if ($('serverFilesHeaderCheck')) $('serverFilesHeaderCheck').addEventListener('change', e => serverFilesSelectRendered(!!e.currentTarget.checked));
 if ($('serverFilesTableBody')) $('serverFilesTableBody').addEventListener('change', e => {
   const check = e.target.closest?.('.server-files-row-check');

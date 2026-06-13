@@ -2954,21 +2954,27 @@ static string BuildOrganizationRelativePath(LibraryItem item, string template)
 {
     var ext = Path.GetExtension(item.FileName);
     if (string.IsNullOrWhiteSpace(ext)) ext = Path.GetExtension(item.Path);
+
+    var cleanTitle = CleanOrganizationTitle(FirstNonBlank(item.Title, item.ManualTitle, item.MagazineTitle, item.GameTitle, Path.GetFileNameWithoutExtension(item.FileName)), item);
+    var cleanManualTitle = CleanOrganizationTitle(FirstNonBlank(item.ManualTitle, item.Title, item.GameTitle), item);
+    var cleanStrategyTitle = CleanOrganizationTitle(FirstNonBlank(item.Title, item.GameTitle, Path.GetFileNameWithoutExtension(item.FileName)), item);
+    var cleanMagazineTitle = CleanOrganizationTitle(FirstNonBlank(item.MagazineTitle, item.Series, item.Title), item);
+
     var values = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
     {
         ["ContentType"] = item.Kind.Equals("Manual", StringComparison.OrdinalIgnoreCase) ? "Manuals" : item.Kind.Equals("Magazine", StringComparison.OrdinalIgnoreCase) ? "Magazines" : "Strategy Guides",
         ["Kind"] = item.Kind,
-        ["Title"] = FirstNonBlank(item.Title, item.ManualTitle, item.MagazineTitle, item.GameTitle, Path.GetFileNameWithoutExtension(item.FileName)),
-        ["GameTitle"] = FirstNonBlank(item.GameTitle, item.Title, item.ManualTitle),
+        ["Title"] = cleanTitle,
+        ["GameTitle"] = FirstNonBlank(item.GameTitle, cleanTitle, cleanManualTitle),
         ["Platform"] = FirstNonBlank(item.Category, item.System, item.PrimarySystem, item.AssociatedPlatforms?.FirstOrDefault() ?? string.Empty, "Unsorted"),
         ["PreferredPlatform"] = FirstNonBlank(item.Category, item.System, item.PrimarySystem, "Unsorted"),
-        ["MagazineSeries"] = FirstNonBlank(item.MagazineTitle, item.Series, item.Title, "Unsorted Magazines"),
+        ["MagazineSeries"] = FirstNonBlank(cleanMagazineTitle, item.Series, "Unsorted Magazines"),
         ["Series"] = FirstNonBlank(item.Series, item.Franchise),
         ["IssueNumber"] = FirstNonBlank(item.IssueNumber, "000"),
         ["Number"] = FirstNonBlank(item.IssueNumber, "000"),
         ["Volume"] = item.Volume ?? string.Empty,
         ["CoveredGames"] = string.Join(", ", item.CoveredGames ?? Array.Empty<string>()),
-        ["Year"] = FirstNonBlank(item.Year, ExtractYear(item.CoverDate), ExtractYear(item.PublicationDate), "Unknown Year"),
+        ["Year"] = FirstNonBlank(item.Year, ExtractYear(item.PublicationDate), ExtractYear(item.CoverDate), ExtractYear(item.GameReleaseYear), string.Empty),
         ["Month"] = FirstNonBlank(ExtractMonth(item.CoverDate), ExtractMonth(item.PublicationDate)),
         ["PublicationDate"] = FirstNonBlank(item.PublicationDate, item.CoverDate, item.Year),
         ["Publisher"] = item.Publisher ?? string.Empty,
@@ -2977,8 +2983,8 @@ static string BuildOrganizationRelativePath(LibraryItem item, string template)
         ["ISBN10"] = item.Isbn10 ?? string.Empty,
         ["ISBN13"] = item.Isbn13 ?? string.Empty,
         ["ASIN"] = item.Asin ?? string.Empty,
-        ["ManualTitle"] = FirstNonBlank(item.ManualTitle, item.Title),
-        ["StrategyGuideTitle"] = FirstNonBlank(item.Title, item.GameTitle),
+        ["ManualTitle"] = cleanManualTitle,
+        ["StrategyGuideTitle"] = cleanStrategyTitle,
         ["Region"] = item.Region ?? string.Empty,
         ["Language"] = item.LanguageTag ?? string.Empty,
         ["Extension"] = ext
@@ -2986,7 +2992,7 @@ static string BuildOrganizationRelativePath(LibraryItem item, string template)
 
     var rendered = Regex.Replace(template ?? string.Empty, "\\{([A-Za-z0-9_]+)\\}", match =>
         values.TryGetValue(match.Groups[1].Value, out var value) ? NormalizeOrganizationTokenValue(value) : string.Empty);
-    rendered = rendered.Replace('\\', '/');
+    rendered = CleanupOrganizationRenderedTemplate(rendered.Replace('\\', '/'));
     var parts = rendered.Split('/', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
         .Select(SanitizePathPart)
         .Where(part => !string.IsNullOrWhiteSpace(part))
@@ -2997,6 +3003,43 @@ static string BuildOrganizationRelativePath(LibraryItem item, string template)
     if (string.IsNullOrWhiteSpace(Path.GetExtension(fileName)) && !string.IsNullOrWhiteSpace(ext)) fileName += ext;
     parts[^1] = SanitizeFileName(fileName);
     return string.Join('/', parts);
+}
+
+static string CleanOrganizationTitle(string? value, LibraryItem item)
+{
+    var text = value ?? string.Empty;
+    if (string.IsNullOrWhiteSpace(text)) return string.Empty;
+
+    text = Path.GetFileNameWithoutExtension(text.Trim());
+    text = NormalizeOrganizationTokenValue(text);
+
+    // Bulk rename templates can accidentally bake their own suffixes back into the Title
+    // after a file has already been organized once. Strip common generated suffixes so
+    // {Title} remains the document title instead of "Title - Strategy Guides - 2001".
+    for (var i = 0; i < 4; i++)
+    {
+        var before = text;
+        text = Regex.Replace(text, @"\s+-\s+(?:Manuals?|Strategy\s+Guides?|Magazines?)(?:\s+-\s*)?(?:[0-9Xx-]{10,17})?(?:\s+-\s*)?(?:(?:19|20)\d{2})?\s*$", string.Empty, RegexOptions.IgnoreCase);
+        text = Regex.Replace(text, @"\s+-\s*(?:19|20)\d{2}\s*$", string.Empty, RegexOptions.IgnoreCase);
+        text = Regex.Replace(text, @"\s+-\s+-\s*", " - ", RegexOptions.IgnoreCase);
+        text = text.Trim(' ', '.', '-');
+        if (string.Equals(before, text, StringComparison.Ordinal)) break;
+    }
+
+    return string.IsNullOrWhiteSpace(text)
+        ? FirstNonBlank(item.GameTitle, item.ManualTitle, item.MagazineTitle, item.Series, Path.GetFileNameWithoutExtension(item.FileName))
+        : text;
+}
+
+static string CleanupOrganizationRenderedTemplate(string value)
+{
+    var text = value ?? string.Empty;
+    text = Regex.Replace(text, @"\s+", " ");
+    text = Regex.Replace(text, @"\s+-\s*(?:-\s*)+", " - ");
+    text = Regex.Replace(text, @"(?:\s+-\s*)+(?=(?:\.[A-Za-z0-9]{1,8})?$)", string.Empty);
+    text = Regex.Replace(text, @"/\s+-\s*", "/");
+    text = Regex.Replace(text, @"\s+-\s*/", "/");
+    return text.Trim();
 }
 
 static string NormalizeOrganizationTokenValue(string? value)
