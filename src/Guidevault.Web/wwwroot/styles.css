@@ -19466,3 +19466,5 @@ body.colorscape-active.detail-page-mode .library-data-plain-list dt{
   .server-files-template-preset-row{grid-template-columns:1fr;}
   .server-files-template-preset-actions{justify-content:flex-start;flex-wrap:wrap;}
 }
+
+/* Guidevault 0.9.178 - File template match fix */

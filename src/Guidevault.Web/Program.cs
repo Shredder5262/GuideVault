@@ -16,7 +16,7 @@ using SixLabors.ImageSharp.Formats.Jpeg;
 using SixLabors.ImageSharp.Processing;
 
 var builder = WebApplication.CreateBuilder(args);
-const string GuidevaultVersion = "0.9.177";
+const string GuidevaultVersion = "0.9.178";
 var app = builder.Build();
 var metadataJsonOptions = new JsonSerializerOptions(JsonSerializerDefaults.Web) { PropertyNameCaseInsensitive = true };
 var options = app.Configuration.GetSection("Guidevault").Get<GuidevaultOptions>() ?? new GuidevaultOptions();
@@ -2974,15 +2974,15 @@ static string BuildOrganizationRelativePath(LibraryItem item, string template)
         ["Number"] = FirstNonBlank(item.IssueNumber, "000"),
         ["Volume"] = item.Volume ?? string.Empty,
         ["CoveredGames"] = string.Join(", ", item.CoveredGames ?? Array.Empty<string>()),
-        ["Year"] = FirstNonBlank(item.Year, ExtractYear(item.PublicationDate), ExtractYear(item.CoverDate), ExtractYear(item.GameReleaseYear), string.Empty),
-        ["Month"] = FirstNonBlank(ExtractMonth(item.CoverDate), ExtractMonth(item.PublicationDate)),
-        ["PublicationDate"] = FirstNonBlank(item.PublicationDate, item.CoverDate, item.Year),
-        ["Publisher"] = item.Publisher ?? string.Empty,
-        ["Writer"] = item.Writer ?? string.Empty,
-        ["ISBN"] = FirstNonBlank(item.Isbn13, item.Isbn10),
-        ["ISBN10"] = item.Isbn10 ?? string.Empty,
-        ["ISBN13"] = item.Isbn13 ?? string.Empty,
-        ["ASIN"] = item.Asin ?? string.Empty,
+        ["Year"] = FirstMeaningfulOrganizationValue(item.Year, ExtractYear(item.PublicationDate), ExtractYear(item.CoverDate), ExtractYear(item.GameReleaseYear)),
+        ["Month"] = FirstMeaningfulOrganizationValue(ExtractMonth(item.CoverDate), ExtractMonth(item.PublicationDate)),
+        ["PublicationDate"] = FirstMeaningfulOrganizationValue(item.PublicationDate, item.CoverDate, item.Year),
+        ["Publisher"] = FirstMeaningfulOrganizationValue(item.Publisher),
+        ["Writer"] = FirstMeaningfulOrganizationValue(item.Writer),
+        ["ISBN"] = FirstMeaningfulOrganizationValue(item.Isbn13, item.Isbn10),
+        ["ISBN10"] = FirstMeaningfulOrganizationValue(item.Isbn10),
+        ["ISBN13"] = FirstMeaningfulOrganizationValue(item.Isbn13),
+        ["ASIN"] = FirstMeaningfulOrganizationValue(item.Asin),
         ["ManualTitle"] = cleanManualTitle,
         ["StrategyGuideTitle"] = cleanStrategyTitle,
         ["Region"] = item.Region ?? string.Empty,
@@ -3012,23 +3012,34 @@ static string CleanOrganizationTitle(string? value, LibraryItem item)
 
     text = Path.GetFileNameWithoutExtension(text.Trim());
     text = NormalizeOrganizationTokenValue(text);
+    text = StripGeneratedOrganizationSuffixes(text);
 
-    // Bulk rename templates can accidentally bake their own suffixes back into the Title
-    // after a file has already been organized once. Strip common generated suffixes so
-    // {Title} remains the document title instead of "Title - Strategy Guides - 2001".
-    for (var i = 0; i < 4; i++)
+    if (string.IsNullOrWhiteSpace(text))
+    {
+        var fallback = FirstMeaningfulOrganizationValue(item.GameTitle, item.ManualTitle, item.MagazineTitle, item.Series, Path.GetFileNameWithoutExtension(item.FileName));
+        return StripGeneratedOrganizationSuffixes(NormalizeOrganizationTokenValue(fallback));
+    }
+
+    return text;
+}
+
+static string StripGeneratedOrganizationSuffixes(string? value)
+{
+    var text = value ?? string.Empty;
+    if (string.IsNullOrWhiteSpace(text)) return string.Empty;
+
+    for (var i = 0; i < 8; i++)
     {
         var before = text;
-        text = Regex.Replace(text, @"\s+-\s+(?:Manuals?|Strategy\s+Guides?|Magazines?)(?:\s+-\s*)?(?:[0-9Xx-]{10,17})?(?:\s+-\s*)?(?:(?:19|20)\d{2})?\s*$", string.Empty, RegexOptions.IgnoreCase);
-        text = Regex.Replace(text, @"\s+-\s*(?:19|20)\d{2}\s*$", string.Empty, RegexOptions.IgnoreCase);
+        text = Regex.Replace(text, @"\s+-\s+(?:Manuals?|Strategy\s+Guides?|Magazines?)(?:\s*-+\s*(?:[0-9Xx-]{10,17}|(?:19|20)\d{2}|Unknown|Unsorted|N/?A|None))*\s*$", string.Empty, RegexOptions.IgnoreCase);
+        text = Regex.Replace(text, @"\s+-+\s*(?:[0-9Xx-]{10,17}|(?:19|20)\d{2}|Unknown|Unsorted|N/?A|None)\s*$", string.Empty, RegexOptions.IgnoreCase);
         text = Regex.Replace(text, @"\s+-\s+-\s*", " - ", RegexOptions.IgnoreCase);
+        text = Regex.Replace(text, @"\s+--\s+", " - ", RegexOptions.IgnoreCase);
         text = text.Trim(' ', '.', '-');
         if (string.Equals(before, text, StringComparison.Ordinal)) break;
     }
 
-    return string.IsNullOrWhiteSpace(text)
-        ? FirstNonBlank(item.GameTitle, item.ManualTitle, item.MagazineTitle, item.Series, Path.GetFileNameWithoutExtension(item.FileName))
-        : text;
+    return text;
 }
 
 static string CleanupOrganizationRenderedTemplate(string value)
@@ -3036,10 +3047,29 @@ static string CleanupOrganizationRenderedTemplate(string value)
     var text = value ?? string.Empty;
     text = Regex.Replace(text, @"\s+", " ");
     text = Regex.Replace(text, @"\s+-\s*(?:-\s*)+", " - ");
+    text = Regex.Replace(text, @"\s+-\s*(?=(?:/|$|\.[A-Za-z0-9]{1,8}))", string.Empty);
     text = Regex.Replace(text, @"(?:\s+-\s*)+(?=(?:\.[A-Za-z0-9]{1,8})?$)", string.Empty);
     text = Regex.Replace(text, @"/\s+-\s*", "/");
     text = Regex.Replace(text, @"\s+-\s*/", "/");
-    return text.Trim();
+    text = Regex.Replace(text, @"/{2,}", "/");
+    return text.Trim(' ', '/', '-');
+}
+
+static bool IsPlaceholderOrganizationValue(string? value)
+{
+    var text = (value ?? string.Empty).Trim();
+    if (string.IsNullOrWhiteSpace(text)) return true;
+    var normalized = Regex.Replace(text, @"[\s._-]+", string.Empty).ToUpperInvariant();
+    return normalized is "UNKNOWN" or "UNSORTED" or "NA" or "N/A" or "NONE" or "NULL" or "TBD";
+}
+
+static string FirstMeaningfulOrganizationValue(params string?[] values)
+{
+    foreach (var value in values)
+    {
+        if (!IsPlaceholderOrganizationValue(value)) return value!.Trim();
+    }
+    return string.Empty;
 }
 
 static string NormalizeOrganizationTokenValue(string? value)
@@ -11758,6 +11788,6 @@ static class GuidevaultLibraryIoGate
 
 static class GuidevaultBuildInfo
 {
-    public const string Version = "0.9.177";
+    public const string Version = "0.9.178";
 }
 
