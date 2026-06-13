@@ -19576,3 +19576,36 @@ body.colorscape-active.detail-page-mode .library-data-plain-list dt{
 body.colorscape-active.detail-page-mode .metadata-cover-picker{border-color:rgba(var(--colorscape-rgb),.32)!important;background:rgba(2,8,16,.36)!important;}
 body.colorscape-active.detail-page-mode .metadata-cover-choice.selected{border-color:rgba(var(--colorscape-rgb),.92)!important;box-shadow:0 0 0 2px rgba(var(--colorscape-rgb),.18),0 16px 34px rgba(0,0,0,.24)!important;}
 @media(max-width:760px){.metadata-cover-picker-head{display:grid;}.metadata-cover-picker-actions{justify-content:flex-start;}.metadata-cover-picker-grid{grid-template-columns:repeat(auto-fill,minmax(104px,1fr));}}
+
+/* Guidevault 0.9.192 - PDF conversion build fix */
+.file-conversion-card .server-files-format-summary{
+  display:flex;
+  flex-direction:column;
+  gap:8px;
+  margin:12px 0;
+  padding:13px 14px;
+  border:1px solid rgba(88,166,255,.14);
+  border-radius:16px;
+  background:rgba(3,9,19,.34);
+  color:#dbeafe;
+}
+.file-conversion-card .server-files-format-summary strong{color:#f7fbff;font-size:.92rem;letter-spacing:.02em;text-transform:uppercase;}
+.file-conversion-card .server-files-format-summary span,
+.file-conversion-card .server-files-format-summary em{color:#9fb1c7;font-style:normal;font-size:.86rem;}
+.server-files-format-chip-row{display:flex;flex-wrap:wrap;gap:8px;}
+.server-files-format-chip{
+  display:inline-flex;
+  align-items:center;
+  gap:7px;
+  padding:7px 10px;
+  border:1px solid rgba(88,166,255,.18);
+  border-radius:999px;
+  background:rgba(88,166,255,.075);
+  color:#cfe3ff!important;
+  font-size:.82rem!important;
+}
+.server-files-format-chip b{color:#f8fbff;}
+.file-conversion-card .settings-actions .ghost:disabled{
+  opacity:.5;
+  cursor:not-allowed;
+}

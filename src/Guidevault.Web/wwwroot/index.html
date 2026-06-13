@@ -4,9 +4,9 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Guidevault</title>
-  <link rel="icon" type="image/x-icon" href="/assets/favicon.ico?v=0.9.190" />
-  <link rel="shortcut icon" type="image/x-icon" href="/assets/favicon.ico?v=0.9.190" />
-  <link rel="stylesheet" href="/styles.css?v=0.9.191-delete-warning-fix" />
+  <link rel="icon" type="image/x-icon" href="/assets/favicon.ico?v=0.9.192" />
+  <link rel="shortcut icon" type="image/x-icon" href="/assets/favicon.ico?v=0.9.192" />
+  <link rel="stylesheet" href="/styles.css?v=0.9.193-pdf-conversion-build-fix" />
 </head>
 <body class="right-collapsed auth-locked">
   <section id="loginView" class="login-view" aria-labelledby="loginTitle">
@@ -1441,6 +1441,30 @@
                 <p id="serverFilesWriteBackStatus" class="sub account-status" aria-live="polite"></p>
                 <div id="serverFilesWriteBackResults" class="server-files-preview-table compact"></div>
               </article>
+
+              <article class="settings-card server-files-card file-conversion-card">
+                <div class="file-metadata-card-heading">
+                  <h3>Format Conversion</h3>
+                  <p class="sub">Show the current source format for the selected files and create converted/optimized copies beside the original packages.</p>
+                </div>
+                <div id="serverFilesFormatSummary" class="server-files-format-summary" aria-live="polite">
+                  <strong>Current Format</strong>
+                  <span>Select files above to see their current formats.</span>
+                </div>
+                <div class="server-files-writeback-callout">
+                  <strong>Conversions are copy-first.</strong>
+                  <span>GuideVault creates a new CBZ/PDF/optimized CBZ beside the source file and leaves the original untouched. Run a rescan when you want the new copy indexed.</span>
+                </div>
+                <div class="settings-actions inline-actions server-files-actions">
+                  <button id="serverFilesConvertCbz" class="primary" type="button">Convert Selected to CBZ</button>
+                  <button id="serverFilesConvertPdf" class="ghost" type="button">Convert Selected to PDF</button>
+                  <button id="serverFilesOptimizeArchive" class="ghost" type="button">Optimize / Repack Selected</button>
+                  <button class="ghost" type="button" disabled title="CBR/RAR creation requires external RAR tooling and is intentionally not bundled.">Convert to CBR</button>
+                </div>
+                <p class="field-help">Optimize/Repack normalizes archive order and ZIP compression into a new CBZ copy. JPEG-heavy archives may not shrink much because the images are already compressed.</p>
+                <p id="serverFilesConvertStatus" class="sub account-status" aria-live="polite"></p>
+                <div id="serverFilesConvertResults" class="server-files-preview-table compact"></div>
+              </article>
             </div>
           </section>
 
@@ -1804,6 +1828,26 @@
               <h2>Update History</h2>
             </div>
             <div class="system-update-list">
+              <details class="system-update-entry" open>
+                <summary>
+                  <span>Guidevault 0.9.192 - PDF Conversion Build Fix</span>
+                  <em>Installed</em>
+                </summary>
+                <ul>
+                  <li>Fixed the PDF conversion image loader to read from a stream so the Release build no longer fails with a byte-array overload compile error.</li>
+                  <li>Kept the Format Conversion tools behavior unchanged while cleaning up the build issue.</li>
+                </ul>
+              </details>
+              <details class="system-update-entry" open>
+                <summary>
+                  <span>Guidevault 0.9.191 - Format Conversion Tools</span>
+                  <em>Installed</em>
+                </summary>
+                <ul>
+                  <li>Added a Format Conversion panel under Server &gt; Files with selected-format detection, Convert to CBZ, Convert to PDF, and Optimize/Repack actions.</li>
+                  <li>Kept CBR creation visible but disabled because writing RAR/CBR requires external archive tooling.</li>
+                </ul>
+              </details>
               <details class="system-update-entry" open>
                 <summary>
                   <span>Guidevault 0.9.190 - Archive Delete Build Warning Cleanup</span>
@@ -2726,7 +2770,7 @@
   </dialog>
 
 
-  <script src="/app.js?v=0.9.191-delete-warning-fix"></script>
+  <script src="/app.js?v=0.9.193-pdf-conversion-build-fix"></script>
 </body>
 </html>
 

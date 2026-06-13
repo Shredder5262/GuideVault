@@ -17,7 +17,7 @@ using SixLabors.ImageSharp.Processing;
 using Microsoft.AspNetCore.Mvc;
 
 var builder = WebApplication.CreateBuilder(args);
-const string GuidevaultVersion = "0.9.191";
+const string GuidevaultVersion = "0.9.193";
 var app = builder.Build();
 var metadataJsonOptions = new JsonSerializerOptions(JsonSerializerDefaults.Web) { PropertyNameCaseInsensitive = true };
 var options = app.Configuration.GetSection("Guidevault").Get<GuidevaultOptions>() ?? new GuidevaultOptions();
@@ -1436,6 +1436,106 @@ app.MapPost("/api/items/files/organize/apply", (JsonElement payload) =>
     {
         app.Logger.LogError(ex, "File organization apply failed.");
         return Results.BadRequest(new { error = $"File organization apply failed: {ex.Message}" });
+    }
+});
+
+
+app.MapPost("/api/items/files/convert", async (JsonElement payload) =>
+{
+    static string ReadString(JsonElement json, string name)
+    {
+        if (json.ValueKind != JsonValueKind.Object) return string.Empty;
+        if (json.TryGetProperty(name, out var direct) && direct.ValueKind == JsonValueKind.String) return direct.GetString()?.Trim() ?? string.Empty;
+        foreach (var property in json.EnumerateObject())
+        {
+            if (property.Name.Equals(name, StringComparison.OrdinalIgnoreCase) && property.Value.ValueKind == JsonValueKind.String)
+                return property.Value.GetString()?.Trim() ?? string.Empty;
+        }
+        return string.Empty;
+    }
+
+    try
+    {
+        var ids = MetadataIdListJsonReader.Read(payload);
+        if (ids.Count == 0)
+            return Results.BadRequest(new { error = "No item ids were supplied for file conversion." });
+
+        var targetFormat = ReadString(payload, "targetFormat").ToLowerInvariant();
+        if (string.IsNullOrWhiteSpace(targetFormat))
+            return Results.BadRequest(new { error = "Choose a target format before converting files." });
+
+        if (targetFormat is not ("cbz" or "pdf" or "optimize"))
+            return Results.BadRequest(new { error = $"Unsupported conversion target: {targetFormat}." });
+
+        if (!GuidevaultLibraryIoGate.TryBeginArchiveWrite(out var archiveWriteLease, out var busyMessage) || archiveWriteLease is null)
+            return Results.Conflict(new { error = busyMessage });
+
+        try
+        {
+            var snapshot = cache.GetItemsSnapshot()
+                .Where(item => !string.IsNullOrWhiteSpace(item.Id))
+                .GroupBy(item => item.Id, StringComparer.OrdinalIgnoreCase)
+                .ToDictionary(group => group.Key, group => group.First(), StringComparer.OrdinalIgnoreCase);
+            var results = new List<object>();
+            var converted = 0;
+            var failed = 0;
+
+            foreach (var id in ids)
+            {
+                var item = cache.TryGetCachedItem(id) ?? (snapshot.TryGetValue(id, out var cached) ? cached : null);
+                if (item is null)
+                {
+                    failed++;
+                    results.Add(new { id, success = false, message = "Item was not found in the active library cache." });
+                    continue;
+                }
+
+                var updated = metadataStore.ApplyOverride(item);
+                var exportDocument = GuidevaultNativeMetadata.BuildExport(updated, new ItemMetadataUpdate());
+                var exportJson = JsonSerializer.Serialize(exportDocument, GuidevaultNativeMetadata.JsonOptions);
+                var result = await ArchiveReader.ConvertArchiveAsync(updated.Path, updated.Kind, exportJson, targetFormat);
+                if (result.Success) converted++; else failed++;
+                results.Add(new
+                {
+                    id = updated.Id,
+                    title = updated.Title,
+                    kind = updated.Kind,
+                    fileName = updated.FileName,
+                    success = result.Success,
+                    sourceFileName = result.SourceFileName,
+                    sourceFormat = result.SourceFormat,
+                    sourceBytes = result.SourceBytes,
+                    outputPath = result.OutputPath,
+                    outputFileName = result.OutputFileName,
+                    targetFormat = result.TargetFormat,
+                    outputBytes = result.OutputBytes,
+                    createdPackage = result.CreatedPackage,
+                    message = result.Message
+                });
+            }
+
+            RecordSystemEvent("Files", "File format conversion", $"Converted/optimized {converted} file(s); {failed} failed.", "api");
+
+            return Results.Ok(new
+            {
+                requested = ids.Count,
+                converted,
+                failed,
+                results,
+                message = failed == 0
+                    ? $"Converted/optimized {converted} selected file(s)."
+                    : $"Converted/optimized {converted} file(s); {failed} failed."
+            });
+        }
+        finally
+        {
+            archiveWriteLease.Dispose();
+        }
+    }
+    catch (Exception ex)
+    {
+        app.Logger.LogError(ex, "File conversion failed.");
+        return Results.BadRequest(new { error = $"File conversion failed: {ex.Message}" });
     }
 });
 
@@ -9657,6 +9757,8 @@ public static class GuidevaultNativeMetadata
 
 public sealed record ArchiveMetadataWriteResult(bool Success, string Message, string MetadataFileName, string WrittenArchivePath, bool CreatedPackage, string OriginalArchivePath);
 
+public sealed record ArchiveConversionResult(bool Success, string Message, string SourcePath, string SourceFileName, string SourceFormat, long SourceBytes, string OutputPath, string OutputFileName, string TargetFormat, long OutputBytes, bool CreatedPackage);
+
 public sealed record ArchiveValidationResult(bool IsReadable, string Message, int PageCount);
 
 public static class ArchiveReader
@@ -9942,6 +10044,268 @@ public static class ArchiveReader
         {
             return new ArchiveMetadataWriteResult(false, $"Unable to write Guidevault metadata: {ex.Message}", metadataFileName, string.Empty, false, archivePath);
         }
+    }
+
+
+    public static async Task<ArchiveConversionResult> ConvertArchiveAsync(string archivePath, string kind, string guidevaultJson, string targetFormat)
+    {
+        var sourceFileName = string.IsNullOrWhiteSpace(archivePath) ? string.Empty : Path.GetFileName(archivePath);
+        var sourceFormat = FormatLabelFromPath(archivePath);
+        long sourceBytes = 0;
+        try { if (File.Exists(archivePath)) sourceBytes = new FileInfo(archivePath).Length; } catch { }
+
+        if (string.IsNullOrWhiteSpace(archivePath) || !File.Exists(archivePath))
+            return new ArchiveConversionResult(false, "Source file was not found.", archivePath, sourceFileName, sourceFormat, sourceBytes, string.Empty, string.Empty, targetFormat.ToUpperInvariant(), 0, false);
+
+        var requested = (targetFormat ?? string.Empty).Trim().ToLowerInvariant();
+        if (requested is not ("cbz" or "pdf" or "optimize"))
+            return new ArchiveConversionResult(false, $"Unsupported conversion target: {targetFormat}.", archivePath, sourceFileName, sourceFormat, sourceBytes, string.Empty, string.Empty, requested.ToUpperInvariant(), 0, false);
+
+        var directory = Path.GetDirectoryName(archivePath) ?? Directory.GetCurrentDirectory();
+        if (!TryVerifyWritableDirectory(directory, out var writeError))
+            return new ArchiveConversionResult(false, BuildReadOnlyMetadataExportMessage(directory, writeError), archivePath, sourceFileName, sourceFormat, sourceBytes, string.Empty, string.Empty, requested.ToUpperInvariant(), 0, false);
+
+        try
+        {
+            var metadataFileName = GetGuidevaultMetadataEntryName(kind);
+            var ext = Path.GetExtension(archivePath).ToLowerInvariant();
+            if (requested == "cbz")
+            {
+                if (ext == ".pdf")
+                    return new ArchiveConversionResult(false, "PDF to CBZ conversion is not available without a PDF rasterizer. Export the PDF pages externally first, then import as CBZ.", archivePath, sourceFileName, sourceFormat, sourceBytes, string.Empty, string.Empty, "CBZ", 0, false);
+
+                var destination = UniqueSiblingPath(archivePath, ext == ".cbz" ? ".converted.cbz" : ".cbz");
+                if (ext == ".cbz") await RepackCbzAsync(archivePath, destination, metadataFileName, guidevaultJson);
+                else await CreateCbzFromReadableArchiveAsync(archivePath, destination, metadataFileName, guidevaultJson);
+                ClearCacheForWrittenArchive(destination);
+                var outputBytes = new FileInfo(destination).Length;
+                return new ArchiveConversionResult(true, $"Created {Path.GetFileName(destination)} as a CBZ copy. The original file was not deleted.", archivePath, sourceFileName, sourceFormat, sourceBytes, destination, Path.GetFileName(destination), "CBZ", outputBytes, true);
+            }
+
+            if (requested == "optimize")
+            {
+                if (ext is not ".cbz" and not ".zip" and not ".cbr" and not ".rar")
+                    return new ArchiveConversionResult(false, "Optimize/Repack is currently available for CBZ/ZIP/CBR-style image archives only.", archivePath, sourceFileName, sourceFormat, sourceBytes, string.Empty, string.Empty, "Optimized CBZ", 0, false);
+
+                var destination = UniqueSiblingPath(archivePath, ".optimized.cbz");
+                if (ext is ".cbz" or ".zip") await RepackCbzAsync(archivePath, destination, metadataFileName, guidevaultJson);
+                else await CreateCbzFromReadableArchiveAsync(archivePath, destination, metadataFileName, guidevaultJson);
+                ClearCacheForWrittenArchive(destination);
+                var outputBytes = new FileInfo(destination).Length;
+                var delta = sourceBytes > 0 ? sourceBytes - outputBytes : 0;
+                var deltaText = delta > 0 ? $" Saved {FormatBytes(delta)}." : delta < 0 ? $" Output is {FormatBytes(Math.Abs(delta))} larger; image files were already compressed." : " Size was unchanged.";
+                return new ArchiveConversionResult(true, $"Created optimized CBZ copy: {Path.GetFileName(destination)}.{deltaText} The original file was not deleted.", archivePath, sourceFileName, sourceFormat, sourceBytes, destination, Path.GetFileName(destination), "Optimized CBZ", outputBytes, true);
+            }
+
+            if (requested == "pdf")
+            {
+                if (ext == ".pdf")
+                    return new ArchiveConversionResult(false, "This item is already a PDF. Use Optimize/Repack only for image archives.", archivePath, sourceFileName, sourceFormat, sourceBytes, string.Empty, string.Empty, "PDF", 0, false);
+
+                var imageEntries = GetImageEntries(archivePath);
+                if (imageEntries.Length == 0)
+                    return new ArchiveConversionResult(false, "No image pages were found to write into a PDF.", archivePath, sourceFileName, sourceFormat, sourceBytes, string.Empty, string.Empty, "PDF", 0, false);
+
+                var destination = UniqueSiblingPath(archivePath, ".pdf");
+                await CreatePdfFromImageArchiveAsync(archivePath, destination, imageEntries);
+                var outputBytes = new FileInfo(destination).Length;
+                return new ArchiveConversionResult(true, $"Created {Path.GetFileName(destination)} as a PDF copy. The original file was not deleted.", archivePath, sourceFileName, sourceFormat, sourceBytes, destination, Path.GetFileName(destination), "PDF", outputBytes, true);
+            }
+
+            return new ArchiveConversionResult(false, $"Unsupported conversion target: {targetFormat}.", archivePath, sourceFileName, sourceFormat, sourceBytes, string.Empty, string.Empty, requested.ToUpperInvariant(), 0, false);
+        }
+        catch (Exception ex) when (IsReadOnlyOrPermissionException(ex))
+        {
+            return new ArchiveConversionResult(false, BuildReadOnlyMetadataExportMessage(directory, ex.Message), archivePath, sourceFileName, sourceFormat, sourceBytes, string.Empty, string.Empty, requested.ToUpperInvariant(), 0, false);
+        }
+        catch (Exception ex)
+        {
+            return new ArchiveConversionResult(false, $"Conversion failed: {ex.Message}", archivePath, sourceFileName, sourceFormat, sourceBytes, string.Empty, string.Empty, requested.ToUpperInvariant(), 0, false);
+        }
+    }
+
+    private static async Task RepackCbzAsync(string sourcePath, string destinationPath, string metadataFileName, string guidevaultJson)
+    {
+        var directory = Path.GetDirectoryName(destinationPath) ?? Directory.GetCurrentDirectory();
+        Directory.CreateDirectory(directory);
+        var tempPath = Path.Combine(directory, $".{Path.GetFileName(destinationPath)}.{Guid.NewGuid():N}.tmp");
+        try
+        {
+            using (var output = ZipFile.Open(tempPath, ZipArchiveMode.Create))
+            using (var source = ZipFile.OpenRead(sourcePath))
+            {
+                var usedNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                foreach (var entry in source.Entries.OrderBy(entry => NaturalSortKey(Normalize(entry.FullName))))
+                {
+                    if (string.IsNullOrWhiteSpace(entry.FullName)) continue;
+                    var entryName = Normalize(entry.FullName).TrimStart('/');
+                    if (string.IsNullOrWhiteSpace(entryName) || !usedNames.Add(entryName)) continue;
+                    var rootName = Path.GetFileName(entryName);
+                    if (GuidevaultMetadataEntryNames.Any(name => string.Equals(rootName, name, StringComparison.OrdinalIgnoreCase))) continue;
+                    if (string.IsNullOrEmpty(entry.Name) && entry.FullName.EndsWith("/", StringComparison.Ordinal)) continue;
+
+                    var copied = output.CreateEntry(entryName, CompressionLevel.Optimal);
+                    copied.LastWriteTime = entry.LastWriteTime;
+                    await using var input = entry.Open();
+                    await using var dest = copied.Open();
+                    await input.CopyToAsync(dest);
+                }
+
+                if (!string.IsNullOrWhiteSpace(guidevaultJson))
+                    await WriteZipTextEntryAsync(output, metadataFileName, guidevaultJson);
+            }
+
+            if (File.Exists(destinationPath)) File.Delete(destinationPath);
+            File.Move(tempPath, destinationPath);
+        }
+        finally
+        {
+            TryDeleteFile(tempPath);
+        }
+    }
+
+    private static async Task CreatePdfFromImageArchiveAsync(string sourcePath, string destinationPath, IReadOnlyList<string> imageEntries)
+    {
+        var directory = Path.GetDirectoryName(destinationPath) ?? Directory.GetCurrentDirectory();
+        Directory.CreateDirectory(directory);
+        var tempPath = Path.Combine(directory, $".{Path.GetFileName(destinationPath)}.{Guid.NewGuid():N}.tmp");
+        try
+        {
+            var pages = new List<PdfImagePage>();
+            for (var i = 0; i < imageEntries.Count; i++)
+            {
+                var page = await GetImagePageAsync(sourcePath, i);
+                if (page is null) continue;
+                var jpeg = await NormalizeImageForPdfAsync(page.Value.Bytes, page.Value.ContentType);
+                if (jpeg is not null) pages.Add(jpeg);
+            }
+
+            if (pages.Count == 0) throw new InvalidDataException("No readable image pages could be converted to PDF.");
+            await WriteSimpleImagePdfAsync(tempPath, pages);
+            if (File.Exists(destinationPath)) File.Delete(destinationPath);
+            File.Move(tempPath, destinationPath);
+        }
+        finally
+        {
+            TryDeleteFile(tempPath);
+        }
+    }
+
+    private sealed record PdfImagePage(byte[] JpegBytes, int Width, int Height);
+
+    private static async Task<PdfImagePage?> NormalizeImageForPdfAsync(byte[] bytes, string contentType)
+    {
+        try
+        {
+            await using var input = new MemoryStream(bytes, writable: false);
+            using var image = await Image.LoadAsync<SixLabors.ImageSharp.PixelFormats.Rgba32>(input);
+            using var output = new MemoryStream();
+            await image.SaveAsJpegAsync(output, new JpegEncoder { Quality = 92 });
+            return new PdfImagePage(output.ToArray(), image.Width, image.Height);
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    private static async Task WriteSimpleImagePdfAsync(string path, IReadOnlyList<PdfImagePage> pages)
+    {
+        await using var stream = new FileStream(path, FileMode.Create, FileAccess.Write, FileShare.None);
+        var offsets = new List<long> { 0 };
+        async Task WriteAsciiAsync(string value)
+        {
+            var data = Encoding.ASCII.GetBytes(value);
+            await stream.WriteAsync(data);
+        }
+        async Task WriteObjectAsync(int number, string body)
+        {
+            offsets.Add(stream.Position);
+            await WriteAsciiAsync($"{number} 0 obj\n{body}\nendobj\n");
+        }
+
+        await WriteAsciiAsync("%PDF-1.4\n%\u00E2\u00E3\u00CF\u00D3\n");
+        var pageCount = pages.Count;
+        var catalogObj = 1;
+        var pagesObj = 2;
+        var firstPageObj = 3;
+        var kids = string.Join(' ', Enumerable.Range(0, pageCount).Select(i => $"{firstPageObj + (i * 3)} 0 R"));
+        await WriteObjectAsync(catalogObj, $"<< /Type /Catalog /Pages {pagesObj} 0 R >>");
+        await WriteObjectAsync(pagesObj, $"<< /Type /Pages /Count {pageCount} /Kids [ {kids} ] >>");
+
+        for (var i = 0; i < pageCount; i++)
+        {
+            var page = pages[i];
+            var pageObj = firstPageObj + (i * 3);
+            var imageObj = pageObj + 1;
+            var contentObj = pageObj + 2;
+            var width = Math.Max(1, page.Width);
+            var height = Math.Max(1, page.Height);
+            var content = $"q\n{width} 0 0 {height} 0 0 cm\n/Im0 Do\nQ\n";
+            var contentBytes = Encoding.ASCII.GetBytes(content);
+
+            await WriteObjectAsync(pageObj, $"<< /Type /Page /Parent {pagesObj} 0 R /MediaBox [0 0 {width} {height}] /Resources << /XObject << /Im0 {imageObj} 0 R >> >> /Contents {contentObj} 0 R >>");
+
+            offsets.Add(stream.Position);
+            await WriteAsciiAsync($"{imageObj} 0 obj\n<< /Type /XObject /Subtype /Image /Width {width} /Height {height} /ColorSpace /DeviceRGB /BitsPerComponent 8 /Filter /DCTDecode /Length {page.JpegBytes.Length} >>\nstream\n");
+            await stream.WriteAsync(page.JpegBytes);
+            await WriteAsciiAsync("\nendstream\nendobj\n");
+
+            offsets.Add(stream.Position);
+            await WriteAsciiAsync($"{contentObj} 0 obj\n<< /Length {contentBytes.Length} >>\nstream\n");
+            await stream.WriteAsync(contentBytes);
+            await WriteAsciiAsync("endstream\nendobj\n");
+        }
+
+        var xref = stream.Position;
+        var objectCount = 2 + (pageCount * 3);
+        await WriteAsciiAsync($"xref\n0 {objectCount + 1}\n0000000000 65535 f \n");
+        for (var i = 1; i <= objectCount; i++)
+            await WriteAsciiAsync($"{offsets[i]:D10} 00000 n \n");
+        await WriteAsciiAsync($"trailer\n<< /Size {objectCount + 1} /Root {catalogObj} 0 R >>\nstartxref\n{xref}\n%%EOF\n");
+    }
+
+    private static string UniqueSiblingPath(string sourcePath, string requestedExtension)
+    {
+        var directory = Path.GetDirectoryName(sourcePath) ?? Directory.GetCurrentDirectory();
+        var baseName = Path.GetFileNameWithoutExtension(sourcePath);
+        var extension = requestedExtension.StartsWith('.') ? requestedExtension : "." + requestedExtension;
+        var candidate = Path.Combine(directory, baseName + extension);
+        if (!File.Exists(candidate) && !candidate.Equals(sourcePath, StringComparison.OrdinalIgnoreCase)) return candidate;
+
+        var suffix = extension.StartsWith(".converted", StringComparison.OrdinalIgnoreCase) || extension.StartsWith(".optimized", StringComparison.OrdinalIgnoreCase)
+            ? extension
+            : ".converted" + extension;
+        candidate = Path.Combine(directory, baseName + suffix);
+        if (!File.Exists(candidate) && !candidate.Equals(sourcePath, StringComparison.OrdinalIgnoreCase)) return candidate;
+
+        for (var i = 2; i < 1000; i++)
+        {
+            candidate = Path.Combine(directory, $"{baseName}.converted-{i}{extension}");
+            if (!File.Exists(candidate) && !candidate.Equals(sourcePath, StringComparison.OrdinalIgnoreCase)) return candidate;
+        }
+
+        return Path.Combine(directory, $"{baseName}.converted-{Guid.NewGuid():N}{extension}");
+    }
+
+    private static string FormatLabelFromPath(string path)
+    {
+        var ext = Path.GetExtension(path).TrimStart('.').ToUpperInvariant();
+        return string.IsNullOrWhiteSpace(ext) ? "Unknown" : ext;
+    }
+
+    private static string FormatBytes(long bytes)
+    {
+        string[] units = ["B", "KB", "MB", "GB", "TB"];
+        var value = Math.Max(0, bytes);
+        var unit = 0;
+        double display = value;
+        while (display >= 1024 && unit < units.Length - 1)
+        {
+            display /= 1024;
+            unit++;
+        }
+        return $"{display:0.#} {units[unit]}";
     }
 
     private static async Task<string?> ReadFirstTextEntryAsync(string archivePath, string[] entryNames)
@@ -12394,6 +12758,6 @@ static class GuidevaultLibraryIoGate
 
 static class GuidevaultBuildInfo
 {
-    public const string Version = "0.9.191";
+    public const string Version = "0.9.193";
 }
 

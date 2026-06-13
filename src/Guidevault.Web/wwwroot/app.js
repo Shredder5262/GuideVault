@@ -100,7 +100,7 @@ const GUIDEVAULT_LIBRARY_CHUNK_YIELD_MS = 30;
 const GUIDEVAULT_STARTUP_STATUS_HIDE_MS = 2400;
 const GUIDEVAULT_LIBRARY_SEARCH_DEBOUNCE_MS = 180;
 const GUIDEVAULT_SORT_COLLATOR = new Intl.Collator(undefined, { numeric: true, sensitivity: 'base' });
-const GUIDEVAULT_APP_VERSION = '0.9.191';
+const GUIDEVAULT_APP_VERSION = '0.9.193';
 const GUIDEVAULT_FILENAME_SCHEMA_KEY = 'guidevault.filenameRename.schema.v1';
 const GUIDEVAULT_FILE_ORGANIZATION_TEMPLATE_PRESETS_KEY = 'guidevault.fileOrganization.templatePresets.v2';
 const GUIDEVAULT_FILE_ORGANIZATION_TEMPLATE_PRESETS_LEGACY_KEY = 'guidevault.fileOrganization.templatePresets.v1';
@@ -19686,6 +19686,7 @@ function renderServerFilesWorkspace() {
     showAll.textContent = hidden ? `Show All ${allItems.length}` : 'Show All';
   }
   serverFilesRefreshSummary();
+  renderServerFilesFormatTools();
 }
 
 function serverFilesScheduleRender(delay = METADATA_MANAGER_SEARCH_DEBOUNCE_MS) {
@@ -19748,6 +19749,7 @@ function serverFilesClearSelection() {
   state.serverFilesPreviewShowAll = false;
   if ($('serverFilesPreviewTable')) $('serverFilesPreviewTable').innerHTML = '';
   if ($('serverFilesWriteBackResults')) $('serverFilesWriteBackResults').innerHTML = '';
+  if ($('serverFilesConvertResults')) $('serverFilesConvertResults').innerHTML = '';
   if ($('serverFilesApplyPreview')) $('serverFilesApplyPreview').disabled = true;
   renderServerFilesWorkspace();
 }
@@ -20296,6 +20298,93 @@ function serverFilesWriteBackRowsHtml(rows = []) {
     </tr>`).join('')}</tbody></table>`;
 }
 
+
+function serverFilesFormatLabel(item) {
+  const raw = String(item?.format || item?.fileFormat || '').trim() || String(serverFilesItemPath(item).split('.').pop() || '').trim();
+  return raw ? raw.toUpperCase().replace(/^\./, '') : 'Unknown';
+}
+
+function serverFilesFormatSummaryHtml(items = []) {
+  if (!items.length) return '<strong>Current Format</strong><span>Select files above to see their current formats.</span>';
+  const counts = items.reduce((map, item) => {
+    const label = serverFilesFormatLabel(item);
+    map[label] = (map[label] || 0) + 1;
+    return map;
+  }, {});
+  const chips = Object.entries(counts)
+    .sort((a, b) => a[0].localeCompare(b[0]))
+    .map(([format, count]) => `<span class="server-files-format-chip"><b>${escapeHtml(format)}</b>${count} file${count === 1 ? '' : 's'}</span>`)
+    .join('');
+  return `<strong>Current Format</strong><div class="server-files-format-chip-row">${chips}</div><em>${items.length} selected file${items.length === 1 ? '' : 's'} ready for conversion actions.</em>`;
+}
+
+function renderServerFilesFormatTools() {
+  const summary = $('serverFilesFormatSummary');
+  if (!summary) return;
+  const items = serverFilesSelectedItemsFromState();
+  summary.innerHTML = serverFilesFormatSummaryHtml(items);
+  const hasSelection = items.length > 0;
+  ['serverFilesConvertCbz','serverFilesConvertPdf','serverFilesOptimizeArchive'].forEach(id => { if ($(id)) $(id).disabled = !hasSelection; });
+}
+
+function serverFilesFormatBytes(bytes) {
+  const value = Number(bytes || 0);
+  if (!Number.isFinite(value) || value <= 0) return '\u2014';
+  const units = ['B','KB','MB','GB','TB'];
+  let size = value;
+  let unit = 0;
+  while (size >= 1024 && unit < units.length - 1) { size /= 1024; unit++; }
+  return `${size.toFixed(size >= 10 || unit === 0 ? 0 : 1)} ${units[unit]}`;
+}
+
+function serverFilesConvertRowsHtml(rows = []) {
+  if (!rows.length) return '<p class="sub">No conversion results yet.</p>';
+  return `<table><thead><tr><th>Type</th><th>Title</th><th>From</th><th>To</th><th>Size</th><th>Status</th></tr></thead><tbody>${rows.map(row => `
+    <tr class="server-files-row-${row.success ? 'ready' : 'conflict'}">
+      <td>${escapeHtml(row.kind || '')}</td>
+      <td>${escapeHtml(row.title || '')}</td>
+      <td>${escapeHtml(row.sourceFormat || '')}<br><small>${escapeHtml(row.sourceFileName || row.fileName || '')}</small></td>
+      <td>${escapeHtml(row.targetFormat || '')}<br><small>${escapeHtml(row.outputFileName || '\u2014')}</small></td>
+      <td>${serverFilesFormatBytes(row.sourceBytes)} &rarr; ${serverFilesFormatBytes(row.outputBytes)}</td>
+      <td>${escapeHtml(row.success ? 'Created' : 'Failed')}${row.message ? `<br><small>${escapeHtml(row.message)}</small>` : ''}</td>
+    </tr>`).join('')}</tbody></table>`;
+}
+
+async function serverFilesConvertSelected(targetFormat = 'cbz') {
+  const ids = serverFilesCurrentSelectedIds();
+  if (!ids.length) {
+    serverFilesSetStatus('serverFilesConvertStatus', 'Select one or more files from the Files workspace list first.', 'error');
+    return;
+  }
+  const labels = { cbz: 'CBZ', pdf: 'PDF', optimize: 'optimized CBZ' };
+  const actionLabel = labels[targetFormat] || targetFormat.toUpperCase();
+  const confirmed = await showAppConfirm({
+    title: `Create ${actionLabel} copies?`,
+    message: `GuideVault will create ${actionLabel} copy files beside ${ids.length} selected source file(s). The original files will not be deleted or replaced.`,
+    okText: `Create ${actionLabel}`,
+    cancelText: 'Cancel'
+  });
+  if (!confirmed) return;
+  const buttons = ['serverFilesConvertCbz','serverFilesConvertPdf','serverFilesOptimizeArchive'].map(id => $(id)).filter(Boolean);
+  buttons.forEach(btn => { btn.disabled = true; });
+  serverFilesSetStatus('serverFilesConvertStatus', `Creating ${actionLabel} copy files for ${ids.length} selected item(s)...`, '');
+  if ($('serverFilesConvertResults')) $('serverFilesConvertResults').innerHTML = `<div class="server-files-preview-loading"><strong>Converting ${ids.length} selected file(s)...</strong><span>Large image archives may take a while because pages have to be read and rewritten.</span></div>`;
+  try {
+    const res = await fetch('/api/items/files/convert', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ids, targetFormat })
+    });
+    let data = null;
+    try { data = await res.json(); } catch {}
+    if (!res.ok) throw new Error(data?.error || `Conversion failed. HTTP ${res.status}`);
+    if ($('serverFilesConvertResults')) $('serverFilesConvertResults').innerHTML = serverFilesConvertRowsHtml(data?.results || []);
+    serverFilesSetStatus('serverFilesConvertStatus', data?.message || `Created ${data?.converted || 0} converted file(s).`, data?.failed ? 'error' : 'success');
+  } finally {
+    renderServerFilesFormatTools();
+  }
+}
+
 async function metadataManagerWriteBackSelected(source = 'metadata') {
   const ids = source === 'files' ? serverFilesCurrentSelectedIds() : metadataManagerCurrentSelectedIds();
   if (!ids.length) {
@@ -20428,6 +20517,9 @@ if ($('serverFilesPreviewTable')) $('serverFilesPreviewTable').addEventListener(
 if ($('serverFilesPreviewSelected')) $('serverFilesPreviewSelected').addEventListener('click', async () => { try { await serverFilesPreviewSelected(); } catch (err) { console.error(err); serverFilesSetStatus('serverFilesOrganizeStatus', `Preview failed: ${err?.message || err}`, 'error'); if ($('serverFilesPreviewTable')) $('serverFilesPreviewTable').innerHTML = `<p class="sub">Preview failed: ${escapeHtml(err?.message || String(err || 'Unknown error'))}</p>`; if ($('serverFilesApplyPreview')) $('serverFilesApplyPreview').disabled = true; } });
 if ($('serverFilesApplyPreview')) $('serverFilesApplyPreview').addEventListener('click', async () => { try { await serverFilesApplyPreview(); } catch (err) { console.error(err); serverFilesSetStatus('serverFilesOrganizeStatus', `Apply failed: ${err?.message || err}`, 'error'); } });
 if ($('serverFilesWriteBackSelected')) $('serverFilesWriteBackSelected').addEventListener('click', async () => { try { await metadataManagerWriteBackSelected('files'); } catch (err) { console.error(err); serverFilesSetStatus('serverFilesWriteBackStatus', `Write-back failed: ${err?.message || err}`, 'error'); } });
+if ($('serverFilesConvertCbz')) $('serverFilesConvertCbz').addEventListener('click', async () => { try { await serverFilesConvertSelected('cbz'); } catch (err) { console.error(err); serverFilesSetStatus('serverFilesConvertStatus', `Conversion failed: ${err?.message || err}`, 'error'); renderServerFilesFormatTools(); } });
+if ($('serverFilesConvertPdf')) $('serverFilesConvertPdf').addEventListener('click', async () => { try { await serverFilesConvertSelected('pdf'); } catch (err) { console.error(err); serverFilesSetStatus('serverFilesConvertStatus', `Conversion failed: ${err?.message || err}`, 'error'); renderServerFilesFormatTools(); } });
+if ($('serverFilesOptimizeArchive')) $('serverFilesOptimizeArchive').addEventListener('click', async () => { try { await serverFilesConvertSelected('optimize'); } catch (err) { console.error(err); serverFilesSetStatus('serverFilesConvertStatus', `Optimize failed: ${err?.message || err}`, 'error'); renderServerFilesFormatTools(); } });
 if ($('metadataManagerRunSourceLookup')) $('metadataManagerRunSourceLookup').addEventListener('click', async e => { e.preventDefault(); try { await metadataManagerRunBatchSourceLookup(); } catch (err) { console.error(err); metadataManagerSetStatus(`Batch source lookup failed: ${err?.message || err}`, 'error'); } });
 if ($('metadataManagerApplySourceLookup')) $('metadataManagerApplySourceLookup').addEventListener('click', async e => { e.preventDefault(); try { await metadataManagerApplyBatchSourceResults(); } catch (err) { console.error(err); metadataManagerSetStatus(`Apply batch lookup failed: ${err?.message || err}`, 'error'); } });
 document.querySelectorAll('[data-metadata-batch-select-fields]').forEach(btn => btn.addEventListener('click', e => { e.preventDefault(); metadataBatchSelectAllFields(btn.dataset.metadataBatchSelectFields || '', true); }));
