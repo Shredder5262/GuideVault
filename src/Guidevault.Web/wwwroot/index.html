@@ -1,12 +1,12 @@
-﻿<!doctype html>
+<!doctype html>
 <html lang="en">
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Guidevault</title>
-  <link rel="icon" type="image/x-icon" href="/assets/favicon.ico?v=0.9.144" />
-  <link rel="shortcut icon" type="image/x-icon" href="/assets/favicon.ico?v=0.9.144" />
-  <link rel="stylesheet" href="/styles.css?v=0.9.167-platform-icons-trueup" />
+  <link rel="icon" type="image/x-icon" href="/assets/favicon.ico?v=0.9.175" />
+  <link rel="shortcut icon" type="image/x-icon" href="/assets/favicon.ico?v=0.9.175" />
+  <link rel="stylesheet" href="/styles.css?v=0.9.175-email-events-workspace" />
 </head>
 <body class="right-collapsed auth-locked">
   <section id="loginView" class="login-view" aria-labelledby="loginTitle">
@@ -65,6 +65,7 @@
         <button class="settings-nav settings-nav-group" data-settings-tab="server" data-settings-group="server" aria-expanded="true" aria-controls="settingsSubmenuServer" type="button"><span class="settings-nav-icon">&#x2699;</span><span class="settings-nav-text">Server</span><span class="settings-nav-chevron" aria-hidden="true">&#x203A;</span></button>
         <div id="settingsSubmenuServer" class="settings-submenu" data-settings-parent="server" aria-label="Server settings subsections">
           <button id="settingsServerGeneralNav" class="settings-subnav" data-settings-tab="server" type="button">General</button>
+          <button id="settingsFilesNav" class="settings-subnav" data-settings-tab="files" type="button">Files</button>
           <button id="settingsIntegrationsNav" class="settings-subnav" data-settings-tab="integrations" type="button">Integrations</button>
           <button id="settingsMediaNav" class="settings-subnav" data-settings-tab="media" type="button">Media</button>
           <button id="settingsOpdsNav" class="settings-subnav" data-settings-tab="opds" type="button">OPDS / Auth Keys</button>
@@ -76,7 +77,7 @@
         <button class="settings-nav settings-nav-group" data-settings-tab="info" data-settings-group="info" aria-expanded="true" aria-controls="settingsSubmenuInfo" type="button"><span class="settings-nav-icon">i</span><span class="settings-nav-text">Info</span><span class="settings-nav-chevron" aria-hidden="true">&#x203A;</span></button>
         <div id="settingsSubmenuInfo" class="settings-submenu" data-settings-parent="info" aria-label="Info subsections">
           <button id="settingsInfoSystemNav" class="settings-subnav" data-settings-tab="info" type="button">System</button>
-          <button id="settingsEmailHistoryNav" class="settings-subnav" data-settings-tab="email-history" type="button">E-mail History</button>
+          <button id="settingsEventsNav" class="settings-subnav" data-settings-tab="events" type="button">Events</button>
         </div>
       </nav>
       <section id="categorySideSection" class="side-section category-side-section">
@@ -175,7 +176,7 @@
               </div>
             </aside>
             <div class="detail-main-column">
-              <div class="tabs"><button class="tab active" data-tab="overview">Overview</button><button class="tab" data-tab="reviews">Reviews</button><button class="tab" data-tab="metadata">Metadata</button><button class="tab" data-tab="file-name">File &amp; Metadata</button><button class="tab" data-tab="reading-profile">Reading Profile</button><button class="tab" data-tab="notes">Notes</button></div>
+              <div class="tabs"><button class="tab active" data-tab="overview">Overview</button><button class="tab" data-tab="reviews">Reviews</button><button class="tab" data-tab="metadata">Metadata</button><button class="tab" data-tab="reading-profile">Reading Profile</button><button class="tab" data-tab="notes">Notes</button><button class="tab" data-tab="library-data">Library Data</button></div>
               <section id="overviewPanel" class="tab-panel">
                 <p id="description"></p>
                 <div id="meta" class="detail-meta-list"></div>
@@ -297,66 +298,14 @@
                 <label id="editCharactersCoveredLabel" class="strategy-metadata-field manual-metadata-field hidden">Characters Covered, comma-separated<input id="editCharactersCovered" /></label>
                 <label id="editLocationsCoveredLabel" class="strategy-metadata-field hidden">Locations Covered, comma-separated<input id="editLocationsCovered" /></label>
                 <label>Tags, comma-separated<input id="editTags" /></label>
-              </section>
-              <section id="file-namePanel" class="tab-panel hidden">
-                <article id="metadataFileMaintenance" class="metadata-file-maintenance filename-schema-panel file-metadata-workflow" aria-live="polite">
-                  <div class="metadata-file-maintenance-header">
-                    <div>
-                      <h3>File &amp; Metadata</h3>
-                      <p class="sub">Review library data, save item metadata, import or export native Guidevault JSON, and rename the active source file.</p>
-                    </div>
-                  </div>
-
-                  <section class="file-metadata-card file-metadata-card-library file-metadata-library-top">
-                    <div class="file-metadata-card-heading">
-                      <h4>Library Data</h4>
-                      <p class="sub">Container, path, page count, scan status, and metadata-source details for the selected item.</p>
-                    </div>
-                    <div id="metadataTechnicalInfo" class="metadata-technical-info hidden"></div>
-                  </section>
-
-                  <div class="file-metadata-main-grid">
-                    <section class="file-metadata-card file-metadata-card-rename">
-                      <div class="file-metadata-card-heading">
-                        <h4>Filename</h4>
-                        <p class="sub">Preview and rename the active source file. The file extension is preserved automatically.</p>
-                      </div>
-                      <dl class="metadata-file-maintenance-list file-rename-preview-list">
-                        <div><dt>Current file</dt><dd id="metadataCurrentFileName">&#x2014;</dd></div>
-                        <div><dt>Preview filename</dt><dd id="metadataSuggestedFileName">&#x2014;</dd></div>
-                      </dl>
-                      <div class="filename-schema-token-area">
-                        <span class="field-help">Click a token button to insert it into the schema. Tokens are filtered for the current item type.</span>
-                        <div id="fileRenameTokenButtons" class="filename-token-buttons" aria-label="Filename naming tokens"></div>
-                      </div>
-                      <label class="filename-schema-label" for="fileRenameSchema">Naming Schema
-                        <input id="fileRenameSchema" type="text" value="{title}" placeholder="{title}" autocomplete="off" spellcheck="false" />
-                        <span class="field-help">Default: <code>{title}</code>. Use separators such as <code> - </code> between tokens.</span>
-                      </label>
-                      <div class="metadata-file-maintenance-actions single-action file-rename-actions">
-                        <button id="resetFileRenameSchemaBtn" class="ghost" type="button">Reset naming schema</button>
-                        <button id="renameToSuggestedFileNameBtn" class="primary" type="button">Rename file</button>
-                      </div>
-                      <p id="fileRenameStatus" class="sub filename-rename-status">Guidevault will rename the source file, update the indexed database entry, and keep this same item identity.</p>
-                    </section>
-
-                    <section class="file-metadata-card file-metadata-card-actions">
-                      <div class="file-metadata-card-heading">
-                        <h4>Metadata actions</h4>
-                        <p class="sub">Save the form first, then export native JSON or import Guidevault JSON from only this selected package.</p>
-                      </div>
-                      <div class="metadata-save-export-row file-metadata-actions">
-                        <button id="saveMetadataBtn" class="primary" type="button">Save Metadata</button>
-                        <button id="exportGuideMetadataBtn" class="ghost" type="button">Export Guide Metadata</button>
-                        <button id="enrichCurrentFileMetadataBtn" class="ghost" type="button">Import Guidevault metadata JSON</button>
-                        <button id="openLibrarySearchBtn" class="ghost openlibrary-action-button hidden" type="button">Search Open Library Metadata</button>
-                        <button id="igdbSearchBtn" class="ghost igdb-action-button hidden" type="button">Search IGDB Game Metadata</button>
-                        <button id="esrbSearchBtn" class="ghost esrb-action-button hidden" type="button">Search ESRB Rating</button>
-                      </div>
-                      <p id="metadataExportStatus" class="sub metadata-export-status" aria-live="polite"></p>
-                    </section>
-                  </div>
-                </article>
+                <div class="metadata-detail-actions settings-actions inline-actions" aria-label="Metadata actions">
+                  <button id="saveMetadataBtn" class="primary metadata-save-button" type="button" title="Save metadata for this item">Save Metadata</button>
+                  <button id="lockAllMetadataFieldsBtn" class="metadata-lock-all-button" type="button" title="Lock all visible metadata fields">Lock All</button>
+                  <button id="unlockAllMetadataFieldsBtn" class="metadata-unlock-all-button" type="button" title="Unlock all visible metadata fields">Unlock All</button>
+                  <button id="openLibrarySearchBtn" class="metadata-lookup-button" type="button" title="Search Open Library metadata">Open Library</button>
+                  <button id="igdbSearchBtn" class="metadata-lookup-button" type="button" title="Search IGDB game metadata">IGDB</button>
+                  <button id="esrbSearchBtn" class="metadata-lookup-button" type="button" title="Search ESRB rating">ESRB</button>
+                </div>
               </section>
               <section id="reading-profilePanel" class="tab-panel hidden">
                 <article class="detail-reading-profile-card effective">
@@ -403,6 +352,13 @@
               <section id="notesPanel" class="tab-panel hidden">
                 <label>Notes<textarea id="notesText" rows="10" placeholder="Add your own reading notes, condition notes, scan quality notes, or collection notes..."></textarea></label>
                 <button id="saveNotesBtn" class="primary full" type="button">Save Notes</button>
+              </section>
+              <section id="library-dataPanel" class="tab-panel hidden">
+                <article id="metadataLibraryDataPanel" class="library-data-simple-panel" aria-live="polite">
+                  <h3>Library Data</h3>
+                  <p class="sub">Read-only file, scan, cache, page-count, and metadata-source details for the selected item. File organization and metadata write-back live under Settings &gt; Server &gt; Files.</p>
+                  <div id="metadataTechnicalInfo" class="metadata-technical-info hidden"></div>
+                </article>
               </section>
             </div>
           </div>
@@ -1033,14 +989,26 @@
                 <label for="metadataManagerSearch">Search
                   <input id="metadataManagerSearch" type="search" placeholder="Title, platform, publisher..." />
                 </label>
-                <label for="metadataManagerKind">Type
-                  <select id="metadataManagerKind">
+                <div class="metadata-manager-kind-filter" role="group" aria-label="Content type filters">
+                  <span>Content Type</span>
+                  <details id="metadataManagerKindDropdown" class="metadata-manager-kind-dropdown">
+                    <summary class="metadata-manager-kind-summary" role="button" aria-label="Choose one or more content types">
+                      <span id="metadataManagerKindSummary">Manuals, Strategy Guides, Magazines</span>
+                      <b aria-hidden="true">&#x25BE;</b>
+                    </summary>
+                    <div class="metadata-manager-kind-checks">
+                      <label><input id="metadataManagerKindManual" type="checkbox" data-metadata-manager-kind="Manual" checked /> Manuals</label>
+                      <label><input id="metadataManagerKindStrategy" type="checkbox" data-metadata-manager-kind="Strategy Guide" checked /> Strategy Guides</label>
+                      <label><input id="metadataManagerKindMagazine" type="checkbox" data-metadata-manager-kind="Magazine" checked /> Magazines</label>
+                    </div>
+                  </details>
+                  <select id="metadataManagerKind" class="hidden" aria-hidden="true" tabindex="-1">
                     <option value="">Manuals, Guides, Magazines</option>
                     <option value="Manual">Manuals</option>
                     <option value="Strategy Guide">Strategy Guides</option>
                     <option value="Magazine">Magazines</option>
                   </select>
-                </label>
+                </div>
                 <label for="metadataManagerStatusFilter">Status
                   <select id="metadataManagerStatusFilter">
                     <option value="">All statuses</option>
@@ -1069,13 +1037,13 @@
               </div>
               <details class="metadata-manager-column-panel">
                 <summary>
-                  <span>Columns</span>
-                  <em id="metadataManagerColumnActiveCount">Default columns shown</em>
+                  <span>Advanced Columns</span>
+                  <em id="metadataManagerColumnActiveCount">Automatic columns shown</em>
                 </summary>
-                <p class="sub">Add or remove grid columns for bulk cleanup. All known Guidevault metadata fields are listed here.</p>
+                <p class="sub">Optional override for the automatic Manual / Strategy Guide / Magazine column set. Most cleanup should start with the content-type checkboxes above.</p>
                 <div id="metadataManagerColumnPicker" class="metadata-manager-column-picker"></div>
                 <div class="settings-actions inline-actions metadata-manager-column-actions">
-                  <button id="metadataManagerColumnsReset" class="ghost" type="button">Reset Default Columns</button>
+                  <button id="metadataManagerColumnsReset" class="ghost" type="button">Use Automatic Columns</button>
                   <button id="metadataManagerColumnsShowAll" class="ghost" type="button">Show All Columns</button>
                 </div>
               </details>
@@ -1092,6 +1060,8 @@
                 <button id="metadataManagerNormalizeSelected" class="ghost" type="button">Normalize Selected</button>
                 <button id="metadataManagerSaveDirty" class="primary" type="button">Save Edited Rows</button>
                 <button id="metadataManagerScrape" class="ghost" type="button">Scrape / Import Metadata</button>
+                <button id="metadataManagerWriteBackSelected" class="ghost" type="button">Write JSON to Selected Files</button>
+                <button id="metadataManagerOpenFilesWorkspace" class="ghost" type="button">Open Files Workspace</button>
               </div>
                             </details>
               <details class="metadata-manager-batch-panel metadata-manager-source-batch-panel">
@@ -1266,6 +1236,173 @@
             </div>
           </section>
 
+
+          <section id="settingsFilesPanel" class="settings-section-panel hidden server-files-panel">
+            <div class="settings-title-row server-files-title-row">
+              <div>
+                <div class="settings-page-kicker">SERVER</div>
+                <h1>Files</h1>
+                <p class="sub">Organize source files, preview bulk rename/move plans, and write Guidevault JSON metadata back into selected CBZ/CBR/PDF packages.</p>
+              </div>
+              <button id="serverFilesRefreshSelection" class="ghost" type="button">Refresh Selection</button>
+            </div>
+
+            <div class="server-files-summary" id="serverFilesSummary" aria-live="polite">Use the Files workspace list to select one file or a group of files, then preview rename/move changes or write embedded metadata.</div>
+
+            <div class="server-files-workflow-strip" aria-label="Files workspace workflow">
+              <div><span>1</span><strong>Select Target Files</strong><em>Pick one entry, visible rows, matching rows, or import the Metadata Manager selection.</em></div>
+              <div><span>2</span><strong>Build File Names</strong><em>Use friendly template buttons for folder and filename patterns.</em></div>
+              <div><span>3</span><strong>Preview Before Applying</strong><em>Review before/after paths before moving files or writing Guidevault JSON.</em></div>
+            </div>
+
+            <article class="settings-card server-files-card server-files-selector-card">
+              <div class="file-metadata-card-heading">
+                <h3>Target Files</h3>
+                <p class="sub">Select exactly which entries should be renamed, moved, or written back. You can still pull in a Metadata Manager selection as a shortcut.</p>
+              </div>
+              <div class="server-files-filter-bar">
+                <label for="serverFilesSearch">Search Files
+                  <input id="serverFilesSearch" type="search" placeholder="Search title, file name, path, platform, series, tags..." />
+                </label>
+                <div class="metadata-manager-kind-filter server-files-kind-filter" role="group" aria-label="File content type filters">
+                  <span>Content Type</span>
+                  <details id="serverFilesKindDropdown" class="metadata-manager-kind-dropdown server-files-kind-dropdown">
+                    <summary class="metadata-manager-kind-summary" role="button" aria-label="Choose one or more file content types">
+                      <span id="serverFilesKindSummary">Manuals, Strategy Guides, Magazines</span>
+                      <b aria-hidden="true">&#x25BE;</b>
+                    </summary>
+                    <div class="metadata-manager-kind-checks server-files-kind-checks">
+                      <label><input type="checkbox" data-server-files-kind="Manual" checked /> Manuals</label>
+                      <label><input type="checkbox" data-server-files-kind="Strategy Guide" checked /> Strategy Guides</label>
+                      <label><input type="checkbox" data-server-files-kind="Magazine" checked /> Magazines</label>
+                    </div>
+                  </details>
+                </div>
+              </div>
+              <div class="settings-actions inline-actions server-files-selection-actions">
+                <button id="serverFilesSelectVisible" class="ghost" type="button">Select Visible</button>
+                <button id="serverFilesSelectMatching" class="ghost" type="button">Select All Matching</button>
+                <button id="serverFilesClearSelection" class="ghost" type="button">Clear Selection</button>
+                <button id="serverFilesUseMetadataSelection" class="ghost" type="button">Use Metadata Manager Selection</button>
+              </div>
+              <p id="serverFilesSelectionStatus" class="sub account-status" aria-live="polite"></p>
+              <div class="server-files-select-table">
+                <table>
+                  <thead>
+                    <tr>
+                      <th><input id="serverFilesHeaderCheck" type="checkbox" aria-label="Select visible files" /></th>
+                      <th>Type</th>
+                      <th>Title</th>
+                      <th>Platform / Series</th>
+                      <th>File Name</th>
+                      <th>Path</th>
+                      <th>Year</th>
+                    </tr>
+                  </thead>
+                  <tbody id="serverFilesTableBody"></tbody>
+                </table>
+              </div>
+              <div class="metadata-manager-footer-row server-files-footer-row">
+                <span id="serverFilesCount">0 shown / 0 matched</span>
+                <div class="settings-actions inline-actions">
+                  <button id="serverFilesLoadMore" class="ghost" type="button" hidden>Load More</button>
+                  <button id="serverFilesShowAll" class="ghost" type="button" hidden>Show All</button>
+                </div>
+              </div>
+            </article>
+
+            <div class="server-files-grid">
+              <article class="settings-card server-files-card organize-files-card">
+                <div class="file-metadata-card-heading">
+                  <h3>Organize Files</h3>
+                  <p class="sub">Preview bulk rename and move paths from metadata. Files stay inside their current library root.</p>
+                </div>
+                <div class="server-files-section-label"><span>Rename / Move Templates</span><em>Choose a template field, then use the builder buttons below.</em></div>
+                <div class="server-files-template-grid">
+                  <label for="serverFilesManualTemplate">Manual template
+                    <input id="serverFilesManualTemplate" class="server-files-template-input" spellcheck="false" value="Manuals/{Platform}/{GameTitle}/{Title} - Manual{Extension}" />
+                  </label>
+                  <label for="serverFilesStrategyTemplate">Strategy guide template
+                    <input id="serverFilesStrategyTemplate" class="server-files-template-input" spellcheck="false" value="Strategy Guides/{Platform}/{GameTitle}/{Title}{Extension}" />
+                  </label>
+                  <label for="serverFilesMagazineTemplate">Magazine template
+                    <input id="serverFilesMagazineTemplate" class="server-files-template-input" spellcheck="false" value="Magazines/{MagazineSeries}/{Year}/{MagazineSeries} - Issue {IssueNumber}{Extension}" />
+                  </label>
+                </div>
+                <div class="server-files-token-builder" aria-label="File name template builder">
+                  <div>
+                    <strong>Template Builder</strong>
+                    <span>Click a template field, then use these buttons to build the folder/file name pattern.</span>
+                  </div>
+                  <div class="server-files-token-bank">
+                    <button type="button" data-server-files-token="{ContentType}" title="Insert {ContentType}">Content Type</button>
+                    <button type="button" data-server-files-token="{Title}" title="Insert {Title}">Item Title</button>
+                    <button type="button" data-server-files-token="{GameTitle}" title="Insert {GameTitle}">Game Title</button>
+                    <button type="button" data-server-files-token="{ManualTitle}" title="Insert {ManualTitle}">Manual Title</button>
+                    <button type="button" data-server-files-token="{StrategyGuideTitle}" title="Insert {StrategyGuideTitle}">Strategy Guide Title</button>
+                    <button type="button" data-server-files-token="{CoveredGames}" title="Insert {CoveredGames}">Covered Games</button>
+                    <button type="button" data-server-files-token="{Platform}" title="Insert {Platform}">Platform</button>
+                    <button type="button" data-server-files-token="{MagazineSeries}" title="Insert {MagazineSeries}">Magazine Series</button>
+                    <button type="button" data-server-files-token="{IssueNumber}" title="Insert {IssueNumber}">Issue Number</button>
+                    <button type="button" data-server-files-token="{Volume}" title="Insert {Volume}">Volume</button>
+                    <button type="button" data-server-files-token="{Number}" title="Insert {Number}">Number</button>
+                    <button type="button" data-server-files-token="{Month}" title="Insert {Month}">Month</button>
+                    <button type="button" data-server-files-token="{Year}" title="Insert {Year}">Year</button>
+                    <button type="button" data-server-files-token="{PublicationDate}" title="Insert {PublicationDate}">Publication Date</button>
+                    <button type="button" data-server-files-token="{Publisher}" title="Insert {Publisher}">Publisher</button>
+                    <button type="button" data-server-files-token="{Writer}" title="Insert {Writer}">Writer / Author</button>
+                    <button type="button" data-server-files-token="{ISBN}" title="Insert {ISBN}">ISBN</button>
+                    <button type="button" data-server-files-token="{ISBN10}" title="Insert {ISBN10}">ISBN-10</button>
+                    <button type="button" data-server-files-token="{ISBN13}" title="Insert {ISBN13}">ISBN-13</button>
+                    <button type="button" data-server-files-token="{ASIN}" title="Insert {ASIN}">ASIN</button>
+                    <button type="button" data-server-files-token="{Region}" title="Insert {Region}">Region</button>
+                    <button type="button" data-server-files-token="{Language}" title="Insert {Language}">Language</button>
+                    <button type="button" data-server-files-token="{Extension}" title="Insert {Extension}">File Extension</button>
+                    <button type="button" data-server-files-token="/" title="Insert folder separator">Folder /</button>
+                    <button type="button" data-server-files-token=" - " title="Insert separator">Separator -</button>
+                  </div>
+                </div>
+                <p class="field-help">The preview below shows the exact current file name/path and proposed file name/path before anything is applied.</p>
+                <div class="settings-actions inline-actions server-files-actions">
+                  <button id="serverFilesPreviewSelected" class="primary" type="button">Preview Selected</button>
+                  <button id="serverFilesApplyPreview" class="danger" type="button" disabled>Apply Previewed Moves</button>
+                </div>
+                <p id="serverFilesOrganizeStatus" class="sub account-status" aria-live="polite"></p>
+                <div id="serverFilesPreviewTable" class="server-files-preview-table"></div>
+              </article>
+
+              <article class="settings-card server-files-card metadata-writeback-card">
+                <div class="file-metadata-card-heading">
+                  <h3>Metadata Write-Back</h3>
+                  <p class="sub">Write the current GuideVault metadata from the database/override store back into selected source packages as Guidevault JSON.</p>
+                </div>
+                <div class="server-files-writeback-callout">
+                  <strong>CBZ files are updated in place.</strong>
+                  <span>CBR and PDF sources use the existing package writer behavior and may create CBZ/ZIP metadata packages instead of modifying the original source.</span>
+                </div>
+                <div class="settings-actions inline-actions server-files-actions">
+                  <button id="serverFilesWriteBackSelected" class="primary" type="button">Write JSON to Selected Files</button>
+                </div>
+                <p id="serverFilesWriteBackStatus" class="sub account-status" aria-live="polite"></p>
+                <div id="serverFilesWriteBackResults" class="server-files-preview-table compact"></div>
+              </article>
+
+              <article class="settings-card server-files-card validation-card">
+                <div class="file-metadata-card-heading">
+                  <h3>File Validation</h3>
+                  <p class="sub">First-pass workspace for future missing-file, broken-archive, duplicate, stale-metadata, and orphaned-cache checks.</p>
+                </div>
+                <ul class="server-files-roadmap-list">
+                  <li>Missing files and unavailable paths</li>
+                  <li>Broken archives and unreadable page sets</li>
+                  <li>Files without embedded Guidevault JSON</li>
+                  <li>Files with stale embedded Guidevault JSON</li>
+                  <li>Duplicate file candidates and orphaned cache cleanup</li>
+                </ul>
+              </article>
+            </div>
+          </section>
+
           <section id="settingsIntegrationsPanel" class="settings-section-panel hidden integrations-settings-panel">
             <div class="settings-title-row integrations-title-row">
               <div>
@@ -1400,6 +1537,17 @@
                 <p id="emailSettingsStatus" class="sub account-status" aria-live="polite"></p>
               </article>
             </div>
+            <article class="settings-card email-history-section-card refined-email-history-card">
+              <div class="settings-card-heading-row">
+                <div>
+                  <h2>E-mail History</h2>
+                  <p class="sub">Review invite and test email attempts from the same Server &gt; Email workspace.</p>
+                </div>
+                <button id="emailHistoryRefresh" class="ghost" type="button">&#x27F3; Refresh</button>
+              </div>
+              <div id="emailHistoryList" class="email-history-list"></div>
+              <p id="emailHistoryStatus" class="sub account-status" aria-live="polite"></p>
+            </article>
           </section>
 
           <section id="settingsUsersPanel" class="settings-section-panel hidden users-settings-panel">
@@ -1517,18 +1665,26 @@
             </div>
             </article>
           </section>
-          <section id="settingsEmailHistoryPanel" class="settings-section-panel hidden email-history-panel">
-            <div class="settings-title-row">
+          <section id="settingsEventsPanel" class="settings-section-panel hidden system-events-panel">
+            <div class="settings-title-row events-title-row">
               <div>
                 <div class="settings-page-kicker">INFO</div>
-                <h1>E-mail History</h1>
-                <p class="sub">Review invite and test email attempts sent by Guidevault.</p>
+                <h1>Events</h1>
+                <p class="sub">Review the last 100 Guidevault system events, including reader opens, metadata changes, connections, and server actions.</p>
               </div>
-              <button id="emailHistoryRefresh" class="ghost" type="button">&#x27F3; Refresh</button>
+              <div class="settings-actions inline-actions">
+                <button id="systemEventsRefresh" class="ghost" type="button">&#x27F3; Refresh</button>
+              </div>
             </div>
-            <div id="emailHistoryList" class="email-history-list"></div>
-            <p id="emailHistoryStatus" class="sub account-status" aria-live="polite"></p>
+            <div class="settings-card events-summary-card">
+              <div><span>Recent Events</span><strong id="systemEventsCount">0</strong></div>
+              <div><span>Last Captured</span><strong id="systemEventsLast">&#x2014;</strong></div>
+              <div><span>Source</span><strong>Server Event Log</strong></div>
+            </div>
+            <div id="systemEventsList" class="system-events-list"></div>
+            <p id="systemEventsStatus" class="sub account-status" aria-live="polite"></p>
           </section>
+
           <section id="settingsInfoPanel" class="settings-section-panel hidden system-info-panel">
             <div class="settings-page-kicker">SYSTEM</div>
             <h1>About System</h1>
@@ -1607,6 +1763,98 @@
               <h2>Update History</h2>
             </div>
             <div class="system-update-list">
+              <details class="system-update-entry" open>
+                <summary>
+                  <span>Guidevault 0.9.175 - Email Relocation and System Events</span>
+                  <em>Installed</em>
+                </summary>
+                <ul>
+                  <li>Moved E-mail History into Server &gt; Email so all email setup, testing, and logs live together.</li>
+                  <li>Added Info &gt; Events to display the last 100 recent system events.</li>
+                  <li>Refreshed the Server &gt; Email layout with clearer delivery, preview, test, and history sections.</li>
+                </ul>
+              </details>
+              <details class="system-update-entry" open>
+                <summary>
+                  <span>Guidevault 0.9.174 - Files Label Alignment</span>
+                  <em>Installed</em>
+                </summary>
+                <ul>
+                  <li>Matched the Server &gt; Files Search Files label size, casing, weight, and spacing to the Content Type label.</li>
+                  <li>Kept the compact Target Files filter layout introduced for the multi-select content type dropdown.</li>
+                </ul>
+              </details>
+              <details class="system-update-entry" open>
+                <summary>
+                  <span>Guidevault 0.9.173 - Files Content Type Dropdown</span>
+                  <em>Installed</em>
+                </summary>
+                <ul>
+                  <li>Changed Server &gt; Files Target Files content-type filtering into a compact multi-select dropdown.</li>
+                  <li>Kept multi-select filtering for Manuals, Strategy Guides, and Magazines.</li>
+                  <li>Reduced vertical clutter in the Files workspace target/filter area.</li>
+                </ul>
+              </details>
+              <details class="system-update-entry" open>
+                <summary>
+                  <span>Guidevault 0.9.172 - Metadata Layout Polish</span>
+                  <em>Installed</em>
+                </summary>
+                <ul>
+                  <li>Shortened the details Metadata action labels so Save, lock, lookup, and rating actions can sit on one line more reliably.</li>
+                  <li>Changed Metadata Manager content-type filtering from large checkbox pills into a compact multi-select dropdown field.</li>
+                  <li>Kept automatic Metadata Manager columns tied to the selected content types.</li>
+                </ul>
+              </details>
+              <details class="system-update-entry" open>
+                <summary>
+                  <span>Guidevault 0.9.171 - Files UI and Metadata Locks</span>
+                  <em>Installed</em>
+                </summary>
+                <ul>
+                  <li>Applied Colorscape styling to the Library Data container so the read-only technical tab matches the rest of the details pane.</li>
+                  <li>Added Lock All Fields and Unlock All Fields actions to the details Metadata tab.</li>
+                  <li>Gave Server &gt; Files another visual pass with a clearer workflow strip, template section label, stronger cards, and cleaner selection/preview styling.</li>
+                </ul>
+              </details>
+              <details class="system-update-entry" open>
+                <summary>
+                  <span>Guidevault 0.9.170 - Metadata and Files Polish</span>
+                  <em>Installed</em>
+                </summary>
+                <ul>
+                  <li>Updated Organize Files template buttons to use friendly names while still inserting the correct rename tokens.</li>
+                  <li>Added ISBN, ISBN-10, ISBN-13, ASIN, writer, publication date, manual title, and strategy guide title tokens for file naming.</li>
+                  <li>Removed the generic Year editor from Strategy Guide metadata and kept strategy-guide year data focused on publication/game-specific fields.</li>
+                  <li>Added a visible Save Metadata button and restyled the metadata lookup actions as blue gradient buttons.</li>
+                  <li>Simplified the Library Data tab into one direct read-only information container.</li>
+                </ul>
+              </details>
+              <details class="system-update-entry" open>
+                <summary>
+                  <span>Guidevault 0.9.169 - Files Rename Builder Preview</span>
+                  <em>Installed</em>
+                </summary>
+                <ul>
+                  <li>Expanded the Files target list so source paths are visible as full copyable paths instead of cramped truncated text.</li>
+                  <li>Added a token-based template builder for manual, strategy guide, and magazine rename/move patterns.</li>
+                  <li>Updated Organize Files preview to show before/after file names and full before/after paths before applying changes.</li>
+                  <li>Kept JSON metadata write-back tied to the same selected Files workspace rows.</li>
+                </ul>
+              </details>
+              <details class="system-update-entry" open>
+                <summary>
+                  <span>Guidevault 0.9.168 - Selectable Files Workspace</span>
+                  <em>Installed</em>
+                </summary>
+                <ul>
+                  <li>Removed the File &amp; Metadata tab from item details and replaced it with a read-only Library Data tab.</li>
+                  <li>Added Server &gt; Files with a searchable target-files list so one file, visible rows, or all matching rows can be selected directly.</li>
+                  <li>Updated Organize Files so rename/move preview and apply use the Files workspace selection.</li>
+                  <li>Updated Metadata Write-Back so Guidevault JSON export can target the same selected Files workspace rows.</li>
+                  <li>Kept the Metadata Manager shortcut for sending selected rows into the Files workspace.</li>
+                </ul>
+              </details>
               <details class="system-update-entry" open>
                 <summary>
                   <span>Guidevault 0.9.166 - Metadata Export Filter Guard</span>
@@ -2289,7 +2537,6 @@
   </dialog>
 
 
-  <script src="/app.js?v=0.9.167-platform-icons-trueup"></script>
+  <script src="/app.js?v=0.9.175-email-events-workspace"></script>
 </body>
 </html>
-

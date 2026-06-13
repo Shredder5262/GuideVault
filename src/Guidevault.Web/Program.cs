@@ -16,7 +16,7 @@ using SixLabors.ImageSharp.Formats.Jpeg;
 using SixLabors.ImageSharp.Processing;
 
 var builder = WebApplication.CreateBuilder(args);
-const string GuidevaultVersion = "0.9.167";
+const string GuidevaultVersion = "0.9.175";
 var app = builder.Build();
 var metadataJsonOptions = new JsonSerializerOptions(JsonSerializerDefaults.Web) { PropertyNameCaseInsensitive = true };
 var options = app.Configuration.GetSection("Guidevault").Get<GuidevaultOptions>() ?? new GuidevaultOptions();
@@ -34,6 +34,7 @@ var taskSettingsPath = Path.Combine(contentRoot, "data", "config", "task.setting
 var customizeSettingsPath = Path.Combine(contentRoot, "data", "config", "customize.settings.json");
 var deviceHistoryPath = Path.Combine(contentRoot, "data", "config", "device.history.json");
 var systemInfoPath = Path.Combine(contentRoot, "data", "config", "system.info.json");
+var systemEventsPath = Path.Combine(contentRoot, "data", "config", "system.events.json");
 var webRoot = app.Environment.WebRootPath ?? Path.Combine(contentRoot, "wwwroot");
 var readerBackgroundsPath = Path.Combine(webRoot, "assets", "backgrounds");
 var legacyReaderBackgroundsPath = Path.Combine(webRoot, "backgrounds");
@@ -64,6 +65,7 @@ var taskSettingsStore = new GuidevaultTaskSettingsStore(taskSettingsPath);
 var customizeSettingsStore = new GuidevaultCustomizeSettingsStore(customizeSettingsPath);
 var deviceStore = new DeviceHistoryStore(deviceHistoryPath);
 var systemInfoStore = new SystemInfoStore(systemInfoPath, GuidevaultVersion);
+var systemEventStore = new GuidevaultSystemEventStore(systemEventsPath);
 var indexCachePath = Path.Combine(contentRoot, "data", "cache", "library-index.json");
 var coverCachePath = Path.Combine(contentRoot, "data", "cache", "covers");
 var coverThumbnailCachePath = Path.Combine(contentRoot, "data", "cache", "cover-thumbs");
@@ -72,6 +74,28 @@ var taskMonitor = new TaskMonitor();
 var cache = new LibraryCache(loadedSettings.Libraries, metadataStore, fileIdentityStore, indexCachePath, taskMonitor);
 var updateChecker = new StableUpdateChecker(options.Updates, GuidevaultVersion);
 var categoryCoverPrewarmGate = new SemaphoreSlim(1, 1);
+
+void RecordSystemEvent(string category, string title, string message = "", string source = "server", string? itemId = null, string? itemTitle = null)
+{
+    try
+    {
+        systemEventStore.Record(new GuidevaultSystemEventRecord
+        {
+            Category = category,
+            Title = title,
+            Message = message,
+            Source = source,
+            ItemId = itemId ?? string.Empty,
+            ItemTitle = itemTitle ?? string.Empty
+        });
+    }
+    catch (Exception ex)
+    {
+        app.Logger.LogWarning(ex, "Unable to write Guidevault system event.");
+    }
+}
+
+RecordSystemEvent("System", "Guidevault started", $"Guidevault {GuidevaultVersion} server initialized.", "server");
 // Do not create configured user library folders here. Guidevault scans existing folders in place.
 // Creating missing folders can hide typo/path mistakes and make libraries appear empty.
 app.UseDefaultFiles();
@@ -89,6 +113,8 @@ app.MapGet("/api/health", () => Results.Ok(new
 app.MapGet("/api/devices", () => Results.Ok(deviceStore.GetSnapshot()));
 
 app.MapGet("/api/system/info", () => Results.Ok(systemInfoStore.GetSnapshot()));
+
+app.MapGet("/api/system/events", (int? limit) => Results.Ok(systemEventStore.GetEvents(limit ?? 100)));
 
 app.MapGet("/api/system/performance", () =>
 {
@@ -150,6 +176,7 @@ app.MapGet("/api/server/settings", () => Results.Ok(serverSettingsStore.GetSnaps
 app.MapPut("/api/server/settings", (GuidevaultServerSettings payload) =>
 {
     var saved = serverSettingsStore.Update(payload ?? new GuidevaultServerSettings());
+    RecordSystemEvent("System", "Server settings updated", "Server settings were saved from the web UI.", "api");
     return Results.Ok(saved);
 });
 
@@ -183,6 +210,7 @@ app.MapGet("/api/email/settings", () => Results.Ok(emailSettingsStore.GetClientS
 app.MapPut("/api/email/settings", (GuidevaultEmailSettings payload) =>
 {
     var saved = emailSettingsStore.Update(payload ?? new GuidevaultEmailSettings());
+    RecordSystemEvent("Email", "Email settings updated", "Email delivery settings were saved.", "api");
     return Results.Ok(saved);
 });
 
@@ -221,6 +249,7 @@ app.MapPost("/api/email/test", (GuidevaultEmailTestRequest payload) =>
             Status = "Sent",
             Message = "Test email sent."
         });
+        RecordSystemEvent("Email", "Test email sent", $"Test email sent to {payload.To!.Trim()}.", "api");
         return Results.Ok(new { sent = true, record, history = emailHistoryStore.GetHistory() });
     }
     catch (Exception ex)
@@ -234,6 +263,7 @@ app.MapPost("/api/email/test", (GuidevaultEmailTestRequest payload) =>
             Status = "Failed",
             Message = ex.Message
         });
+        RecordSystemEvent("Email", "Test email failed", ex.Message, "api");
         return Results.BadRequest(new { error = ex.Message, record, history = emailHistoryStore.GetHistory() });
     }
 });
@@ -322,6 +352,7 @@ app.MapPut("/api/customize/settings", (GuidevaultCustomizeSettings payload) =>
 app.MapPost("/api/devices/heartbeat", (HttpRequest request, ClientDeviceHeartbeat payload) =>
 {
     var device = deviceStore.RecordWebClient(request, payload ?? new ClientDeviceHeartbeat());
+    RecordSystemEvent("Connection", "Client connection", $"{device.DisplayName} connected from {device.IpAddress}.", "api");
     return Results.Ok(new { device, snapshot = deviceStore.GetSnapshot() });
 });
 
@@ -329,7 +360,9 @@ app.MapPost("/api/devices/email", (EmailDeviceUpsert payload) =>
 {
     if (payload is null || string.IsNullOrWhiteSpace(payload.Name) || string.IsNullOrWhiteSpace(payload.Email))
         return Results.BadRequest(new { error = "Name and email are required." });
-    return Results.Ok(deviceStore.UpsertEmailDevice(payload));
+    var snapshot = deviceStore.UpsertEmailDevice(payload);
+    RecordSystemEvent("Connection", "Email device saved", $"Saved email device {payload.Name}.", "api");
+    return Results.Ok(snapshot);
 });
 
 app.MapDelete("/api/devices/email/{id}", (string id) =>
@@ -758,6 +791,7 @@ app.MapPost("/api/settings/library", (LibrarySettings settings) =>
     }.Normalize(contentRoot, options.LibraryPath);
     cache.SetLibraries(updated.Libraries);
     LibrarySettingsStore.Save(configPath, updated);
+    RecordSystemEvent("Library", "Library path updated", $"Library path saved: {newPath}", "api");
     var task = taskMonitor.Start("library-scan", "Library scan", "Scanning updated library folder...");
     _ = Task.Run(async () =>
     {
@@ -802,6 +836,7 @@ app.MapPost("/api/settings/libraries", (JsonElement payload) =>
 
     cache.SetLibraries(updated.Libraries);
     LibrarySettingsStore.Save(configPath, updated);
+    RecordSystemEvent("Library", removeLibraryOperation || parsedLibraries.Count == 0 ? "Library removed" : "Libraries updated", removeLibraryOperation || parsedLibraries.Count == 0 ? "Library entries were removed and reindexing started." : $"Saved {parsedLibraries.Count} library definition(s) and started a scan.", "api");
     var emptyLibraryList = parsedLibraries.Count == 0;
     var removalActivity = removeLibraryOperation || emptyLibraryList;
     var task = taskMonitor.Start(
@@ -881,6 +916,7 @@ app.MapGet("/api/openlibrary/search", async (string? q, string? secondary, strin
     try
     {
         var results = await OpenLibraryMetadataClient.SearchAsync(q, secondary, isbn, title, gameTitle, publisher, year, limit ?? 16);
+        RecordSystemEvent("API", "Open Library search", $"Open Library search returned {results.Count} result(s).", "api");
         return Results.Ok(new
         {
             provider = "Open Library",
@@ -899,6 +935,7 @@ app.MapPost("/api/openlibrary/resolve", async (JsonElement payload) =>
     try
     {
         var result = await OpenLibraryMetadataClient.ResolveAsync(payload);
+        RecordSystemEvent("API", "Open Library metadata resolved", "Open Library metadata result was loaded for comparison.", "api");
         return Results.Ok(result);
     }
     catch (Exception ex)
@@ -927,6 +964,7 @@ app.MapGet("/api/igdb/search", async (string? q, string? platform, string? year,
     {
         var settings = serverSettingsStore.GetSnapshot();
         var results = await IgdbGameMetadataClient.SearchAsync(q, platform, year, limit ?? 16, settings.IgdbClientId, settings.IgdbClientSecret);
+        RecordSystemEvent("API", "IGDB search", $"IGDB search returned {results.Count} result(s).", "api");
         return Results.Ok(new
         {
             provider = "IGDB",
@@ -946,6 +984,7 @@ app.MapPost("/api/igdb/resolve", async (JsonElement payload) =>
     {
         var settings = serverSettingsStore.GetSnapshot();
         var result = await IgdbGameMetadataClient.ResolveAsync(payload, settings.IgdbClientId, settings.IgdbClientSecret);
+        RecordSystemEvent("API", "IGDB metadata resolved", "IGDB metadata result was loaded for comparison.", "api");
         return Results.Ok(result);
     }
     catch (Exception ex)
@@ -960,6 +999,7 @@ app.MapGet("/api/esrb/search", async (string? q, string? platform, int? limit) =
     try
     {
         var results = await EsrbRatingMetadataClient.SearchAsync(q, platform, limit ?? 12);
+        RecordSystemEvent("API", "ESRB search", $"ESRB search returned {results.Count} result(s).", "api");
         return Results.Ok(new
         {
             provider = "ESRB",
@@ -978,6 +1018,7 @@ app.MapPost("/api/esrb/resolve", async (JsonElement payload) =>
     try
     {
         var result = await EsrbRatingMetadataClient.ResolveAsync(payload);
+        RecordSystemEvent("API", "ESRB rating resolved", "ESRB rating result was loaded for comparison.", "api");
         return Results.Ok(result);
     }
     catch (Exception ex)
@@ -1002,6 +1043,7 @@ app.MapPut("/api/items/{id}/metadata", (string id, JsonElement payload) =>
     // and return the full updated item. If it is not loaded, still return success;
     // the saved override will be applied the next time the item is indexed/loaded.
     var cached = cache.TryGetCachedItem(id);
+    RecordSystemEvent("Metadata", "Metadata updated", cached is not null ? $"Updated metadata for {cached.Title}." : $"Updated metadata override for item {id}.", "api", id, cached?.Title);
     if (cached is not null)
     {
         var updated = metadataStore.ApplyOverride(cached);
@@ -1078,6 +1120,8 @@ app.MapPost("/api/items/metadata/bulk", (JsonElement payload) =>
 
             cacheUpdated = cache.ReplaceCachedItems(updatedItems, persist: false);
         }
+
+        RecordSystemEvent("Metadata", "Bulk metadata updated", $"Saved {effectiveUpdates.Length} metadata row(s).", "api");
 
         // Do not return the updated LibraryItem list here. Large JSON imports can update
         // thousands of rows, and echoing all rows back can create a huge response and make
@@ -1160,6 +1204,8 @@ app.MapPost("/api/items/{id}/metadata/native-export", async (string id, JsonElem
         if (!writeResult.Success)
             return Results.BadRequest(new { error = writeResult.Message });
 
+        RecordSystemEvent("Metadata", "Guidevault JSON written", $"Wrote Guidevault JSON metadata to {updated.Title}.", "api", id, updated.Title);
+
         return Results.Ok(new
         {
             item = updated,
@@ -1174,6 +1220,213 @@ app.MapPost("/api/items/{id}/metadata/native-export", async (string id, JsonElem
     finally
     {
         archiveWriteLease.Dispose();
+    }
+});
+
+
+app.MapPost("/api/items/metadata/native-export/bulk", async (JsonElement payload) =>
+{
+    try
+    {
+        var ids = MetadataIdListJsonReader.Read(payload);
+        if (ids.Count == 0)
+            return Results.BadRequest(new { error = "No item ids were supplied for metadata write-back." });
+
+        if (!GuidevaultLibraryIoGate.TryBeginArchiveWrite(out var archiveWriteLease, out var busyMessage) || archiveWriteLease is null)
+            return Results.Conflict(new { error = busyMessage });
+
+        try
+        {
+            var snapshot = cache.GetItemsSnapshot()
+                .Where(item => !string.IsNullOrWhiteSpace(item.Id))
+                .GroupBy(item => item.Id, StringComparer.OrdinalIgnoreCase)
+                .ToDictionary(group => group.Key, group => group.First(), StringComparer.OrdinalIgnoreCase);
+            var results = new List<object>();
+            var updatedItems = new List<LibraryItem>();
+            var written = 0;
+            var failed = 0;
+
+            foreach (var id in ids)
+            {
+                var cached = cache.TryGetCachedItem(id) ?? (snapshot.TryGetValue(id, out var item) ? item : null);
+                if (cached is null)
+                {
+                    failed++;
+                    results.Add(new { id, success = false, message = "Item was not found in the active library cache." });
+                    continue;
+                }
+
+                var updated = metadataStore.ApplyOverride(cached);
+                cache.ReplaceCachedItem(updated, persist: false);
+                updatedItems.Add(updated);
+
+                var exportDocument = GuidevaultNativeMetadata.BuildExport(updated, new ItemMetadataUpdate());
+                var exportJson = JsonSerializer.Serialize(exportDocument, GuidevaultNativeMetadata.JsonOptions);
+                var writeResult = await ArchiveReader.WriteGuidevaultMetadataAsync(updated.Path, updated.Kind, exportJson);
+                if (writeResult.Success) written++; else failed++;
+
+                results.Add(new
+                {
+                    id = updated.Id,
+                    title = updated.Title,
+                    kind = updated.Kind,
+                    fileName = updated.FileName,
+                    success = writeResult.Success,
+                    metadataFileName = writeResult.MetadataFileName,
+                    writtenArchivePath = writeResult.WrittenArchivePath,
+                    writtenArchiveFileName = string.IsNullOrWhiteSpace(writeResult.WrittenArchivePath) ? string.Empty : Path.GetFileName(writeResult.WrittenArchivePath),
+                    createdPackage = writeResult.CreatedPackage,
+                    originalArchivePath = writeResult.OriginalArchivePath,
+                    message = writeResult.Message
+                });
+            }
+
+            if (updatedItems.Count > 0) cache.ReplaceCachedItems(updatedItems, persist: false);
+            RecordSystemEvent("Metadata", "Bulk Guidevault JSON write-back", $"Wrote Guidevault JSON metadata to {written} file(s); {failed} failed.", "api");
+
+            return Results.Ok(new
+            {
+                requested = ids.Count,
+                written,
+                failed,
+                results,
+                message = failed == 0
+                    ? $"Wrote Guidevault JSON metadata to {written} selected file(s)."
+                    : $"Wrote Guidevault JSON metadata to {written} file(s); {failed} failed."
+            });
+        }
+        finally
+        {
+            archiveWriteLease.Dispose();
+        }
+    }
+    catch (Exception ex)
+    {
+        app.Logger.LogError(ex, "Bulk native metadata write-back failed.");
+        return Results.BadRequest(new { error = $"Bulk native metadata write-back failed: {ex.Message}" });
+    }
+});
+
+app.MapPost("/api/items/files/organize/preview", (JsonElement payload) =>
+{
+    try
+    {
+        var ids = MetadataIdListJsonReader.Read(payload);
+        if (ids.Count == 0)
+            return Results.BadRequest(new { error = "No item ids were supplied for file organization preview." });
+
+        var snapshot = cache.GetItemsSnapshot();
+        var plans = BuildFileOrganizationPlans(ids, payload, snapshot, metadataStore, cache.LibraryPaths, apply: false);
+        var ready = plans.Count(plan => plan.Status.Equals("Ready", StringComparison.OrdinalIgnoreCase));
+        return Results.Ok(new
+        {
+            requested = ids.Count,
+            readyToApply = ready,
+            unchanged = plans.Count(plan => plan.Status.Equals("Unchanged", StringComparison.OrdinalIgnoreCase)),
+            blocked = plans.Count(plan => !plan.Status.Equals("Ready", StringComparison.OrdinalIgnoreCase) && !plan.Status.Equals("Unchanged", StringComparison.OrdinalIgnoreCase)),
+            results = plans,
+            message = ready > 0
+                ? $"Previewed {plans.Count} file(s). {ready} file(s) are ready to move/rename."
+                : $"Previewed {plans.Count} file(s). No file moves are currently ready."
+        });
+    }
+    catch (Exception ex)
+    {
+        app.Logger.LogError(ex, "File organization preview failed.");
+        return Results.BadRequest(new { error = $"File organization preview failed: {ex.Message}" });
+    }
+});
+
+app.MapPost("/api/items/files/organize/apply", (JsonElement payload) =>
+{
+    try
+    {
+        var ids = MetadataIdListJsonReader.Read(payload);
+        if (ids.Count == 0)
+            return Results.BadRequest(new { error = "No item ids were supplied for file organization." });
+
+        if (!GuidevaultLibraryIoGate.TryBeginArchiveWrite(out var archiveWriteLease, out var busyMessage) || archiveWriteLease is null)
+            return Results.Conflict(new { error = busyMessage });
+
+        try
+        {
+            var snapshot = cache.GetItemsSnapshot();
+            var plans = BuildFileOrganizationPlans(ids, payload, snapshot, metadataStore, cache.LibraryPaths, apply: true);
+            var movedItems = new List<LibraryItem>();
+            var results = new List<FileOrganizationPlan>();
+            var moved = 0;
+            var failed = 0;
+
+            foreach (var plan in plans)
+            {
+                if (!plan.Status.Equals("Ready", StringComparison.OrdinalIgnoreCase))
+                {
+                    results.Add(plan);
+                    if (!plan.Status.Equals("Unchanged", StringComparison.OrdinalIgnoreCase)) failed++;
+                    continue;
+                }
+
+                try
+                {
+                    var sourcePath = Path.GetFullPath(plan.CurrentPath);
+                    var destinationPath = Path.GetFullPath(plan.ProposedPath);
+                    Directory.CreateDirectory(Path.GetDirectoryName(destinationPath) ?? Directory.GetCurrentDirectory());
+                    File.Move(sourcePath, destinationPath);
+                    ArchiveReader.ClearCoverCacheForPath(sourcePath);
+                    ArchiveReader.ClearCoverCacheForPath(destinationPath);
+
+                    var updated = snapshot.FirstOrDefault(item => string.Equals(item.Id, plan.Id, StringComparison.OrdinalIgnoreCase));
+                    if (updated is not null)
+                    {
+                        updated = metadataStore.ApplyOverride(updated);
+                        var info = new FileInfo(destinationPath);
+                        updated = updated with
+                        {
+                            Path = destinationPath,
+                            RelativePath = BuildRelativeLibraryPath(destinationPath, cache.LibraryPaths, updated.RelativePath),
+                            FileName = info.Name,
+                            SizeBytes = info.Length,
+                            Added = info.CreationTimeUtc,
+                            Modified = info.LastWriteTimeUtc
+                        };
+                        fileIdentityStore.RememberRename(sourcePath, destinationPath, updated.Id);
+                        movedItems.Add(updated);
+                    }
+
+                    moved++;
+                    results.Add(plan with { Status = "Moved", Message = "File moved and Guidevault cache updated." });
+                }
+                catch (Exception ex)
+                {
+                    failed++;
+                    results.Add(plan with { Status = "Failed", Message = ex.Message });
+                }
+            }
+
+            if (movedItems.Count > 0) cache.ReplaceCachedItems(movedItems, persist: true);
+            RecordSystemEvent("Files", "Files moved or renamed", $"Moved/renamed {moved} file(s); {failed} failed.", "api");
+
+            return Results.Ok(new
+            {
+                requested = ids.Count,
+                moved,
+                failed,
+                items = movedItems,
+                results,
+                message = failed == 0
+                    ? $"Moved/renamed {moved} file(s)."
+                    : $"Moved/renamed {moved} file(s); {failed} file(s) were blocked or failed."
+            });
+        }
+        finally
+        {
+            archiveWriteLease.Dispose();
+        }
+    }
+    catch (Exception ex)
+    {
+        app.Logger.LogError(ex, "File organization apply failed.");
+        return Results.BadRequest(new { error = $"File organization apply failed: {ex.Message}" });
     }
 });
 
@@ -1441,6 +1694,7 @@ app.MapGet("/api/items/{id}/pages", async (string id) =>
 {
     var item = (await cache.GetItemsAsync()).FirstOrDefault(i => i.Id == id);
     if (item is null) return Results.NotFound();
+    RecordSystemEvent("Reader", "Book opened", $"Opened {item.Title} in the reader.", "api", item.Id, item.Title);
 
     if (item.Format == "PDF")
     {
@@ -1483,7 +1737,9 @@ app.MapGet("/api/items/{id}/page/{page:int}", async (string id, int page, HttpRe
 app.MapGet("/api/items/{id}/file", async (string id) =>
 {
     var item = (await cache.GetItemsAsync()).FirstOrDefault(i => i.Id == id);
-    return item is null ? Results.NotFound() : Results.File(item.Path, contentType: item.ContentType, enableRangeProcessing: true);
+    if (item is null) return Results.NotFound();
+    RecordSystemEvent("Reader", "File opened", $"Opened source file for {item.Title}.", "api", item.Id, item.Title);
+    return Results.File(item.Path, contentType: item.ContentType, enableRangeProcessing: true);
 });
 
 app.MapGet("/api/opds/settings", (HttpRequest request) => Results.Ok(opdsStore.GetClientSettings(DefaultOpdsConnectionUrl(request))));
@@ -2596,6 +2852,215 @@ static string ResolvePath(string contentRoot, string path)
     return Path.GetFullPath(Path.Combine(contentRoot, path));
 }
 
+
+static List<FileOrganizationPlan> BuildFileOrganizationPlans(IEnumerable<string> ids, JsonElement payload, IReadOnlyList<LibraryItem> snapshot, MetadataStore metadataStore, IEnumerable<string> libraryPaths, bool apply)
+{
+    var idSet = ids.Where(id => !string.IsNullOrWhiteSpace(id)).Select(id => id.Trim()).ToHashSet(StringComparer.OrdinalIgnoreCase);
+    var itemMap = snapshot
+        .Where(item => !string.IsNullOrWhiteSpace(item.Id))
+        .GroupBy(item => item.Id, StringComparer.OrdinalIgnoreCase)
+        .ToDictionary(group => group.Key, group => group.First(), StringComparer.OrdinalIgnoreCase);
+    var plans = new List<FileOrganizationPlan>();
+
+    foreach (var id in idSet)
+    {
+        if (!itemMap.TryGetValue(id, out var sourceItem))
+        {
+            plans.Add(new FileOrganizationPlan(id, string.Empty, string.Empty, string.Empty, string.Empty, string.Empty, string.Empty, "Missing", "Item was not found in the active library cache."));
+            continue;
+        }
+
+        var item = metadataStore.ApplyOverride(sourceItem);
+        var currentPath = string.IsNullOrWhiteSpace(item.Path) ? string.Empty : Path.GetFullPath(item.Path);
+        if (string.IsNullOrWhiteSpace(currentPath) || !File.Exists(currentPath))
+        {
+            plans.Add(new FileOrganizationPlan(item.Id, item.Kind, item.Title, item.FileName, currentPath, string.Empty, item.RelativePath, "Missing", "Source file could not be found."));
+            continue;
+        }
+
+        if (!TryResolveLibraryRoot(currentPath, libraryPaths, out var libraryRoot))
+        {
+            plans.Add(new FileOrganizationPlan(item.Id, item.Kind, item.Title, item.FileName, currentPath, string.Empty, item.RelativePath, "Blocked", "Unable to resolve the current library root for this file."));
+            continue;
+        }
+
+        var template = FileOrganizationTemplateForKind(payload, item.Kind);
+        var relativePath = BuildOrganizationRelativePath(item, template);
+        if (string.IsNullOrWhiteSpace(relativePath))
+        {
+            plans.Add(new FileOrganizationPlan(item.Id, item.Kind, item.Title, item.FileName, currentPath, string.Empty, item.RelativePath, "Blocked", "Template produced an empty path."));
+            continue;
+        }
+
+        var destinationPath = Path.GetFullPath(Path.Combine(libraryRoot, relativePath.Replace('/', Path.DirectorySeparatorChar)));
+        if (!IsPathInsideRoot(destinationPath, libraryRoot))
+        {
+            plans.Add(new FileOrganizationPlan(item.Id, item.Kind, item.Title, item.FileName, currentPath, destinationPath, relativePath, "Blocked", "Template tried to move the file outside its current library root."));
+            continue;
+        }
+
+        if (string.Equals(currentPath, destinationPath, StringComparison.OrdinalIgnoreCase))
+        {
+            plans.Add(new FileOrganizationPlan(item.Id, item.Kind, item.Title, item.FileName, currentPath, destinationPath, relativePath, "Unchanged", "File already matches this organization template."));
+            continue;
+        }
+
+        if (File.Exists(destinationPath))
+        {
+            plans.Add(new FileOrganizationPlan(item.Id, item.Kind, item.Title, item.FileName, currentPath, destinationPath, relativePath, "Conflict", "A file already exists at the proposed destination."));
+            continue;
+        }
+
+        plans.Add(new FileOrganizationPlan(item.Id, item.Kind, item.Title, item.FileName, currentPath, destinationPath, relativePath, "Ready", apply ? "Ready to apply." : "Ready to move/rename."));
+    }
+
+    return plans;
+}
+
+static string FileOrganizationTemplateForKind(JsonElement payload, string kind)
+{
+    var defaults = kind.Equals("Manual", StringComparison.OrdinalIgnoreCase)
+        ? "Manuals/{Platform}/{GameTitle}/{Title} - Manual{Extension}"
+        : kind.Equals("Magazine", StringComparison.OrdinalIgnoreCase)
+            ? "Magazines/{MagazineSeries}/{Year}/{MagazineSeries} - Issue {IssueNumber}{Extension}"
+            : "Strategy Guides/{Platform}/{GameTitle}/{Title}{Extension}";
+
+    if (payload.ValueKind != JsonValueKind.Object) return defaults;
+    if (!TryGetJsonProperty(payload, "templates", out var templates) || templates.ValueKind != JsonValueKind.Object) return defaults;
+
+    var key = kind.Equals("Manual", StringComparison.OrdinalIgnoreCase)
+        ? "manual"
+        : kind.Equals("Magazine", StringComparison.OrdinalIgnoreCase)
+            ? "magazine"
+            : "strategyGuide";
+
+    if (TryGetJsonProperty(templates, key, out var value) && value.ValueKind == JsonValueKind.String)
+    {
+        var text = value.GetString();
+        if (!string.IsNullOrWhiteSpace(text)) return text!;
+    }
+
+    return defaults;
+}
+
+static string BuildOrganizationRelativePath(LibraryItem item, string template)
+{
+    var ext = Path.GetExtension(item.FileName);
+    if (string.IsNullOrWhiteSpace(ext)) ext = Path.GetExtension(item.Path);
+    var values = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+    {
+        ["ContentType"] = item.Kind.Equals("Manual", StringComparison.OrdinalIgnoreCase) ? "Manuals" : item.Kind.Equals("Magazine", StringComparison.OrdinalIgnoreCase) ? "Magazines" : "Strategy Guides",
+        ["Kind"] = item.Kind,
+        ["Title"] = FirstNonBlank(item.Title, item.ManualTitle, item.MagazineTitle, item.GameTitle, Path.GetFileNameWithoutExtension(item.FileName)),
+        ["GameTitle"] = FirstNonBlank(item.GameTitle, item.Title, item.ManualTitle),
+        ["Platform"] = FirstNonBlank(item.Category, item.System, item.PrimarySystem, item.AssociatedPlatforms?.FirstOrDefault() ?? string.Empty, "Unsorted"),
+        ["PreferredPlatform"] = FirstNonBlank(item.Category, item.System, item.PrimarySystem, "Unsorted"),
+        ["MagazineSeries"] = FirstNonBlank(item.MagazineTitle, item.Series, item.Title, "Unsorted Magazines"),
+        ["Series"] = FirstNonBlank(item.Series, item.Franchise),
+        ["IssueNumber"] = FirstNonBlank(item.IssueNumber, "000"),
+        ["Number"] = FirstNonBlank(item.IssueNumber, "000"),
+        ["Volume"] = item.Volume ?? string.Empty,
+        ["CoveredGames"] = string.Join(", ", item.CoveredGames ?? Array.Empty<string>()),
+        ["Year"] = FirstNonBlank(item.Year, ExtractYear(item.CoverDate), ExtractYear(item.PublicationDate), "Unknown Year"),
+        ["Month"] = FirstNonBlank(ExtractMonth(item.CoverDate), ExtractMonth(item.PublicationDate)),
+        ["PublicationDate"] = FirstNonBlank(item.PublicationDate, item.CoverDate, item.Year),
+        ["Publisher"] = item.Publisher ?? string.Empty,
+        ["Writer"] = item.Writer ?? string.Empty,
+        ["ISBN"] = FirstNonBlank(item.Isbn13, item.Isbn10),
+        ["ISBN10"] = item.Isbn10 ?? string.Empty,
+        ["ISBN13"] = item.Isbn13 ?? string.Empty,
+        ["ASIN"] = item.Asin ?? string.Empty,
+        ["ManualTitle"] = FirstNonBlank(item.ManualTitle, item.Title),
+        ["StrategyGuideTitle"] = FirstNonBlank(item.Title, item.GameTitle),
+        ["Region"] = item.Region ?? string.Empty,
+        ["Language"] = item.LanguageTag ?? string.Empty,
+        ["Extension"] = ext
+    };
+
+    var rendered = Regex.Replace(template ?? string.Empty, "\\{([A-Za-z0-9_]+)\\}", match => values.TryGetValue(match.Groups[1].Value, out var value) ? value : string.Empty);
+    rendered = rendered.Replace('\\', '/');
+    var parts = rendered.Split('/', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+        .Select(SanitizePathPart)
+        .Where(part => !string.IsNullOrWhiteSpace(part))
+        .ToList();
+
+    if (parts.Count == 0) return string.Empty;
+    var fileName = parts[^1];
+    if (string.IsNullOrWhiteSpace(Path.GetExtension(fileName)) && !string.IsNullOrWhiteSpace(ext)) fileName += ext;
+    parts[^1] = SanitizeFileName(fileName);
+    return string.Join('/', parts);
+}
+
+static string SanitizePathPart(string value)
+{
+    var cleaned = new string((value ?? string.Empty).Select(ch => Path.GetInvalidFileNameChars().Contains(ch) ? '-' : ch).ToArray());
+    cleaned = Regex.Replace(cleaned, "\\s+", " ").Trim(' ', '.', '-');
+    return string.IsNullOrWhiteSpace(cleaned) ? "Unsorted" : cleaned;
+}
+
+static string SanitizeFileName(string value)
+{
+    var cleaned = SanitizePathPart(value);
+    if (string.IsNullOrWhiteSpace(Path.GetExtension(cleaned))) cleaned = cleaned.TrimEnd('.') + ".cbz";
+    return cleaned;
+}
+
+static bool TryResolveLibraryRoot(string filePath, IEnumerable<string> libraryPaths, out string root)
+{
+    root = string.Empty;
+    var normalized = Path.GetFullPath(filePath);
+    foreach (var candidate in libraryPaths.Where(p => !string.IsNullOrWhiteSpace(p)).Select(Path.GetFullPath).OrderByDescending(p => p.Length))
+    {
+        var withSep = candidate.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar) + Path.DirectorySeparatorChar;
+        if (normalized.StartsWith(withSep, StringComparison.OrdinalIgnoreCase))
+        {
+            root = candidate;
+            return true;
+        }
+    }
+    return false;
+}
+
+static bool IsPathInsideRoot(string path, string root)
+{
+    var normalizedPath = Path.GetFullPath(path);
+    var normalizedRoot = Path.GetFullPath(root).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar) + Path.DirectorySeparatorChar;
+    return normalizedPath.StartsWith(normalizedRoot, StringComparison.OrdinalIgnoreCase);
+}
+
+static string FirstNonBlank(params string?[] values)
+    => values.FirstOrDefault(value => !string.IsNullOrWhiteSpace(value))?.Trim() ?? string.Empty;
+
+static string ExtractYear(string? value)
+{
+    var match = Regex.Match(value ?? string.Empty, "\\b(19|20)\\d{2}\\b");
+    return match.Success ? match.Value : string.Empty;
+}
+
+static string ExtractMonth(string? value)
+{
+    var match = Regex.Match(value ?? string.Empty, "\\b(January|February|March|April|May|June|July|August|September|October|November|December|Jan|Feb|Mar|Apr|Jun|Jul|Aug|Sep|Sept|Oct|Nov|Dec)\\b", RegexOptions.IgnoreCase);
+    return match.Success ? match.Value : string.Empty;
+}
+
+static bool TryGetJsonProperty(JsonElement json, string camelName, out JsonElement value)
+{
+    if (json.ValueKind == JsonValueKind.Object)
+    {
+        if (json.TryGetProperty(camelName, out value)) return true;
+        foreach (var property in json.EnumerateObject())
+        {
+            if (property.Name.Equals(camelName, StringComparison.OrdinalIgnoreCase))
+            {
+                value = property.Value;
+                return true;
+            }
+        }
+    }
+    value = default;
+    return false;
+}
+
 static string BuildRelativeLibraryPath(string fullPath, IEnumerable<string> libraryPaths, string fallbackRelativePath)
 {
     try
@@ -2618,6 +3083,17 @@ static string BuildRelativeLibraryPath(string fullPath, IEnumerable<string> libr
 }
 
 record BrowseRoot(string Label, string Path);
+
+record FileOrganizationPlan(
+    string Id,
+    string Kind,
+    string Title,
+    string FileName,
+    string CurrentPath,
+    string ProposedPath,
+    string RelativePath,
+    string Status,
+    string Message);
 
 
 
@@ -3856,6 +4332,84 @@ public sealed class GuidevaultEmailHistoryRecord
     public string Status { get; set; } = "Logged";
     public string Message { get; set; } = string.Empty;
     public DateTimeOffset SentAt { get; set; } = DateTimeOffset.UtcNow;
+}
+
+public sealed class GuidevaultSystemEventStore
+{
+    private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web) { WriteIndented = true };
+    private readonly object _gate = new();
+    private readonly string _path;
+    private List<GuidevaultSystemEventRecord> _records;
+
+    public GuidevaultSystemEventStore(string path)
+    {
+        _path = path;
+        Directory.CreateDirectory(Path.GetDirectoryName(_path)!);
+        _records = Load();
+        Save();
+    }
+
+    public IReadOnlyList<GuidevaultSystemEventRecord> GetEvents(int limit = 100)
+    {
+        var safeLimit = Math.Clamp(limit, 1, 500);
+        lock (_gate) return _records.OrderByDescending(r => r.CreatedAt).Take(safeLimit).Select(Clone).ToArray();
+    }
+
+    public GuidevaultSystemEventRecord Record(GuidevaultSystemEventRecord record)
+    {
+        lock (_gate)
+        {
+            record.Id = string.IsNullOrWhiteSpace(record.Id) ? Guid.NewGuid().ToString("N")[..12] : record.Id;
+            record.CreatedAt = record.CreatedAt == default ? DateTimeOffset.UtcNow : record.CreatedAt;
+            record.Category = Clean(record.Category, "System");
+            record.Title = Clean(record.Title, "Guidevault event");
+            record.Message = Clean(record.Message);
+            record.Source = Clean(record.Source, "server");
+            record.ItemId = Clean(record.ItemId);
+            record.ItemTitle = Clean(record.ItemTitle);
+            _records.Insert(0, record);
+            if (_records.Count > 500) _records = _records.Take(500).ToList();
+            Save();
+            return Clone(record);
+        }
+    }
+
+    private List<GuidevaultSystemEventRecord> Load()
+    {
+        try
+        {
+            if (File.Exists(_path))
+                return JsonSerializer.Deserialize<List<GuidevaultSystemEventRecord>>(File.ReadAllText(_path), JsonOptions) ?? new List<GuidevaultSystemEventRecord>();
+        }
+        catch { }
+        return new List<GuidevaultSystemEventRecord>();
+    }
+
+    private void Save() => File.WriteAllText(_path, JsonSerializer.Serialize(_records, JsonOptions));
+    private static GuidevaultSystemEventRecord Clone(GuidevaultSystemEventRecord record) => new()
+    {
+        Id = record.Id,
+        Category = record.Category,
+        Title = record.Title,
+        Message = record.Message,
+        Source = record.Source,
+        ItemId = record.ItemId,
+        ItemTitle = record.ItemTitle,
+        CreatedAt = record.CreatedAt
+    };
+    private static string Clean(string? value, string fallback = "") => string.IsNullOrWhiteSpace(value) ? fallback : value.Trim();
+}
+
+public sealed class GuidevaultSystemEventRecord
+{
+    public string Id { get; set; } = string.Empty;
+    public string Category { get; set; } = "System";
+    public string Title { get; set; } = "Guidevault event";
+    public string Message { get; set; } = string.Empty;
+    public string Source { get; set; } = "server";
+    public string ItemId { get; set; } = string.Empty;
+    public string ItemTitle { get; set; } = string.Empty;
+    public DateTimeOffset CreatedAt { get; set; } = DateTimeOffset.UtcNow;
 }
 
 
@@ -11136,6 +11690,6 @@ static class GuidevaultLibraryIoGate
 
 static class GuidevaultBuildInfo
 {
-    public const string Version = "0.9.167";
+    public const string Version = "0.9.175";
 }
 

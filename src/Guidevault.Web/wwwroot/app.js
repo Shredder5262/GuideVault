@@ -1,4 +1,4 @@
-﻿const state = {
+const state = {
   items: [], filtered: [], selected: null, filter: 'All Content', categoryFilter: '', viewMode: 'all', activeTab: 'overview', customFilter: null,
   reader: { item: null, pages: [], index: 0, animating: false, displayMode: 2, transitionMode: 'stable', overlayVisible: false, advancedVisible: false, bookmarkMenuOpen: false, magnifierSettingsVisible: false, scrubbing: false, shading: null, zoom: 100, fullscreenOnOpen: false, magnifier: null, magnifierActive: false, longPressTimer: null, suppressHitClickUntil: 0, backgrounds: [], background: '', backgroundBrightness: 72 },
   libraryPath: '',
@@ -22,7 +22,8 @@
   readingProfiles: { presets: {}, defaultPresetId: 'default', groupAssignments: {}, entryAssignments: {} },
   opds: { connectionUrl: '', selectedKeyId: '', keys: [], editingUrl: false, revealUrl: false, creatingKey: false },
   devices: { emailDevices: [], clientDevices: [], generatedAt: null, addingEmail: false, editingEmailId: '', editingClientId: '', clientMenuId: '' },
-  metadataManager: { selectedIds: [], dirty: {}, filterKind: '', statusFilter: '', search: '', missing: '', category: '', visibleColumns: [], sortKey: '', sortDirection: 'asc', draggedColumnKey: '', renderLimit: 250 },
+  metadataManager: { selectedIds: [], dirty: {}, filterKind: '', kindFilters: ['Manual','Strategy Guide','Magazine'], statusFilter: '', search: '', missing: '', category: '', visibleColumns: [], useCustomColumns: false, sortKey: '', sortDirection: 'asc', draggedColumnKey: '', renderLimit: 250 },
+  serverFiles: { selectedIds: [], kindFilters: ['Manual','Strategy Guide','Magazine'], search: '', renderLimit: 250 },
   metadataSourceBatch: { results: [], running: false, applied: 0, runId: 0, abortController: null },
   keybinds: { bindings: {}, awaitingId: '' },
   folderBrowser: { targetInputId: '', currentPath: '/app/data/library', roots: [] },
@@ -30,6 +31,7 @@
   serverSettings: null,
   emailSettings: null,
   emailHistory: [],
+  systemEvents: [],
   usersSettings: { users: [], libraries: [], permissions: [] },
   usersSettingsRuntime: { loaded: false, loading: false, requestId: 0, loadTimer: 0, renderedHash: '' },
   taskSettings: null,
@@ -98,7 +100,7 @@ const GUIDEVAULT_LIBRARY_CHUNK_YIELD_MS = 30;
 const GUIDEVAULT_STARTUP_STATUS_HIDE_MS = 2400;
 const GUIDEVAULT_LIBRARY_SEARCH_DEBOUNCE_MS = 180;
 const GUIDEVAULT_SORT_COLLATOR = new Intl.Collator(undefined, { numeric: true, sensitivity: 'base' });
-const GUIDEVAULT_APP_VERSION = '0.9.167';
+const GUIDEVAULT_APP_VERSION = '0.9.175';
 const GUIDEVAULT_FILENAME_SCHEMA_KEY = 'guidevault.filenameRename.schema.v1';
 const GUIDEVAULT_DEFAULT_FILENAME_SCHEMA = '{title}';
 const GUIDEVAULT_STABLE_TAG_FEED_URL = 'https://api.github.com/repos/Shredder5262/GuideVault/tags';
@@ -3630,6 +3632,63 @@ function renderEmailHistory() {
     </article>`;
   }).join('') : '<article class="settings-card"><p class="sub">No email has been sent or attempted yet.</p></article>';
 }
+
+async function loadSystemEvents(showStatus = false) {
+  try {
+    const res = await fetch('/api/system/events?limit=100', { cache: 'no-store' });
+    if (!res.ok) throw new Error(`System events request failed: ${res.status}`);
+    const data = await res.json();
+    state.systemEvents = Array.isArray(data) ? data : (Array.isArray(data.events) ? data.events : []);
+    renderSystemEvents();
+    if (showStatus) setSystemEventsStatus('System events refreshed.', 'success');
+  } catch (err) {
+    console.warn('Unable to load system events', err);
+    state.systemEvents = Array.isArray(state.systemEvents) ? state.systemEvents : [];
+    renderSystemEvents();
+    if (showStatus) setSystemEventsStatus('Unable to load system events from the backend.', 'error');
+  }
+}
+function setSystemEventsStatus(message = '', tone = '') {
+  const el = $('systemEventsStatus');
+  if (!el) return;
+  el.textContent = message;
+  el.dataset.tone = tone || '';
+}
+function systemEventIcon(category = '') {
+  const key = String(category || '').toLowerCase();
+  if (key.includes('reader')) return '&#x1F4D6;';
+  if (key.includes('metadata')) return '&#x270E;';
+  if (key.includes('connection') || key.includes('device')) return '&#x1F517;';
+  if (key.includes('email')) return '&#x2709;';
+  if (key.includes('file')) return '&#x1F5C2;';
+  if (key.includes('library')) return '&#x1F4DA;';
+  if (key.includes('api')) return '&#x1F5A7;';
+  return '&#x25C8;';
+}
+function renderSystemEvents() {
+  const host = $('systemEventsList');
+  if (!host) return;
+  const items = Array.isArray(state.systemEvents) ? state.systemEvents.slice(0, 100) : [];
+  if ($('systemEventsCount')) $('systemEventsCount').textContent = String(items.length);
+  if ($('systemEventsLast')) {
+    const last = items[0]?.createdAt ? new Date(items[0].createdAt).toLocaleString() : '\u2014';
+    $('systemEventsLast').textContent = last;
+  }
+  host.innerHTML = items.length ? items.map(item => {
+    const created = item.createdAt ? new Date(item.createdAt).toLocaleString() : 'Unknown time';
+    const category = item.category || 'System';
+    const title = item.title || item.message || 'Guidevault event';
+    const source = item.source || 'server';
+    return `<article class="settings-card system-event-row" data-category="${escapeForAttribute(String(category).toLowerCase())}">
+      <div class="system-event-icon" aria-hidden="true">${systemEventIcon(category)}</div>
+      <div class="system-event-main">
+        <div class="system-event-title-line"><strong>${escapeHtml(title)}</strong><span>${escapeHtml(category)}</span></div>
+        ${item.message ? `<p>${escapeHtml(item.message)}</p>` : ''}
+        <div class="system-event-foot"><span>${escapeHtml(created)}</span><span>${escapeHtml(source)}</span>${item.itemTitle ? `<span>${escapeHtml(item.itemTitle)}</span>` : ''}</div>
+      </div>
+    </article>`;
+  }).join('') : '<article class="settings-card"><p class="sub">No system events have been recorded yet.</p></article>';
+}
 function usersSettingsRuntime() {
   if (!state.usersSettingsRuntime) state.usersSettingsRuntime = { loaded: false, loading: false, requestId: 0, loadTimer: 0, renderedHash: '' };
   return state.usersSettingsRuntime;
@@ -5452,7 +5511,7 @@ function activateTab(tab) {
   state.activeTab = tab || 'overview';
   document.querySelectorAll('.tab').forEach(b => b.classList.toggle('active', b.dataset.tab === state.activeTab));
   document.querySelectorAll('.tab-panel').forEach(p => p.classList.toggle('hidden', p.id !== `${state.activeTab}Panel`));
-  if (state.activeTab === 'file-name') updateMetadataFileMaintenance();
+  if (state.activeTab === 'library-data') updateMetadataFileMaintenance();
   if (state.activeTab === 'reviews' && state.selected) loadPublicReviewsForItem(state.selected, true);
 }
 
@@ -9285,6 +9344,52 @@ function toggleSelectedMetadataLock(lockKey = '') {
   persistSelectedMetadataLocks(locks);
 }
 
+
+function metadataPanelVisibleLockButtons() {
+  return Array.from(document.querySelectorAll('#metadataPanel .metadata-lock-button[data-metadata-lock-key]')).filter(button => {
+    const label = button.closest('label');
+    if (!label) return false;
+    if (label.classList.contains('hidden')) return false;
+    if (label.closest('.hidden')) return false;
+    try {
+      const style = window.getComputedStyle(label);
+      if (style.display === 'none' || style.visibility === 'hidden') return false;
+    } catch {}
+    return !!button.dataset.metadataLockKey;
+  });
+}
+
+function selectedVisibleMetadataLockKeys() {
+  return Array.from(new Set(metadataPanelVisibleLockButtons()
+    .map(button => String(button.dataset.metadataLockKey || '').trim())
+    .filter(Boolean)));
+}
+
+async function setAllSelectedMetadataFieldLocks(locked = true) {
+  if (!state.selected) { setStatus('Select an item before changing field locks.'); return; }
+  addMetadataFieldLockButtons();
+  const keys = selectedVisibleMetadataLockKeys();
+  if (!keys.length) { setStatus('No visible metadata fields are available to lock.'); return; }
+  const current = metadataLocksOf(state.selected);
+  const next = { ...current };
+  const now = new Date().toISOString();
+  if (locked) {
+    keys.forEach(key => {
+      next[key] = { locked: true, lockedAt: current[key]?.lockedAt || now, source: 'manual', reason: 'Locked by Lock All Fields in Guidevault' };
+    });
+    await persistSelectedMetadataLocks(next);
+    setStatus(`Locked ${keys.length} visible metadata field${keys.length === 1 ? '' : 's'}.`);
+    return;
+  }
+  const serverPatch = { ...current };
+  keys.forEach(key => {
+    if (serverPatch[key]) serverPatch[key] = { locked: false, source: 'manual' };
+    delete next[key];
+  });
+  await persistSelectedMetadataLocks(next, serverPatch);
+  setStatus(`Unlocked ${keys.length} visible metadata field${keys.length === 1 ? '' : 's'}.`);
+}
+
 const METADATA_FIELD_HELP = {
   editTitle: {
     default: 'Guidevault display title for this item. For manuals, use the manual-facing title; for strategy guides, use the guide title; for magazines, use the issue entry title.',
@@ -9460,7 +9565,7 @@ function updateTypedMetadataFieldVisibility(kind = $('editKind')?.value || '') {
   $('metadataPanel')?.classList.toggle('metadata-kind-strategy', isStrategyGuide);
   $('editGameTitleLabel')?.classList.toggle('strategy-game-context-order', isStrategyGuide);
   if ($('editSeriesLabel')) $('editSeriesLabel').classList.toggle('hidden', isStrategyGuide || isManual || isMagazine);
-  if ($('editYearLabel')) $('editYearLabel').classList.toggle('hidden', isManual || isMagazine);
+  if ($('editYearLabel')) $('editYearLabel').classList.toggle('hidden', isManual || isMagazine || isStrategyGuide);
   if ($('editPublicationDateGuideLabel')) $('editPublicationDateGuideLabel').classList.toggle('hidden', !isStrategyGuide);
   if ($('editManualTitleLabel')) $('editManualTitleLabel').classList.add('hidden');
   refreshMetadataFieldInfoDescriptions(kind);
@@ -9922,7 +10027,7 @@ function buildCurrentMetadataPayloadFromForm(extra = {}) {
     series: $('editSeries')?.value || '',
     issueNumber: selectedKind === 'Magazine' ? ($('editIssue')?.value || '') : '',
     publisher: $('editPublisher')?.value || '',
-    year: selectedKind === 'Manual' ? '' : (selectedKind === 'Magazine' ? (yearFromText($('editCoverDate')?.value || $('editPublicationDate')?.value || $('editYear')?.value || '') || $('editYear')?.value || '') : ($('editYear')?.value || '')),
+    year: selectedKind === 'Manual' || selectedKind === 'Strategy Guide' ? '' : (selectedKind === 'Magazine' ? (yearFromText($('editCoverDate')?.value || $('editPublicationDate')?.value || $('editYear')?.value || '') || $('editYear')?.value || '') : ($('editYear')?.value || '')),
     pageCount: numericInput('editPageCount'),
     metadataPageCount: numericInput('editPageCount'),
     writer: $('editWriter')?.value || '',
@@ -10082,7 +10187,7 @@ async function enrichSelectedFileMetadata() {
       state.selected = data.item;
       clearClientMetadataOverride(selectedId);
       renderDetails(data.item);
-      activateTab('file-name');
+      activateTab('library-data');
       applyFilters();
     }
 
@@ -10294,24 +10399,22 @@ function ensureOpenLibraryMetadataUi() {
 
   const existing = $('openLibrarySearchBtn');
   if (existing) {
-    existing.classList.add('ghost', 'openlibrary-action-button');
+    existing.classList.remove('ghost');
+    existing.classList.add('metadata-lookup-button', 'openlibrary-action-button');
     existing.type = 'button';
+    existing.textContent = 'Open Library';
     existing.dataset.defaultTitle = 'Search Open Library by strategy guide title/game title and review metadata before importing selected fields.';
     updateMetadataSourceActionVisibility();
     return;
   }
 
-  const target = document.querySelector('#file-namePanel .file-metadata-card-actions .file-metadata-actions')
-    || $('exportGuideMetadataBtn')?.parentElement
-    || $('enrichCurrentFileMetadataBtn')?.parentElement
-    || $('file-namePanel')
-    || $('metadataPanel');
+  const target = $('metadataPanel');
   if (target) {
     const btn = document.createElement('button');
     btn.id = 'openLibrarySearchBtn';
     btn.type = 'button';
-    btn.className = 'ghost openlibrary-action-button';
-    btn.textContent = 'Search Open Library Metadata';
+    btn.className = 'metadata-lookup-button openlibrary-action-button';
+    btn.textContent = 'Open Library';
     btn.title = 'Search Open Library by strategy guide title/game title and review metadata before importing selected fields.';
     btn.dataset.defaultTitle = btn.title;
     target.appendChild(btn);
@@ -10573,7 +10676,7 @@ async function importOpenLibraryMetadata(mode = 'selected') {
   const payload = openLibraryPayloadFromFields(fields);
   try {
     openLibrarySetStatus('Importing selected Open Library metadata...', 'info');
-    const updated = await saveSelectedMetadata(payload, { tab: 'file-name' });
+    const updated = await saveSelectedMetadata(payload, { tab: 'metadata' });
     if (updated) {
       setStatus('Open Library metadata imported. Cover preview was not imported.');
       closeOpenLibraryDialog();
@@ -10640,23 +10743,24 @@ function ensureEsrbMetadataUi() {
 
   const existing = $('esrbSearchBtn');
   if (existing) {
-    existing.classList.add('ghost', 'esrb-action-button');
+    existing.classList.remove('ghost');
+    existing.classList.add('metadata-lookup-button', 'esrb-action-button');
     existing.type = 'button';
+    existing.textContent = 'ESRB';
     existing.dataset.defaultTitle = 'Search ESRB.org by strategy-guide game title and review the rating before importing it.';
     updateMetadataSourceActionVisibility();
     return;
   }
 
-  const target = document.querySelector('#file-namePanel .file-metadata-card-actions .file-metadata-actions')
-    || $('igdbSearchBtn')?.parentElement
+  const target = $('igdbSearchBtn')?.parentElement
     || $('openLibrarySearchBtn')?.parentElement
     || $('metadataPanel');
   if (target) {
     const btn = document.createElement('button');
     btn.id = 'esrbSearchBtn';
     btn.type = 'button';
-    btn.className = 'ghost esrb-action-button';
-    btn.textContent = 'Search ESRB Rating';
+    btn.className = 'metadata-lookup-button esrb-action-button';
+    btn.textContent = 'ESRB';
     btn.title = 'Search ESRB.org by strategy-guide game title and review the rating before importing it.';
     btn.dataset.defaultTitle = btn.title;
     target.appendChild(btn);
@@ -11017,23 +11121,24 @@ function ensureIgdbMetadataUi() {
 
   const existing = $('igdbSearchBtn');
   if (existing) {
-    existing.classList.add('ghost', 'igdb-action-button');
+    existing.classList.remove('ghost');
+    existing.classList.add('metadata-lookup-button', 'igdb-action-button');
     existing.type = 'button';
+    existing.textContent = 'IGDB';
     existing.dataset.defaultTitle = 'Search IGDB by strategy-guide game title and review game metadata before importing selected fields.';
     updateMetadataSourceActionVisibility();
     return;
   }
 
-  const target = document.querySelector('#file-namePanel .file-metadata-card-actions .file-metadata-actions')
-    || $('openLibrarySearchBtn')?.parentElement
+  const target = $('openLibrarySearchBtn')?.parentElement
     || $('exportGuideMetadataBtn')?.parentElement
     || $('metadataPanel');
   if (target) {
     const btn = document.createElement('button');
     btn.id = 'igdbSearchBtn';
     btn.type = 'button';
-    btn.className = 'ghost igdb-action-button';
-    btn.textContent = 'Search IGDB Game Metadata';
+    btn.className = 'metadata-lookup-button igdb-action-button';
+    btn.textContent = 'IGDB';
     btn.title = 'Search IGDB by strategy-guide game title and review game metadata before importing selected fields.';
     btn.dataset.defaultTitle = btn.title;
     target.appendChild(btn);
@@ -11341,7 +11446,7 @@ async function importIgdbMetadata(mode = 'selected') {
   const payload = igdbPayloadFromFields(fields);
   try {
     igdbSetStatus('Importing selected IGDB game metadata...', 'info');
-    const updated = await saveSelectedMetadata(payload, { tab: 'file-name' });
+    const updated = await saveSelectedMetadata(payload, { tab: 'metadata' });
     if (updated) {
       setStatus('IGDB game metadata imported. Open Library book metadata remains separate. Covers were not imported.');
       closeIgdbDialog();
@@ -11454,7 +11559,7 @@ Guidevault will rename the source file, update the indexed database entry, and k
       state.selected = data.item;
       rememberClientMetadataOverride(selectedId, metadata);
       renderDetails(data.item);
-      activateTab('file-name');
+      activateTab('library-data');
       applyFilters();
     }
 
@@ -11617,6 +11722,56 @@ const METADATA_MANAGER_ALL_COLUMNS = [
   { key:'notes', label:'Notes', description:'Freeform notes.' }
 ];
 
+const METADATA_MANAGER_KIND_FILTERS = ['Manual', 'Strategy Guide', 'Magazine'];
+const METADATA_MANAGER_AUTO_COLUMNS_BY_KIND = {
+  Manual: ['kind','metadataStatus','name','gameTitle','category','series','languageTag','region','year','publisher','rating','manualTitle','manualType','includedSections','includedExtras','controlScheme','itemsCovered','metadataSource'],
+  'Strategy Guide': ['kind','metadataStatus','name','gameTitle','category','associatedPlatforms','series','languageTag','region','publisher','writer','publicationDate','isbn10','isbn13','guideType','edition','franchise','gameReleaseYear','genre','coveredGames','coveredPlatforms','guideTopics','metadataSource'],
+  Magazine: ['kind','metadataStatus','name','magazineTitle','issueNumber','volume','coverDate','year','publisher','region','languageTag','platformFocus','primarySystem','magazineCategory','coverSubject','featuredGames','featuredPlatforms','specialFeatures','includedExtras','tags','metadataSource']
+};
+
+function metadataManagerSelectedKinds() {
+  state.metadataManager = state.metadataManager || {};
+  const fromCheckboxes = Array.isArray(state.metadataManager.kindFilters) ? state.metadataManager.kindFilters.filter(kind => METADATA_MANAGER_KIND_FILTERS.includes(kind)) : [];
+  if (fromCheckboxes.length) return fromCheckboxes;
+  const legacy = String(state.metadataManager.filterKind || '').trim();
+  if (METADATA_MANAGER_KIND_FILTERS.includes(legacy)) return [legacy];
+  return METADATA_MANAGER_KIND_FILTERS.slice();
+}
+
+function metadataManagerSetSelectedKinds(kinds = []) {
+  state.metadataManager = state.metadataManager || {};
+  const clean = (kinds || []).filter(kind => METADATA_MANAGER_KIND_FILTERS.includes(kind));
+  const next = clean.length ? clean : METADATA_MANAGER_KIND_FILTERS.slice();
+  const previous = Array.isArray(state.metadataManager.kindFilters) ? state.metadataManager.kindFilters : [];
+  const changed = next.length !== previous.length || next.some(kind => !previous.includes(kind));
+  state.metadataManager.kindFilters = next;
+  state.metadataManager.filterKind = state.metadataManager.kindFilters.length === 1 ? state.metadataManager.kindFilters[0] : '';
+  if (changed) state.metadataManager.useCustomColumns = false;
+}
+
+function metadataManagerKindSummaryLabel(kinds = metadataManagerSelectedKinds()) {
+  const selected = (Array.isArray(kinds) && kinds.length ? kinds : METADATA_MANAGER_KIND_FILTERS).filter(kind => METADATA_MANAGER_KIND_FILTERS.includes(kind));
+  if (!selected.length || selected.length === METADATA_MANAGER_KIND_FILTERS.length) return 'Manuals, Strategy Guides, Magazines';
+  return selected.map(kind => kind === 'Strategy Guide' ? 'Strategy Guides' : `${kind}s`).join(', ');
+}
+
+function syncMetadataManagerKindDropdown() {
+  const summary = $('metadataManagerKindSummary');
+  if (summary) summary.textContent = metadataManagerKindSummaryLabel();
+  const dropdown = $('metadataManagerKindDropdown');
+  if (dropdown) dropdown.title = `Showing: ${metadataManagerKindSummaryLabel()}`;
+}
+
+function metadataManagerAutoColumnKeysForKinds(kinds = metadataManagerSelectedKinds()) {
+  const selected = (kinds && kinds.length ? kinds : METADATA_MANAGER_KIND_FILTERS).filter(kind => METADATA_MANAGER_KIND_FILTERS.includes(kind));
+  const keys = [];
+  const add = key => { if (!keys.includes(key) && metadataManagerValidColumnKeys().has(key)) keys.push(key); };
+  ['kind','metadataStatus','name'].forEach(add);
+  selected.forEach(kind => (METADATA_MANAGER_AUTO_COLUMNS_BY_KIND[kind] || []).forEach(add));
+  if (selected.length > 1) ['category','series','languageTag','region','year','publisher','topics','metadataSource'].forEach(add);
+  return keys.length ? keys : METADATA_MANAGER_DEFAULT_COLUMNS.slice();
+}
+
 function metadataManagerItemId(item) {
   return String(item?.id || item?.Id || '').trim();
 }
@@ -11731,13 +11886,13 @@ function metadataManagerEditableItems() {
   const allowed = new Set(['Manual', 'Strategy Guide', 'Magazine']);
   const manager = state.metadataManager || {};
   const q = String(manager.search || '').trim().toLowerCase();
-  const kind = String(manager.filterKind || '').trim();
+  const selectedKinds = new Set(metadataManagerSelectedKinds());
   const statusFilter = normalizeMetadataStatus(manager.statusFilter || '', '');
   const missing = String(manager.missing || '').trim();
   const category = String(manager.category || '').trim().toLowerCase();
   const filtered = (state.items || []).filter(item => {
     if (!allowed.has(item.kind)) return false;
-    if (kind && item.kind !== kind) return false;
+    if (!selectedKinds.has(item.kind)) return false;
     if (statusFilter && metadataStatusOf(item) !== statusFilter) return false;
     if (category) {
       const cats = [metadataManagerCategoryValue(item), metadataManagerSeriesValue(item), item.magazineTitle, item.series, ...associatedPlatformsOf(item)]
@@ -11971,17 +12126,25 @@ function metadataManagerColumnDefinition(key) {
 }
 
 function metadataManagerLoadVisibleColumns() {
+  state.metadataManager = state.metadataManager || {};
   const valid = metadataManagerValidColumnKeys();
+  if (!state.metadataManager.useCustomColumns) {
+    const auto = metadataManagerAutoColumnKeysForKinds();
+    state.metadataManager.visibleColumns = auto;
+    return auto;
+  }
   let saved = [];
   try { saved = JSON.parse(localStorage.getItem(GUIDEVAULT_METADATA_COLUMNS_KEY) || '[]') || []; } catch { saved = []; }
   const requested = (Array.isArray(state.metadataManager?.visibleColumns) && state.metadataManager.visibleColumns.length ? state.metadataManager.visibleColumns : saved)
     .filter(key => valid.has(key));
-  const resolved = requested.length ? requested : METADATA_MANAGER_DEFAULT_COLUMNS.slice();
+  const resolved = requested.length ? requested : metadataManagerAutoColumnKeysForKinds();
   state.metadataManager.visibleColumns = resolved;
   return resolved;
 }
 
 function metadataManagerSaveVisibleColumns(columns) {
+  state.metadataManager = state.metadataManager || {};
+  state.metadataManager.useCustomColumns = true;
   const valid = metadataManagerValidColumnKeys();
   const seen = new Set();
   const resolved = (columns || []).filter(key => {
@@ -12098,10 +12261,13 @@ function metadataManagerSortItems(items) {
 }
 
 function metadataManagerResetColumns() {
-  metadataManagerSaveVisibleColumns(METADATA_MANAGER_DEFAULT_COLUMNS.slice());
+  state.metadataManager = state.metadataManager || {};
+  state.metadataManager.useCustomColumns = false;
+  state.metadataManager.visibleColumns = metadataManagerAutoColumnKeysForKinds();
+  try { localStorage.removeItem(GUIDEVAULT_METADATA_COLUMNS_KEY); } catch {}
   renderMetadataManagerColumnPicker();
   renderMetadataManager();
-  metadataManagerSetStatus('Metadata columns reset to the default view.', 'success');
+  metadataManagerSetStatus('Metadata columns returned to the automatic content-type view.', 'success');
 }
 
 function metadataManagerShowAllColumns() {
@@ -12162,7 +12328,7 @@ function renderMetadataManagerColumnPicker() {
     </section>`;
   }).join('');
   const active = $('metadataManagerColumnActiveCount');
-  if (active) active.textContent = `${visible.length} of ${METADATA_MANAGER_ALL_COLUMNS.length} columns shown - grouped by context; click table headers to sort or drag headers to reorder`;
+  if (active) active.textContent = state.metadataManager?.useCustomColumns ? `${visible.length} of ${METADATA_MANAGER_ALL_COLUMNS.length} custom columns shown - click headers to sort or drag to reorder` : `${visible.length} automatic columns shown for selected content type(s)`;
 }
 
 function metadataManagerSourceTitleCandidate(item) {
@@ -12399,7 +12565,7 @@ function metadataManagerBatchPayloadForItem(item, entries) {
 
 function renderMetadataManager() {
   if (!$('settingsMetadataManagerPanel')) return;
-  state.metadataManager = state.metadataManager || { selectedIds: [], dirty: {}, filterKind: '', statusFilter: '', search: '', missing: '', category: '', visibleColumns: [], sortKey: '', sortDirection: 'asc', draggedColumnKey: '', renderLimit: METADATA_MANAGER_DEFAULT_RENDER_LIMIT };
+  state.metadataManager = state.metadataManager || { selectedIds: [], dirty: {}, filterKind: '', kindFilters: ['Manual','Strategy Guide','Magazine'], statusFilter: '', search: '', missing: '', category: '', visibleColumns: [], useCustomColumns: false, sortKey: '', sortDirection: 'asc', draggedColumnKey: '', renderLimit: METADATA_MANAGER_DEFAULT_RENDER_LIMIT };
   const categorySelect = $('metadataManagerCategory');
   if (categorySelect && !categorySelect.options.length) metadataManagerRenderCategoryFilter();
   const columnPicker = $('metadataManagerColumnPicker');
@@ -12407,6 +12573,9 @@ function renderMetadataManager() {
   const manager = state.metadataManager;
   if ($('metadataManagerSearch')) $('metadataManagerSearch').value = manager.search || '';
   if ($('metadataManagerKind')) $('metadataManagerKind').value = manager.filterKind || '';
+  const selectedKinds = new Set(metadataManagerSelectedKinds());
+  document.querySelectorAll('[data-metadata-manager-kind]').forEach(input => { input.checked = selectedKinds.has(input.dataset.metadataManagerKind || ''); });
+  syncMetadataManagerKindDropdown();
   if ($('metadataManagerStatusFilter')) $('metadataManagerStatusFilter').value = normalizeMetadataStatus(manager.statusFilter || '', '');
   if ($('metadataManagerMissing')) $('metadataManagerMissing').value = manager.missing || '';
   if ($('metadataManagerCategory')) $('metadataManagerCategory').value = manager.category || '';
@@ -12551,7 +12720,7 @@ function metadataManagerUpdateFilter(field, value) {
     metadataManagerScheduleRender();
     return;
   }
-  if (field === 'filterKind' || field === 'statusFilter' || field === 'missing' || field === 'category') {
+  if (field === 'filterKind' || field === 'kindFilters' || field === 'statusFilter' || field === 'missing' || field === 'category') {
     state.metadataManager.selectedIds = [];
     metadataManagerResetRenderLimit();
   }
@@ -13732,7 +13901,6 @@ function metadataManagerSyncFiltersFromControls() {
   state.metadataManager = state.metadataManager || {};
   const mappings = [
     ['metadataManagerSearch', 'search'],
-    ['metadataManagerKind', 'filterKind'],
     ['metadataManagerStatusFilter', 'statusFilter'],
     ['metadataManagerMissing', 'missing'],
     ['metadataManagerCategory', 'category']
@@ -13741,6 +13909,8 @@ function metadataManagerSyncFiltersFromControls() {
     const control = $(id);
     if (control) state.metadataManager[field] = control.value || '';
   });
+  const checkedKinds = Array.from(document.querySelectorAll('[data-metadata-manager-kind]:checked')).map(el => el.dataset.metadataManagerKind || '').filter(Boolean);
+  metadataManagerSetSelectedKinds(checkedKinds.length ? checkedKinds : state.metadataManager.kindFilters || METADATA_MANAGER_KIND_FILTERS);
   return state.metadataManager;
 }
 
@@ -13751,16 +13921,19 @@ function metadataManagerExportScopeSlug(kind = '') {
 
 function metadataManagerExportCsv() {
   const manager = metadataManagerSyncFiltersFromControls();
-  const requestedKind = String(manager.filterKind || '').trim();
+  const requestedKinds = metadataManagerSelectedKinds();
+  const requestedKind = requestedKinds.length === 1 ? requestedKinds[0] : '';
   let rows = metadataManagerEditableItems();
 
-  // Hard guard the export scope from the live Type control. If the manager state ever
+  // Hard guard the export scope from the live Type checkboxes. If the manager state ever
   // gets stale, this prevents a Strategy Guide export from falling back to magazines/all rows.
-  if (requestedKind) rows = rows.filter(item => String(item?.kind || '').trim() === requestedKind);
+  const requestedSet = new Set(requestedKinds);
+  rows = rows.filter(item => requestedSet.has(String(item?.kind || '').trim()));
 
   const columns = metadataManagerVisibleColumns();
   if (!rows.length) {
-    metadataManagerSetStatus(requestedKind ? `No ${requestedKind} row(s) match the current Metadata Manager filters.` : 'No metadata rows match the current Metadata Manager filters.', 'error');
+    const scopeText = requestedKind || requestedKinds.join(', ') || 'metadata';
+    metadataManagerSetStatus(`No ${scopeText} row(s) match the current Metadata Manager filters.`, 'error');
     return;
   }
   const header = ['id', ...columns.map(column => column.key)];
@@ -13775,7 +13948,7 @@ function metadataManagerExportCsv() {
   const blob = new Blob([new Uint8Array([0xEF, 0xBB, 0xBF]), csvText], { type: 'text/csv;charset=utf-8' });
   const link = document.createElement('a');
   link.href = URL.createObjectURL(blob);
-  const scope = metadataManagerExportScopeSlug(requestedKind);
+  const scope = metadataManagerExportScopeSlug(requestedKind || requestedKinds.join('-'));
   link.download = `guidevault-metadata-${scope}-${new Date().toISOString().slice(0,10)}.csv`;
   document.body.appendChild(link);
   link.click();
@@ -14351,15 +14524,9 @@ function updateMetadataTechnicalInfo(item) {
     return;
   }
   panel.innerHTML = `
-    <details class="metadata-library-data-dropdown">
-      <summary>
-        <span>Library Data</span>
-        <em>${rows.length} field${rows.length === 1 ? '' : 's'}</em>
-      </summary>
-      <dl class="metadata-technical-list">
-        ${rows.map(([k, v]) => metaRow(k, v, false)).join('')}
-      </dl>
-    </details>`;
+    <dl class="metadata-technical-list library-data-flat-list">
+      ${rows.map(([k, v]) => metaRow(k, v, false)).join('')}
+    </dl>`;
 }
 
 function isEsrbIconEligible(item) {
@@ -14688,7 +14855,7 @@ function renderDetails(item) {
   setMaybeValue('editGamePublisher', (isStrategyGuide || isManual) ? item.gamePublisher : '');
   setMaybeValue('editGameReleaseYear', (isStrategyGuide || isManual) ? (item.gameReleaseYear || (isManual ? item.year : '')) : '');
   setMaybeValue('editGenre', (isStrategyGuide || isManual) ? item.genre : '');
-  $('editYear').value = isManual ? '' : (item.year || '');
+  $('editYear').value = (isManual || isStrategyGuide) ? '' : (item.year || '');
   if ($('editPageCount')) $('editPageCount').value = item.metadataPageCount || item.pageCountMetadata || item.pageCountEntered || item.pageCount || item.PageCount || '';
   $('editWriter').value = item.writer || '';
   $('editSummary').value = item.summary || '';
@@ -14823,7 +14990,7 @@ async function saveSelectedMetadata(extra = {}, options = {}) {
       series: $('editSeries').value,
       issueNumber: selectedKind === 'Magazine' ? $('editIssue').value : '',
       publisher: $('editPublisher').value,
-      year: selectedKind === 'Manual' ? '' : $('editYear').value,
+      year: (selectedKind === 'Manual' || selectedKind === 'Strategy Guide') ? '' : $('editYear').value,
       pageCount: numericInput('editPageCount'),
       metadataPageCount: numericInput('editPageCount'),
       writer: $('editWriter').value,
@@ -18182,8 +18349,8 @@ function updateSettingsInsights() {
 const GUIDEVAULT_SETTINGS_GROUPS = {
   account: ['account', 'preferences', 'keybinds', 'reading-profiles', 'customize', 'devices'],
   insights: ['insights', 'insights-devices', 'statistics'],
-  server: ['server', 'integrations', 'metadata-manager', 'opds', 'media', 'email', 'users', 'tasks'],
-  info: ['info', 'email-history']
+  server: ['server', 'files', 'integrations', 'metadata-manager', 'opds', 'media', 'email', 'users', 'tasks'],
+  info: ['info', 'events']
 };
 
 function settingsGroupForTab(tab = 'account') {
@@ -18308,7 +18475,8 @@ function showSettingsScreen(tab = 'account') {
 }
 function activateSettingsTab(tab = 'account') {
   if (tab === 'insights') tab = 'statistics';
-  const allowed = new Set(['account', 'preferences', 'keybinds', 'reading-profiles', 'customize', 'opds', 'devices', 'insights-devices', 'statistics', 'server', 'integrations', 'metadata-manager', 'media', 'email', 'users', 'tasks', 'info', 'email-history']);
+  if (tab === 'email-history') tab = 'email';
+  const allowed = new Set(['account', 'preferences', 'keybinds', 'reading-profiles', 'customize', 'opds', 'devices', 'insights-devices', 'statistics', 'server', 'files', 'integrations', 'metadata-manager', 'media', 'email', 'users', 'tasks', 'info', 'events']);
   const active = allowed.has(tab) ? tab : 'account';
   state.settingsActiveTab = active;
   const activeGroup = settingsGroupForTab(active);
@@ -18330,6 +18498,7 @@ function activateSettingsTab(tab = 'account') {
   if ($('settingsOpdsPanel')) $('settingsOpdsPanel').classList.toggle('hidden', active !== 'opds');
   if ($('settingsDevicesPanel')) $('settingsDevicesPanel').classList.toggle('hidden', active !== 'devices');
   if ($('settingsServerPanel')) $('settingsServerPanel').classList.toggle('hidden', active !== 'server');
+  if ($('settingsFilesPanel')) $('settingsFilesPanel').classList.toggle('hidden', active !== 'files');
   if ($('settingsIntegrationsPanel')) $('settingsIntegrationsPanel').classList.toggle('hidden', active !== 'integrations');
   if ($('settingsMediaPanel')) $('settingsMediaPanel').classList.toggle('hidden', active !== 'media');
   if ($('settingsEmailPanel')) $('settingsEmailPanel').classList.toggle('hidden', active !== 'email');
@@ -18338,19 +18507,20 @@ function activateSettingsTab(tab = 'account') {
   if ($('settingsMetadataManagerPanel')) $('settingsMetadataManagerPanel').classList.toggle('hidden', active !== 'metadata-manager');
   if ($('settingsImportPanel')) $('settingsImportPanel').classList.toggle('hidden', active !== 'media');
   if ($('settingsInfoPanel')) $('settingsInfoPanel').classList.toggle('hidden', active !== 'info');
-  if ($('settingsEmailHistoryPanel')) $('settingsEmailHistoryPanel').classList.toggle('hidden', active !== 'email-history');
+  if ($('settingsEventsPanel')) $('settingsEventsPanel').classList.toggle('hidden', active !== 'events');
   if (active === 'preferences') renderPreferencesSettings();
   if (active === 'keybinds') renderKeybindsSettings();
   if (active === 'customize') renderCustomizeSettings();
   if (active === 'server') loadServerSettings(false);
+  if (active === 'files') renderServerFilesWorkspace();
   if (active === 'integrations') loadServerSettings(false);
   if (active === 'media') loadServerSettings(false);
-  if (active === 'email') { if (!state.serverSettings) loadServerSettings(false); loadEmailSettings(false); requestAnimationFrame(syncEmailTemplatePreview); }
+  if (active === 'email') { if (!state.serverSettings) loadServerSettings(false); loadEmailSettings(false); loadEmailHistory(false); requestAnimationFrame(syncEmailTemplatePreview); }
   if (active === 'users') { renderUsersLoadingState(); deferAfterVisiblePaint(() => openUsersSettingsPanel(), 120); }
   if (active === 'tasks') loadTaskSettings(false);
   if (active === 'statistics') renderStatistics();
   if (active === 'info') { trimSystemUpdateHistory(); loadSystemInfo(false); loadSystemPerformance(); checkStableUpdates(false); }
-  if (active === 'email-history') loadEmailHistory(false);
+  if (active === 'events') loadSystemEvents(false);
   if (active === 'reading-profiles') renderReadingProfileSettings();
   if (active === 'opds') { renderOpdsSettings(); syncOpdsSettingsFromServer(false); }
   if (active === 'devices' || active === 'insights-devices') { renderDeviceHistory(); sendDeviceHeartbeat({ refresh: true }); loadDeviceHistory(false); }
@@ -18811,7 +18981,9 @@ document.addEventListener('keydown', e => {
   if (e.key === 'Escape') closeMetadataMultiSelects();
 });
 if ($('editEditionType')) $('editEditionType').addEventListener('change', updateEditionControls);
-if ($('saveMetadataBtn')) $('saveMetadataBtn').addEventListener('click', async e => { e.preventDefault(); await saveSelectedMetadata({}, { tab: state.activeTab || 'file-name', button: e.currentTarget }); });
+if ($('saveMetadataBtn')) $('saveMetadataBtn').addEventListener('click', async e => { e.preventDefault(); await saveSelectedMetadata({}, { tab: state.activeTab || 'metadata', button: e.currentTarget }); });
+if ($('lockAllMetadataFieldsBtn')) $('lockAllMetadataFieldsBtn').addEventListener('click', async e => { e.preventDefault(); await setAllSelectedMetadataFieldLocks(true); });
+if ($('unlockAllMetadataFieldsBtn')) $('unlockAllMetadataFieldsBtn').addEventListener('click', async e => { e.preventDefault(); await setAllSelectedMetadataFieldLocks(false); });
 if ($('exportGuideMetadataBtn')) $('exportGuideMetadataBtn').addEventListener('click', e => { e.preventDefault(); exportSelectedGuidevaultMetadata(); });
 if ($('enrichCurrentFileMetadataBtn')) $('enrichCurrentFileMetadataBtn').addEventListener('click', e => { e.preventDefault(); enrichSelectedFileMetadata(); });
 if ($('resetFileRenameSchemaBtn')) $('resetFileRenameSchemaBtn').addEventListener('click', e => { e.preventDefault(); resetFileRenameSchema(); });
@@ -18831,9 +19003,9 @@ if ($('metadataPanel')) {
   $('metadataPanel').addEventListener('input', () => updateMetadataFileMaintenance());
   $('metadataPanel').addEventListener('change', () => updateMetadataFileMaintenance());
 }
-if ($('file-namePanel')) {
-  $('file-namePanel').addEventListener('input', () => updateMetadataFileMaintenance());
-  $('file-namePanel').addEventListener('change', () => updateMetadataFileMaintenance());
+if ($('library-dataPanel')) {
+  $('library-dataPanel').addEventListener('input', () => updateMetadataFileMaintenance());
+  $('library-dataPanel').addEventListener('change', () => updateMetadataFileMaintenance());
 }
 
 document.addEventListener('click', e => {
@@ -18997,6 +19169,463 @@ if ($('customSideNavItems')) $('customSideNavItems').addEventListener('click', e
   applyCustomSideNavItem(btn.dataset.customNavId || '');
 });
 if ($('serverSaveSettings')) $('serverSaveSettings').addEventListener('click', e => { e.preventDefault(); saveServerSettings('general'); });
+
+
+function metadataManagerCurrentSelectedIds() {
+  const selected = Array.from(new Set((state.metadataManager?.selectedIds || []).map(id => String(id || '').trim()).filter(Boolean)));
+  if (selected.length) return selected;
+  const selectedItemId = metadataManagerItemId(state.selected || {});
+  return selectedItemId ? [selectedItemId] : [];
+}
+
+function metadataManagerSelectedItemsFromState() {
+  const ids = new Set(metadataManagerCurrentSelectedIds());
+  return (state.items || []).filter(item => ids.has(metadataManagerItemId(item)));
+}
+
+function serverFilesEnsureState() {
+  state.serverFiles = state.serverFiles || { selectedIds: [], kindFilters: ['Manual','Strategy Guide','Magazine'], search: '', renderLimit: METADATA_MANAGER_DEFAULT_RENDER_LIMIT, templateTargetId: 'serverFilesManualTemplate' };
+  if (!Array.isArray(state.serverFiles.selectedIds)) state.serverFiles.selectedIds = [];
+  if (!Array.isArray(state.serverFiles.kindFilters) || !state.serverFiles.kindFilters.length) state.serverFiles.kindFilters = ['Manual','Strategy Guide','Magazine'];
+  if (!Number.isFinite(Number(state.serverFiles.renderLimit)) || Number(state.serverFiles.renderLimit) <= 0) state.serverFiles.renderLimit = METADATA_MANAGER_DEFAULT_RENDER_LIMIT;
+  return state.serverFiles;
+}
+
+function serverFilesSelectedKinds() {
+  const files = serverFilesEnsureState();
+  const kinds = (files.kindFilters || []).filter(kind => METADATA_MANAGER_KIND_FILTERS.includes(kind));
+  return kinds.length ? kinds : METADATA_MANAGER_KIND_FILTERS.slice();
+}
+
+function serverFilesKindSummaryLabel(kinds = serverFilesSelectedKinds()) {
+  const selected = (Array.isArray(kinds) && kinds.length ? kinds : METADATA_MANAGER_KIND_FILTERS).filter(kind => METADATA_MANAGER_KIND_FILTERS.includes(kind));
+  if (!selected.length || selected.length === METADATA_MANAGER_KIND_FILTERS.length) return 'Manuals, Strategy Guides, Magazines';
+  return selected.map(kind => kind === 'Strategy Guide' ? 'Strategy Guides' : `${kind}s`).join(', ');
+}
+
+function syncServerFilesKindDropdown() {
+  const summary = $('serverFilesKindSummary');
+  if (summary) summary.textContent = serverFilesKindSummaryLabel();
+  const dropdown = $('serverFilesKindDropdown');
+  if (dropdown) dropdown.title = `Showing: ${serverFilesKindSummaryLabel()}`;
+}
+
+function serverFilesItemPath(item) {
+  return String(item?.path || item?.Path || item?.sourcePath || item?.filePath || item?.relativePath || item?.RelativePath || '').trim();
+}
+
+function serverFilesBaseName(path = '') {
+  const normalized = String(path || '').replace(/\\/g, '/');
+  const parts = normalized.split('/').filter(Boolean);
+  return parts.length ? parts[parts.length - 1] : String(path || '');
+}
+
+function serverFilesPathCodeHtml(path = '', emptyText = '\u2014') {
+  const value = String(path || '').trim();
+  if (!value) return `<span class="server-files-empty-path">${escapeHtml(emptyText)}</span>`;
+  return `<code class="server-files-full-path" title="${escapeForAttribute(value)}">${escapeHtml(value)}</code>`;
+}
+
+function serverFilesPreviewPathBlockHtml(label = '', fileName = '', fullPath = '') {
+  return `<div class="server-files-before-after-block">
+    <span>${escapeHtml(label)}</span>
+    <strong>${escapeHtml(fileName || serverFilesBaseName(fullPath) || '\u2014')}</strong>
+    ${serverFilesPathCodeHtml(fullPath)}
+  </div>`;
+}
+
+function serverFilesSearchText(item) {
+  return [
+    metadataManagerItemName(item),
+    item?.title,
+    item?.kind,
+    item?.fileName,
+    item?.filename,
+    serverFilesItemPath(item),
+    metadataManagerCategoryValue(item),
+    metadataManagerSeriesValue(item),
+    item?.publisher,
+    item?.year,
+    metadataManagerTopicValue(item),
+    platformListText(item)
+  ].join(' ').toLowerCase();
+}
+
+function serverFilesMatchingItems() {
+  const files = serverFilesEnsureState();
+  const selectedKinds = new Set(serverFilesSelectedKinds());
+  const q = String(files.search || '').trim().toLowerCase();
+  return (state.items || []).filter(item => {
+    if (!METADATA_MANAGER_KIND_FILTERS.includes(item.kind)) return false;
+    if (!selectedKinds.has(item.kind)) return false;
+    if (q && !serverFilesSearchText(item).includes(q)) return false;
+    return true;
+  }).slice().sort((a, b) => {
+    const kindCompare = String(a.kind || '').localeCompare(String(b.kind || ''), undefined, { sensitivity: 'base' });
+    if (kindCompare) return kindCompare;
+    const categoryCompare = String(metadataManagerCategoryValue(a) || metadataManagerSeriesValue(a) || '').localeCompare(String(metadataManagerCategoryValue(b) || metadataManagerSeriesValue(b) || ''), undefined, { numeric: true, sensitivity: 'base' });
+    if (categoryCompare) return categoryCompare;
+    return metadataManagerItemName(a).localeCompare(metadataManagerItemName(b), undefined, { numeric: true, sensitivity: 'base' });
+  });
+}
+
+function serverFilesCurrentRenderLimit(total = 0) {
+  const files = serverFilesEnsureState();
+  const raw = Number(files.renderLimit || 0);
+  const fallback = metadataManagerDefaultRenderLimit();
+  const safe = Number.isFinite(raw) && raw > 0 ? raw : fallback;
+  return Math.max(1, Math.min(Math.max(total, fallback), Math.floor(safe)));
+}
+
+function serverFilesCurrentSelectedIds() {
+  const files = serverFilesEnsureState();
+  return Array.from(new Set((files.selectedIds || []).map(id => String(id || '').trim()).filter(Boolean)));
+}
+
+function serverFilesSelectedItemsFromState() {
+  const ids = new Set(serverFilesCurrentSelectedIds());
+  return (state.items || []).filter(item => ids.has(metadataManagerItemId(item)));
+}
+
+function serverFilesSelectedSummaryText() {
+  const files = serverFilesEnsureState();
+  const items = serverFilesSelectedItemsFromState();
+  const matched = serverFilesMatchingItems().length;
+  if (!items.length) return `No files selected. Use the list below to select one file or a group of files. ${matched} matching file(s) available.`;
+  const counts = items.reduce((acc, item) => { acc[item.kind || 'Other'] = (acc[item.kind || 'Other'] || 0) + 1; return acc; }, {});
+  return `${items.length} selected for file actions: ${Object.entries(counts).map(([kind, count]) => `${count} ${kind}${count === 1 ? '' : 's'}`).join(', ')}. ${matched} matching file(s) shown by the current filters.`;
+}
+
+function serverFilesSetStatus(targetId, message = '', tone = '') {
+  const el = $(targetId);
+  if (!el) return;
+  el.textContent = message;
+  el.classList.toggle('success', tone === 'success');
+  el.classList.toggle('error', tone === 'error');
+}
+
+function serverFilesRefreshSummary() {
+  const summary = $('serverFilesSummary');
+  if (summary) summary.textContent = serverFilesSelectedSummaryText();
+}
+
+function serverFilesRowsHtml(items = []) {
+  const selected = new Set(serverFilesCurrentSelectedIds());
+  if (!items.length) return '<tr><td colspan="7" class="metadata-manager-empty">No files match the current Files workspace filter.</td></tr>';
+  return items.map(item => {
+    const id = metadataManagerItemId(item);
+    const name = metadataManagerItemName(item) || item.title || item.fileName || 'Untitled';
+    const category = item.kind === 'Magazine' ? (metadataManagerSeriesValue(item) || item.magazineTitle || '') : (metadataManagerCategoryValue(item) || platformListText(item) || '');
+    const path = serverFilesItemPath(item) || item.fileName || '';
+    const fileName = item.fileName || serverFilesBaseName(path) || '';
+    const metadataStatus = metadataStatusOf(item) || '';
+    return `<tr>
+      <td><input class="server-files-row-check" type="checkbox" data-server-file-id="${escapeForAttribute(id)}" ${selected.has(id) ? 'checked' : ''} /></td>
+      <td><span class="metadata-kind-pill metadata-kind-preview-trigger" data-metadata-preview-id="${escapeForAttribute(id)}" title="Click and hold to preview cover">${escapeHtml(item.kind || '')}</span></td>
+      <td><strong>${escapeHtml(name)}</strong><br><small>${escapeHtml(metadataStatus || '\u2014')}</small></td>
+      <td>${escapeHtml(category || '\u2014')}</td>
+      <td><code class="server-files-file-name" title="${escapeForAttribute(fileName)}">${escapeHtml(fileName || '\u2014')}</code></td>
+      <td>${serverFilesPathCodeHtml(path)}</td>
+      <td>${escapeHtml(String(item.year || item.coverDate || item.publicationDate || '').trim() || '\u2014')}</td>
+    </tr>`;
+  }).join('');
+}
+
+function renderServerFilesWorkspace() {
+  if (!$('settingsFilesPanel')) return;
+  const files = serverFilesEnsureState();
+  if ($('serverFilesSearch')) $('serverFilesSearch').value = files.search || '';
+  const selectedKinds = new Set(serverFilesSelectedKinds());
+  document.querySelectorAll('[data-server-files-kind]').forEach(input => { input.checked = selectedKinds.has(input.dataset.serverFilesKind || ''); });
+  syncServerFilesKindDropdown();
+  const allItems = serverFilesMatchingItems();
+  const limit = serverFilesCurrentRenderLimit(allItems.length);
+  const rendered = allItems.slice(0, limit);
+  const hidden = Math.max(0, allItems.length - rendered.length);
+  const body = $('serverFilesTableBody');
+  if (body) body.innerHTML = serverFilesRowsHtml(rendered) + (hidden ? `<tr><td colspan="7" class="metadata-manager-empty metadata-manager-hidden-note">${hidden} more matching file${hidden === 1 ? ' is' : 's are'} hidden by the display limit.</td></tr>` : '');
+  const selected = new Set(serverFilesCurrentSelectedIds());
+  const renderedIds = rendered.map(metadataManagerItemId).filter(Boolean);
+  const header = $('serverFilesHeaderCheck');
+  if (header) {
+    header.checked = renderedIds.length > 0 && renderedIds.every(id => selected.has(id));
+    header.indeterminate = renderedIds.some(id => selected.has(id)) && !header.checked;
+  }
+  if ($('serverFilesCount')) {
+    $('serverFilesCount').textContent = hidden
+      ? `${rendered.length} shown / ${allItems.length} matched (${hidden} not rendered yet)`
+      : `${rendered.length} shown / ${allItems.length} matched`;
+  }
+  const loadMore = $('serverFilesLoadMore');
+  if (loadMore) {
+    loadMore.hidden = !hidden;
+    loadMore.disabled = !hidden;
+    loadMore.textContent = hidden ? `Load ${Math.min(METADATA_MANAGER_RENDER_STEP, hidden)} More` : 'Load More';
+  }
+  const showAll = $('serverFilesShowAll');
+  if (showAll) {
+    showAll.hidden = !hidden;
+    showAll.disabled = !hidden;
+    showAll.textContent = hidden ? `Show All ${allItems.length}` : 'Show All';
+  }
+  serverFilesRefreshSummary();
+}
+
+function serverFilesScheduleRender(delay = METADATA_MANAGER_SEARCH_DEBOUNCE_MS) {
+  const files = serverFilesEnsureState();
+  if (files.renderTimer) clearTimeout(files.renderTimer);
+  files.renderTimer = setTimeout(() => {
+    files.renderTimer = null;
+    renderServerFilesWorkspace();
+  }, Math.max(0, Number(delay) || 0));
+}
+
+function serverFilesUpdateSearch(value) {
+  const files = serverFilesEnsureState();
+  files.search = String(value || '');
+  files.renderLimit = metadataManagerDefaultRenderLimit();
+  serverFilesScheduleRender();
+}
+
+function serverFilesUpdateKinds() {
+  const files = serverFilesEnsureState();
+  const kinds = Array.from(document.querySelectorAll('[data-server-files-kind]:checked')).map(input => input.dataset.serverFilesKind || '').filter(kind => METADATA_MANAGER_KIND_FILTERS.includes(kind));
+  files.kindFilters = kinds.length ? kinds : METADATA_MANAGER_KIND_FILTERS.slice();
+  files.renderLimit = metadataManagerDefaultRenderLimit();
+  syncServerFilesKindDropdown();
+  renderServerFilesWorkspace();
+}
+
+function serverFilesToggleSelection(id, checked) {
+  if (!id) return;
+  const files = serverFilesEnsureState();
+  const selected = new Set(files.selectedIds || []);
+  if (checked) selected.add(id); else selected.delete(id);
+  files.selectedIds = Array.from(selected);
+  renderServerFilesWorkspace();
+}
+
+function serverFilesSelectRendered(select = true) {
+  const files = serverFilesEnsureState();
+  const items = serverFilesMatchingItems();
+  const limit = serverFilesCurrentRenderLimit(items.length);
+  const ids = items.slice(0, limit).map(metadataManagerItemId).filter(Boolean);
+  const selected = new Set(files.selectedIds || []);
+  ids.forEach(id => select ? selected.add(id) : selected.delete(id));
+  files.selectedIds = Array.from(selected);
+  renderServerFilesWorkspace();
+}
+
+function serverFilesSelectMatching() {
+  const files = serverFilesEnsureState();
+  const selected = new Set(files.selectedIds || []);
+  serverFilesMatchingItems().map(metadataManagerItemId).filter(Boolean).forEach(id => selected.add(id));
+  files.selectedIds = Array.from(selected);
+  renderServerFilesWorkspace();
+}
+
+function serverFilesClearSelection() {
+  const files = serverFilesEnsureState();
+  files.selectedIds = [];
+  state.serverFilesPreview = [];
+  if ($('serverFilesPreviewTable')) $('serverFilesPreviewTable').innerHTML = '';
+  if ($('serverFilesWriteBackResults')) $('serverFilesWriteBackResults').innerHTML = '';
+  if ($('serverFilesApplyPreview')) $('serverFilesApplyPreview').disabled = true;
+  renderServerFilesWorkspace();
+}
+
+function serverFilesUseMetadataSelection() {
+  const ids = metadataManagerCurrentSelectedIds();
+  const files = serverFilesEnsureState();
+  files.selectedIds = ids;
+  files.renderLimit = Math.max(files.renderLimit || metadataManagerDefaultRenderLimit(), ids.length, metadataManagerDefaultRenderLimit());
+  renderServerFilesWorkspace();
+  serverFilesSetStatus('serverFilesSelectionStatus', ids.length ? `Loaded ${ids.length} Metadata Manager selection(s) into Files.` : 'No Metadata Manager rows were selected.', ids.length ? 'success' : 'error');
+}
+
+function serverFilesLoadMoreRows() {
+  const files = serverFilesEnsureState();
+  const items = serverFilesMatchingItems();
+  files.renderLimit = Math.min(items.length, serverFilesCurrentRenderLimit(items.length) + METADATA_MANAGER_RENDER_STEP);
+  renderServerFilesWorkspace();
+}
+
+function serverFilesShowAllRows() {
+  const files = serverFilesEnsureState();
+  const items = serverFilesMatchingItems();
+  files.renderLimit = Math.max(items.length, metadataManagerDefaultRenderLimit());
+  renderServerFilesWorkspace();
+}
+
+function serverFilesTrackTemplateTarget(input) {
+  if (!input?.id) return;
+  const files = serverFilesEnsureState();
+  files.templateTargetId = input.id;
+}
+
+function serverFilesCurrentTemplateInput() {
+  const files = serverFilesEnsureState();
+  const targetId = files.templateTargetId || document.activeElement?.id || 'serverFilesManualTemplate';
+  const input = $(targetId);
+  if (input && input.classList?.contains('server-files-template-input')) return input;
+  return $('serverFilesManualTemplate') || $('serverFilesStrategyTemplate') || $('serverFilesMagazineTemplate');
+}
+
+function serverFilesInsertTemplateToken(token = '') {
+  const input = serverFilesCurrentTemplateInput();
+  if (!input || !token) return;
+  const value = String(input.value || '');
+  const start = Number.isFinite(input.selectionStart) ? input.selectionStart : value.length;
+  const end = Number.isFinite(input.selectionEnd) ? input.selectionEnd : start;
+  input.value = `${value.slice(0, start)}${token}${value.slice(end)}`;
+  const nextPos = start + token.length;
+  input.focus();
+  try { input.setSelectionRange(nextPos, nextPos); } catch {}
+  serverFilesTrackTemplateTarget(input);
+  if ($('serverFilesApplyPreview')) $('serverFilesApplyPreview').disabled = true;
+  if ($('serverFilesPreviewTable')) $('serverFilesPreviewTable').innerHTML = '<p class="sub">Template changed. Preview selected files again to see the updated before/after plan.</p>';
+}
+
+function serverFilesTemplatesPayload() {
+  return {
+    manual: $('serverFilesManualTemplate')?.value || 'Manuals/{Platform}/{GameTitle}/{Title} - Manual{Extension}',
+    strategyGuide: $('serverFilesStrategyTemplate')?.value || 'Strategy Guides/{Platform}/{GameTitle}/{Title}{Extension}',
+    magazine: $('serverFilesMagazineTemplate')?.value || 'Magazines/{MagazineSeries}/{Year}/{MagazineSeries} - Issue {IssueNumber}{Extension}'
+  };
+}
+
+function serverFilesPreviewRowsHtml(rows = []) {
+  if (!rows.length) return '<p class="sub">No preview rows yet.</p>';
+  return `<table class="server-files-before-after-table"><thead><tr><th>Type</th><th>Title</th><th>Before</th><th>After</th><th>Status</th></tr></thead><tbody>${rows.map(row => {
+    const currentPath = row.currentPath || '';
+    const proposedPath = row.proposedPath || '';
+    const currentName = row.fileName || serverFilesBaseName(currentPath);
+    const proposedName = serverFilesBaseName(proposedPath);
+    return `<tr class="server-files-row-${escapeForAttribute(String(row.status || '').toLowerCase().replace(/[^a-z0-9]+/g, '-'))}">
+      <td>${escapeHtml(row.kind || '')}</td>
+      <td>${escapeHtml(row.title || row.fileName || '')}</td>
+      <td>${serverFilesPreviewPathBlockHtml('Current file', currentName, currentPath)}</td>
+      <td>${serverFilesPreviewPathBlockHtml('Proposed file', proposedName, proposedPath)}</td>
+      <td>${escapeHtml(row.status || '')}${row.message ? `<br><small>${escapeHtml(row.message)}</small>` : ''}</td>
+    </tr>`;
+  }).join('')}</tbody></table>`;
+}
+
+async function serverFilesPreviewSelected() {
+  const ids = serverFilesCurrentSelectedIds();
+  serverFilesRefreshSummary();
+  if (!ids.length) {
+    serverFilesSetStatus('serverFilesOrganizeStatus', 'Select one or more files from the Files workspace list first.', 'error');
+    return;
+  }
+  serverFilesSetStatus('serverFilesOrganizeStatus', `Building preview for ${ids.length} selected file(s)...`, '');
+  const res = await fetch('/api/items/files/organize/preview', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ ids, templates: serverFilesTemplatesPayload() })
+  });
+  let data = null;
+  try { data = await res.json(); } catch {}
+  if (!res.ok) throw new Error(data?.error || `Preview failed. HTTP ${res.status}`);
+  state.serverFilesPreview = data?.results || [];
+  if ($('serverFilesPreviewTable')) $('serverFilesPreviewTable').innerHTML = serverFilesPreviewRowsHtml(state.serverFilesPreview);
+  const applyBtn = $('serverFilesApplyPreview');
+  if (applyBtn) applyBtn.disabled = !(data?.readyToApply > 0);
+  serverFilesSetStatus('serverFilesOrganizeStatus', data?.message || `Previewed ${state.serverFilesPreview.length} file(s).`, data?.readyToApply ? 'success' : '');
+}
+
+async function serverFilesApplyPreview() {
+  const ids = serverFilesCurrentSelectedIds();
+  if (!ids.length) {
+    serverFilesSetStatus('serverFilesOrganizeStatus', 'Select one or more files from the Files workspace list first.', 'error');
+    return;
+  }
+  const confirmed = await showAppConfirm({
+    title: 'Apply file moves?',
+    message: `GuideVault will rename and/or move ${ids.length} selected source file(s) inside their current library roots. Existing destination files will not be overwritten.`,
+    okText: 'Apply Moves',
+    cancelText: 'Cancel'
+  });
+  if (!confirmed) return;
+  serverFilesSetStatus('serverFilesOrganizeStatus', `Applying file organization to ${ids.length} selected file(s)...`, '');
+  const res = await fetch('/api/items/files/organize/apply', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ ids, templates: serverFilesTemplatesPayload() })
+  });
+  let data = null;
+  try { data = await res.json(); } catch {}
+  if (!res.ok) throw new Error(data?.error || `Apply failed. HTTP ${res.status}`);
+  state.serverFilesPreview = data?.results || [];
+  if ($('serverFilesPreviewTable')) $('serverFilesPreviewTable').innerHTML = serverFilesPreviewRowsHtml(state.serverFilesPreview);
+  const updatedItems = Array.isArray(data?.items) ? data.items : [];
+  updatedItems.forEach(item => replaceItemInState(item));
+  if (updatedItems.length) {
+    markLibraryIndexesDirty();
+    applyFilters();
+    renderServerFilesWorkspace();
+    if (state.selected) {
+      const selectedId = metadataManagerItemId(state.selected);
+      const replacement = updatedItems.find(item => metadataManagerItemId(item) === selectedId);
+      if (replacement) renderDetails(replacement);
+    }
+  }
+  serverFilesSetStatus('serverFilesOrganizeStatus', data?.message || `Moved ${data?.moved || 0} file(s).`, data?.failed ? 'error' : 'success');
+}
+
+function serverFilesWriteBackRowsHtml(rows = []) {
+  if (!rows.length) return '<p class="sub">No write-back results yet.</p>';
+  return `<table><thead><tr><th>Type</th><th>Title</th><th>File</th><th>Status</th><th>Message</th></tr></thead><tbody>${rows.map(row => `
+    <tr class="server-files-row-${row.success ? 'ready' : 'conflict'}">
+      <td>${escapeHtml(row.kind || '')}</td>
+      <td>${escapeHtml(row.title || '')}</td>
+      <td>${escapeHtml(row.writtenArchiveFileName || row.fileName || '')}</td>
+      <td>${escapeHtml(row.success ? 'Written' : 'Failed')}</td>
+      <td>${escapeHtml(row.message || '')}</td>
+    </tr>`).join('')}</tbody></table>`;
+}
+
+async function metadataManagerWriteBackSelected(source = 'metadata') {
+  const ids = source === 'files' ? serverFilesCurrentSelectedIds() : metadataManagerCurrentSelectedIds();
+  if (!ids.length) {
+    if (source === 'files') serverFilesSetStatus('serverFilesWriteBackStatus', 'Select one or more files from the Files workspace list first.', 'error');
+    else metadataManagerSetStatus('Select one or more rows first.', 'error');
+    return;
+  }
+  const dirtyIds = new Set(Object.keys(state.metadataManager?.dirty || {}));
+  const selectedDirty = ids.filter(id => dirtyIds.has(id));
+  if (selectedDirty.length) await metadataManagerSaveDirtyRows();
+  const statusTarget = source === 'files' ? 'serverFilesWriteBackStatus' : null;
+  if (statusTarget) serverFilesSetStatus(statusTarget, `Writing Guidevault JSON to ${ids.length} selected file(s)...`, '');
+  else metadataManagerSetStatus(`Writing Guidevault JSON to ${ids.length} selected file(s)...`);
+  const res = await fetch('/api/items/metadata/native-export/bulk', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ ids })
+  });
+  let data = null;
+  try { data = await res.json(); } catch {}
+  if (!res.ok) throw new Error(data?.error || `Write-back failed. HTTP ${res.status}`);
+  const message = data?.message || `Wrote Guidevault JSON for ${data?.written || 0} file(s).`;
+  if (statusTarget) {
+    serverFilesSetStatus(statusTarget, message, data?.failed ? 'error' : 'success');
+    if ($('serverFilesWriteBackResults')) $('serverFilesWriteBackResults').innerHTML = serverFilesWriteBackRowsHtml(data?.results || []);
+  } else {
+    metadataManagerSetStatus(message, data?.failed ? 'error' : 'success');
+  }
+}
+
+function metadataManagerOpenFilesWorkspace() {
+  const ids = metadataManagerCurrentSelectedIds();
+  if (ids.length) {
+    const files = serverFilesEnsureState();
+    files.selectedIds = ids;
+    files.renderLimit = Math.max(files.renderLimit || metadataManagerDefaultRenderLimit(), ids.length, metadataManagerDefaultRenderLimit());
+  }
+  activateSettingsTab('files');
+  renderServerFilesWorkspace();
+}
+
 if ($('integrationsSaveSettings')) $('integrationsSaveSettings').addEventListener('click', e => { e.preventDefault(); saveServerSettings('integrations'); });
 if ($('igdbTestCredentials')) $('igdbTestCredentials').addEventListener('click', e => { e.preventDefault(); testIgdbCredentials(); });
 if ($('serverResetDefaults')) $('serverResetDefaults').addEventListener('click', e => { e.preventDefault(); resetServerDefaults(); });
@@ -19010,6 +19639,7 @@ if ($('emailTemplatePreset')) $('emailTemplatePreset').addEventListener('change'
 if ($('emailTemplateUploadButton')) $('emailTemplateUploadButton').addEventListener('click', e => { e.preventDefault(); $('emailTemplateFile')?.click(); });
 if ($('emailTemplateFile')) $('emailTemplateFile').addEventListener('change', e => uploadEmailTemplateFile(e.currentTarget.files?.[0]));
 if ($('emailHistoryRefresh')) $('emailHistoryRefresh').addEventListener('click', e => { e.preventDefault(); loadEmailHistory(true); });
+if ($('systemEventsRefresh')) $('systemEventsRefresh').addEventListener('click', e => { e.preventDefault(); loadSystemEvents(true); });
 if ($('usersRefresh')) $('usersRefresh').addEventListener('click', e => { e.preventDefault(); scheduleUsersSettingsLoad(true, 0); });
 if ($('usersInviteButton')) $('usersInviteButton').addEventListener('click', e => { e.preventDefault(); inviteUser(); });
 if ($('tasksSaveSettings')) $('tasksSaveSettings').addEventListener('click', e => { e.preventDefault(); saveTaskSettings(); });
@@ -19021,7 +19651,12 @@ if ($('taskRunBackup')) $('taskRunBackup').addEventListener('click', e => { e.pr
 if ($('taskRunTrim')) $('taskRunTrim').addEventListener('click', e => { e.preventDefault(); trimGuidevaultMemory(); setTasksSettingsStatus('Reading cache clear requested.', 'info'); });
 
 if ($('metadataManagerSearch')) $('metadataManagerSearch').addEventListener('input', e => metadataManagerUpdateFilter('search', e.currentTarget.value));
-if ($('metadataManagerKind')) $('metadataManagerKind').addEventListener('change', e => metadataManagerUpdateFilter('filterKind', e.currentTarget.value));
+if ($('metadataManagerKind')) $('metadataManagerKind').addEventListener('change', e => { metadataManagerSetSelectedKinds(e.currentTarget.value ? [e.currentTarget.value] : METADATA_MANAGER_KIND_FILTERS); metadataManagerUpdateFilter('kindFilters', state.metadataManager.kindFilters); });
+document.querySelectorAll('[data-metadata-manager-kind]').forEach(input => input.addEventListener('change', () => {
+  const kinds = Array.from(document.querySelectorAll('[data-metadata-manager-kind]:checked')).map(el => el.dataset.metadataManagerKind || '').filter(Boolean);
+  metadataManagerSetSelectedKinds(kinds);
+  metadataManagerUpdateFilter('kindFilters', state.metadataManager.kindFilters);
+}));
 if ($('metadataManagerStatusFilter')) $('metadataManagerStatusFilter').addEventListener('change', e => metadataManagerUpdateFilter('statusFilter', e.currentTarget.value));
 if ($('metadataManagerMissing')) $('metadataManagerMissing').addEventListener('change', e => metadataManagerUpdateFilter('missing', e.currentTarget.value));
 if ($('metadataManagerCategory')) $('metadataManagerCategory').addEventListener('change', e => metadataManagerUpdateFilter('category', e.currentTarget.value));
@@ -19038,6 +19673,38 @@ if ($('metadataManagerExportCsv')) $('metadataManagerExportCsv').addEventListene
 if ($('metadataManagerImportJson')) $('metadataManagerImportJson').addEventListener('click', () => $('metadataManagerImportFile')?.click());
 if ($('metadataManagerImportFile')) $('metadataManagerImportFile').addEventListener('change', e => metadataManagerImportJsonFile(e.currentTarget.files?.[0]));
 if ($('metadataManagerScrape')) $('metadataManagerScrape').addEventListener('click', metadataManagerScrapePlaceholder);
+if ($('metadataManagerWriteBackSelected')) $('metadataManagerWriteBackSelected').addEventListener('click', async () => { try { await metadataManagerWriteBackSelected('metadata'); } catch (err) { console.error(err); metadataManagerSetStatus(`Write-back failed: ${err?.message || err}`, 'error'); } });
+if ($('metadataManagerOpenFilesWorkspace')) $('metadataManagerOpenFilesWorkspace').addEventListener('click', metadataManagerOpenFilesWorkspace);
+if ($('serverFilesRefreshSelection')) $('serverFilesRefreshSelection').addEventListener('click', renderServerFilesWorkspace);
+if ($('serverFilesSearch')) $('serverFilesSearch').addEventListener('input', e => serverFilesUpdateSearch(e.currentTarget.value));
+document.querySelectorAll('[data-server-files-kind]').forEach(input => input.addEventListener('change', serverFilesUpdateKinds));
+if ($('serverFilesHeaderCheck')) $('serverFilesHeaderCheck').addEventListener('change', e => serverFilesSelectRendered(!!e.currentTarget.checked));
+if ($('serverFilesTableBody')) $('serverFilesTableBody').addEventListener('change', e => {
+  const check = e.target.closest?.('.server-files-row-check');
+  if (!check) return;
+  serverFilesToggleSelection(check.dataset.serverFileId || '', !!check.checked);
+});
+if ($('serverFilesSelectVisible')) $('serverFilesSelectVisible').addEventListener('click', () => serverFilesSelectRendered(true));
+if ($('serverFilesSelectMatching')) $('serverFilesSelectMatching').addEventListener('click', serverFilesSelectMatching);
+if ($('serverFilesClearSelection')) $('serverFilesClearSelection').addEventListener('click', serverFilesClearSelection);
+if ($('serverFilesUseMetadataSelection')) $('serverFilesUseMetadataSelection').addEventListener('click', serverFilesUseMetadataSelection);
+if ($('serverFilesLoadMore')) $('serverFilesLoadMore').addEventListener('click', serverFilesLoadMoreRows);
+if ($('serverFilesShowAll')) $('serverFilesShowAll').addEventListener('click', serverFilesShowAllRows);
+document.querySelectorAll('.server-files-template-input').forEach(input => {
+  input.addEventListener('focus', () => serverFilesTrackTemplateTarget(input));
+  input.addEventListener('click', () => serverFilesTrackTemplateTarget(input));
+  input.addEventListener('input', () => {
+    if ($('serverFilesApplyPreview')) $('serverFilesApplyPreview').disabled = true;
+    if ($('serverFilesPreviewTable')) $('serverFilesPreviewTable').innerHTML = '<p class="sub">Template changed. Preview selected files again to see the updated before/after plan.</p>';
+  });
+});
+document.querySelectorAll('[data-server-files-token]').forEach(btn => btn.addEventListener('click', e => {
+  e.preventDefault();
+  serverFilesInsertTemplateToken(btn.dataset.serverFilesToken || '');
+}));
+if ($('serverFilesPreviewSelected')) $('serverFilesPreviewSelected').addEventListener('click', async () => { try { await serverFilesPreviewSelected(); } catch (err) { console.error(err); serverFilesSetStatus('serverFilesOrganizeStatus', `Preview failed: ${err?.message || err}`, 'error'); } });
+if ($('serverFilesApplyPreview')) $('serverFilesApplyPreview').addEventListener('click', async () => { try { await serverFilesApplyPreview(); } catch (err) { console.error(err); serverFilesSetStatus('serverFilesOrganizeStatus', `Apply failed: ${err?.message || err}`, 'error'); } });
+if ($('serverFilesWriteBackSelected')) $('serverFilesWriteBackSelected').addEventListener('click', async () => { try { await metadataManagerWriteBackSelected('files'); } catch (err) { console.error(err); serverFilesSetStatus('serverFilesWriteBackStatus', `Write-back failed: ${err?.message || err}`, 'error'); } });
 if ($('metadataManagerRunSourceLookup')) $('metadataManagerRunSourceLookup').addEventListener('click', async e => { e.preventDefault(); try { await metadataManagerRunBatchSourceLookup(); } catch (err) { console.error(err); metadataManagerSetStatus(`Batch source lookup failed: ${err?.message || err}`, 'error'); } });
 if ($('metadataManagerApplySourceLookup')) $('metadataManagerApplySourceLookup').addEventListener('click', async e => { e.preventDefault(); try { await metadataManagerApplyBatchSourceResults(); } catch (err) { console.error(err); metadataManagerSetStatus(`Apply batch lookup failed: ${err?.message || err}`, 'error'); } });
 document.querySelectorAll('[data-metadata-batch-select-fields]').forEach(btn => btn.addEventListener('click', e => { e.preventDefault(); metadataBatchSelectAllFields(btn.dataset.metadataBatchSelectFields || '', true); }));
@@ -19095,5 +19762,4 @@ installLibraryCardDelegates();
 installGlobalDetailDelegate();
 syncEmailTemplatePreview();
 initializeGuidevaultAuthAndApp();
-
 
