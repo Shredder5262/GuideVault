@@ -16,7 +16,7 @@ using SixLabors.ImageSharp.Formats.Jpeg;
 using SixLabors.ImageSharp.Processing;
 
 var builder = WebApplication.CreateBuilder(args);
-const string GuidevaultVersion = "0.9.178";
+const string GuidevaultVersion = "0.9.179";
 var app = builder.Build();
 var metadataJsonOptions = new JsonSerializerOptions(JsonSerializerDefaults.Web) { PropertyNameCaseInsensitive = true };
 var options = app.Configuration.GetSection("Guidevault").Get<GuidevaultOptions>() ?? new GuidevaultOptions();
@@ -1378,7 +1378,12 @@ app.MapPost("/api/items/files/organize/apply", (JsonElement payload) =>
                     var updated = snapshot.FirstOrDefault(item => string.Equals(item.Id, plan.Id, StringComparison.OrdinalIgnoreCase));
                     if (updated is not null)
                     {
+                        // Preserve the existing GuideVault item identity and current metadata before changing the path.
+                        // Without this, a later scan can infer metadata from the newly generated filename/folder and
+                        // make the renamed file look like a brand-new entry.
                         updated = metadataStore.ApplyOverride(updated);
+                        metadataStore.MergeOverride(updated.Id, CreateMetadataSnapshotForMove(updated));
+
                         var info = new FileInfo(destinationPath);
                         updated = updated with
                         {
@@ -1386,7 +1391,8 @@ app.MapPost("/api/items/files/organize/apply", (JsonElement payload) =>
                             RelativePath = BuildRelativeLibraryPath(destinationPath, cache.LibraryPaths, updated.RelativePath),
                             FileName = info.Name,
                             SizeBytes = info.Length,
-                            Added = info.CreationTimeUtc,
+                            // Keep the original library-added timestamp. A rename/move is not a new library add.
+                            Added = updated.Added,
                             Modified = info.LastWriteTimeUtc
                         };
                         fileIdentityStore.RememberRename(sourcePath, destinationPath, updated.Id);
@@ -3158,6 +3164,68 @@ static bool TryGetJsonProperty(JsonElement json, string camelName, out JsonEleme
     value = default;
     return false;
 }
+
+static ItemMetadataUpdate CreateMetadataSnapshotForMove(LibraryItem item)
+    => new(
+        Title: item.Title,
+        Kind: item.Kind,
+        System: item.System,
+        Category: item.Category,
+        Publisher: item.Publisher,
+        Year: item.Year,
+        Tags: item.Tags,
+        Summary: item.Summary,
+        Series: item.Series,
+        Writer: item.Writer,
+        IssueNumber: item.IssueNumber,
+        Rating: item.Rating,
+        WebLink: item.WebLink,
+        Asin: item.Asin,
+        Isbn10: item.Isbn10,
+        Isbn13: item.Isbn13,
+        LanguageTag: item.LanguageTag,
+        AssociatedPlatforms: item.AssociatedPlatforms,
+        PlatformMatchTitle: item.PlatformMatchTitle,
+        PlatformResolverSource: item.PlatformResolverSource,
+        PlatformResolverConfidence: item.PlatformResolverConfidence,
+        MagazineTitle: item.MagazineTitle,
+        Volume: item.Volume,
+        CoverDate: item.CoverDate,
+        PublicationDate: item.PublicationDate,
+        Region: item.Region,
+        PlatformFocus: item.PlatformFocus,
+        PrimarySystem: item.PrimarySystem,
+        MagazineCategory: item.MagazineCategory,
+        CoverSubject: item.CoverSubject,
+        BarcodeUpcIssn: item.BarcodeUpcIssn,
+        FeaturedGames: item.FeaturedGames,
+        FeaturedPlatforms: item.FeaturedPlatforms,
+        SpecialFeatures: item.SpecialFeatures,
+        IncludedExtras: item.IncludedExtras,
+        GameTitle: item.GameTitle,
+        GuideType: item.GuideType,
+        Edition: item.Edition,
+        Franchise: item.Franchise,
+        Developer: item.Developer,
+        GamePublisher: item.GamePublisher,
+        GameReleaseYear: item.GameReleaseYear,
+        Genre: item.Genre,
+        CoveredGames: item.CoveredGames,
+        CoveredPlatforms: item.CoveredPlatforms,
+        GuideTopics: item.GuideTopics,
+        CharactersCovered: item.CharactersCovered,
+        LocationsCovered: item.LocationsCovered,
+        ManualTitle: item.ManualTitle,
+        ManualType: item.ManualType,
+        IncludedSections: item.IncludedSections,
+        ControlScheme: item.ControlScheme,
+        ItemsCovered: item.ItemsCovered,
+        WarrantySupport: item.WarrantySupport,
+        PageCount: item.PageCount > 0 ? item.PageCount : null,
+        MetadataSource: string.IsNullOrWhiteSpace(item.MetadataSource) ? "GuideVault file organization" : item.MetadataSource,
+        MetadataStatus: item.MetadataStatus,
+        Notes: item.Notes,
+        MetadataLocks: item.MetadataLocks);
 
 static string BuildRelativeLibraryPath(string fullPath, IEnumerable<string> libraryPaths, string fallbackRelativePath)
 {
@@ -6993,7 +7061,22 @@ public sealed class LibraryCache
         try
         {
             if (!string.Equals(Path.GetFullPath(item.Path), Path.GetFullPath(info.FullName), StringComparison.OrdinalIgnoreCase)) return false;
+            return CachedItemLooksLikeSamePhysicalFile(item, info);
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
+    private static bool CachedItemLooksLikeSamePhysicalFile(LibraryItem item, FileInfo info)
+    {
+        try
+        {
             if (item.SizeBytes != info.Length) return false;
+            var itemExt = Path.GetExtension(item.FileName);
+            if (string.IsNullOrWhiteSpace(itemExt)) itemExt = Path.GetExtension(item.Path);
+            if (!string.Equals(itemExt, info.Extension, StringComparison.OrdinalIgnoreCase)) return false;
             var cachedModified = item.Modified.UtcDateTime;
             return Math.Abs((cachedModified - info.LastWriteTimeUtc).TotalSeconds) < 2;
         }
@@ -7003,6 +7086,14 @@ public sealed class LibraryCache
         }
     }
 
+    private static string MovedFileSignature(long sizeBytes, DateTime modifiedUtc, string? extension)
+    {
+        if (sizeBytes <= 0) return string.Empty;
+        var normalizedExt = (extension ?? string.Empty).Trim().ToLowerInvariant();
+        var unixSeconds = new DateTimeOffset(DateTime.SpecifyKind(modifiedUtc, DateTimeKind.Utc)).ToUnixTimeSeconds();
+        return $"{sizeBytes}:{unixSeconds}:{normalizedExt}";
+    }
+
     private static LibraryItem RefreshCachedItemForLibrary(LibraryItem cached, FileInfo info, string relativePath, LibraryDefinition library)
         => cached with
         {
@@ -7010,7 +7101,7 @@ public sealed class LibraryCache
             RelativePath = relativePath,
             FileName = info.Name,
             SizeBytes = info.Length,
-            Added = info.CreationTimeUtc,
+            Added = cached.Added,
             Modified = info.LastWriteTimeUtc,
             LibraryName = library.Name,
             LibraryType = library.Type
@@ -7160,6 +7251,22 @@ public sealed class LibraryCache
             .GroupBy(i => i.Id, StringComparer.OrdinalIgnoreCase)
             .ToDictionary(g => g.Key, g => g.First(), StringComparer.OrdinalIgnoreCase);
 
+        // A rename/move must not make GuideVault treat the archive as a brand-new item.
+        // The explicit identity map should handle app-driven moves, but this recovery map
+        // lets scans repair items moved before the map was written or after a container restart.
+        var movedFileRecoveryMap = previousItems.Values
+            .Where(item => !string.IsNullOrWhiteSpace(item.Id) && !string.IsNullOrWhiteSpace(item.Path) && item.SizeBytes > 0)
+            .Where(item =>
+            {
+                try { return !File.Exists(item.Path); }
+                catch { return false; }
+            })
+            .Select(item => new { Key = MovedFileSignature(item.SizeBytes, item.Modified.UtcDateTime, Path.GetExtension(item.FileName)), Item = item })
+            .Where(entry => !string.IsNullOrWhiteSpace(entry.Key))
+            .GroupBy(entry => entry.Key, StringComparer.OrdinalIgnoreCase)
+            .Where(group => group.Count() == 1)
+            .ToDictionary(group => group.Key, group => group.First().Item, StringComparer.OrdinalIgnoreCase);
+
         var bag = new ConcurrentBag<LibraryItem>();
         var processed = 0;
         var parsed = 0;
@@ -7185,18 +7292,34 @@ public sealed class LibraryCache
         {
             try
             {
-                var id = _identityStore.GetItemId(candidate.File) ?? StableId(candidate.File);
-                if (_metadataStore.IsRemoved(id)) return;
-
                 var info = new FileInfo(candidate.File);
                 if (!info.Exists) return;
+
+                LibraryItem? cached = null;
+                var id = _identityStore.GetItemId(candidate.File);
+                if (string.IsNullOrWhiteSpace(id))
+                {
+                    var recoveryKey = MovedFileSignature(info.Length, info.LastWriteTimeUtc, info.Extension);
+                    if (movedFileRecoveryMap.TryGetValue(recoveryKey, out var recovered) && recovered is not null)
+                    {
+                        id = recovered.Id;
+                        cached = recovered;
+                        _identityStore.RememberRename(recovered.Path, candidate.File, recovered.Id);
+                    }
+                }
+                id ??= StableId(candidate.File);
+                if (_metadataStore.IsRemoved(id)) return;
+
                 var ext = info.Extension.ToLowerInvariant();
                 var format = ext.TrimStart('.').ToUpperInvariant();
                 var relativePath = Path.GetRelativePath(candidate.Root, candidate.File);
 
-                var hasMatchingCache = previousItems.TryGetValue(id, out var cached) && CachedItemMatchesFile(cached, info);
-                if (hasMatchingCache && cached is not null)
+                if (cached is null) previousItems.TryGetValue(id, out cached);
+                var hasMatchingCache = cached is not null && CachedItemMatchesFile(cached, info);
+                var hasMovedMatchingCache = !hasMatchingCache && cached is not null && CachedItemLooksLikeSamePhysicalFile(cached, info);
+                if ((hasMatchingCache || hasMovedMatchingCache) && cached is not null)
                 {
+                    if (hasMovedMatchingCache) _identityStore.RememberRename(cached.Path, info.FullName, cached.Id);
                     var refreshed = RefreshCachedItemForLibrary(cached, info, relativePath, candidate.Library);
                     var needsValidation = cleanupActivity && ShouldDeepValidateCachedItem(refreshed, candidate.Library.Type);
                     var needsMetadataEnrichment = metadataActivity && ShouldEnrichMetadata(refreshed, legacyComicInfoActivity);
@@ -11788,6 +11911,6 @@ static class GuidevaultLibraryIoGate
 
 static class GuidevaultBuildInfo
 {
-    public const string Version = "0.9.178";
+    public const string Version = "0.9.179";
 }
 

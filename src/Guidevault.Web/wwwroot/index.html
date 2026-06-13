@@ -4,9 +4,9 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Guidevault</title>
-  <link rel="icon" type="image/x-icon" href="/assets/favicon.ico?v=0.9.178" />
-  <link rel="shortcut icon" type="image/x-icon" href="/assets/favicon.ico?v=0.9.178" />
-  <link rel="stylesheet" href="/styles.css?v=0.9.178-file-template-presets" />
+  <link rel="icon" type="image/x-icon" href="/assets/favicon.ico?v=0.9.179" />
+  <link rel="shortcut icon" type="image/x-icon" href="/assets/favicon.ico?v=0.9.179" />
+  <link rel="stylesheet" href="/styles.css?v=0.9.179-preserve-file-identity" />
 </head>
 <body class="right-collapsed auth-locked">
   <section id="loginView" class="login-view" aria-labelledby="loginTitle">
@@ -1777,13 +1777,13 @@
             <div class="system-update-list">
               <details class="system-update-entry" open>
                 <summary>
-                  <span>Guidevault 0.9.178 - File Template Match Fix</span>
+                  <span>Guidevault 0.9.179 - Preserve File Identity on Rename</span>
                   <em>Installed</em>
                 </summary>
                 <ul>
-                  <li>Fixed Server &gt; Files preview/apply output so rename and move plans follow the selected Manual, Strategy Guide, or Magazine template more exactly.</li>
-                  <li>Improved cleanup for titles that already contain generated suffixes such as content type, ISBN, year, or Unknown placeholders from earlier rename attempts.</li>
-                  <li>Improved empty-token cleanup so missing ISBN or year values do not leave doubled separators in proposed filenames.</li>
+                  <li>Fixed Server &gt; Files rename/move actions so the existing GuideVault item ID and metadata are preserved when the source file path changes.</li>
+                  <li>Added a metadata snapshot before file organization so a renamed archive does not get re-inferred from its new filename as a blank/new item.</li>
+                  <li>Added scan-time recovery for moved files using the file identity map and unchanged file size/modified-time signature.</li>
                 </ul>
               </details>
               <details class="system-update-entry" open>
@@ -2582,6 +2582,6 @@
   </dialog>
 
 
-  <script src="/app.js?v=0.9.178-file-template-presets"></script>
+  <script src="/app.js?v=0.9.179-preserve-file-identity"></script>
 </body>
 </html>
