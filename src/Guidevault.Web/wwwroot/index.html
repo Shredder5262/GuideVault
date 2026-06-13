@@ -4,9 +4,9 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Guidevault</title>
-  <link rel="icon" type="image/x-icon" href="/assets/favicon.ico?v=0.9.186" />
-  <link rel="shortcut icon" type="image/x-icon" href="/assets/favicon.ico?v=0.9.186" />
-  <link rel="stylesheet" href="/styles.css?v=0.9.186-cover-picker" />
+  <link rel="icon" type="image/x-icon" href="/assets/favicon.ico?v=0.9.187" />
+  <link rel="shortcut icon" type="image/x-icon" href="/assets/favicon.ico?v=0.9.187" />
+  <link rel="stylesheet" href="/styles.css?v=0.9.187-cover-picker-ondemand" />
 </head>
 <body class="right-collapsed auth-locked">
   <section id="loginView" class="login-view" aria-labelledby="loginTitle">
@@ -1806,6 +1806,17 @@
             <div class="system-update-list">
               <details class="system-update-entry" open>
                 <summary>
+                  <span>Guidevault 0.9.187 - On-Demand Cover Picker Loading</span>
+                  <em>Installed</em>
+                </summary>
+                <ul>
+                  <li>Stopped the Library Data cover picker from automatically reading archive page lists when the tab opens.</li>
+                  <li>Cover picker page enumeration and page thumbnails now load only after clicking Load Pages.</li>
+                  <li>Normal library cover loading continues to use the existing cover cache and manual override selection, without loading the picker grid in the background.</li>
+                </ul>
+              </details>
+              <details class="system-update-entry" open>
+                <summary>
                   <span>Guidevault 0.9.186 - Library Data Cover Picker</span>
                   <em>Installed</em>
                 </summary>
@@ -2685,6 +2696,6 @@
   </dialog>
 
 
-  <script src="/app.js?v=0.9.186-cover-picker"></script>
+  <script src="/app.js?v=0.9.187-cover-picker-ondemand"></script>
 </body>
 </html>

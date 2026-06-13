@@ -100,7 +100,7 @@ const GUIDEVAULT_LIBRARY_CHUNK_YIELD_MS = 30;
 const GUIDEVAULT_STARTUP_STATUS_HIDE_MS = 2400;
 const GUIDEVAULT_LIBRARY_SEARCH_DEBOUNCE_MS = 180;
 const GUIDEVAULT_SORT_COLLATOR = new Intl.Collator(undefined, { numeric: true, sensitivity: 'base' });
-const GUIDEVAULT_APP_VERSION = '0.9.186';
+const GUIDEVAULT_APP_VERSION = '0.9.187';
 const GUIDEVAULT_FILENAME_SCHEMA_KEY = 'guidevault.filenameRename.schema.v1';
 const GUIDEVAULT_FILE_ORGANIZATION_TEMPLATE_PRESETS_KEY = 'guidevault.fileOrganization.templatePresets.v2';
 const GUIDEVAULT_FILE_ORGANIZATION_TEMPLATE_PRESETS_LEGACY_KEY = 'guidevault.fileOrganization.templatePresets.v1';
@@ -5515,7 +5515,7 @@ function activateTab(tab) {
   state.activeTab = tab || 'overview';
   document.querySelectorAll('.tab').forEach(b => b.classList.toggle('active', b.dataset.tab === state.activeTab));
   document.querySelectorAll('.tab-panel').forEach(p => p.classList.toggle('hidden', p.id !== `${state.activeTab}Panel`));
-  if (state.activeTab === 'library-data') { updateMetadataFileMaintenance(); loadCoverPickerForSelected(); }
+  if (state.activeTab === 'library-data') { updateMetadataFileMaintenance(); }
   if (state.activeTab === 'reviews' && state.selected) loadPublicReviewsForItem(state.selected, true);
 }
 
@@ -14589,23 +14589,26 @@ function resetMetadataCoverPicker(item) {
     return;
   }
   panel.classList.remove('hidden');
-  panel._coverPickerData = data;
+  panel._coverPickerData = null;
   panel.dataset.itemId = id;
   panel.dataset.loaded = '0';
   panel.innerHTML = `
     <div class="metadata-cover-picker-head">
       <div>
         <h4>Cover Page Override</h4>
-        <p class="sub">Read the archive image list and choose the exact page Guidevault should use as this item's cover.</p>
+        <p class="sub">Click Load Pages only when you want to inspect this archive and choose an exact cover page.</p>
       </div>
       <div class="metadata-cover-picker-actions">
         <button class="ghost tiny" type="button" data-cover-picker-load>Load Pages</button>
         <button class="ghost tiny" type="button" data-cover-picker-clear disabled>Use Auto Cover</button>
       </div>
     </div>
-    <div class="metadata-cover-picker-status">Open Library Data and load pages to choose a cover.</div>`;
-  if (state.activeTab === 'library-data') loadCoverPickerForSelected();
+    <div class="metadata-cover-picker-status">Cover page choices are loaded on demand so normal library cover loading stays fast.</div>`;
+  // Do not enumerate archive pages automatically. The cover picker can be
+  // expensive for large CBR/CBZ files or network-hosted libraries, so it only
+  // loads after the user clicks Load Pages.
 }
+
 
 function coverPickerPageLabel(entry = {}) {
   const n = Number(entry.index || 0) + 1;
