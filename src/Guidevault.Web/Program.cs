@@ -16,7 +16,7 @@ using SixLabors.ImageSharp.Formats.Jpeg;
 using SixLabors.ImageSharp.Processing;
 
 var builder = WebApplication.CreateBuilder(args);
-const string GuidevaultVersion = "0.9.180";
+const string GuidevaultVersion = "0.9.181";
 var app = builder.Build();
 var metadataJsonOptions = new JsonSerializerOptions(JsonSerializerDefaults.Web) { PropertyNameCaseInsensitive = true };
 var options = app.Configuration.GetSection("Guidevault").Get<GuidevaultOptions>() ?? new GuidevaultOptions();
@@ -2935,7 +2935,7 @@ static string FileOrganizationTemplateForKind(JsonElement payload, string kind)
     var defaults = kind.Equals("Manual", StringComparison.OrdinalIgnoreCase)
         ? "Manuals/{Platform}/{GameTitle}/{Title} - Manual{Extension}"
         : kind.Equals("Magazine", StringComparison.OrdinalIgnoreCase)
-            ? "Magazines/{MagazineSeries}/{Year}/{MagazineSeries} - Issue {IssueNumber}{Extension}"
+            ? "Magazines/{MagazineSeries}/{Year}/{MagazineSeries} - {IssuePart}{Extension}"
             : "Strategy Guides/{Platform}/{GameTitle}/{Title}{Extension}";
 
     if (payload.ValueKind != JsonValueKind.Object) return defaults;
@@ -2966,6 +2966,11 @@ static string BuildOrganizationRelativePath(LibraryItem item, string template)
     var cleanStrategyTitle = CleanOrganizationTitle(FirstNonBlank(item.Title, item.GameTitle, Path.GetFileNameWithoutExtension(item.FileName)), item);
     var cleanMagazineTitle = CleanOrganizationTitle(FirstNonBlank(item.MagazineTitle, item.Series, item.Title), item);
 
+    var issueNumber = FirstMeaningfulOrganizationValue(item.IssueNumber);
+    var volumeNumber = FirstMeaningfulOrganizationValue(item.Volume);
+    var edition = FirstMeaningfulOrganizationValue(item.Edition);
+    var guideType = FirstMeaningfulOrganizationValue(item.GuideType);
+
     var values = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
     {
         ["ContentType"] = item.Kind.Equals("Manual", StringComparison.OrdinalIgnoreCase) ? "Manuals" : item.Kind.Equals("Magazine", StringComparison.OrdinalIgnoreCase) ? "Magazines" : "Strategy Guides",
@@ -2976,9 +2981,17 @@ static string BuildOrganizationRelativePath(LibraryItem item, string template)
         ["PreferredPlatform"] = FirstNonBlank(item.Category, item.System, item.PrimarySystem, "Unsorted"),
         ["MagazineSeries"] = FirstNonBlank(cleanMagazineTitle, item.Series, "Unsorted Magazines"),
         ["Series"] = FirstNonBlank(item.Series, item.Franchise),
-        ["IssueNumber"] = FirstNonBlank(item.IssueNumber, "000"),
-        ["Number"] = FirstNonBlank(item.IssueNumber, "000"),
-        ["Volume"] = item.Volume ?? string.Empty,
+        ["IssueNumber"] = issueNumber,
+        ["IssuePart"] = LabeledOrganizationValue(issueNumber, "Issue "),
+        ["Number"] = issueNumber,
+        ["NumberPart"] = LabeledOrganizationValue(issueNumber, "No. "),
+        ["Volume"] = volumeNumber,
+        ["VolumeNumber"] = volumeNumber,
+        ["VolumePart"] = LabeledOrganizationValue(volumeNumber, "Vol. "),
+        ["Edition"] = edition,
+        ["EditionPart"] = edition,
+        ["GuideType"] = guideType,
+        ["GuideTypePart"] = guideType,
         ["CoveredGames"] = string.Join(", ", item.CoveredGames ?? Array.Empty<string>()),
         ["Year"] = FirstMeaningfulOrganizationValue(item.Year, ExtractYear(item.PublicationDate), ExtractYear(item.CoverDate), ExtractYear(item.GameReleaseYear)),
         ["Month"] = FirstMeaningfulOrganizationValue(ExtractMonth(item.CoverDate), ExtractMonth(item.PublicationDate)),
@@ -2990,14 +3003,23 @@ static string BuildOrganizationRelativePath(LibraryItem item, string template)
         ["ISBN13"] = FirstMeaningfulOrganizationValue(item.Isbn13),
         ["ASIN"] = FirstMeaningfulOrganizationValue(item.Asin),
         ["ManualTitle"] = cleanManualTitle,
+        ["ManualType"] = FirstMeaningfulOrganizationValue(item.ManualType),
         ["StrategyGuideTitle"] = cleanStrategyTitle,
+        ["MagazineTitle"] = cleanMagazineTitle,
+        ["CoverDate"] = FirstMeaningfulOrganizationValue(item.CoverDate),
         ["Region"] = item.Region ?? string.Empty,
         ["Language"] = item.LanguageTag ?? string.Empty,
         ["Extension"] = ext
     };
 
     var rendered = Regex.Replace(template ?? string.Empty, "\\{([A-Za-z0-9_]+)\\}", match =>
-        values.TryGetValue(match.Groups[1].Value, out var value) ? NormalizeOrganizationTokenValue(value) : string.Empty);
+    {
+        var tokenName = match.Groups[1].Value;
+        if (!values.TryGetValue(tokenName, out var value)) return string.Empty;
+        return tokenName.Equals("Extension", StringComparison.OrdinalIgnoreCase)
+            ? NormalizeOrganizationExtensionToken(value)
+            : NormalizeOrganizationTokenValue(value);
+    });
     rendered = CleanupOrganizationRenderedTemplate(rendered.Replace('\\', '/'));
     var parts = rendered.Split('/', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
         .Select(SanitizePathPart)
@@ -3053,6 +3075,7 @@ static string CleanupOrganizationRenderedTemplate(string value)
     var text = value ?? string.Empty;
     text = Regex.Replace(text, @"\s+", " ");
     text = Regex.Replace(text, @"\s+-\s*(?:-\s*)+", " - ");
+    text = Regex.Replace(text, @"\b(?:Issue|No\.?|Number|Vol\.?|Volume|Edition)\s*(?=(?:/|$|\.[A-Za-z0-9]{1,8}|\s+-\s))", string.Empty, RegexOptions.IgnoreCase);
     text = Regex.Replace(text, @"\s+-\s*(?=(?:/|$|\.[A-Za-z0-9]{1,8}))", string.Empty);
     text = Regex.Replace(text, @"(?:\s+-\s*)+(?=(?:\.[A-Za-z0-9]{1,8})?$)", string.Empty);
     text = Regex.Replace(text, @"/\s+-\s*", "/");
@@ -3078,6 +3101,13 @@ static string FirstMeaningfulOrganizationValue(params string?[] values)
     return string.Empty;
 }
 
+
+static string LabeledOrganizationValue(string? value, string label)
+{
+    var meaningful = FirstMeaningfulOrganizationValue(value);
+    return string.IsNullOrWhiteSpace(meaningful) ? string.Empty : $"{label}{meaningful}";
+}
+
 static string NormalizeOrganizationTokenValue(string? value)
 {
     var text = value ?? string.Empty;
@@ -3091,6 +3121,16 @@ static string NormalizeOrganizationTokenValue(string? value)
     text = Regex.Replace(text, @"\s+", " ").Trim();
     text = Regex.Replace(text, @"\s*-\s*(?:-\s*)+", " - ");
     return text.Trim(' ', '.', '-');
+}
+
+static string NormalizeOrganizationExtensionToken(string? value)
+{
+    var ext = (value ?? string.Empty).Trim();
+    if (string.IsNullOrWhiteSpace(ext)) return string.Empty;
+    ext = Regex.Replace(ext, @"[^A-Za-z0-9.]+", string.Empty);
+    if (string.IsNullOrWhiteSpace(ext)) return string.Empty;
+    ext = ext.TrimStart('.');
+    return string.IsNullOrWhiteSpace(ext) ? string.Empty : $".{ext}";
 }
 
 static string SanitizePathPart(string value)
@@ -9358,6 +9398,7 @@ public static class ArchiveReader
     private static string CoverCacheDirectory = Path.Combine(AppContext.BaseDirectory, "data", "cache", "covers");
     private static string CoverThumbnailCacheDirectory = Path.Combine(AppContext.BaseDirectory, "data", "cache", "cover-thumbs");
     private static readonly string[] KnownCoverCacheExtensions = [".jpg", ".jpeg", ".png", ".webp", ".gif", ".bmp"];
+    private const string CoverCacheVersion = "cover-natural-sort-v2";
 
     public static void ConfigureCoverCache(string cacheDirectory, string? thumbnailCacheDirectory = null)
     {
@@ -10127,6 +10168,13 @@ public static class ArchiveReader
         var ext = Path.GetExtension(archivePath);
         if (ext.Equals(".pdf", StringComparison.OrdinalIgnoreCase)) return null;
 
+        // Covers must be chosen from the same normalized page list the reader uses.
+        // Some archives store entries out of page order, so never trust raw ZIP/RAR
+        // order for the cover. Prefer explicit/front-style names, then 00/000, then
+        // 01/001, then the normal natural page sort.
+        var candidateKeys = GetCoverCandidateEntries(archivePath).Take(12).ToArray();
+        if (candidateKeys.Length == 0) return null;
+
         // Prefer System.IO.Compression for normal CBZ files because it is fast and
         // random-access. If the file is a mislabeled archive, fall back to
         // SharpCompress instead of treating the item as unreadable.
@@ -10135,17 +10183,14 @@ public static class ArchiveReader
             try
             {
                 using var zip = ZipFile.OpenRead(archivePath);
-                var entries = zip.Entries
-                    .Where(e => IsUsableZipImageEntry(e))
-                    .OrderBy(e => NaturalSortKey(Normalize(e.FullName)))
-                    .Take(12)
-                    .ToArray();
-
-                foreach (var entry in entries)
+                foreach (var entryKey in candidateKeys)
                 {
                     try
                     {
-                        var contentType = ContentTypeFromExtension(Path.GetExtension(entry.Name));
+                        var entry = zip.Entries.FirstOrDefault(e => string.Equals(Normalize(e.FullName), entryKey, StringComparison.OrdinalIgnoreCase));
+                        if (entry is null) continue;
+
+                        var contentType = ContentTypeFromExtension(Path.GetExtension(entryKey));
                         await using var stream = entry.Open();
                         using var output = new MemoryStream();
                         await stream.CopyToAsync(output);
@@ -10165,16 +10210,21 @@ public static class ArchiveReader
             }
         }
 
+        var candidateRanks = candidateKeys
+            .Select((key, index) => new { key, index })
+            .ToDictionary(x => x.key, x => x.index, StringComparer.OrdinalIgnoreCase);
+        (byte[] Bytes, string ContentType)? best = null;
+        var bestRank = int.MaxValue;
+
         using var reader = ReaderFactory.OpenReader(archivePath);
-        var checkedImages = 0;
         while (reader.MoveToNextEntry())
         {
             var current = reader.Entry;
             if (current.IsDirectory) continue;
-            var entryKey = current.Key ?? string.Empty;
-            if (!IsImageEntryName(entryKey)) continue;
 
-            checkedImages++;
+            var entryKey = Normalize(current.Key ?? string.Empty);
+            if (!candidateRanks.TryGetValue(entryKey, out var rank) || rank >= bestRank) continue;
+
             try
             {
                 var contentType = ContentTypeFromExtension(Path.GetExtension(entryKey));
@@ -10182,17 +10232,19 @@ public static class ArchiveReader
                 using var output = new MemoryStream();
                 await input.CopyToAsync(output);
                 var bytes = output.ToArray();
-                if (LooksLikeImageBytes(bytes, contentType)) return (bytes, contentType);
+                if (!LooksLikeImageBytes(bytes, contentType)) continue;
+
+                best = (bytes, contentType);
+                bestRank = rank;
+                if (bestRank == 0) return best;
             }
             catch
             {
-                // Keep looking for a usable leading image.
+                // Keep looking for another usable candidate page.
             }
-
-            if (checkedImages >= 12) break;
         }
 
-        return null;
+        return best;
     }
 
     private static string CoverCacheKey(string archivePath)
@@ -10200,12 +10252,12 @@ public static class ArchiveReader
         try
         {
             var info = new FileInfo(archivePath);
-            var raw = $"{info.FullName}|{info.Length}|{info.LastWriteTimeUtc.Ticks}";
+            var raw = $"{CoverCacheVersion}|{info.FullName}|{info.Length}|{info.LastWriteTimeUtc.Ticks}";
             return Convert.ToHexString(SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(raw))).ToLowerInvariant();
         }
         catch
         {
-            return Convert.ToHexString(SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(archivePath))).ToLowerInvariant();
+            return Convert.ToHexString(SHA256.HashData(System.Text.Encoding.UTF8.GetBytes($"{CoverCacheVersion}|{archivePath}"))).ToLowerInvariant();
         }
     }
 
@@ -10415,6 +10467,38 @@ public static class ArchiveReader
         => !string.IsNullOrWhiteSpace(entry.Name)
            && entry.Length > 0
            && IsImageEntryName(entry.Name);
+
+    private static IEnumerable<string> GetCoverCandidateEntries(string archivePath)
+    {
+        return GetImageEntries(archivePath)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .OrderBy(CoverCandidatePriority)
+            .ThenBy(entry => NaturalSortKey(Path.GetFileName(entry)))
+            .ThenBy(NaturalSortKey)
+            .ThenBy(entry => entry, StringComparer.OrdinalIgnoreCase);
+    }
+
+    private static int CoverCandidatePriority(string entryKey)
+    {
+        var fileName = Path.GetFileNameWithoutExtension(Normalize(entryKey)).Trim().ToLowerInvariant();
+        if (string.IsNullOrWhiteSpace(fileName)) return 50;
+
+        var compact = Regex.Replace(fileName, @"[\s_\-.]+", string.Empty);
+        if (compact is "cover" or "front" or "frontcover" or "fc" or "folder"
+            || compact.StartsWith("cover", StringComparison.OrdinalIgnoreCase)
+            || compact.EndsWith("cover", StringComparison.OrdinalIgnoreCase))
+            return 0;
+
+        var pageMatch = Regex.Match(compact, @"^(?:page|pg|p|scan|img|image)?0*(\d+)$", RegexOptions.IgnoreCase);
+        if (pageMatch.Success && int.TryParse(pageMatch.Groups[1].Value, out var pageNumber))
+        {
+            if (pageNumber == 0) return 1;
+            if (pageNumber == 1) return 2;
+            return 10 + Math.Min(pageNumber, 9999);
+        }
+
+        return 20;
+    }
 
     private static bool LooksLikeImageBytes(byte[]? bytes, string contentType)
     {
@@ -11911,6 +11995,6 @@ static class GuidevaultLibraryIoGate
 
 static class GuidevaultBuildInfo
 {
-    public const string Version = "0.9.180";
+    public const string Version = "0.9.181";
 }
 

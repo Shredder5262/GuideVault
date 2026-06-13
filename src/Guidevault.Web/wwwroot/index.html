@@ -1,12 +1,12 @@
-<!doctype html>
+﻿<!doctype html>
 <html lang="en">
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Guidevault</title>
-  <link rel="icon" type="image/x-icon" href="/assets/favicon.ico?v=0.9.180" />
-  <link rel="shortcut icon" type="image/x-icon" href="/assets/favicon.ico?v=0.9.180" />
-  <link rel="stylesheet" href="/styles.css?v=0.9.180-strategy-metadata-tlc" />
+  <link rel="icon" type="image/x-icon" href="/assets/favicon.ico?v=0.9.182" />
+  <link rel="shortcut icon" type="image/x-icon" href="/assets/favicon.ico?v=0.9.182" />
+  <link rel="stylesheet" href="/styles.css?v=0.9.181-template-builder" />
 </head>
 <body class="right-collapsed auth-locked">
   <section id="loginView" class="login-view" aria-labelledby="loginTitle">
@@ -1317,17 +1317,24 @@
                   <h3>Organize Files</h3>
                   <p class="sub">Preview bulk rename and move paths from metadata. Files stay inside their current library root.</p>
                 </div>
-                <div class="server-files-section-label"><span>Rename / Move Templates</span><em>Choose a saved template set, edit it, then save your preferred layout.</em></div>
+                <div class="server-files-section-label"><span>Rename / Move Templates</span><em>Choose a content type, edit its template, then save only that one template.</em></div>
                 <div class="server-files-template-preset-row" aria-label="Saved file organization templates">
+                  <label for="serverFilesTemplateKindSelect">Template Type
+                    <select id="serverFilesTemplateKindSelect">
+                      <option value="manual">Manuals</option>
+                      <option value="strategyGuide">Strategy Guides</option>
+                      <option value="magazine">Magazines</option>
+                    </select>
+                  </label>
                   <label for="serverFilesTemplatePresetSelect">Saved Template
                     <select id="serverFilesTemplatePresetSelect"></select>
                   </label>
                   <label for="serverFilesTemplatePresetName">Template Name
-                    <input id="serverFilesTemplatePresetName" type="text" placeholder="My file layout" />
+                    <input id="serverFilesTemplatePresetName" type="text" placeholder="My manual layout" />
                   </label>
                   <div class="settings-actions inline-actions server-files-template-preset-actions">
-                    <button id="serverFilesSaveTemplatePreset" class="primary" type="button">Save Template</button>
-                    <button id="serverFilesDeleteTemplatePreset" class="ghost" type="button">Delete Template</button>
+                    <button id="serverFilesSaveTemplatePreset" class="primary" type="button">Save Selected Type</button>
+                    <button id="serverFilesDeleteTemplatePreset" class="ghost" type="button">Delete Selected</button>
                   </div>
                 </div>
                 <div class="server-files-template-grid">
@@ -1338,40 +1345,72 @@
                     <input id="serverFilesStrategyTemplate" class="server-files-template-input" spellcheck="false" value="Strategy Guides/{Platform}/{GameTitle}/{Title}{Extension}" />
                   </label>
                   <label for="serverFilesMagazineTemplate">Magazine template
-                    <input id="serverFilesMagazineTemplate" class="server-files-template-input" spellcheck="false" value="Magazines/{MagazineSeries}/{Year}/{MagazineSeries} - Issue {IssueNumber}{Extension}" />
+                    <input id="serverFilesMagazineTemplate" class="server-files-template-input" spellcheck="false" value="Magazines/{MagazineSeries}/{Year}/{MagazineSeries} - {IssuePart}{Extension}" />
                   </label>
                 </div>
                 <div class="server-files-token-builder" aria-label="File name template builder">
                   <div>
                     <strong>Template Builder</strong>
-                    <span>Click a template field, then use these buttons to build the folder/file name pattern.</span>
+                    <span>Click a template field, then use the grouped buttons below. Optional part tokens stay blank when metadata is missing.</span>
                   </div>
-                  <div class="server-files-token-bank">
-                    <button type="button" data-server-files-token="{ContentType}" title="Insert {ContentType}">Content Type</button>
-                    <button type="button" data-server-files-token="{Title}" title="Insert {Title}">Item Title</button>
-                    <button type="button" data-server-files-token="{GameTitle}" title="Insert {GameTitle}">Game Title</button>
-                    <button type="button" data-server-files-token="{ManualTitle}" title="Insert {ManualTitle}">Manual Title</button>
-                    <button type="button" data-server-files-token="{StrategyGuideTitle}" title="Insert {StrategyGuideTitle}">Strategy Guide Title</button>
-                    <button type="button" data-server-files-token="{CoveredGames}" title="Insert {CoveredGames}">Covered Games</button>
-                    <button type="button" data-server-files-token="{Platform}" title="Insert {Platform}">Platform</button>
-                    <button type="button" data-server-files-token="{MagazineSeries}" title="Insert {MagazineSeries}">Magazine Series</button>
-                    <button type="button" data-server-files-token="{IssueNumber}" title="Insert {IssueNumber}">Issue Number</button>
-                    <button type="button" data-server-files-token="{Volume}" title="Insert {Volume}">Volume</button>
-                    <button type="button" data-server-files-token="{Number}" title="Insert {Number}">Number</button>
-                    <button type="button" data-server-files-token="{Month}" title="Insert {Month}">Month</button>
-                    <button type="button" data-server-files-token="{Year}" title="Insert {Year}">Year</button>
-                    <button type="button" data-server-files-token="{PublicationDate}" title="Insert {PublicationDate}">Publication Date</button>
-                    <button type="button" data-server-files-token="{Publisher}" title="Insert {Publisher}">Publisher</button>
-                    <button type="button" data-server-files-token="{Writer}" title="Insert {Writer}">Writer / Author</button>
-                    <button type="button" data-server-files-token="{ISBN}" title="Insert {ISBN}">ISBN</button>
-                    <button type="button" data-server-files-token="{ISBN10}" title="Insert {ISBN10}">ISBN-10</button>
-                    <button type="button" data-server-files-token="{ISBN13}" title="Insert {ISBN13}">ISBN-13</button>
-                    <button type="button" data-server-files-token="{ASIN}" title="Insert {ASIN}">ASIN</button>
-                    <button type="button" data-server-files-token="{Region}" title="Insert {Region}">Region</button>
-                    <button type="button" data-server-files-token="{Language}" title="Insert {Language}">Language</button>
-                    <button type="button" data-server-files-token="{Extension}" title="Insert {Extension}">File Extension</button>
-                    <button type="button" data-server-files-token="/" title="Insert folder separator">Folder /</button>
-                    <button type="button" data-server-files-token=" - " title="Insert separator">Separator -</button>
+                  <div class="server-files-token-help">Volume is the raw magazine volume field. Number currently maps to the issue/number field. Use Volume Part, Issue Part, Number Part, or Edition Part when you only want text to appear if that metadata exists.</div>
+                  <div class="server-files-token-groups">
+                    <section class="server-files-token-group" aria-label="Common template fields">
+                      <h4>Common</h4>
+                      <div class="server-files-token-bank">
+                        <button type="button" data-server-files-token="{ContentType}" title="Insert {ContentType}">Content Type</button>
+                        <button type="button" data-server-files-token="{Title}" title="Insert {Title}">Item Title</button>
+                        <button type="button" data-server-files-token="{GameTitle}" title="Insert {GameTitle}">Game Title</button>
+                        <button type="button" data-server-files-token="{Platform}" title="Insert {Platform}">Platform</button>
+                        <button type="button" data-server-files-token="{PreferredPlatform}" title="Insert {PreferredPlatform}">Preferred Platform</button>
+                        <button type="button" data-server-files-token="{Publisher}" title="Insert {Publisher}">Publisher</button>
+                        <button type="button" data-server-files-token="{Writer}" title="Insert {Writer}">Writer / Author</button>
+                        <button type="button" data-server-files-token="{Year}" title="Insert {Year}">Year</button>
+                        <button type="button" data-server-files-token="{Month}" title="Insert {Month}">Month</button>
+                        <button type="button" data-server-files-token="{PublicationDate}" title="Insert {PublicationDate}">Publication Date</button>
+                        <button type="button" data-server-files-token="{Region}" title="Insert {Region}">Region</button>
+                        <button type="button" data-server-files-token="{Language}" title="Insert {Language}">Language</button>
+                        <button type="button" data-server-files-token="{Extension}" title="Insert {Extension}">File Extension</button>
+                        <button type="button" data-server-files-token="/" title="Insert folder separator">Folder /</button>
+                        <button type="button" data-server-files-token=" - " title="Insert separator">Separator -</button>
+                      </div>
+                    </section>
+                    <section class="server-files-token-group" aria-label="Manual template fields">
+                      <h4>Manuals</h4>
+                      <div class="server-files-token-bank">
+                        <button type="button" data-server-files-token="{ManualTitle}" title="Insert {ManualTitle}">Manual Title</button>
+                        <button type="button" data-server-files-token="{ManualType}" title="Insert {ManualType}">Manual Type</button>
+                      </div>
+                    </section>
+                    <section class="server-files-token-group" aria-label="Strategy guide template fields">
+                      <h4>Strategy Guides</h4>
+                      <div class="server-files-token-bank">
+                        <button type="button" data-server-files-token="{StrategyGuideTitle}" title="Insert {StrategyGuideTitle}">Strategy Guide Title</button>
+                        <button type="button" data-server-files-token="{CoveredGames}" title="Insert {CoveredGames}">Covered Games</button>
+                        <button type="button" data-server-files-token="{GuideType}" title="Insert {GuideType}">Guide Type</button>
+                        <button type="button" data-server-files-token="{GuideTypePart}" title="Insert {GuideTypePart}">Guide Type Part</button>
+                        <button type="button" data-server-files-token="{Edition}" title="Insert {Edition}">Edition</button>
+                        <button type="button" data-server-files-token="{EditionPart}" title="Insert {EditionPart}">Edition Part</button>
+                        <button type="button" data-server-files-token="{ISBN}" title="Insert {ISBN}">ISBN</button>
+                        <button type="button" data-server-files-token="{ISBN10}" title="Insert {ISBN10}">ISBN-10</button>
+                        <button type="button" data-server-files-token="{ISBN13}" title="Insert {ISBN13}">ISBN-13</button>
+                        <button type="button" data-server-files-token="{ASIN}" title="Insert {ASIN}">ASIN</button>
+                      </div>
+                    </section>
+                    <section class="server-files-token-group" aria-label="Magazine template fields">
+                      <h4>Magazines</h4>
+                      <div class="server-files-token-bank">
+                        <button type="button" data-server-files-token="{MagazineSeries}" title="Insert {MagazineSeries}">Magazine Series</button>
+                        <button type="button" data-server-files-token="{MagazineTitle}" title="Insert {MagazineTitle}">Magazine Title</button>
+                        <button type="button" data-server-files-token="{IssueNumber}" title="Insert {IssueNumber}">Issue Number</button>
+                        <button type="button" data-server-files-token="{IssuePart}" title="Insert {IssuePart}">Issue Part</button>
+                        <button type="button" data-server-files-token="{Volume}" title="Insert {Volume}">Volume Number</button>
+                        <button type="button" data-server-files-token="{VolumePart}" title="Insert {VolumePart}">Volume Part</button>
+                        <button type="button" data-server-files-token="{Number}" title="Insert {Number}">Number</button>
+                        <button type="button" data-server-files-token="{NumberPart}" title="Insert {NumberPart}">Number Part</button>
+                        <button type="button" data-server-files-token="{CoverDate}" title="Insert {CoverDate}">Cover Date</button>
+                      </div>
+                    </section>
                   </div>
                 </div>
                 <p class="field-help">The preview below shows the exact current file name/path and proposed file name/path before anything is applied.</p>
@@ -1775,6 +1814,27 @@
               <h2>Update History</h2>
             </div>
             <div class="system-update-list">
+              <details class="system-update-entry" open>
+                <summary>
+                  <span>Guidevault 0.9.182 - File Template Builder Cleanup</span>
+                  <em>Installed</em>
+                </summary>
+                <ul>
+                  <li>Grouped file template builder tokens into Common, Manuals, Strategy Guides, and Magazines sections.</li>
+                  <li>Changed saved file templates to save and delete per content type instead of saving manual, strategy guide, and magazine templates as one combined set.</li>
+                  <li>Added clearer optional tokens such as Issue Part, Volume Part, Number Part, and Edition Part so missing metadata does not leave orphan labels in filenames.</li>
+                </ul>
+              </details>
+              <details class="system-update-entry" open>
+                <summary>
+                  <span>Guidevault 0.9.181 - Natural Cover Selection</span>
+                  <em>Installed</em>
+                </summary>
+                <ul>
+                  <li>Fixed magazine and archive cover extraction so fallback archive readers choose covers from the sorted page list instead of raw archive entry order.</li>
+                  <li>Added cover-name priority for front/cover files, 00/000 pages, and 01/001 pages so archives with out-of-order entries display the correct first page.</li>
+                </ul>
+              </details>
               <details class="system-update-entry" open>
                 <summary>
                   <span>Guidevault 0.9.180 - Strategy Metadata TLC</span>
@@ -2592,6 +2652,7 @@
   </dialog>
 
 
-  <script src="/app.js?v=0.9.180-strategy-metadata-tlc"></script>
+  <script src="/app.js?v=0.9.181-template-builder"></script>
 </body>
 </html>
+

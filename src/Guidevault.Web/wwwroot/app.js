@@ -1,4 +1,4 @@
-const state = {
+﻿const state = {
   items: [], filtered: [], selected: null, filter: 'All Content', categoryFilter: '', viewMode: 'all', activeTab: 'overview', customFilter: null,
   reader: { item: null, pages: [], index: 0, animating: false, displayMode: 2, transitionMode: 'stable', overlayVisible: false, advancedVisible: false, bookmarkMenuOpen: false, magnifierSettingsVisible: false, scrubbing: false, shading: null, zoom: 100, fullscreenOnOpen: false, magnifier: null, magnifierActive: false, longPressTimer: null, suppressHitClickUntil: 0, backgrounds: [], background: '', backgroundBrightness: 72 },
   libraryPath: '',
@@ -100,9 +100,10 @@ const GUIDEVAULT_LIBRARY_CHUNK_YIELD_MS = 30;
 const GUIDEVAULT_STARTUP_STATUS_HIDE_MS = 2400;
 const GUIDEVAULT_LIBRARY_SEARCH_DEBOUNCE_MS = 180;
 const GUIDEVAULT_SORT_COLLATOR = new Intl.Collator(undefined, { numeric: true, sensitivity: 'base' });
-const GUIDEVAULT_APP_VERSION = '0.9.180';
+const GUIDEVAULT_APP_VERSION = '0.9.181';
 const GUIDEVAULT_FILENAME_SCHEMA_KEY = 'guidevault.filenameRename.schema.v1';
-const GUIDEVAULT_FILE_ORGANIZATION_TEMPLATE_PRESETS_KEY = 'guidevault.fileOrganization.templatePresets.v1';
+const GUIDEVAULT_FILE_ORGANIZATION_TEMPLATE_PRESETS_KEY = 'guidevault.fileOrganization.templatePresets.v2';
+const GUIDEVAULT_FILE_ORGANIZATION_TEMPLATE_PRESETS_LEGACY_KEY = 'guidevault.fileOrganization.templatePresets.v1';
 const GUIDEVAULT_DEFAULT_FILENAME_SCHEMA = '{title}';
 const GUIDEVAULT_STABLE_TAG_FEED_URL = 'https://api.github.com/repos/Shredder5262/GuideVault/tags';
 const GUIDEVAULT_RELEASES_URL = 'https://github.com/Shredder5262/GuideVault/releases';
@@ -19188,7 +19189,7 @@ function metadataManagerSelectedItemsFromState() {
 }
 
 function serverFilesEnsureState() {
-  state.serverFiles = state.serverFiles || { selectedIds: [], kindFilters: ['Manual','Strategy Guide','Magazine'], search: '', renderLimit: METADATA_MANAGER_DEFAULT_RENDER_LIMIT, templateTargetId: 'serverFilesManualTemplate' };
+  state.serverFiles = state.serverFiles || { selectedIds: [], kindFilters: ['Manual','Strategy Guide','Magazine'], search: '', renderLimit: METADATA_MANAGER_DEFAULT_RENDER_LIMIT, templateKind: 'manual', templateTargetId: 'serverFilesManualTemplate' };
   if (!Array.isArray(state.serverFiles.selectedIds)) state.serverFiles.selectedIds = [];
   if (!Array.isArray(state.serverFiles.kindFilters) || !state.serverFiles.kindFilters.length) state.serverFiles.kindFilters = ['Manual','Strategy Guide','Magazine'];
   if (!Number.isFinite(Number(state.serverFiles.renderLimit)) || Number(state.serverFiles.renderLimit) <= 0) state.serverFiles.renderLimit = METADATA_MANAGER_DEFAULT_RENDER_LIMIT;
@@ -19466,90 +19467,241 @@ function serverFilesTrackTemplateTarget(input) {
   if (!input?.id) return;
   const files = serverFilesEnsureState();
   files.templateTargetId = input.id;
+  const kind = serverFilesTemplateKindFromInputId(input.id);
+  files.templateKind = kind;
+  const kindSelect = $('serverFilesTemplateKindSelect');
+  if (kindSelect && kindSelect.value !== kind) {
+    kindSelect.value = kind;
+    renderServerFilesTemplatePresetOptions();
+  }
 }
 
-function serverFilesDefaultTemplatePresets() {
-  return [
-    {
-      id: 'guidevault-default',
-      name: 'GuideVault Default',
-      templates: {
-        manual: 'Manuals/{Platform}/{GameTitle}/{Title} - Manual{Extension}',
-        strategyGuide: 'Strategy Guides/{Platform}/{GameTitle}/{Title}{Extension}',
-        magazine: 'Magazines/{MagazineSeries}/{Year}/{MagazineSeries} - Issue {IssueNumber}{Extension}'
-      },
-      builtIn: true
-    },
-    {
-      id: 'publisher-title-type-year',
-      name: 'Publisher / Title - Type - ISBN - Year',
-      templates: {
-        manual: '{Publisher}/{Title} - {ContentType} - {Year}{Extension}',
-        strategyGuide: '{Publisher}/{Title} - {ContentType} - {ISBN10} - {Year}{Extension}',
-        magazine: '{Publisher}/{MagazineSeries} - Issue {IssueNumber} - {Year}{Extension}'
-      },
-      builtIn: true
-    },
-    {
-      id: 'flat-clean-name',
-      name: 'Flat Clean Name',
-      templates: {
-        manual: '{Title}{Extension}',
-        strategyGuide: '{Title}{Extension}',
-        magazine: '{MagazineSeries} - Issue {IssueNumber}{Extension}'
-      },
-      builtIn: true
-    }
-  ];
-}
-
-function serverFilesDefaultTemplates() {
-  return serverFilesDefaultTemplatePresets()[0].templates;
-}
-
-function normalizeServerFilesTemplatePreset(value = {}, fallbackId = '') {
-  const defaultTemplates = serverFilesDefaultTemplates();
-  const id = String(value.id || fallbackId || `template-${Date.now()}`).trim() || `template-${Date.now()}`;
-  const name = String(value.name || 'Custom Template').trim() || 'Custom Template';
-  const templates = value.templates || {};
+function serverFilesTemplateKindDefinitions() {
   return {
-    id,
-    name,
-    builtIn: value.builtIn === true,
-    updatedAt: value.updatedAt || new Date().toISOString(),
-    templates: {
-      manual: String(templates.manual || defaultTemplates.manual || '').trim() || defaultTemplates.manual,
-      strategyGuide: String(templates.strategyGuide || defaultTemplates.strategyGuide || '').trim() || defaultTemplates.strategyGuide,
-      magazine: String(templates.magazine || defaultTemplates.magazine || '').trim() || defaultTemplates.magazine
+    manual: {
+      label: 'Manuals',
+      singularLabel: 'Manual',
+      inputId: 'serverFilesManualTemplate',
+      defaultPresetId: 'guidevault-default-manual',
+      defaultTemplate: 'Manuals/{Platform}/{GameTitle}/{Title} - Manual{Extension}'
+    },
+    strategyGuide: {
+      label: 'Strategy Guides',
+      singularLabel: 'Strategy Guide',
+      inputId: 'serverFilesStrategyTemplate',
+      defaultPresetId: 'guidevault-default-strategy-guide',
+      defaultTemplate: 'Strategy Guides/{Platform}/{GameTitle}/{Title}{Extension}'
+    },
+    magazine: {
+      label: 'Magazines',
+      singularLabel: 'Magazine',
+      inputId: 'serverFilesMagazineTemplate',
+      defaultPresetId: 'guidevault-default-magazine',
+      defaultTemplate: 'Magazines/{MagazineSeries}/{Year}/{MagazineSeries} - {IssuePart}{Extension}'
     }
   };
 }
 
-function loadServerFilesTemplatePresets() {
-  const builtIns = serverFilesDefaultTemplatePresets().map(preset => normalizeServerFilesTemplatePreset(preset, preset.id));
-  const stateValue = { selectedId: 'guidevault-default', presets: Object.fromEntries(builtIns.map(preset => [preset.id, preset])) };
-  try {
-    const raw = localStorage.getItem(GUIDEVAULT_FILE_ORGANIZATION_TEMPLATE_PRESETS_KEY);
-    if (raw) {
-      const parsed = JSON.parse(raw);
-      if (parsed && typeof parsed === 'object') {
-        if (parsed.presets && typeof parsed.presets === 'object') {
-          Object.entries(parsed.presets).forEach(([id, preset]) => {
-            const normalized = normalizeServerFilesTemplatePreset({ ...(preset || {}), id: preset?.id || id }, id);
-            stateValue.presets[normalized.id] = normalized;
-          });
-        }
-        if (parsed.selectedId && stateValue.presets[parsed.selectedId]) stateValue.selectedId = parsed.selectedId;
-      }
+function serverFilesTemplateKindOrder() {
+  return ['manual', 'strategyGuide', 'magazine'];
+}
+
+function serverFilesNormalizeTemplateKind(kind = '') {
+  const key = String(kind || '').trim();
+  return serverFilesTemplateKindDefinitions()[key] ? key : 'manual';
+}
+
+function serverFilesTemplateKindFromInputId(id = '') {
+  const text = String(id || '');
+  const defs = serverFilesTemplateKindDefinitions();
+  return serverFilesTemplateKindOrder().find(kind => defs[kind].inputId === text) || 'manual';
+}
+
+function serverFilesTemplateInputForKind(kind = '') {
+  const normalizedKind = serverFilesNormalizeTemplateKind(kind);
+  const id = serverFilesTemplateKindDefinitions()[normalizedKind].inputId;
+  return $(id);
+}
+
+function serverFilesCurrentTemplateKind() {
+  const files = serverFilesEnsureState();
+  return serverFilesNormalizeTemplateKind($('serverFilesTemplateKindSelect')?.value || files.templateKind || serverFilesTemplateKindFromInputId(files.templateTargetId || ''));
+}
+
+function serverFilesDefaultTemplatePresets(kind = '') {
+  const presets = {
+    manual: [
+      { id: 'guidevault-default-manual', name: 'GuideVault Manual Default', template: 'Manuals/{Platform}/{GameTitle}/{Title} - Manual{Extension}', builtIn: true },
+      { id: 'manual-flat-title', name: 'Manual Flat Title', template: '{Title}{Extension}', builtIn: true },
+      { id: 'manual-publisher-year', name: 'Manual Publisher / Title / Year', template: '{Publisher}/{Title} - Manual - {Year}{Extension}', builtIn: true }
+    ],
+    strategyGuide: [
+      { id: 'guidevault-default-strategy-guide', name: 'GuideVault Strategy Guide Default', template: 'Strategy Guides/{Platform}/{GameTitle}/{Title}{Extension}', builtIn: true },
+      { id: 'strategy-guide-edition', name: 'Strategy Guide with Optional Edition', template: 'Strategy Guides/{Platform}/{GameTitle}/{Title} - {EditionPart}{Extension}', builtIn: true },
+      { id: 'strategy-guide-publisher-isbn-year', name: 'Strategy Guide Publisher / ISBN / Year', template: '{Publisher}/{Title} - {GuideTypePart} - {ISBN10} - {Year}{Extension}', builtIn: true }
+    ],
+    magazine: [
+      { id: 'guidevault-default-magazine', name: 'GuideVault Magazine Default', template: 'Magazines/{MagazineSeries}/{Year}/{MagazineSeries} - {IssuePart}{Extension}', builtIn: true },
+      { id: 'magazine-volume-issue', name: 'Magazine with Optional Volume + Issue', template: 'Magazines/{MagazineSeries}/{Year}/{MagazineSeries} - {VolumePart} - {IssuePart}{Extension}', builtIn: true },
+      { id: 'magazine-flat-series-issue', name: 'Magazine Flat Series + Issue', template: '{MagazineSeries} - {IssuePart}{Extension}', builtIn: true }
+    ]
+  };
+  const normalizedKind = serverFilesNormalizeTemplateKind(kind);
+  return kind ? presets[normalizedKind] : presets;
+}
+
+function serverFilesDefaultTemplates() {
+  const defs = serverFilesTemplateKindDefinitions();
+  return Object.fromEntries(serverFilesTemplateKindOrder().map(kind => [kind, defs[kind].defaultTemplate]));
+}
+
+function normalizeServerFilesTemplatePreset(value = {}, kind = 'manual', fallbackId = '') {
+  const normalizedKind = serverFilesNormalizeTemplateKind(kind);
+  const defs = serverFilesTemplateKindDefinitions();
+  const defaultTemplate = defs[normalizedKind].defaultTemplate;
+  const templates = value.templates || {};
+  const template = String(value.template || templates[normalizedKind] || defaultTemplate || '').trim() || defaultTemplate;
+  const id = String(value.id || fallbackId || `template-${normalizedKind}-${Date.now()}`).trim() || `template-${normalizedKind}-${Date.now()}`;
+  const name = String(value.name || `${defs[normalizedKind].singularLabel} Template`).trim() || `${defs[normalizedKind].singularLabel} Template`;
+  return {
+    id,
+    kind: normalizedKind,
+    name,
+    template,
+    builtIn: value.builtIn === true,
+    updatedAt: value.updatedAt || new Date().toISOString()
+  };
+}
+
+function serverFilesBuildDefaultTemplatePresetState() {
+  const presets = {};
+  const selectedIds = {};
+  const hiddenBuiltIns = {};
+  serverFilesTemplateKindOrder().forEach(kind => {
+    presets[kind] = {};
+    hiddenBuiltIns[kind] = [];
+    serverFilesDefaultTemplatePresets(kind).forEach(preset => {
+      const normalized = normalizeServerFilesTemplatePreset(preset, kind, preset.id);
+      presets[kind][normalized.id] = normalized;
+    });
+    selectedIds[kind] = serverFilesTemplateKindDefinitions()[kind].defaultPresetId;
+  });
+  return { selectedKind: 'manual', selectedIds, hiddenBuiltIns, presets };
+}
+
+function serverFilesApplyHiddenBuiltInTemplatePresets(stateValue) {
+  serverFilesTemplateKindOrder().forEach(kind => {
+    const hidden = new Set((stateValue.hiddenBuiltIns?.[kind] || []).map(id => String(id || '').trim()).filter(Boolean));
+    hidden.forEach(id => {
+      if (stateValue.presets?.[kind]?.[id]?.builtIn) delete stateValue.presets[kind][id];
+    });
+    if (!Object.keys(stateValue.presets?.[kind] || {}).length) {
+      const fallback = normalizeServerFilesTemplatePreset(serverFilesDefaultTemplatePresets(kind)[0], kind, serverFilesTemplateKindDefinitions()[kind].defaultPresetId);
+      stateValue.presets[kind] = { [fallback.id]: fallback };
+      stateValue.selectedIds[kind] = fallback.id;
+      stateValue.hiddenBuiltIns[kind] = [];
     }
-  } catch {}
+  });
+}
+
+function serverFilesNormalizeTemplatePresetState(parsed = null) {
+  const stateValue = serverFilesBuildDefaultTemplatePresetState();
+  if (!parsed || typeof parsed !== 'object') return stateValue;
+
+  if (parsed.selectedKind) stateValue.selectedKind = serverFilesNormalizeTemplateKind(parsed.selectedKind);
+  if (parsed.hiddenBuiltIns && typeof parsed.hiddenBuiltIns === 'object') {
+    serverFilesTemplateKindOrder().forEach(kind => {
+      stateValue.hiddenBuiltIns[kind] = Array.isArray(parsed.hiddenBuiltIns[kind]) ? parsed.hiddenBuiltIns[kind].map(id => String(id || '').trim()).filter(Boolean) : [];
+    });
+  }
+  serverFilesApplyHiddenBuiltInTemplatePresets(stateValue);
+
+  if (parsed.presets && typeof parsed.presets === 'object') {
+    serverFilesTemplateKindOrder().forEach(kind => {
+      const kindPresets = parsed.presets[kind];
+      if (!kindPresets || typeof kindPresets !== 'object') return;
+      Object.entries(kindPresets).forEach(([id, preset]) => {
+        const normalized = normalizeServerFilesTemplatePreset({ ...(preset || {}), id: preset?.id || id }, kind, id);
+        if (normalized.builtIn && stateValue.hiddenBuiltIns[kind]?.includes(normalized.id)) return;
+        stateValue.presets[kind][normalized.id] = normalized;
+      });
+    });
+  }
+
+  if (parsed.selectedIds && typeof parsed.selectedIds === 'object') {
+    serverFilesTemplateKindOrder().forEach(kind => {
+      const selectedId = String(parsed.selectedIds[kind] || '').trim();
+      if (selectedId && stateValue.presets[kind]?.[selectedId]) stateValue.selectedIds[kind] = selectedId;
+    });
+  }
+
+  serverFilesTemplateKindOrder().forEach(kind => {
+    if (!stateValue.presets[kind]?.[stateValue.selectedIds[kind]]) {
+      stateValue.selectedIds[kind] = Object.keys(stateValue.presets[kind] || {})[0] || serverFilesTemplateKindDefinitions()[kind].defaultPresetId;
+    }
+  });
+
   return stateValue;
 }
 
+function serverFilesMigrateLegacyTemplatePresetState() {
+  try {
+    const raw = localStorage.getItem(GUIDEVAULT_FILE_ORGANIZATION_TEMPLATE_PRESETS_LEGACY_KEY);
+    if (!raw) return null;
+    const legacy = JSON.parse(raw);
+    if (!legacy || typeof legacy !== 'object' || !legacy.presets || typeof legacy.presets !== 'object') return null;
+    const migrated = serverFilesBuildDefaultTemplatePresetState();
+    Object.entries(legacy.presets).forEach(([id, preset]) => {
+      if (!preset || preset.builtIn) return;
+      serverFilesTemplateKindOrder().forEach(kind => {
+        const defs = serverFilesTemplateKindDefinitions();
+        const legacyTemplate = preset.templates?.[kind];
+        if (!legacyTemplate) return;
+        const migratedId = `migrated-${kind}-${String(id || Date.now()).replace(/[^a-z0-9_-]+/gi, '-')}`;
+        const migratedName = `${String(preset.name || 'Custom Template').trim() || 'Custom Template'} - ${defs[kind].singularLabel}`;
+        const normalized = normalizeServerFilesTemplatePreset({ id: migratedId, name: migratedName, template: legacyTemplate, builtIn: false, updatedAt: preset.updatedAt }, kind, migratedId);
+        migrated.presets[kind][normalized.id] = normalized;
+        if (legacy.selectedId && String(legacy.selectedId) === String(id)) migrated.selectedIds[kind] = normalized.id;
+      });
+    });
+    return migrated;
+  } catch { return null; }
+}
+
+function loadServerFilesTemplatePresets() {
+  try {
+    const raw = localStorage.getItem(GUIDEVAULT_FILE_ORGANIZATION_TEMPLATE_PRESETS_KEY);
+    if (raw) return serverFilesNormalizeTemplatePresetState(JSON.parse(raw));
+  } catch {}
+  const migrated = serverFilesMigrateLegacyTemplatePresetState();
+  if (migrated) {
+    saveServerFilesTemplatePresets(migrated);
+    return migrated;
+  }
+  return serverFilesBuildDefaultTemplatePresetState();
+}
+
 function saveServerFilesTemplatePresets(presetsState) {
-  const normalized = presetsState || loadServerFilesTemplatePresets();
+  const normalized = serverFilesNormalizeTemplatePresetState(presetsState || loadServerFilesTemplatePresets());
   try { localStorage.setItem(GUIDEVAULT_FILE_ORGANIZATION_TEMPLATE_PRESETS_KEY, JSON.stringify(normalized)); } catch {}
   return normalized;
+}
+
+function serverFilesSetActiveTemplateKind(kind = '', options = {}) {
+  const normalizedKind = serverFilesNormalizeTemplateKind(kind);
+  const files = serverFilesEnsureState();
+  files.templateKind = normalizedKind;
+  files.templateTargetId = serverFilesTemplateKindDefinitions()[normalizedKind].inputId;
+  const kindSelect = $('serverFilesTemplateKindSelect');
+  if (kindSelect && kindSelect.value !== normalizedKind) kindSelect.value = normalizedKind;
+  renderServerFilesTemplatePresetOptions();
+  if (options.focusInput) {
+    const input = serverFilesTemplateInputForKind(normalizedKind);
+    if (input) {
+      input.focus();
+      try { input.setSelectionRange(input.value.length, input.value.length); } catch {}
+    }
+  }
 }
 
 function serverFilesSetTemplateInputs(templates = {}) {
@@ -19563,83 +19715,123 @@ function serverFilesSetTemplateInputs(templates = {}) {
   if ($('serverFilesApplyPreview')) $('serverFilesApplyPreview').disabled = true;
 }
 
-function serverFilesCurrentTemplateName() {
+function serverFilesCurrentTemplateName(kind = '') {
+  const normalizedKind = serverFilesNormalizeTemplateKind(kind || serverFilesCurrentTemplateKind());
+  const defs = serverFilesTemplateKindDefinitions();
   const name = String($('serverFilesTemplatePresetName')?.value || '').trim();
-  return name || 'Custom File Template';
+  return name || `${defs[normalizedKind].singularLabel} Template`;
 }
 
 function renderServerFilesTemplatePresetOptions() {
   const select = $('serverFilesTemplatePresetSelect');
   if (!select) return;
   const presetsState = loadServerFilesTemplatePresets();
-  const presets = Object.values(presetsState.presets || {}).sort((a, b) => {
+  const kind = serverFilesNormalizeTemplateKind($('serverFilesTemplateKindSelect')?.value || presetsState.selectedKind || 'manual');
+  const kindSelect = $('serverFilesTemplateKindSelect');
+  if (kindSelect && kindSelect.value !== kind) kindSelect.value = kind;
+
+  const presets = Object.values(presetsState.presets?.[kind] || {}).sort((a, b) => {
     if (a.builtIn !== b.builtIn) return a.builtIn ? -1 : 1;
     return String(a.name || '').localeCompare(String(b.name || ''), undefined, { sensitivity: 'base' });
   });
-  select.innerHTML = presets.map(preset => `<option value="${escapeForAttribute(preset.id)}">${escapeHtml(preset.name || preset.id)}</option>`).join('');
-  select.value = presetsState.presets[presetsState.selectedId] ? presetsState.selectedId : 'guidevault-default';
-  const selected = presetsState.presets[select.value];
+  const groupHtml = (label, rows) => rows.length
+    ? `<optgroup label="${escapeForAttribute(label)}">${rows.map(preset => `<option value="${escapeForAttribute(preset.id)}">${escapeHtml(preset.name || preset.id)}</option>`).join('')}</optgroup>`
+    : '';
+  select.innerHTML = groupHtml('Built-in templates', presets.filter(preset => preset.builtIn)) + groupHtml('Custom templates', presets.filter(preset => !preset.builtIn));
+  const selectedId = presetsState.presets?.[kind]?.[presetsState.selectedIds?.[kind]] ? presetsState.selectedIds[kind] : presets[0]?.id;
+  if (selectedId) select.value = selectedId;
+  const selected = presetsState.presets?.[kind]?.[select.value];
   if ($('serverFilesTemplatePresetName') && selected) $('serverFilesTemplatePresetName').value = selected.name || '';
+}
+
+function serverFilesApplySelectedTemplatesToInputs(presetsState) {
+  const stateValue = presetsState || loadServerFilesTemplatePresets();
+  serverFilesTemplateKindOrder().forEach(kind => {
+    const selectedId = stateValue.selectedIds?.[kind];
+    const preset = stateValue.presets?.[kind]?.[selectedId] || Object.values(stateValue.presets?.[kind] || {})[0];
+    const input = serverFilesTemplateInputForKind(kind);
+    if (input && preset) input.value = String(preset.template || serverFilesTemplateKindDefinitions()[kind].defaultTemplate || '');
+  });
+  if ($('serverFilesApplyPreview')) $('serverFilesApplyPreview').disabled = true;
 }
 
 function hydrateServerFilesTemplatePresets(forceApply = false) {
   const select = $('serverFilesTemplatePresetSelect');
   if (!select) return;
   const firstHydrate = !select.dataset.hydrated;
-  renderServerFilesTemplatePresetOptions();
   const presetsState = loadServerFilesTemplatePresets();
-  const selected = presetsState.presets[select.value] || presetsState.presets['guidevault-default'];
-  if ((forceApply || firstHydrate) && selected) serverFilesSetTemplateInputs(selected.templates || {});
+  const activeKind = serverFilesNormalizeTemplateKind(presetsState.selectedKind || 'manual');
+  const kindSelect = $('serverFilesTemplateKindSelect');
+  if (kindSelect) kindSelect.value = activeKind;
+  const files = serverFilesEnsureState();
+  files.templateKind = activeKind;
+  files.templateTargetId = serverFilesTemplateKindDefinitions()[activeKind].inputId;
+  renderServerFilesTemplatePresetOptions();
+  if (forceApply || firstHydrate) serverFilesApplySelectedTemplatesToInputs(presetsState);
   select.dataset.hydrated = 'true';
 }
 
 function serverFilesApplySelectedTemplatePreset() {
   const select = $('serverFilesTemplatePresetSelect');
   if (!select) return;
+  const kind = serverFilesCurrentTemplateKind();
   const presetsState = loadServerFilesTemplatePresets();
-  const preset = presetsState.presets[select.value];
+  const preset = presetsState.presets?.[kind]?.[select.value];
   if (!preset) return;
-  presetsState.selectedId = preset.id;
+  presetsState.selectedKind = kind;
+  presetsState.selectedIds[kind] = preset.id;
   saveServerFilesTemplatePresets(presetsState);
   if ($('serverFilesTemplatePresetName')) $('serverFilesTemplatePresetName').value = preset.name || '';
-  serverFilesSetTemplateInputs(preset.templates || {});
+  const input = serverFilesTemplateInputForKind(kind);
+  if (input) input.value = String(preset.template || '');
   if ($('serverFilesPreviewTable')) $('serverFilesPreviewTable').innerHTML = '<p class="sub">Template loaded. Preview selected files to see the updated before/after plan.</p>';
-  serverFilesSetStatus('serverFilesOrganizeStatus', `Loaded template set: ${preset.name}.`, 'success');
+  serverFilesSetStatus('serverFilesOrganizeStatus', `Loaded ${serverFilesTemplateKindDefinitions()[kind].singularLabel.toLowerCase()} template: ${preset.name}.`, 'success');
 }
 
 function serverFilesSaveTemplatePreset() {
   const presetsState = loadServerFilesTemplatePresets();
   const select = $('serverFilesTemplatePresetSelect');
+  const kind = serverFilesCurrentTemplateKind();
   const currentId = String(select?.value || '').trim();
-  const existing = presetsState.presets[currentId];
-  const name = serverFilesCurrentTemplateName();
-  let id = currentId && existing && !existing.builtIn ? currentId : `custom-${Date.now()}`;
-  const preset = normalizeServerFilesTemplatePreset({ id, name, templates: serverFilesTemplatesPayload(), builtIn: false }, id);
-  presetsState.presets[id] = preset;
-  presetsState.selectedId = id;
+  const existing = presetsState.presets?.[kind]?.[currentId];
+  const name = serverFilesCurrentTemplateName(kind);
+  const input = serverFilesTemplateInputForKind(kind);
+  const template = String(input?.value || '').trim() || serverFilesTemplateKindDefinitions()[kind].defaultTemplate;
+  const id = currentId && existing && !existing.builtIn ? currentId : `custom-${kind}-${Date.now()}`;
+  const preset = normalizeServerFilesTemplatePreset({ id, name, template, builtIn: false }, kind, id);
+  presetsState.presets[kind] = presetsState.presets[kind] || {};
+  presetsState.presets[kind][id] = preset;
+  presetsState.selectedKind = kind;
+  presetsState.selectedIds[kind] = id;
   saveServerFilesTemplatePresets(presetsState);
   renderServerFilesTemplatePresetOptions();
   if ($('serverFilesTemplatePresetSelect')) $('serverFilesTemplatePresetSelect').value = id;
   if ($('serverFilesTemplatePresetName')) $('serverFilesTemplatePresetName').value = preset.name;
-  serverFilesSetStatus('serverFilesOrganizeStatus', `Saved template set: ${preset.name}.`, 'success');
+  serverFilesSetStatus('serverFilesOrganizeStatus', `Saved ${serverFilesTemplateKindDefinitions()[kind].singularLabel.toLowerCase()} template: ${preset.name}.`, 'success');
 }
 
 function serverFilesDeleteTemplatePreset() {
   const select = $('serverFilesTemplatePresetSelect');
   if (!select) return;
+  const kind = serverFilesCurrentTemplateKind();
   const presetsState = loadServerFilesTemplatePresets();
   const id = String(select.value || '').trim();
-  const preset = presetsState.presets[id];
+  const preset = presetsState.presets?.[kind]?.[id];
   if (!preset) return;
-  if (preset.builtIn) {
-    serverFilesSetStatus('serverFilesOrganizeStatus', 'Built-in template sets cannot be deleted. Save a custom copy first.', 'error');
+  const visibleCount = Object.keys(presetsState.presets?.[kind] || {}).length;
+  if (visibleCount <= 1) {
+    serverFilesSetStatus('serverFilesOrganizeStatus', `Keep at least one ${serverFilesTemplateKindDefinitions()[kind].singularLabel.toLowerCase()} template available.`, 'error');
     return;
   }
-  delete presetsState.presets[id];
-  presetsState.selectedId = 'guidevault-default';
+  if (preset.builtIn) {
+    presetsState.hiddenBuiltIns[kind] = Array.from(new Set([...(presetsState.hiddenBuiltIns?.[kind] || []), id]));
+  }
+  delete presetsState.presets[kind][id];
+  presetsState.selectedKind = kind;
+  presetsState.selectedIds[kind] = Object.keys(presetsState.presets[kind] || {})[0] || serverFilesTemplateKindDefinitions()[kind].defaultPresetId;
   saveServerFilesTemplatePresets(presetsState);
-  hydrateServerFilesTemplatePresets(true);
-  serverFilesSetStatus('serverFilesOrganizeStatus', `Deleted template set: ${preset.name}.`, 'success');
+  hydrateServerFilesTemplatePresets(false);
+  serverFilesSetStatus('serverFilesOrganizeStatus', `Deleted ${serverFilesTemplateKindDefinitions()[kind].singularLabel.toLowerCase()} template: ${preset.name}.`, 'success');
 }
 
 function serverFilesCurrentTemplateInput() {
@@ -19858,6 +20050,7 @@ if ($('metadataManagerOpenFilesWorkspace')) $('metadataManagerOpenFilesWorkspace
 if ($('serverFilesRefreshSelection')) $('serverFilesRefreshSelection').addEventListener('click', renderServerFilesWorkspace);
 if ($('serverFilesSearch')) $('serverFilesSearch').addEventListener('input', e => serverFilesUpdateSearch(e.currentTarget.value));
 document.querySelectorAll('[data-server-files-kind]').forEach(input => input.addEventListener('change', serverFilesUpdateKinds));
+if ($('serverFilesTemplateKindSelect')) $('serverFilesTemplateKindSelect').addEventListener('change', e => serverFilesSetActiveTemplateKind(e.currentTarget.value, { focusInput: true }));
 if ($('serverFilesTemplatePresetSelect')) $('serverFilesTemplatePresetSelect').addEventListener('change', serverFilesApplySelectedTemplatePreset);
 if ($('serverFilesSaveTemplatePreset')) $('serverFilesSaveTemplatePreset').addEventListener('click', e => { e.preventDefault(); serverFilesSaveTemplatePreset(); });
 if ($('serverFilesDeleteTemplatePreset')) $('serverFilesDeleteTemplatePreset').addEventListener('click', e => { e.preventDefault(); serverFilesDeleteTemplatePreset(); });
@@ -19945,4 +20138,5 @@ installLibraryCardDelegates();
 installGlobalDetailDelegate();
 syncEmailTemplatePreview();
 initializeGuidevaultAuthAndApp();
+
 

@@ -18839,6 +18839,10 @@ body.colorscape-active.detail-page-mode .detail-reviews-header{
 .server-files-token-builder{display:grid;gap:10px;margin-top:12px;padding:12px 14px;border:1px solid rgba(88,166,255,.18);border-radius:16px;background:rgba(8,14,28,.46);}
 .server-files-token-builder strong{color:#f4f8ff;display:block;margin-bottom:2px;}
 .server-files-token-builder span{color:#93a8c3;font-size:.84rem;}
+.server-files-token-help{color:#a9bad3;font-size:.8rem;line-height:1.42;padding:9px 11px;border:1px solid rgba(148,163,184,.16);border-radius:12px;background:rgba(15,23,42,.36);}
+.server-files-token-groups{display:grid;gap:10px;}
+.server-files-token-group{display:grid;gap:8px;padding:10px;border:1px solid rgba(113,166,235,.16);border-radius:14px;background:rgba(255,255,255,.025);}
+.server-files-token-group h4{margin:0;color:#f4f8ff;font-size:.78rem;letter-spacing:.08em;text-transform:uppercase;}
 .server-files-token-bank{display:flex;flex-wrap:wrap;gap:8px;}
 .server-files-token-bank button{border:1px solid rgba(113,166,235,.28);border-radius:999px;background:rgba(88,166,255,.11);color:#dcecff;padding:7px 10px;font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:.78rem;cursor:pointer;}
 .server-files-token-bank button:hover{border-color:rgba(113,166,235,.7);background:rgba(88,166,255,.2);}
@@ -19086,6 +19090,14 @@ body.colorscape-active.detail-page-mode .library-data-plain-list dt{
   background:
     radial-gradient(circle at 0% 0%,rgba(var(--server-files-blue),.12),transparent 45%),
     rgba(3,9,19,.42)!important;
+}
+.server-files-token-help{
+  border-color:rgba(var(--server-files-blue),.16)!important;
+  background:rgba(8,14,28,.46)!important;
+}
+.server-files-token-group{
+  border-color:rgba(var(--server-files-blue),.18)!important;
+  background:linear-gradient(135deg,rgba(var(--server-files-blue),.055),rgba(15,23,42,.46))!important;
 }
 .server-files-token-bank button{
   border-color:rgba(var(--server-files-blue),.30)!important;
@@ -19470,4 +19482,4 @@ body.colorscape-active.detail-page-mode .library-data-plain-list dt{
 /* Guidevault 0.9.179 - Preserve file identity on rename */
 
 
-/* Guidevault 0.9.180 - Strategy metadata TLC */
+/* Guidevault 0.9.182 - Template builder cleanup */
