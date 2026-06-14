@@ -17,7 +17,7 @@ using SixLabors.ImageSharp.Processing;
 using Microsoft.AspNetCore.Mvc;
 
 var builder = WebApplication.CreateBuilder(args);
-const string GuidevaultVersion = "0.9.196";
+const string GuidevaultVersion = "0.9.197";
 var app = builder.Build();
 var metadataJsonOptions = new JsonSerializerOptions(JsonSerializerDefaults.Web) { PropertyNameCaseInsensitive = true };
 var options = app.Configuration.GetSection("Guidevault").Get<GuidevaultOptions>() ?? new GuidevaultOptions();
@@ -1464,7 +1464,7 @@ app.MapPost("/api/items/files/convert", async (JsonElement payload) =>
         if (string.IsNullOrWhiteSpace(targetFormat))
             return Results.BadRequest(new { error = "Choose a target format before converting files." });
 
-        if (targetFormat is not ("cbz" or "pdf" or "optimize"))
+        if (targetFormat is not ("cbz" or "pdf"))
             return Results.BadRequest(new { error = $"Unsupported conversion target: {targetFormat}." });
 
         if (!GuidevaultLibraryIoGate.TryBeginArchiveWrite(out var archiveWriteLease, out var busyMessage) || archiveWriteLease is null)
@@ -1514,7 +1514,7 @@ app.MapPost("/api/items/files/convert", async (JsonElement payload) =>
                 });
             }
 
-            RecordSystemEvent("Files", "File format conversion", $"Converted/optimized {converted} file(s); {failed} failed.", "api");
+            RecordSystemEvent("Files", "File format conversion", $"Converted {converted} file(s); {failed} failed.", "api");
 
             return Results.Ok(new
             {
@@ -1523,8 +1523,8 @@ app.MapPost("/api/items/files/convert", async (JsonElement payload) =>
                 failed,
                 results,
                 message = failed == 0
-                    ? $"Converted/optimized {converted} selected file(s)."
-                    : $"Converted/optimized {converted} file(s); {failed} failed."
+                    ? $"Converted {converted} selected file(s)."
+                    : $"Converted {converted} file(s); {failed} failed."
             });
         }
         finally
@@ -10091,7 +10091,7 @@ public static class ArchiveReader
             return new ArchiveConversionResult(false, "Source file was not found.", archivePath, sourceFileName, sourceFormat, sourceBytes, string.Empty, string.Empty, targetFormat.ToUpperInvariant(), 0, false);
 
         var requested = (targetFormat ?? string.Empty).Trim().ToLowerInvariant();
-        if (requested is not ("cbz" or "pdf" or "optimize"))
+        if (requested is not ("cbz" or "pdf"))
             return new ArchiveConversionResult(false, $"Unsupported conversion target: {targetFormat}.", archivePath, sourceFileName, sourceFormat, sourceBytes, string.Empty, string.Empty, requested.ToUpperInvariant(), 0, false);
 
         var directory = Path.GetDirectoryName(archivePath) ?? Directory.GetCurrentDirectory();
@@ -10121,25 +10121,10 @@ public static class ArchiveReader
                 return new ArchiveConversionResult(true, $"Created {Path.GetFileName(destination)} as a CBZ copy. The original file was not deleted.", archivePath, sourceFileName, sourceFormat, sourceBytes, destination, Path.GetFileName(destination), "CBZ", cbzOutputBytes, true);
             }
 
-            if (requested == "optimize")
-            {
-                if (ext is not ".cbz" and not ".zip" and not ".cbr" and not ".rar")
-                    return new ArchiveConversionResult(false, "Optimize/Repack is currently available for CBZ/ZIP/CBR-style image archives only.", archivePath, sourceFileName, sourceFormat, sourceBytes, string.Empty, string.Empty, "Optimized CBZ", 0, false);
-
-                var destination = UniqueSiblingPath(archivePath, ".optimized.cbz");
-                if (ext is ".cbz" or ".zip") await RepackCbzAsync(archivePath, destination, metadataFileName, guidevaultJson);
-                else await CreateCbzFromReadableArchiveAsync(archivePath, destination, metadataFileName, guidevaultJson);
-                ClearCacheForWrittenArchive(destination);
-                var optimizedOutputBytes = new FileInfo(destination).Length;
-                var delta = sourceBytes > 0 ? sourceBytes - optimizedOutputBytes : 0;
-                var deltaText = delta > 0 ? $" Saved {FormatBytes(delta)}." : delta < 0 ? $" Output is {FormatBytes(Math.Abs(delta))} larger; image files were already compressed." : " Size was unchanged.";
-                return new ArchiveConversionResult(true, $"Created optimized CBZ copy: {Path.GetFileName(destination)}.{deltaText} The original file was not deleted.", archivePath, sourceFileName, sourceFormat, sourceBytes, destination, Path.GetFileName(destination), "Optimized CBZ", optimizedOutputBytes, true);
-            }
-
             if (requested == "pdf")
             {
                 if (ext == ".pdf")
-                    return new ArchiveConversionResult(false, "This item is already a PDF. Use Optimize/Repack only for image archives.", archivePath, sourceFileName, sourceFormat, sourceBytes, string.Empty, string.Empty, "PDF", 0, false);
+                    return new ArchiveConversionResult(false, "This item is already a PDF. Choose CBZ if you want a CBZ image copy.", archivePath, sourceFileName, sourceFormat, sourceBytes, string.Empty, string.Empty, "PDF", 0, false);
 
                 var imageEntries = GetImageEntries(archivePath);
                 if (imageEntries.Length == 0)
@@ -12990,5 +12975,5 @@ static class GuidevaultLibraryIoGate
 
 static class GuidevaultBuildInfo
 {
-    public const string Version = "0.9.196";
+    public const string Version = "0.9.197";
 }

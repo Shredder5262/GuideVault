@@ -100,7 +100,7 @@ const GUIDEVAULT_LIBRARY_CHUNK_YIELD_MS = 30;
 const GUIDEVAULT_STARTUP_STATUS_HIDE_MS = 2400;
 const GUIDEVAULT_LIBRARY_SEARCH_DEBOUNCE_MS = 180;
 const GUIDEVAULT_SORT_COLLATOR = new Intl.Collator(undefined, { numeric: true, sensitivity: 'base' });
-const GUIDEVAULT_APP_VERSION = '0.9.196';
+const GUIDEVAULT_APP_VERSION = '0.9.197';
 const GUIDEVAULT_FILENAME_SCHEMA_KEY = 'guidevault.filenameRename.schema.v1';
 const GUIDEVAULT_FILE_ORGANIZATION_TEMPLATE_PRESETS_KEY = 'guidevault.fileOrganization.templatePresets.v2';
 const GUIDEVAULT_FILE_ORGANIZATION_TEMPLATE_PRESETS_LEGACY_KEY = 'guidevault.fileOrganization.templatePresets.v1';
@@ -20324,7 +20324,7 @@ function renderServerFilesFormatTools() {
   const items = serverFilesSelectedItemsFromState();
   summary.innerHTML = serverFilesFormatSummaryHtml(items);
   const hasSelection = items.length > 0;
-  ['serverFilesConvertCbz','serverFilesConvertPdf','serverFilesOptimizeArchive'].forEach(id => { if ($(id)) $(id).disabled = !hasSelection; });
+  ['serverFilesConvertCbz','serverFilesConvertPdf'].forEach(id => { if ($(id)) $(id).disabled = !hasSelection; });
 }
 
 function serverFilesFormatBytes(bytes) {
@@ -20356,7 +20356,7 @@ async function serverFilesConvertSelected(targetFormat = 'cbz') {
     serverFilesSetStatus('serverFilesConvertStatus', 'Select one or more files from the Files workspace list first.', 'error');
     return;
   }
-  const labels = { cbz: 'CBZ', pdf: 'PDF', optimize: 'optimized CBZ' };
+  const labels = { cbz: 'CBZ', pdf: 'PDF' };
   const actionLabel = labels[targetFormat] || targetFormat.toUpperCase();
   const confirmed = await showAppConfirm({
     title: `Create ${actionLabel} copies?`,
@@ -20365,7 +20365,7 @@ async function serverFilesConvertSelected(targetFormat = 'cbz') {
     cancelText: 'Cancel'
   });
   if (!confirmed) return;
-  const buttons = ['serverFilesConvertCbz','serverFilesConvertPdf','serverFilesOptimizeArchive'].map(id => $(id)).filter(Boolean);
+  const buttons = ['serverFilesConvertCbz','serverFilesConvertPdf'].map(id => $(id)).filter(Boolean);
   buttons.forEach(btn => { btn.disabled = true; });
   serverFilesSetStatus('serverFilesConvertStatus', `Creating ${actionLabel} copy files for ${ids.length} selected item(s)...`, '');
   if ($('serverFilesConvertResults')) $('serverFilesConvertResults').innerHTML = `<div class="server-files-preview-loading"><strong>Converting ${ids.length} selected file(s)...</strong><span>Large image archives and PDFs may take a while because pages have to be read, rasterized, and rewritten.</span></div>`;
@@ -20519,7 +20519,6 @@ if ($('serverFilesApplyPreview')) $('serverFilesApplyPreview').addEventListener(
 if ($('serverFilesWriteBackSelected')) $('serverFilesWriteBackSelected').addEventListener('click', async () => { try { await metadataManagerWriteBackSelected('files'); } catch (err) { console.error(err); serverFilesSetStatus('serverFilesWriteBackStatus', `Write-back failed: ${err?.message || err}`, 'error'); } });
 if ($('serverFilesConvertCbz')) $('serverFilesConvertCbz').addEventListener('click', async () => { try { await serverFilesConvertSelected('cbz'); } catch (err) { console.error(err); serverFilesSetStatus('serverFilesConvertStatus', `Conversion failed: ${err?.message || err}`, 'error'); renderServerFilesFormatTools(); } });
 if ($('serverFilesConvertPdf')) $('serverFilesConvertPdf').addEventListener('click', async () => { try { await serverFilesConvertSelected('pdf'); } catch (err) { console.error(err); serverFilesSetStatus('serverFilesConvertStatus', `Conversion failed: ${err?.message || err}`, 'error'); renderServerFilesFormatTools(); } });
-if ($('serverFilesOptimizeArchive')) $('serverFilesOptimizeArchive').addEventListener('click', async () => { try { await serverFilesConvertSelected('optimize'); } catch (err) { console.error(err); serverFilesSetStatus('serverFilesConvertStatus', `Optimize failed: ${err?.message || err}`, 'error'); renderServerFilesFormatTools(); } });
 if ($('metadataManagerRunSourceLookup')) $('metadataManagerRunSourceLookup').addEventListener('click', async e => { e.preventDefault(); try { await metadataManagerRunBatchSourceLookup(); } catch (err) { console.error(err); metadataManagerSetStatus(`Batch source lookup failed: ${err?.message || err}`, 'error'); } });
 if ($('metadataManagerApplySourceLookup')) $('metadataManagerApplySourceLookup').addEventListener('click', async e => { e.preventDefault(); try { await metadataManagerApplyBatchSourceResults(); } catch (err) { console.error(err); metadataManagerSetStatus(`Apply batch lookup failed: ${err?.message || err}`, 'error'); } });
 document.querySelectorAll('[data-metadata-batch-select-fields]').forEach(btn => btn.addEventListener('click', e => { e.preventDefault(); metadataBatchSelectAllFields(btn.dataset.metadataBatchSelectFields || '', true); }));
