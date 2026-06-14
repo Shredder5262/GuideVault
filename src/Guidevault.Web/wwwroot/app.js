@@ -100,7 +100,7 @@ const GUIDEVAULT_LIBRARY_CHUNK_YIELD_MS = 30;
 const GUIDEVAULT_STARTUP_STATUS_HIDE_MS = 2400;
 const GUIDEVAULT_LIBRARY_SEARCH_DEBOUNCE_MS = 180;
 const GUIDEVAULT_SORT_COLLATOR = new Intl.Collator(undefined, { numeric: true, sensitivity: 'base' });
-const GUIDEVAULT_APP_VERSION = '0.9.197';
+const GUIDEVAULT_APP_VERSION = '0.9.199';
 const GUIDEVAULT_FILENAME_SCHEMA_KEY = 'guidevault.filenameRename.schema.v1';
 const GUIDEVAULT_FILE_ORGANIZATION_TEMPLATE_PRESETS_KEY = 'guidevault.fileOrganization.templatePresets.v2';
 const GUIDEVAULT_FILE_ORGANIZATION_TEMPLATE_PRESETS_LEGACY_KEY = 'guidevault.fileOrganization.templatePresets.v1';
@@ -20339,15 +20339,41 @@ function serverFilesFormatBytes(bytes) {
 
 function serverFilesConvertRowsHtml(rows = []) {
   if (!rows.length) return '<p class="sub">No conversion results yet.</p>';
-  return `<table><thead><tr><th>Type</th><th>Title</th><th>From</th><th>To</th><th>Size</th><th>Status</th></tr></thead><tbody>${rows.map(row => `
+  return `<table class="server-files-conversion-table"><colgroup><col class="convert-col-type"><col class="convert-col-title"><col class="convert-col-from"><col class="convert-col-to"><col class="convert-col-size"><col class="convert-col-status"></colgroup><thead><tr><th>Type</th><th>Title</th><th>Source</th><th>Output</th><th>Size</th><th>Status</th></tr></thead><tbody>${rows.map(row => `
     <tr class="server-files-row-${row.success ? 'ready' : 'conflict'}">
-      <td>${escapeHtml(row.kind || '')}</td>
-      <td>${escapeHtml(row.title || '')}</td>
-      <td>${escapeHtml(row.sourceFormat || '')}<br><small>${escapeHtml(row.sourceFileName || row.fileName || '')}</small></td>
-      <td>${escapeHtml(row.targetFormat || '')}<br><small>${escapeHtml(row.outputFileName || '\u2014')}</small></td>
-      <td>${serverFilesFormatBytes(row.sourceBytes)} &rarr; ${serverFilesFormatBytes(row.outputBytes)}</td>
-      <td>${escapeHtml(row.success ? 'Created' : 'Failed')}${row.message ? `<br><small>${escapeHtml(row.message)}</small>` : ''}</td>
+      <td><span class="conversion-type-pill">${escapeHtml(row.kind || '')}</span></td>
+      <td><strong class="conversion-title">${escapeHtml(row.title || '')}</strong></td>
+      <td><b>${escapeHtml(row.sourceFormat || '')}</b><small>${escapeHtml(row.sourceFileName || row.fileName || '')}</small></td>
+      <td><b>${escapeHtml(row.targetFormat || '')}</b><small>${escapeHtml(row.outputFileName || '—')}</small></td>
+      <td><span class="conversion-size-text">${serverFilesFormatBytes(row.sourceBytes)} &rarr; ${serverFilesFormatBytes(row.outputBytes)}</span></td>
+      <td><b>${escapeHtml(row.success ? 'Created' : 'Failed')}</b>${row.message ? `<small>${escapeHtml(row.message)}</small>` : ''}</td>
     </tr>`).join('')}</tbody></table>`;
+}
+
+async function serverFilesPollConversionJob(taskId) {
+  const resultsHost = $('serverFilesConvertResults');
+  const statusHost = 'serverFilesConvertStatus';
+  const maxAttempts = 720;
+  for (let attempt = 0; attempt < maxAttempts; attempt++) {
+    await new Promise(resolve => window.setTimeout(resolve, attempt === 0 ? 700 : 1200));
+    await pollTasks(false);
+    let data = null;
+    try {
+      const res = await fetch(`/api/items/files/convert/${encodeURIComponent(taskId)}`, { cache: 'no-store' });
+      if (!res.ok) continue;
+      data = await res.json();
+    } catch { continue; }
+    const status = String(data?.status || '').toLowerCase();
+    if (status === 'running' || status === 'queued') {
+      serverFilesSetStatus(statusHost, data?.message || 'Conversion is running. Track progress in Tasks.', '');
+      continue;
+    }
+    if (resultsHost) resultsHost.innerHTML = serverFilesConvertRowsHtml(data?.results || []);
+    serverFilesSetStatus(statusHost, data?.message || 'Conversion finished.', data?.failed ? 'error' : 'success');
+    renderServerFilesFormatTools();
+    return data;
+  }
+  serverFilesSetStatus(statusHost, 'Conversion is still running. Check the Tasks panel for progress.', '');
 }
 
 async function serverFilesConvertSelected(targetFormat = 'cbz') {
@@ -20367,8 +20393,8 @@ async function serverFilesConvertSelected(targetFormat = 'cbz') {
   if (!confirmed) return;
   const buttons = ['serverFilesConvertCbz','serverFilesConvertPdf'].map(id => $(id)).filter(Boolean);
   buttons.forEach(btn => { btn.disabled = true; });
-  serverFilesSetStatus('serverFilesConvertStatus', `Creating ${actionLabel} copy files for ${ids.length} selected item(s)...`, '');
-  if ($('serverFilesConvertResults')) $('serverFilesConvertResults').innerHTML = `<div class="server-files-preview-loading"><strong>Converting ${ids.length} selected file(s)...</strong><span>Large image archives and PDFs may take a while because pages have to be read, rasterized, and rewritten.</span></div>`;
+  serverFilesSetStatus('serverFilesConvertStatus', `Starting ${actionLabel} conversion task for ${ids.length} selected item(s)...`, '');
+  if ($('serverFilesConvertResults')) $('serverFilesConvertResults').innerHTML = `<div class="server-files-preview-loading"><strong>Starting conversion task...</strong><span>Progress will appear in the Tasks notification panel. Results will display here when the task completes.</span></div>`;
   try {
     const res = await fetch('/api/items/files/convert', {
       method: 'POST',
@@ -20378,8 +20404,17 @@ async function serverFilesConvertSelected(targetFormat = 'cbz') {
     let data = null;
     try { data = await res.json(); } catch {}
     if (!res.ok) throw new Error(data?.error || `Conversion failed. HTTP ${res.status}`);
-    if ($('serverFilesConvertResults')) $('serverFilesConvertResults').innerHTML = serverFilesConvertRowsHtml(data?.results || []);
-    serverFilesSetStatus('serverFilesConvertStatus', data?.message || `Created ${data?.converted || 0} converted file(s).`, data?.failed ? 'error' : 'success');
+    if (data?.taskId || data?.id) {
+      replaceLibraryTask(data.taskId || data.id, data);
+      await pollTasks(false);
+      serverFilesSetStatus('serverFilesConvertStatus', data?.message || `${actionLabel} conversion task started.`, '');
+      await serverFilesPollConversionJob(data.taskId || data.id);
+    } else {
+      if ($('serverFilesConvertResults')) $('serverFilesConvertResults').innerHTML = serverFilesConvertRowsHtml(data?.results || []);
+      serverFilesSetStatus('serverFilesConvertStatus', data?.message || `Created ${data?.converted || 0} converted file(s).`, data?.failed ? 'error' : 'success');
+    }
+  } catch (err) {
+    serverFilesSetStatus('serverFilesConvertStatus', err?.message || 'Conversion failed.', 'error');
   } finally {
     renderServerFilesFormatTools();
   }

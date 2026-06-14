@@ -1,4 +1,4 @@
-using System.Collections.Concurrent;
+﻿using System.Collections.Concurrent;
 using System.IO.Compression;
 using System.Security.Cryptography;
 using System.Text;
@@ -17,7 +17,7 @@ using SixLabors.ImageSharp.Processing;
 using Microsoft.AspNetCore.Mvc;
 
 var builder = WebApplication.CreateBuilder(args);
-const string GuidevaultVersion = "0.9.197";
+const string GuidevaultVersion = "0.9.199";
 var app = builder.Build();
 var metadataJsonOptions = new JsonSerializerOptions(JsonSerializerDefaults.Web) { PropertyNameCaseInsensitive = true };
 var options = app.Configuration.GetSection("Guidevault").Get<GuidevaultOptions>() ?? new GuidevaultOptions();
@@ -74,6 +74,7 @@ var coverCachePath = Path.Combine(contentRoot, "data", "cache", "covers");
 var coverThumbnailCachePath = Path.Combine(contentRoot, "data", "cache", "cover-thumbs");
 ArchiveReader.ConfigureCoverCache(coverCachePath, coverThumbnailCachePath);
 var taskMonitor = new TaskMonitor();
+var fileConversionJobs = new FileConversionJobStore();
 var cache = new LibraryCache(loadedSettings.Libraries, metadataStore, fileIdentityStore, indexCachePath, taskMonitor);
 var updateChecker = new StableUpdateChecker(options.Updates, GuidevaultVersion);
 var categoryCoverPrewarmGate = new SemaphoreSlim(1, 1);
@@ -1440,7 +1441,7 @@ app.MapPost("/api/items/files/organize/apply", (JsonElement payload) =>
 });
 
 
-app.MapPost("/api/items/files/convert", async (JsonElement payload) =>
+app.MapPost("/api/items/files/convert", (JsonElement payload) =>
 {
     static string ReadString(JsonElement json, string name)
     {
@@ -1456,7 +1457,10 @@ app.MapPost("/api/items/files/convert", async (JsonElement payload) =>
 
     try
     {
-        var ids = MetadataIdListJsonReader.Read(payload);
+        var ids = MetadataIdListJsonReader.Read(payload)
+            .Where(id => !string.IsNullOrWhiteSpace(id))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
         if (ids.Count == 0)
             return Results.BadRequest(new { error = "No item ids were supplied for file conversion." });
 
@@ -1467,76 +1471,127 @@ app.MapPost("/api/items/files/convert", async (JsonElement payload) =>
         if (targetFormat is not ("cbz" or "pdf"))
             return Results.BadRequest(new { error = $"Unsupported conversion target: {targetFormat}." });
 
-        if (!GuidevaultLibraryIoGate.TryBeginArchiveWrite(out var archiveWriteLease, out var busyMessage) || archiveWriteLease is null)
-            return Results.Conflict(new { error = busyMessage });
+        var targetLabel = targetFormat.ToUpperInvariant();
+        var task = taskMonitor.Start("file-conversion", "File conversion", $"Queued {targetLabel} conversion for {ids.Count} file(s).");
+        fileConversionJobs.Start(task.Id, ids.Count, targetLabel);
 
-        try
+        _ = Task.Run(async () =>
         {
-            var snapshot = cache.GetItemsSnapshot()
-                .Where(item => !string.IsNullOrWhiteSpace(item.Id))
-                .GroupBy(item => item.Id, StringComparer.OrdinalIgnoreCase)
-                .ToDictionary(group => group.Key, group => group.First(), StringComparer.OrdinalIgnoreCase);
             var results = new List<object>();
             var converted = 0;
             var failed = 0;
 
-            foreach (var id in ids)
+            try
             {
-                var item = cache.TryGetCachedItem(id) ?? (snapshot.TryGetValue(id, out var cached) ? cached : null);
-                if (item is null)
+                taskMonitor.Update(task.Id, $"Preparing {targetLabel} conversion for {ids.Count} file(s)...", 2);
+                fileConversionJobs.Update(task.Id, "running", $"Preparing {targetLabel} conversion...", ids.Count, converted, failed, results);
+
+                if (!GuidevaultLibraryIoGate.TryBeginArchiveWrite(out var archiveWriteLease, out var busyMessage) || archiveWriteLease is null)
                 {
-                    failed++;
-                    results.Add(new { id, success = false, message = "Item was not found in the active library cache." });
-                    continue;
+                    taskMonitor.Fail(task.Id, busyMessage);
+                    fileConversionJobs.Update(task.Id, "failed", busyMessage, ids.Count, converted, ids.Count, results);
+                    return;
                 }
 
-                var updated = metadataStore.ApplyOverride(item);
-                var exportDocument = GuidevaultNativeMetadata.BuildExport(updated, new ItemMetadataUpdate());
-                var exportJson = JsonSerializer.Serialize(exportDocument, GuidevaultNativeMetadata.JsonOptions);
-                var result = await ArchiveReader.ConvertArchiveAsync(updated.Path, updated.Kind, exportJson, targetFormat);
-                if (result.Success) converted++; else failed++;
-                results.Add(new
+                try
                 {
-                    id = updated.Id,
-                    title = updated.Title,
-                    kind = updated.Kind,
-                    fileName = updated.FileName,
-                    success = result.Success,
-                    sourceFileName = result.SourceFileName,
-                    sourceFormat = result.SourceFormat,
-                    sourceBytes = result.SourceBytes,
-                    outputPath = result.OutputPath,
-                    outputFileName = result.OutputFileName,
-                    targetFormat = result.TargetFormat,
-                    outputBytes = result.OutputBytes,
-                    createdPackage = result.CreatedPackage,
-                    message = result.Message
-                });
+                    var snapshot = cache.GetItemsSnapshot()
+                        .Where(item => !string.IsNullOrWhiteSpace(item.Id))
+                        .GroupBy(item => item.Id, StringComparer.OrdinalIgnoreCase)
+                        .ToDictionary(group => group.Key, group => group.First(), StringComparer.OrdinalIgnoreCase);
+
+                    for (var index = 0; index < ids.Count; index++)
+                    {
+                        var id = ids[index];
+                        var item = cache.TryGetCachedItem(id) ?? (snapshot.TryGetValue(id, out var cached) ? cached : null);
+                        var itemNumber = index + 1;
+                        var baseProgress = 5 + (int)Math.Round((index / Math.Max(1d, ids.Count)) * 88d);
+
+                        if (item is null)
+                        {
+                            failed++;
+                            results.Add(new { id, success = false, message = "Item was not found in the active library cache." });
+                            taskMonitor.Update(task.Id, $"Skipped missing item {itemNumber} of {ids.Count}.", Math.Min(96, baseProgress));
+                            fileConversionJobs.Update(task.Id, "running", $"Skipped missing item {itemNumber} of {ids.Count}.", ids.Count, converted, failed, results);
+                            continue;
+                        }
+
+                        var updated = metadataStore.ApplyOverride(item);
+                        taskMonitor.Update(task.Id, $"Converting {itemNumber} of {ids.Count}: {updated.Title}", Math.Min(96, baseProgress));
+                        fileConversionJobs.Update(task.Id, "running", $"Converting {itemNumber} of {ids.Count}: {updated.Title}", ids.Count, converted, failed, results);
+
+                        var exportDocument = GuidevaultNativeMetadata.BuildExport(updated, new ItemMetadataUpdate());
+                        var exportJson = JsonSerializer.Serialize(exportDocument, GuidevaultNativeMetadata.JsonOptions);
+                        var result = await ArchiveReader.ConvertArchiveAsync(updated.Path, updated.Kind, exportJson, targetFormat);
+                        if (result.Success) converted++; else failed++;
+                        results.Add(new
+                        {
+                            id = updated.Id,
+                            title = updated.Title,
+                            kind = updated.Kind,
+                            fileName = updated.FileName,
+                            success = result.Success,
+                            sourceFileName = result.SourceFileName,
+                            sourceFormat = result.SourceFormat,
+                            sourceBytes = result.SourceBytes,
+                            outputPath = result.OutputPath,
+                            outputFileName = result.OutputFileName,
+                            targetFormat = result.TargetFormat,
+                            outputBytes = result.OutputBytes,
+                            createdPackage = result.CreatedPackage,
+                            message = result.Message
+                        });
+
+                        var progress = 5 + (int)Math.Round((itemNumber / Math.Max(1d, ids.Count)) * 90d);
+                        taskMonitor.Update(task.Id, $"Converted {converted} file(s); {failed} failed.", Math.Min(98, progress));
+                        fileConversionJobs.Update(task.Id, "running", $"Converted {converted} file(s); {failed} failed.", ids.Count, converted, failed, results);
+                    }
+
+                    var finalMessage = failed == 0
+                        ? $"Converted {converted} selected file(s)."
+                        : $"Converted {converted} file(s); {failed} failed.";
+                    RecordSystemEvent("Files", "File format conversion", $"Converted {converted} file(s); {failed} failed.", "api");
+                    taskMonitor.Complete(task.Id, finalMessage, 100);
+                    fileConversionJobs.Update(task.Id, failed == 0 ? "completed" : "completed", finalMessage, ids.Count, converted, failed, results);
+                }
+                finally
+                {
+                    archiveWriteLease.Dispose();
+                }
             }
-
-            RecordSystemEvent("Files", "File format conversion", $"Converted {converted} file(s); {failed} failed.", "api");
-
-            return Results.Ok(new
+            catch (Exception ex)
             {
-                requested = ids.Count,
-                converted,
-                failed,
-                results,
-                message = failed == 0
-                    ? $"Converted {converted} selected file(s)."
-                    : $"Converted {converted} file(s); {failed} failed."
-            });
-        }
-        finally
+                app.Logger.LogError(ex, "File conversion failed.");
+                failed = Math.Max(failed, ids.Count - converted);
+                var message = $"File conversion failed: {ex.Message}";
+                taskMonitor.Fail(task.Id, message);
+                fileConversionJobs.Update(task.Id, "failed", message, ids.Count, converted, failed, results);
+            }
+        });
+
+        return Results.Ok(new
         {
-            archiveWriteLease.Dispose();
-        }
+            taskId = task.Id,
+            id = task.Id,
+            kind = task.Kind,
+            title = task.Title,
+            status = task.Status,
+            message = $"Started {targetLabel} conversion for {ids.Count} selected file(s). Track progress in Tasks.",
+            progressPercent = task.ProgressPercent,
+            updatedAt = task.UpdatedAt
+        });
     }
     catch (Exception ex)
     {
-        app.Logger.LogError(ex, "File conversion failed.");
-        return Results.BadRequest(new { error = $"File conversion failed: {ex.Message}" });
+        app.Logger.LogError(ex, "File conversion start failed.");
+        return Results.BadRequest(new { error = $"File conversion start failed: {ex.Message}" });
     }
+});
+
+app.MapGet("/api/items/files/convert/{taskId}", (string taskId) =>
+{
+    var job = fileConversionJobs.Get(taskId);
+    return job is null ? Results.NotFound(new { error = "Conversion job was not found." }) : Results.Ok(job);
 });
 
 app.MapPost("/api/items/{id}/metadata/enrich-native", async (string id) =>
@@ -3280,8 +3335,8 @@ static string FileOrganizationTemplateForKind(JsonElement payload, string kind)
 
 static string BuildOrganizationRelativePath(LibraryItem item, string template)
 {
-    var ext = Path.GetExtension(item.FileName);
-    if (string.IsNullOrWhiteSpace(ext)) ext = Path.GetExtension(item.Path);
+    var ext = NormalizeOrganizationExtensionToken(Path.GetExtension(item.FileName));
+    if (string.IsNullOrWhiteSpace(ext)) ext = NormalizeOrganizationExtensionToken(Path.GetExtension(item.Path));
 
     var cleanTitle = CleanOrganizationTitle(FirstNonBlank(item.Title, item.ManualTitle, item.MagazineTitle, item.GameTitle, Path.GetFileNameWithoutExtension(item.FileName)), item);
     var cleanManualTitle = CleanOrganizationTitle(FirstNonBlank(item.ManualTitle, item.Title, item.GameTitle), item);
@@ -3349,9 +3404,8 @@ static string BuildOrganizationRelativePath(LibraryItem item, string template)
         .ToList();
 
     if (parts.Count == 0) return string.Empty;
-    var fileName = parts[^1];
-    if (string.IsNullOrWhiteSpace(Path.GetExtension(fileName)) && !string.IsNullOrWhiteSpace(ext)) fileName += ext;
-    parts[^1] = SanitizeFileName(fileName);
+    var fileName = EnsureOrganizationFileExtension(parts[^1], ext);
+    parts[^1] = SanitizeFileName(fileName, ext);
     return string.Join('/', parts);
 }
 
@@ -3464,11 +3518,34 @@ static string SanitizePathPart(string value)
     return string.IsNullOrWhiteSpace(cleaned) ? "Unsorted" : cleaned;
 }
 
-static string SanitizeFileName(string value)
+static string EnsureOrganizationFileExtension(string value, string? preferredExtension)
+{
+    var cleaned = value ?? string.Empty;
+    var ext = NormalizeOrganizationExtensionToken(preferredExtension);
+    if (string.IsNullOrWhiteSpace(ext)) ext = ".cbz";
+
+    // Magazine templates often end with values such as "Vol. 3" or "No. 12".
+    // Path.GetExtension treats the last dotted label as an extension, which can prevent the real
+    // source extension from being appended. Only trust known GuideVault package extensions here.
+    var currentExt = NormalizeOrganizationExtensionToken(Path.GetExtension(cleaned));
+    if (HasKnownOrganizationFileExtension(currentExt)) return cleaned;
+
+    return cleaned.TrimEnd('.') + ext;
+}
+
+static bool HasKnownOrganizationFileExtension(string? value)
+{
+    var ext = NormalizeOrganizationExtensionToken(value);
+    return ext.Equals(".cbz", StringComparison.OrdinalIgnoreCase)
+        || ext.Equals(".cbr", StringComparison.OrdinalIgnoreCase)
+        || ext.Equals(".pdf", StringComparison.OrdinalIgnoreCase)
+        || ext.Equals(".zip", StringComparison.OrdinalIgnoreCase);
+}
+
+static string SanitizeFileName(string value, string? preferredExtension = ".cbz")
 {
     var cleaned = SanitizePathPart(value);
-    if (string.IsNullOrWhiteSpace(Path.GetExtension(cleaned))) cleaned = cleaned.TrimEnd('.') + ".cbz";
-    return cleaned;
+    return EnsureOrganizationFileExtension(cleaned, preferredExtension);
 }
 
 static bool TryResolveLibraryRoot(string filePath, IEnumerable<string> libraryPaths, out string root)
@@ -7161,6 +7238,52 @@ public sealed class MetadataStore
             MetadataLocks: MetadataLockHelper.MergeLocks(existing?.MetadataLocks, update.MetadataLocks));
 }
 
+
+
+public sealed record FileConversionJob(
+    string TaskId,
+    string Status,
+    string Message,
+    int Requested,
+    int Converted,
+    int Failed,
+    IReadOnlyList<object> Results,
+    DateTimeOffset CreatedAt,
+    DateTimeOffset UpdatedAt);
+
+public sealed class FileConversionJobStore
+{
+    private readonly ConcurrentDictionary<string, FileConversionJob> _jobs = new(StringComparer.OrdinalIgnoreCase);
+
+    public FileConversionJob Start(string taskId, int requested, string targetFormat)
+    {
+        var now = DateTimeOffset.UtcNow;
+        var job = new FileConversionJob(taskId, "running", $"Queued {targetFormat} conversion for {requested} file(s).", requested, 0, 0, Array.Empty<object>(), now, now);
+        _jobs[taskId] = job;
+        return job;
+    }
+
+    public void Update(string taskId, string status, string message, int requested, int converted, int failed, IReadOnlyList<object> results)
+    {
+        var now = DateTimeOffset.UtcNow;
+        var created = _jobs.TryGetValue(taskId, out var existing) ? existing.CreatedAt : now;
+        _jobs[taskId] = new FileConversionJob(taskId, status, message, requested, converted, failed, results.ToArray(), created, now);
+        Prune();
+    }
+
+    public FileConversionJob? Get(string taskId)
+    {
+        Prune();
+        return string.IsNullOrWhiteSpace(taskId) ? null : _jobs.TryGetValue(taskId, out var job) ? job : null;
+    }
+
+    private void Prune()
+    {
+        var cutoff = DateTimeOffset.UtcNow.AddHours(-2);
+        foreach (var stale in _jobs.Where(kv => kv.Value.UpdatedAt < cutoff && !kv.Value.Status.Equals("running", StringComparison.OrdinalIgnoreCase)).Select(kv => kv.Key).ToArray())
+            _jobs.TryRemove(stale, out _);
+    }
+}
 
 public sealed record GuidevaultTask(string Id, string Kind, string Title, string Status, string Message, int ProgressPercent, DateTimeOffset CreatedAt, DateTimeOffset UpdatedAt);
 
@@ -12975,5 +13098,6 @@ static class GuidevaultLibraryIoGate
 
 static class GuidevaultBuildInfo
 {
-    public const string Version = "0.9.197";
+    public const string Version = "0.9.199";
 }
+

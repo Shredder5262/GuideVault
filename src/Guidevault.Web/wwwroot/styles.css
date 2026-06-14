@@ -19615,3 +19615,55 @@ body.colorscape-active.detail-page-mode .metadata-cover-choice.selected{border-c
 /* Guidevault 0.9.195 - PDF to CBZ rasterizer support */
 
 /* Guidevault 0.9.197 - remove optimize/repack conversion action */
+
+
+/* Guidevault 0.9.198 - conversion task progress and results spacing */
+.server-files-preview-table .server-files-conversion-table{
+  min-width:1280px;
+  table-layout:fixed;
+}
+.server-files-conversion-table .convert-col-type{width:96px;}
+.server-files-conversion-table .convert-col-title{width:26%;}
+.server-files-conversion-table .convert-col-from{width:24%;}
+.server-files-conversion-table .convert-col-to{width:24%;}
+.server-files-conversion-table .convert-col-size{width:130px;}
+.server-files-conversion-table .convert-col-status{width:260px;}
+.server-files-conversion-table td{
+  line-height:1.35;
+}
+.server-files-conversion-table td:nth-child(3),
+.server-files-conversion-table td:nth-child(4){
+  min-width:0;
+}
+.server-files-conversion-table td small,
+.server-files-conversion-table td b,
+.server-files-conversion-table .conversion-title,
+.server-files-conversion-table .conversion-size-text{
+  display:block;
+  overflow-wrap:anywhere;
+  word-break:break-word;
+}
+.server-files-conversion-table td small{
+  margin-top:4px;
+  color:#9fb1c7;
+  font-size:.78rem;
+}
+.server-files-conversion-table td b{
+  color:#f7fbff;
+}
+.server-files-conversion-table .conversion-title{
+  color:#f7fbff;
+  font-size:.9rem;
+}
+.conversion-type-pill{
+  display:inline-flex;
+  align-items:center;
+  max-width:100%;
+  padding:5px 8px;
+  border:1px solid rgba(88,166,255,.18);
+  border-radius:999px;
+  background:rgba(88,166,255,.08);
+  color:#dbeafe;
+  font-size:.76rem;
+  font-weight:800;
+}

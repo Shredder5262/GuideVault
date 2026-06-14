@@ -4,9 +4,9 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Guidevault</title>
-  <link rel="icon" type="image/x-icon" href="/assets/favicon.ico?v=0.9.197" />
-  <link rel="shortcut icon" type="image/x-icon" href="/assets/favicon.ico?v=0.9.197" />
-  <link rel="stylesheet" href="/styles.css?v=0.9.197-remove-optimize-repack" />
+  <link rel="icon" type="image/x-icon" href="/assets/favicon.ico?v=0.9.199" />
+  <link rel="shortcut icon" type="image/x-icon" href="/assets/favicon.ico?v=0.9.199" />
+  <link rel="stylesheet" href="/styles.css?v=0.9.199-template-extension" />
 </head>
 <body class="right-collapsed auth-locked">
   <section id="loginView" class="login-view" aria-labelledby="loginTitle">
@@ -1829,6 +1829,27 @@
             <div class="system-update-list">
               <details class="system-update-entry" open>
                 <summary>
+                  <span>Guidevault 0.9.199 - Magazine Template Extension Fix</span>
+                  <em>Installed</em>
+                </summary>
+                <ul>
+                  <li>Fixed file organization templates so magazine filenames that end with values like Vol. 3 or No. 12 still receive the real source extension.</li>
+                  <li>Template extension checks now only trust known GuideVault package extensions such as CBZ, CBR, PDF, and ZIP before deciding not to append the original extension.</li>
+                </ul>
+              </details>
+              <details class="system-update-entry" open>
+                <summary>
+                  <span>Guidevault 0.9.198 - Conversion Progress Tasks</span>
+                  <em>Installed</em>
+                </summary>
+                <ul>
+                  <li>File conversions now start as background Tasks with progress updates instead of leaving the Files panel stuck on a static creating-copy message.</li>
+                  <li>Conversion results now have wider, cleaner columns for titles, source files, output files, sizes, and error/status messages.</li>
+                  <li>Kept conversion output copy-first so original source packages remain untouched.</li>
+                </ul>
+              </details>
+              <details class="system-update-entry" open>
+                <summary>
                   <span>Guidevault 0.9.197 - Format Conversion Cleanup</span>
                   <em>Installed</em>
                 </summary>
@@ -2811,6 +2832,6 @@
   </dialog>
 
 
-  <script src="/app.js?v=0.9.197-remove-optimize-repack"></script>
+  <script src="/app.js?v=0.9.199-template-extension"></script>
 </body>
 </html>
