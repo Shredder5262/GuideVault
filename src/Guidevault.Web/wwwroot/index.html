@@ -6,7 +6,7 @@
   <title>Guidevault</title>
   <link rel="icon" type="image/x-icon" href="/assets/favicon.ico?v=0.9.213" />
   <link rel="shortcut icon" type="image/x-icon" href="/assets/favicon.ico?v=0.9.213" />
-  <link rel="stylesheet" href="/styles.css?v=0.9.215" />
+  <link rel="stylesheet" href="/styles.css?v=0.9.216" />
 </head>
 <body class="right-collapsed auth-locked">
   <section id="loginView" class="login-view" aria-labelledby="loginTitle">
@@ -1866,6 +1866,17 @@
             <div class="system-update-list">
               <details class="system-update-entry" open>
                 <summary>
+                  <span>Guidevault 0.9.214 - Docker Poppler Runtime Fix</span>
+                  <em>Installed</em>
+                </summary>
+                <ul>
+                  <li>Fixes the Docker runtime image so Poppler is installed in the final ASP.NET container layer instead of being absent from published images.</li>
+                  <li>Adds poppler-utils to the runtime PATH so PDF-to-CBZ conversion can find pdftoppm and pdftocairo inside the GuideVault container.</li>
+                  <li>Reformats the root Dockerfile into clear build and runtime stages so future runtime dependencies are easier to verify.</li>
+                </ul>
+              </details>
+              <details class="system-update-entry" open>
+                <summary>
                   <span>Guidevault 0.9.213 - Home Assistant Reader Polish</span>
                   <em>Installed</em>
                 </summary>
@@ -3018,7 +3029,7 @@
   </dialog>
 
 
-  <script src="/app.js?v=0.9.215-common-game-fields"></script>
+  <script src="/app.js?v=0.9.216-common-game-fields"></script>
 </body>
 </html>
 
