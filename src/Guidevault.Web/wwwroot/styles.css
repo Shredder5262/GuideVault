@@ -7431,6 +7431,19 @@ body.left-collapsed .category-body{
   background:rgba(255,255,255,.04)!important;
 }
 .task-card strong{display:block!important;margin-bottom:3px!important;}
+.task-card[data-tone="success"]{border-color:rgba(74,214,109,.34)!important;}
+.task-card[data-tone="error"]{border-color:rgba(255,111,111,.45)!important;}
+.task-card[data-tone="warning"]{border-color:rgba(255,203,107,.42)!important;}
+.task-card-action{
+  display:inline-flex!important;
+  align-items:center!important;
+  width:max-content!important;
+  margin-top:8px!important;
+  color:var(--accent-2)!important;
+  font-weight:800!important;
+  text-decoration:none!important;
+}
+.task-card-action:hover{text-decoration:underline!important;}
 .task-card small{display:block!important;color:var(--muted)!important;}
 .task-progress{
   height:6px!important;
@@ -19666,4 +19679,83 @@ body.colorscape-active.detail-page-mode .metadata-cover-choice.selected{border-c
   color:#dbeafe;
   font-size:.76rem;
   font-weight:800;
+}
+
+/* Guidevault 0.9.206 - Home Assistant integration layout polish */
+.integration-homeassistant-card{
+  grid-column:1 / -1;
+}
+.integration-homeassistant-card .integrations-credential-grid{
+  grid-template-columns:repeat(4,minmax(180px,1fr));
+}
+.integration-homeassistant-card .server-files-writeback-callout{
+  max-width:none;
+}
+@media(max-width:1320px){
+  .integration-homeassistant-card .integrations-credential-grid{grid-template-columns:repeat(2,minmax(220px,1fr));}
+}
+@media(max-width:1050px){
+  .integration-homeassistant-card{grid-column:auto;}
+}
+@media(max-width:720px){
+  .integration-homeassistant-card .integrations-credential-grid{grid-template-columns:1fr;}
+}
+
+
+/* Guidevault 0.9.207 - shared toast message stack for integration feedback */
+.guidevault-message-toast-stack{
+  position:fixed;
+  right:24px;
+  bottom:24px;
+  z-index:10060;
+  display:grid;
+  gap:10px;
+  width:min(460px,calc(100vw - 48px));
+  pointer-events:none;
+}
+.guidevault-update-toast + .guidevault-message-toast-stack,
+.guidevault-message-toast-stack:has(+ .guidevault-update-toast){bottom:96px;}
+.guidevault-message-toast{
+  pointer-events:auto;
+  display:grid;
+  grid-template-columns:36px minmax(0,1fr) 30px;
+  gap:12px;
+  align-items:start;
+  padding:13px 13px;
+  border-radius:16px;
+  background:linear-gradient(180deg,rgba(18,35,59,.98),rgba(8,19,34,.98));
+  color:#edf6ff;
+  border:1px solid rgba(122,180,255,.30);
+  box-shadow:0 18px 54px rgba(0,0,0,.38),0 0 28px rgba(47,129,255,.14);
+  animation:guidevaultMessageToastIn .16s ease-out both;
+}
+.guidevault-message-toast.closing{animation:guidevaultMessageToastOut .16s ease-in both;}
+.guidevault-message-toast[data-tone="success"]{border-color:rgba(82,210,141,.44);box-shadow:0 18px 54px rgba(0,0,0,.38),0 0 28px rgba(37,179,101,.16);}
+.guidevault-message-toast[data-tone="error"]{border-color:rgba(255,121,121,.50);box-shadow:0 18px 54px rgba(0,0,0,.38),0 0 28px rgba(224,71,71,.16);}
+.guidevault-message-toast[data-tone="warning"]{border-color:rgba(255,201,92,.48);box-shadow:0 18px 54px rgba(0,0,0,.38),0 0 28px rgba(245,174,59,.14);}
+.guidevault-message-toast-icon{
+  width:34px;height:34px;border-radius:12px;
+  display:grid;place-items:center;
+  background:rgba(47,129,255,.22);
+  color:#fff;font-weight:950;
+  box-shadow:inset 0 0 0 1px rgba(180,220,255,.26);
+}
+.guidevault-message-toast[data-tone="success"] .guidevault-message-toast-icon{background:rgba(34,182,107,.24);}
+.guidevault-message-toast[data-tone="error"] .guidevault-message-toast-icon{background:rgba(226,76,76,.24);}
+.guidevault-message-toast[data-tone="warning"] .guidevault-message-toast-icon{background:rgba(245,174,59,.24);}
+.guidevault-message-toast-copy{display:grid;gap:4px;min-width:0;}
+.guidevault-message-toast-copy strong{font-size:14px;color:#fff;}
+.guidevault-message-toast-copy span{font-size:13px;line-height:1.38;color:#c5d7ec;overflow-wrap:anywhere;}
+.guidevault-message-toast-close{
+  border:0;background:transparent;color:#b9cce4;
+  font-size:22px;line-height:1;cursor:pointer;
+  width:28px;height:28px;border-radius:9px;
+}
+.guidevault-message-toast-close:hover{background:rgba(255,255,255,.08);color:#fff;}
+@keyframes guidevaultMessageToastIn{from{opacity:0;transform:translateY(8px) scale(.98);}to{opacity:1;transform:translateY(0) scale(1);}}
+@keyframes guidevaultMessageToastOut{from{opacity:1;transform:translateY(0) scale(1);}to{opacity:0;transform:translateY(8px) scale(.98);}}
+@media (max-width:720px){
+  .guidevault-message-toast-stack{left:14px;right:14px;bottom:14px;width:auto;}
+  .guidevault-update-toast + .guidevault-message-toast-stack,
+  .guidevault-message-toast-stack:has(+ .guidevault-update-toast){bottom:86px;}
 }

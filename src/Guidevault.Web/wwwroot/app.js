@@ -9,6 +9,7 @@ const state = {
   categoryStructure: 'content-type',
   coverScale: 100,
   tasks: [],
+  taskNotifications: [],
   taskPanelVisible: false,
   taskPollTimer: null,
   libraryLoadedOnce: false,
@@ -29,6 +30,7 @@ const state = {
   folderBrowser: { targetInputId: '', currentPath: '/app/data/library', roots: [] },
   customize: { activeTab: 'home', homeShelves: [], sideNav: { customItems: [] } },
   serverSettings: null,
+  homeAssistant: { pollTimer: null, lastCommandId: 0, lastStatusSignature: '', statusTimer: null, applyingCommand: false },
   emailSettings: null,
   emailHistory: [],
   systemEvents: [],
@@ -47,6 +49,8 @@ const state = {
   updateCheck: null,
   updateCheckTimer: null,
   updateToastTimer: null,
+  messageToastTimers: {},
+  messageToastCounter: 0,
   settingsNavCollapsed: {},
   deviceHeartbeatTimer: null,
   openLibrary: { results: [], selectedResult: null, resolvedResult: null, step: 'search' },
@@ -100,7 +104,7 @@ const GUIDEVAULT_LIBRARY_CHUNK_YIELD_MS = 30;
 const GUIDEVAULT_STARTUP_STATUS_HIDE_MS = 2400;
 const GUIDEVAULT_LIBRARY_SEARCH_DEBOUNCE_MS = 180;
 const GUIDEVAULT_SORT_COLLATOR = new Intl.Collator(undefined, { numeric: true, sensitivity: 'base' });
-const GUIDEVAULT_APP_VERSION = '0.9.199';
+const GUIDEVAULT_APP_VERSION = '0.9.210';
 const GUIDEVAULT_FILENAME_SCHEMA_KEY = 'guidevault.filenameRename.schema.v1';
 const GUIDEVAULT_FILE_ORGANIZATION_TEMPLATE_PRESETS_KEY = 'guidevault.fileOrganization.templatePresets.v2';
 const GUIDEVAULT_FILE_ORGANIZATION_TEMPLATE_PRESETS_LEGACY_KEY = 'guidevault.fileOrganization.templatePresets.v1';
@@ -114,11 +118,12 @@ const GUIDEVAULT_COLORSCAPE_CACHE_KEY = 'guidevault.colorscapeCache.v1';
 const GUIDEVAULT_COLORSCAPE_CACHE_LIMIT = 900;
 const GUIDEVAULT_COLORSCAPE_MENU_BATCH_SIZE = 2;
 const GUIDEVAULT_COLORSCAPE_MENU_SAMPLE_DELAY_MS = 700;
-const GUIDEVAULT_SECONDARY_COVER_DELAY_MS = 3200;
-const GUIDEVAULT_SECONDARY_COVER_BATCH_SIZE = 2;
-const GUIDEVAULT_PRIMARY_COVER_BATCH_SIZE = 5;
-const GUIDEVAULT_PRIMARY_COVER_DELAY_MS = 180;
-const GUIDEVAULT_COVER_VIEWPORT_PRIME_PADDING = 520;
+const GUIDEVAULT_SECONDARY_COVER_DELAY_MS = 1800;
+const GUIDEVAULT_SECONDARY_COVER_BATCH_SIZE = 3;
+const GUIDEVAULT_PRIMARY_COVER_BATCH_SIZE = 10;
+const GUIDEVAULT_PRIMARY_COVER_DELAY_MS = 35;
+const GUIDEVAULT_COVER_VIEWPORT_PRIME_PADDING = 900;
+const GUIDEVAULT_COVER_IMMEDIATE_VISIBLE_PADDING = 160;
 const GUIDEVAULT_CATEGORY_PRIMARY_PREWARM_LIMIT = 96;
 const GUIDEVAULT_CATEGORY_PRIMARY_PREWARM_BATCH_SIZE = 8;
 const GUIDEVAULT_CATEGORY_PRIMARY_PREWARM_DELAY_MS = 110;
@@ -131,6 +136,12 @@ const GUIDEVAULT_COVER_OVERRIDE_BUST_KEY = 'guidevault.coverOverrideBust.v1';
 const GUIDEVAULT_COVER_RESULT_CACHE_LIMIT = 1600;
 const GUIDEVAULT_TRANSPARENT_COVER_PLACEHOLDER = 'data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///ywAAAAAAQABAAACAUwAOw==';
 const GUIDEVAULT_GRID_COVER_THUMB_WIDTH = 360;
+// Keep visible cover loading bounded.  Without this guard, fast navigation across
+// Manuals -> Strategy Guides -> Magazines can leave the browser decoding old
+// covers while the new view is trying to paint.
+const GUIDEVAULT_COVER_LOAD_CONCURRENCY = 12;
+const GUIDEVAULT_COVER_LOAD_QUEUE_LIMIT = 520;
+const GUIDEVAULT_COVER_LOAD_TIMEOUT_MS = 18000;
 
 let guidevaultLibrarySearchTimer = null;
 let guidevaultVirtualResizeAttached = false;
@@ -152,6 +163,8 @@ const guidevaultCategoryPrimaryPrewarmSeen = new Set();
 let guidevaultCategoryPreviewPrewarmTimer = 0;
 const guidevaultCategoryPreviewPrewarmQueue = [];
 const guidevaultCategoryPreviewPrewarmSeen = new Set();
+const guidevaultCoverLoadQueue = [];
+const guidevaultCoverLoadInFlight = new Map();
 
 const METADATA_STATUS_OPTIONS = ['Unreviewed', 'Needs Review', 'Reviewed', 'Locked', 'Failed Lookup', 'Manual Only'];
 const METADATA_STATUS_ALIASES = new Map([
@@ -2815,7 +2828,15 @@ function notifyStableUpdateAvailable(update) {
     localStorage.setItem(GUIDEVAULT_UPDATE_NOTIFIED_VERSION_KEY, key);
   } catch {}
 
-  showStableUpdateToast(update);
+  addTaskNotification({
+    title: `Guidevault ${version} is available`,
+    message: 'A new stable Guidevault release has been published.',
+    tone: 'info',
+    kind: 'update-notification',
+    dedupeKey: `stable-update-${version}`,
+    actionUrl: update.releaseUrl || update.releasePath || '',
+    actionLabel: 'Open release'
+  });
 
   try {
     if ('Notification' in window && Notification.permission === 'granted') {
@@ -2833,37 +2854,28 @@ function notifyStableUpdateAvailable(update) {
 }
 
 function showStableUpdateToast(update) {
-  let toast = $('guidevaultUpdateToast');
-  if (!toast) {
-    toast = document.createElement('div');
-    toast.id = 'guidevaultUpdateToast';
-    toast.className = 'guidevault-update-toast hidden';
-    toast.setAttribute('role', 'status');
-    toast.setAttribute('aria-live', 'polite');
-    document.body.appendChild(toast);
-  }
-  const version = escapeHtml(update?.latestVersion || 'stable');
-  const releaseUrl = update?.releaseUrl || update?.releasePath || '';
-  toast.innerHTML = `
-    <div class="guidevault-update-toast-icon">\u21A5</div>
-    <div class="guidevault-update-toast-copy">
-      <strong>Guidevault ${version} is available</strong>
-      <span>A new stable release has been published.</span>
-    </div>
-    <div class="guidevault-update-toast-actions">
-      ${releaseUrl ? '<button type="button" data-update-toast-action="open">Open release</button>' : ''}
-    </div>`;
-  toast.classList.remove('hidden');
-
-  toast.querySelector('[data-update-toast-action="open"]')?.addEventListener('click', () => {
-    if (releaseUrl) window.open(releaseUrl, '_blank', 'noopener,noreferrer');
-    toast.classList.add('hidden');
+  const version = String(update?.latestVersion || 'stable').trim() || 'stable';
+  addTaskNotification({
+    title: `Guidevault ${version} is available`,
+    message: 'A new stable Guidevault release has been published.',
+    tone: 'info',
+    kind: 'update-notification',
+    dedupeKey: `stable-update-${version}`,
+    actionUrl: update?.releaseUrl || update?.releasePath || '',
+    actionLabel: 'Open release'
   });
-
-  if (state.updateToastTimer) window.clearTimeout(state.updateToastTimer);
-  state.updateToastTimer = window.setTimeout(() => toast.classList.add('hidden'), 5500);
 }
 
+function showGuidevaultMessageToast(message = '', tone = 'info', options = {}) {
+  const title = options.title || (String(tone || '').toLowerCase() === 'success' ? 'Success' : String(tone || '').toLowerCase() === 'error' ? 'Problem' : String(tone || '').toLowerCase() === 'warning' ? 'Warning' : 'Message');
+  addTaskNotification({
+    title,
+    message,
+    tone,
+    kind: options.kind || 'message-notification',
+    dedupeKey: options.dedupeKey || ''
+  });
+}
 
 
 function normalizeStableVersion(value = '') {
@@ -3235,7 +3247,11 @@ function setServerSettingsStatus(message = '', tone = '') {
 }
 function setIntegrationsSettingsStatus(message = '', tone = '') {
   const el = $('integrationsSettingsStatus');
-  if (el) { el.textContent = message || ''; el.dataset.tone = tone || ''; }
+  if (el) {
+    el.textContent = '';
+    el.dataset.tone = '';
+  }
+  if (message) showGuidevaultMessageToast(message, tone || 'info', { title: 'Integrations' });
 }
 function setMediaSettingsStatus(message = '', tone = '') {
   const el = $('mediaSettingsStatus');
@@ -3254,7 +3270,7 @@ function setTasksSettingsStatus(message = '', tone = '') {
   if (el) { el.textContent = message || ''; el.dataset.tone = tone || ''; }
 }
 function defaultServerSettings() {
-  return { hostName: window.location?.origin || 'http://localhost:5478', baseUrl: '/', ipAddresses: '', port: 5478, loggingLevel: 'Information', backupDirectory: 'data/backups', bookmarksDirectory: 'data/bookmarks', igdbClientId: '', igdbClientSecret: '' };
+  return { hostName: window.location?.origin || 'http://localhost:5478', baseUrl: '/', ipAddresses: '', port: 5478, loggingLevel: 'Information', backupDirectory: 'data/backups', bookmarksDirectory: 'data/bookmarks', igdbClientId: '', igdbClientSecret: '', homeAssistantEnabled: false, homeAssistantUrl: '', homeAssistantLongLivedAccessToken: '', homeAssistantEntityPrefix: 'guidevault', homeAssistantPushStateEnabled: true, homeAssistantPushEventsEnabled: true, homeAssistantCommandEnabled: true, homeAssistantCommandToken: '' };
 }
 function normalizeServerSettings(value = {}) {
   const defaults = defaultServerSettings();
@@ -3267,7 +3283,15 @@ function normalizeServerSettings(value = {}) {
     backupDirectory: String(value.backupDirectory || defaults.backupDirectory).trim(),
     bookmarksDirectory: String(value.bookmarksDirectory || defaults.bookmarksDirectory).trim(),
     igdbClientId: String(value.igdbClientId || '').trim(),
-    igdbClientSecret: String(value.igdbClientSecret || '').trim()
+    igdbClientSecret: String(value.igdbClientSecret || '').trim(),
+    homeAssistantEnabled: !!value.homeAssistantEnabled,
+    homeAssistantUrl: String(value.homeAssistantUrl || '').trim(),
+    homeAssistantLongLivedAccessToken: String(value.homeAssistantLongLivedAccessToken || '').trim(),
+    homeAssistantEntityPrefix: String(value.homeAssistantEntityPrefix || defaults.homeAssistantEntityPrefix).trim() || 'guidevault',
+    homeAssistantPushStateEnabled: value.homeAssistantPushStateEnabled !== false,
+    homeAssistantPushEventsEnabled: value.homeAssistantPushEventsEnabled !== false,
+    homeAssistantCommandEnabled: value.homeAssistantCommandEnabled !== false,
+    homeAssistantCommandToken: String(value.homeAssistantCommandToken || '').trim()
   };
 }
 async function loadServerSettings(showStatus = false) {
@@ -3296,6 +3320,14 @@ function renderServerSettings() {
   if ($('mediaBookmarksDirectory')) $('mediaBookmarksDirectory').value = settings.bookmarksDirectory;
   if ($('igdbClientId')) $('igdbClientId').value = settings.igdbClientId || '';
   if ($('igdbClientSecret')) $('igdbClientSecret').value = settings.igdbClientSecret || '';
+  if ($('homeAssistantEnabled')) $('homeAssistantEnabled').checked = !!settings.homeAssistantEnabled;
+  if ($('homeAssistantUrl')) $('homeAssistantUrl').value = settings.homeAssistantUrl || '';
+  if ($('homeAssistantToken')) $('homeAssistantToken').value = settings.homeAssistantLongLivedAccessToken || '';
+  if ($('homeAssistantEntityPrefix')) $('homeAssistantEntityPrefix').value = settings.homeAssistantEntityPrefix || 'guidevault';
+  if ($('homeAssistantPushStateEnabled')) $('homeAssistantPushStateEnabled').checked = settings.homeAssistantPushStateEnabled !== false;
+  if ($('homeAssistantPushEventsEnabled')) $('homeAssistantPushEventsEnabled').checked = settings.homeAssistantPushEventsEnabled !== false;
+  if ($('homeAssistantCommandEnabled')) $('homeAssistantCommandEnabled').checked = settings.homeAssistantCommandEnabled !== false;
+  if ($('homeAssistantCommandToken')) $('homeAssistantCommandToken').value = settings.homeAssistantCommandToken || '';
 }
 
 function collectServerSettings() {
@@ -3310,7 +3342,15 @@ function collectServerSettings() {
     backupDirectory: $('serverBackupDirectory')?.value ?? existing.backupDirectory,
     bookmarksDirectory: $('mediaBookmarksDirectory')?.value ?? existing.bookmarksDirectory,
     igdbClientId: $('igdbClientId')?.value ?? existing.igdbClientId,
-    igdbClientSecret: $('igdbClientSecret')?.value ?? existing.igdbClientSecret
+    igdbClientSecret: $('igdbClientSecret')?.value ?? existing.igdbClientSecret,
+    homeAssistantEnabled: $('homeAssistantEnabled') ? $('homeAssistantEnabled').checked : existing.homeAssistantEnabled,
+    homeAssistantUrl: $('homeAssistantUrl')?.value ?? existing.homeAssistantUrl,
+    homeAssistantLongLivedAccessToken: $('homeAssistantToken')?.value ?? existing.homeAssistantLongLivedAccessToken,
+    homeAssistantEntityPrefix: $('homeAssistantEntityPrefix')?.value ?? existing.homeAssistantEntityPrefix,
+    homeAssistantPushStateEnabled: $('homeAssistantPushStateEnabled') ? $('homeAssistantPushStateEnabled').checked : existing.homeAssistantPushStateEnabled,
+    homeAssistantPushEventsEnabled: $('homeAssistantPushEventsEnabled') ? $('homeAssistantPushEventsEnabled').checked : existing.homeAssistantPushEventsEnabled,
+    homeAssistantCommandEnabled: $('homeAssistantCommandEnabled') ? $('homeAssistantCommandEnabled').checked : existing.homeAssistantCommandEnabled,
+    homeAssistantCommandToken: $('homeAssistantCommandToken')?.value ?? existing.homeAssistantCommandToken
   });
 }
 async function saveServerSettings(source = 'general') {
@@ -3320,18 +3360,192 @@ async function saveServerSettings(source = 'general') {
     if (!res.ok) throw new Error(`Save failed: ${res.status}`);
     state.serverSettings = normalizeServerSettings(await res.json());
     renderServerSettings();
-    const msg = source === 'media' ? 'Media settings saved.' : (source === 'integrations' ? 'Integrations saved.' : 'General server settings saved. Restart Guidevault if you changed listener values.');
+    const msg = source === 'media' ? 'Media settings saved.'
+      : source === 'home-assistant' ? 'Home Assistant settings saved.'
+      : source === 'integrations' ? 'Integrations saved.'
+      : 'General server settings saved. Restart Guidevault if you changed listener values.';
     if (source === 'media') setMediaSettingsStatus(msg, 'success');
-    else if (source === 'integrations') setIntegrationsSettingsStatus(msg, 'success');
+    else if (source === 'integrations' || source === 'home-assistant') setIntegrationsSettingsStatus(msg, 'success');
     else setServerSettingsStatus(msg, 'success');
   } catch (err) {
     console.error('Unable to save server settings', err);
     const msg = `Unable to save settings: ${err?.message || err}`;
     if (source === 'media') setMediaSettingsStatus(msg, 'error');
-    else if (source === 'integrations') setIntegrationsSettingsStatus(msg, 'error');
+    else if (source === 'integrations' || source === 'home-assistant') setIntegrationsSettingsStatus(msg, 'error');
     else setServerSettingsStatus(msg, 'error');
   }
 }
+
+async function testHomeAssistantConnection() {
+  const payload = collectServerSettings();
+  setIntegrationsSettingsStatus('Saving and testing Home Assistant connection...', 'info');
+  try {
+    const saveRes = await fetch('/api/server/settings', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+    if (!saveRes.ok) throw new Error(`Save failed: ${saveRes.status}`);
+    state.serverSettings = normalizeServerSettings(await saveRes.json());
+    renderServerSettings();
+    const res = await fetch('/api/home-assistant/test', { method: 'POST', cache: 'no-store' });
+    let data = null;
+    try { data = await res.json(); } catch {}
+    if (!res.ok) throw new Error(data?.message || data?.error || `Test failed: ${res.status}`);
+    setIntegrationsSettingsStatus(data?.message || 'Home Assistant connection verified.', 'success');
+    scheduleHomeAssistantStatusPublish('connection_test', 'Guidevault connection test');
+  } catch (err) {
+    console.error('Home Assistant test failed', err);
+    setIntegrationsSettingsStatus(`Home Assistant test failed: ${err?.message || err}`, 'error');
+  }
+}
+
+function copyHomeAssistantCommandToken() {
+  const token = String($('homeAssistantCommandToken')?.value || state.serverSettings?.homeAssistantCommandToken || '').trim();
+  if (!token) { setIntegrationsSettingsStatus('Save integrations first so Guidevault can generate a command token.', 'error'); return; }
+  copyTextToClipboard(token, 'Copied Home Assistant command token.', setIntegrationsSettingsStatus);
+}
+
+function homeAssistantReaderDisplayModeLabel(mode = state.reader.displayMode) {
+  const normalized = normalizeReaderDisplayMode(mode);
+  if (normalized === 1) return 'single_page';
+  if (normalized === 3) return 'adaptive_two_page';
+  return 'two_page';
+}
+
+function buildHomeAssistantReaderStatus(eventType = '', message = '') {
+  const readerActive = isReaderActiveForKeys();
+  const item = readerActive ? (state.reader.item || {}) : {};
+  const pageCount = readerActive ? readerPageCount() : 0;
+  const page = readerActive ? currentReaderPageNumber() : 0;
+  const progress = readerActive && pageCount > 1 ? Math.round(((page - 1) / (pageCount - 1)) * 10000) / 100 : (readerActive && pageCount === 1 ? 100 : 0);
+  const activeView = !$('readerView')?.classList.contains('hidden') ? 'reader'
+    : !$('detailView')?.classList.contains('hidden') ? 'details'
+    : !$('settingsView')?.classList.contains('hidden') ? 'settings'
+    : 'library';
+  return {
+    readerActive,
+    view: activeView,
+    itemId: item.id || '',
+    itemTitle: readerActive ? (displayTitle(item) || item.title || '') : '',
+    itemKind: item.kind || '',
+    page,
+    pageCount,
+    progressPercent: progress,
+    zoom: Math.round(clampNumber(state.reader.zoom, 70, 145, 100)),
+    displayMode: readerActive ? homeAssistantReaderDisplayModeLabel() : '',
+    transitionMode: readerActive ? normalizeReaderTransitionMode(state.reader.transitionMode || 'stable') : '',
+    eventType: eventType || '',
+    message: message || ''
+  };
+}
+
+function scheduleHomeAssistantStatusPublish(eventType = '', message = '') {
+  window.clearTimeout(state.homeAssistant.statusTimer);
+  state.homeAssistant.statusTimer = window.setTimeout(() => publishHomeAssistantReaderStatus(eventType, message), eventType ? 50 : 250);
+}
+
+async function publishHomeAssistantReaderStatus(eventType = '', message = '') {
+  try {
+    const settings = normalizeServerSettings(state.serverSettings || defaultServerSettings());
+    if (!settings.homeAssistantEnabled && !eventType) return;
+    const payload = buildHomeAssistantReaderStatus(eventType, message);
+    const signature = JSON.stringify({ ...payload, eventType: eventType || '', message: message || '' });
+    if (!eventType && signature === state.homeAssistant.lastStatusSignature) return;
+    state.homeAssistant.lastStatusSignature = signature;
+    await fetch('/api/home-assistant/status', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload), keepalive: true });
+  } catch (err) {
+    console.warn('Unable to publish Guidevault reader state for Home Assistant.', err);
+  }
+}
+
+function startHomeAssistantCommandPolling() {
+  if (state.homeAssistant.pollTimer) window.clearInterval(state.homeAssistant.pollTimer);
+  const poll = () => pollHomeAssistantCommands().catch(err => console.warn('Home Assistant command poll failed', err));
+  state.homeAssistant.pollTimer = window.setInterval(poll, 1500);
+  window.setTimeout(poll, 500);
+}
+
+async function pollHomeAssistantCommands() {
+  const res = await fetch(`/api/home-assistant/commands?after=${encodeURIComponent(state.homeAssistant.lastCommandId || 0)}`, { cache: 'no-store' });
+  if (!res.ok) return;
+  const data = await res.json();
+  const commands = Array.isArray(data?.commands) ? data.commands : [];
+  for (const command of commands) {
+    state.homeAssistant.lastCommandId = Math.max(Number(state.homeAssistant.lastCommandId) || 0, Number(command.id) || 0);
+    await applyHomeAssistantCommand(command);
+  }
+}
+
+async function resolveHomeAssistantCommandItem(command = {}) {
+  const itemId = String(command.itemId || '').trim();
+  if (itemId) {
+    const local = state.items.find(item => String(item.id || '') === itemId);
+    if (local) return local;
+    const res = await fetch(`/api/items/${encodeURIComponent(itemId)}`, { cache: 'no-store' });
+    if (res.ok) return await res.json();
+  }
+
+  const query = String(command.itemTitle || command.query || '').trim();
+  if (!query) return null;
+  const lower = query.toLowerCase();
+  const local = state.items.find(item => String(displayTitle(item) || item.title || '').toLowerCase() === lower)
+    || state.items.find(item => String(displayTitle(item) || item.title || '').toLowerCase().includes(lower));
+  if (local) return local;
+
+  const res = await fetch(`/api/library/page?page=1&pageSize=25&q=${encodeURIComponent(query)}`, { cache: 'no-store' });
+  if (!res.ok) return null;
+  const data = await res.json();
+  const items = Array.isArray(data?.items) ? data.items : [];
+  return items.find(item => String(displayTitle(item) || item.title || '').toLowerCase() === lower) || items[0] || null;
+}
+
+async function applyHomeAssistantCommand(command = {}) {
+  if (state.homeAssistant.applyingCommand) return;
+  state.homeAssistant.applyingCommand = true;
+  try {
+    const action = String(command.action || '').trim().toLowerCase().replace(/[-\s]+/g, '_');
+    if (!action || action === 'status') { scheduleHomeAssistantStatusPublish('command_status', 'Home Assistant requested reader status.'); return; }
+
+    if (['open', 'open_item', 'open_guide'].includes(action)) {
+      const item = await resolveHomeAssistantCommandItem(command);
+      if (!item) { scheduleHomeAssistantStatusPublish('command_failed', `Could not find Guidevault item for Home Assistant command.`); return; }
+      await openReader(item);
+      scheduleHomeAssistantStatusPublish('command_open', `Opened ${displayTitle(item) || item.title || 'item'} from Home Assistant.`);
+      return;
+    }
+
+    if (action === 'close_reader') { await exitReaderToLibrary(); scheduleHomeAssistantStatusPublish('command_close', 'Closed reader from Home Assistant.'); return; }
+    if (!isReaderActiveForKeys()) { scheduleHomeAssistantStatusPublish('command_failed', `Reader is not active for ${action}.`); return; }
+
+    if (action === 'next_page') await showPage(state.reader.index, 'next');
+    else if (action === 'previous_page') await showPage(state.reader.index, 'prev');
+    else if (action === 'first_page') jumpReaderToPage(1);
+    else if (action === 'last_page') jumpReaderToPage(readerPageCount());
+    else if (action === 'set_page') jumpReaderToPage(Number(command.page) || 1);
+    else if (action === 'zoom_in') adjustReaderZoom(10);
+    else if (action === 'zoom_out') adjustReaderZoom(-10);
+    else if (action === 'set_zoom') {
+      state.reader.zoom = clampNumber(Number(command.zoom) || state.reader.zoom || 100, 70, 145, 100);
+      applyReaderZoom();
+      setReaderOverlayVisible(true);
+      scheduleReaderPageEdgeShadingBounds();
+    }
+    else if (action === 'set_display_mode') {
+      const requested = String(command.displayMode || '').toLowerCase();
+      const mode = requested.includes('single') ? 1 : requested.includes('adaptive') ? 3 : Number(command.displayMode) || 2;
+      setReaderDisplayMode(mode);
+    }
+    else if (action === 'toggle_overlay') toggleReaderOverlay();
+    else if (action === 'fullscreen') await requestReaderFullscreenFromProfile();
+    else if (action === 'exit_fullscreen') await exitReaderFullscreenOnly();
+    else { scheduleHomeAssistantStatusPublish('command_ignored', `Unknown Home Assistant command: ${action}`); return; }
+
+    scheduleHomeAssistantStatusPublish(`command_${action}`, command.message || `Applied Home Assistant command: ${action}`);
+  } catch (err) {
+    console.error('Unable to apply Home Assistant command', err);
+    scheduleHomeAssistantStatusPublish('command_failed', `Home Assistant command failed: ${err?.message || err}`);
+  } finally {
+    state.homeAssistant.applyingCommand = false;
+  }
+}
+
 async function testIgdbCredentials() {
   const payload = collectServerSettings();
   const setIgdbStatus = $('integrationsSettingsStatus') ? setIntegrationsSettingsStatus : setServerSettingsStatus;
@@ -3924,10 +4138,11 @@ function toggleOpdsRevealUrl() {
   renderOpdsSettings();
 }
 
-async function copyTextToClipboard(text, successMessage = 'Copied.') {
+async function copyTextToClipboard(text, successMessage = 'Copied.', statusFn = setOpdsStatus) {
+  const report = typeof statusFn === 'function' ? statusFn : setOpdsStatus;
   try {
     await navigator.clipboard.writeText(text);
-    setOpdsStatus(successMessage, 'success');
+    report(successMessage, 'success');
   } catch {
     const temp = document.createElement('textarea');
     temp.value = text;
@@ -3936,8 +4151,8 @@ async function copyTextToClipboard(text, successMessage = 'Copied.') {
     temp.style.opacity = '0';
     document.body.appendChild(temp);
     temp.select();
-    try { document.execCommand('copy'); setOpdsStatus(successMessage, 'success'); }
-    catch { setOpdsStatus('Copy failed. Reveal and copy manually.', 'error'); }
+    try { document.execCommand('copy'); report(successMessage, 'success'); }
+    catch { report('Copy failed. Reveal and copy manually.', 'error'); }
     finally { temp.remove(); }
   }
 }
@@ -6834,7 +7049,7 @@ function scheduleCoverRetry(img) {
   const delay = Math.min(30000, 1200 + attempts * 2200);
   window.setTimeout(() => {
     if (!img.isConnected) return;
-    img.src = coverRetryUrl(baseUrl);
+    enqueueCoverImageLoad(img, coverRetryUrl(baseUrl));
   }, delay);
 }
 
@@ -6860,6 +7075,163 @@ function setCoverFetchPriority(img) {
   } catch {}
 }
 
+
+function removeQueuedCoverImage(img) {
+  const index = guidevaultCoverLoadQueue.indexOf(img);
+  if (index >= 0) guidevaultCoverLoadQueue.splice(index, 1);
+  if (img?.dataset) delete img.dataset.coverPendingSrc;
+}
+
+function cancelCoverPipelineForImage(img, resetSrc = false) {
+  if (!img) return;
+  removeQueuedCoverImage(img);
+  guidevaultPrimaryCoverPrimeQueue.delete(img);
+  guidevaultSecondaryCoverPrimeQueue.delete(img);
+  const active = guidevaultCoverLoadInFlight.get(img);
+  if (active?.timer) window.clearTimeout(active.timer);
+  if (active) guidevaultCoverLoadInFlight.delete(img);
+  if (img.dataset) {
+    delete img.dataset.coverPendingSrc;
+    delete img.dataset.coverInFlightSrc;
+  }
+  if (resetSrc && img.isConnected) {
+    try {
+      img.removeAttribute('src');
+      img.src = GUIDEVAULT_TRANSPARENT_COVER_PLACEHOLDER;
+    } catch {}
+  }
+}
+
+function pruneCoverLoadInFlight() {
+  // Detached images do not always fire load/error after a grid is replaced.
+  // If they stay in the in-flight map they can consume all cover slots and
+  // make the next library view look like covers have stopped loading.
+  for (const [img, active] of Array.from(guidevaultCoverLoadInFlight.entries())) {
+    if (img?.isConnected && img.dataset?.coverSrc) continue;
+    if (active?.timer) window.clearTimeout(active.timer);
+    guidevaultCoverLoadInFlight.delete(img);
+    if (img?.dataset) delete img.dataset.coverInFlightSrc;
+  }
+}
+
+function pruneCoverLoadQueue() {
+  pruneCoverLoadInFlight();
+  for (let i = guidevaultCoverLoadQueue.length - 1; i >= 0; i -= 1) {
+    const img = guidevaultCoverLoadQueue[i];
+    if (!img?.isConnected || !img.dataset?.coverSrc) guidevaultCoverLoadQueue.splice(i, 1);
+  }
+  while (guidevaultCoverLoadQueue.length > GUIDEVAULT_COVER_LOAD_QUEUE_LIMIT) {
+    const img = guidevaultCoverLoadQueue.shift();
+    if (img?.dataset) delete img.dataset.coverPendingSrc;
+  }
+}
+
+function guidevaultCoverLoadPriorityScore(img) {
+  if (!img?.isConnected || !img.dataset?.coverSrc) return Number.POSITIVE_INFINITY;
+  const secondaryPenalty = isSecondaryCoverImage(img) ? 100000 : 0;
+  const scroller = libraryScrollElement();
+  const scrollerRect = scroller?.getBoundingClientRect?.();
+  const rect = img.getBoundingClientRect?.();
+  if (!scrollerRect || !rect) return secondaryPenalty + 50000;
+  const visible = rect.bottom >= scrollerRect.top && rect.top <= scrollerRect.bottom;
+  const belowFoldDistance = Math.max(0, rect.top - scrollerRect.bottom);
+  const aboveFoldDistance = Math.max(0, scrollerRect.top - rect.bottom);
+  return secondaryPenalty + (visible ? 0 : 20000) + Math.min(50000, belowFoldDistance + aboveFoldDistance);
+}
+
+function sortCoverLoadQueueByPriority() {
+  if (guidevaultCoverLoadQueue.length <= 1) return;
+  guidevaultCoverLoadQueue.sort((a, b) => guidevaultCoverLoadPriorityScore(a) - guidevaultCoverLoadPriorityScore(b));
+}
+
+function completeCoverPipelineImage(img) {
+  const active = guidevaultCoverLoadInFlight.get(img);
+  if (!active) return null;
+  if (active.timer) window.clearTimeout(active.timer);
+  guidevaultCoverLoadInFlight.delete(img);
+  if (img?.dataset) delete img.dataset.coverInFlightSrc;
+  requestAnimationFrame(pumpCoverLoadQueue);
+  return active;
+}
+
+function markCoverTimedOut(img, url) {
+  const active = guidevaultCoverLoadInFlight.get(img);
+  if (!active || active.url !== url) return;
+  guidevaultCoverLoadInFlight.delete(img);
+  if (img?.dataset) delete img.dataset.coverInFlightSrc;
+  if (img?.isConnected) {
+    img.classList.add('cover-error');
+    img.classList.remove('cover-loaded', 'cover-loading');
+    const wrap = img.closest?.('.cover-wrap');
+    wrap?.classList.add('cover-error');
+    wrap?.classList.remove('cover-ready');
+    try {
+      img.removeAttribute('src');
+      img.src = GUIDEVAULT_TRANSPARENT_COVER_PLACEHOLDER;
+    } catch {}
+    scheduleCoverRetry(img);
+  }
+  pumpCoverLoadQueue();
+}
+
+function pumpCoverLoadQueue() {
+  pruneCoverLoadQueue();
+  sortCoverLoadQueueByPriority();
+  if (!guidevaultCoverLoadQueue.length && guidevaultCoverLoadInFlight.size) pruneCoverLoadInFlight();
+  while (guidevaultCoverLoadInFlight.size < GUIDEVAULT_COVER_LOAD_CONCURRENCY && guidevaultCoverLoadQueue.length) {
+    const img = guidevaultCoverLoadQueue.shift();
+    if (!img?.isConnected || !img.dataset?.coverSrc) continue;
+    const url = img.dataset.coverPendingSrc || img.dataset.coverSrc;
+    delete img.dataset.coverPendingSrc;
+    if (!url) continue;
+    const current = img.getAttribute('src') || '';
+    if (current === url && img.complete && img.naturalWidth > 1 && img.naturalHeight > 1) {
+      forceCoverRepaint(img);
+      scheduleColorscapeSampleForLoadedCover(img);
+      continue;
+    }
+    img.dataset.coverInFlightSrc = url;
+    const timer = window.setTimeout(() => markCoverTimedOut(img, url), GUIDEVAULT_COVER_LOAD_TIMEOUT_MS);
+    guidevaultCoverLoadInFlight.set(img, { url, timer });
+    try {
+      img.setAttribute('src', url);
+    } catch {
+      completeCoverPipelineImage(img);
+    }
+  }
+}
+
+function enqueueCoverImageLoad(img, url) {
+  if (!img || !img.dataset?.coverSrc || !url) return;
+  if (!img.isConnected) return;
+  const current = img.getAttribute('src') || '';
+  if (current === url) {
+    if (img.complete && img.naturalWidth > 1 && img.naturalHeight > 1) {
+      forceCoverRepaint(img);
+      scheduleColorscapeSampleForLoadedCover(img);
+    }
+    return;
+  }
+  const active = guidevaultCoverLoadInFlight.get(img);
+  if (active?.url === url) return;
+  if (active) cancelCoverPipelineForImage(img, false);
+  img.dataset.coverPendingSrc = url;
+  if (!guidevaultCoverLoadQueue.includes(img)) {
+    const urgent = !isSecondaryCoverImage(img) && coverImageIsNearViewport(img, GUIDEVAULT_COVER_IMMEDIATE_VISIBLE_PADDING);
+    if (urgent) guidevaultCoverLoadQueue.unshift(img);
+    else guidevaultCoverLoadQueue.push(img);
+  }
+  pruneCoverLoadQueue();
+  pumpCoverLoadQueue();
+}
+
+function cancelCoverLoadsForRoot(root = document, options = {}) {
+  const resetSrc = options.resetSrc !== false;
+  root?.querySelectorAll?.('img[data-cover-src]').forEach(img => cancelCoverPipelineForImage(img, resetSrc));
+  pruneCoverLoadInFlight();
+  pumpCoverLoadQueue();
+}
+
 function primeCoverImage(img) {
   if (!img || !img.dataset.coverSrc) return;
   const wanted = img.dataset.coverSrc;
@@ -6873,7 +7245,18 @@ function primeCoverImage(img) {
   img.classList.add('cover-loading');
   img.classList.remove('cover-loaded', 'cover-error');
   if (current !== wanted) {
-    img.setAttribute('src', wanted);
+    // Covers that are known-good and physically on-screen should appear as fast as
+    // the browser cache/server disk cache can serve them, while off-screen covers
+    // still go through the bounded stability queue.
+    if (!isSecondaryCoverImage(img)
+      && guidevaultCoverResultForUrl(wanted) === true
+      && coverImageIsNearViewport(img, GUIDEVAULT_COVER_IMMEDIATE_VISIBLE_PADDING)) {
+      try {
+        img.setAttribute('src', wanted);
+        return;
+      } catch {}
+    }
+    enqueueCoverImageLoad(img, wanted);
     return;
   }
   if (img.complete && img.naturalWidth > 1 && img.naturalHeight > 1) {
@@ -7133,8 +7516,12 @@ function primeVisibleCoverImages(root = document) {
     if (isSecondaryCoverImage(img)) secondary.push(img);
     else primary.push(img);
   });
-  primary.forEach(queuePrimaryCoverPrime);
-  secondary.forEach(queueSecondaryCoverPrime);
+  primary
+    .sort((a, b) => guidevaultCoverLoadPriorityScore(a) - guidevaultCoverLoadPriorityScore(b))
+    .forEach(queuePrimaryCoverPrime);
+  secondary
+    .sort((a, b) => guidevaultCoverLoadPriorityScore(a) - guidevaultCoverLoadPriorityScore(b))
+    .forEach(queueSecondaryCoverPrime);
 }
 
 function initializeCoverImages(root = document) {
@@ -7148,6 +7535,7 @@ function initializeCoverImages(root = document) {
       img.classList.add('cover-loading');
       img.closest?.('.cover-wrap')?.classList.add('cover-pending');
       img.addEventListener('error', () => {
+        completeCoverPipelineImage(img);
         img.classList.add('cover-error');
         img.classList.remove('cover-loaded', 'cover-loading');
         const wrap = img.closest?.('.cover-wrap');
@@ -7157,6 +7545,7 @@ function initializeCoverImages(root = document) {
         scheduleCoverRetry(img);
       });
       img.addEventListener('load', () => {
+        completeCoverPipelineImage(img);
         const current = String(img.currentSrc || img.src || '').toLowerCase();
         const requested = img.dataset.coverSrc || '';
         if (current.includes('/assets/missing-cover.svg')) {
@@ -7185,6 +7574,7 @@ function initializeCoverImages(root = document) {
     }
   });
   requestAnimationFrame(() => primeVisibleCoverImages(root));
+  window.setTimeout(() => primeVisibleCoverImages(root), 120);
 }
 const ALPHA_RAIL_KEYS = ['#', 'A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'I', 'J', 'K', 'L', 'M', 'N', 'O', 'P', 'Q', 'R', 'S', 'T', 'U', 'V', 'W', 'X', 'Y', 'Z'];
 
@@ -7307,10 +7697,10 @@ function render() {
   if ($('homeShelves')) $('homeShelves').classList.toggle('hidden', !homeMode);
   if (groupMode) {
     renderGroupGrid('grid', state.viewMode);
-    if ($('recentGrid')) $('recentGrid').innerHTML = '';
-    if ($('homeShelves')) $('homeShelves').innerHTML = '';
+    if ($('recentGrid')) { cancelCoverLoadsForRoot($('recentGrid')); $('recentGrid').innerHTML = ''; }
+    if ($('homeShelves')) { cancelCoverLoadsForRoot($('homeShelves')); $('homeShelves').innerHTML = ''; }
   } else {
-    if (homeMode) renderHomeShelves(); else if ($('homeShelves')) $('homeShelves').innerHTML = '';
+    if (homeMode) renderHomeShelves(); else if ($('homeShelves')) { cancelCoverLoadsForRoot($('homeShelves')); $('homeShelves').innerHTML = ''; }
     if ($('recentGrid')) $('recentGrid').innerHTML = '';
     renderGrid('grid', state.filtered);
     renderAlphaRail(state.filtered.map(displayTitle));
@@ -7491,8 +7881,9 @@ function renderGroupGrid(id, viewMode) {
       ${categoryPreviewStripHtml(items, name, cardIndex, def.kind)}
     </article>`;
   }).join('');
-  $(id).innerHTML = overview + (cards || `<div class="empty-message">${def.empty} Set a Library Root folder in Settings and scan your collection.</div>`);
   const host = $(id);
+  cancelCoverLoadsForRoot(host);
+  host.innerHTML = overview + (cards || `<div class="empty-message">${def.empty} Set a Library Root folder in Settings and scan your collection.</div>`);
   initializeCoverImages(host);
   attachCoverPrimeScrollHandler();
   scheduleApplyColorscapeToGroupCards(def.kind);
@@ -7925,6 +8316,7 @@ function renderVirtualGridWindow(force = false) {
   vgrid.startIndex = win.startIndex;
   vgrid.endIndex = win.endIndex;
   const slice = vgrid.items.slice(win.startIndex, win.endIndex);
+  cancelCoverLoadsForRoot(host);
   host.innerHTML = `${win.topHeight > 0 ? `<div class="gv-virtual-spacer gv-virtual-spacer-top" style="height:${Math.round(win.topHeight)}px"></div>` : ''}${slice.map(item => cardMarkupForItem(item)).join('')}${win.bottomHeight > 0 ? `<div class="gv-virtual-spacer gv-virtual-spacer-bottom" style="height:${Math.round(win.bottomHeight)}px"></div>` : ''}`;
   initializeCoverImages(host);
   attachCoverPrimeScrollHandler();
@@ -7970,6 +8362,7 @@ function renderVirtualGrid(id, list) {
   };
   host.classList.remove('stable-grid');
   host.classList.add('virtualized-grid');
+  cancelCoverLoadsForRoot(host);
   host.innerHTML = list.slice(0, Math.min(list.length, GUIDEVAULT_GRID_INITIAL_RENDER)).map(item => cardMarkupForItem(item)).join('');
   initializeCoverImages(host);
   attachCoverPrimeScrollHandler();
@@ -7989,6 +8382,7 @@ function renderGrid(id, items) {
   const list = Array.isArray(items) ? items : [];
   if (!list.length) {
     clearVirtualGridIfHost(id);
+    cancelCoverLoadsForRoot(host);
     host.classList.remove('stable-grid');
     host.innerHTML = `<div class="empty-message">No content found. Set a Library Root folder in Settings and scan for CBZ, CBR, or PDF files.</div>`;
     return;
@@ -8004,6 +8398,7 @@ function renderGrid(id, items) {
   state.libraryRenderToken = (Number(state.libraryRenderToken || 0) + 1) % 1000000;
   const token = state.libraryRenderToken;
   const firstCount = Math.min(list.length, GUIDEVAULT_GRID_INITIAL_RENDER);
+  cancelCoverLoadsForRoot(host);
   host.innerHTML = list.slice(0, firstCount).map(item => cardMarkupForItem(item)).join('');
   initializeCoverImages(host);
   attachCoverPrimeScrollHandler();
@@ -8723,6 +9118,7 @@ function renderHomeShelves() {
   const shelves = settings.homeShelves?.length ? settings.homeShelves : ['recently-added'];
   state.homeShelfOffsets = state.homeShelfOffsets || {};
   state.homeShelfSlideDirection = state.homeShelfSlideDirection || {};
+  cancelCoverLoadsForRoot(host);
   host.innerHTML = shelves.map(id => {
     const opt = HOME_SHELF_OPTIONS.find(o => o.id === id) || HOME_SHELF_OPTIONS[0];
     const items = shelfItemsFor(id, state.items);
@@ -11766,7 +12162,7 @@ const METADATA_MANAGER_ALL_COLUMNS = [
 
 const METADATA_MANAGER_KIND_FILTERS = ['Manual', 'Strategy Guide', 'Magazine'];
 const METADATA_MANAGER_AUTO_COLUMNS_BY_KIND = {
-  Manual: ['kind','metadataStatus','name','gameTitle','category','series','languageTag','region','year','publisher','rating','manualTitle','manualType','includedSections','includedExtras','controlScheme','itemsCovered','metadataSource'],
+  Manual: ['kind','metadataStatus','name','gameTitle','category','languageTag','region','publisher','manualTitle','manualType','franchise','developer','gamePublisher','gameReleaseYear','genre','includedSections','includedExtras','controlScheme','itemsCovered','charactersCovered','warrantySupport','metadataSource','platformMatchTitle','platformResolverSource','pageCount','rating','topics'],
   'Strategy Guide': ['kind','metadataStatus','name','gameTitle','category','associatedPlatforms','series','languageTag','region','publisher','writer','publicationDate','isbn10','isbn13','guideType','edition','franchise','gameReleaseYear','genre','coveredGames','coveredPlatforms','guideTopics','metadataSource','platformMatchTitle','platformResolverSource','charactersCovered','locationsCovered','developer','gamePublisher','pageCount','rating','topics'],
   Magazine: ['kind','metadataStatus','name','magazineTitle','issueNumber','volume','coverDate','year','publisher','region','languageTag','platformFocus','primarySystem','magazineCategory','coverSubject','featuredGames','featuredPlatforms','specialFeatures','includedExtras','tags','metadataSource']
 };
@@ -12321,8 +12717,9 @@ function metadataManagerShowAllColumns() {
 
 const METADATA_MANAGER_COLUMN_GROUPS = [
   { key: 'core', label: 'Core / All content' },
+  { key: 'game', label: 'Game fields (manuals / guides)' },
   { key: 'book', label: 'Book identifiers / publishing' },
-  { key: 'strategy', label: 'Strategy Guide / Game fields' },
+  { key: 'strategy', label: 'Strategy Guide fields' },
   { key: 'manual', label: 'Manual fields' },
   { key: 'magazine', label: 'Magazine fields' },
   { key: 'lookup', label: 'Lookup / source fields' },
@@ -12332,9 +12729,10 @@ const METADATA_MANAGER_COLUMN_GROUPS = [
 function metadataManagerColumnGroupKey(column) {
   const key = String(column?.key || '');
   if (['kind','metadataStatus','name','category','series','languageTag','region','year','publisher','topics','rating'].includes(key)) return 'core';
+  if (['gameTitle','franchise','developer','gamePublisher','gameReleaseYear','genre'].includes(key)) return 'game';
   if (['asin','isbn10','isbn13','writer','webLink','publicationDate','pageCount'].includes(key)) return 'book';
-  if (['gameTitle','guideType','edition','franchise','developer','gamePublisher','gameReleaseYear','genre','associatedPlatforms','coveredGames','coveredPlatforms','guideTopics','charactersCovered','locationsCovered'].includes(key)) return 'strategy';
-  if (['manualTitle','manualType','includedSections','controlScheme','itemsCovered','warrantySupport'].includes(key)) return 'manual';
+  if (['guideType','edition','associatedPlatforms','coveredGames','coveredPlatforms','guideTopics','locationsCovered'].includes(key)) return 'strategy';
+  if (['manualTitle','manualType','includedSections','controlScheme','itemsCovered','warrantySupport','charactersCovered'].includes(key)) return 'manual';
   if (['magazineTitle','issueNumber','volume','coverDate','barcodeUpcIssn','platformFocus','primarySystem','magazineCategory','coverSubject','featuredGames','featuredPlatforms','specialFeatures'].includes(key)) return 'magazine';
   if (['metadataSource','platformMatchTitle','platformResolverSource'].includes(key)) return 'lookup';
   return 'notes';
@@ -13123,8 +13521,8 @@ const METADATA_BATCH_SOURCE_FIELDS = {
   ]
 };
 
-function metadataBatchStrategyItems() {
-  return metadataManagerSelectedItems().filter(item => item?.kind === 'Strategy Guide');
+function metadataBatchGameMetadataItems() {
+  return metadataManagerSelectedItems().filter(item => item?.kind === 'Strategy Guide' || item?.kind === 'Manual');
 }
 
 const METADATA_BATCH_SOURCE_ORDER = ['openLibrary', 'igdb', 'esrb'];
@@ -13225,7 +13623,7 @@ function metadataBatchCurrentFieldValue(item, source, field) {
   if (source === 'igdb') {
     if (field === 'gameDeveloper') return item.gameDeveloper || item.developer || '';
     if (field === 'gamePublisher') return item.gamePublisher || '';
-    if (field === 'gameFranchise') return item.gameFranchise || item.franchise || item.series || '';
+    if (field === 'gameFranchise') return item.gameFranchise || item.franchise || (item.kind === 'Strategy Guide' ? item.series : '') || '';
     if (field === 'associatedPlatforms') return associatedPlatformsOf(item).join(', ');
     if (field === 'preferredPlatform') return metadataManagerCategoryValue(item) || '';
     return item[field] || '';
@@ -13249,7 +13647,7 @@ function metadataBatchItemSearchText(item, keys) {
 function metadataBatchCleanLookupText(value = '') {
   return String(value || '')
     .replace(/\([^)]*\)/g, ' ')
-    .replace(/\b(official|unofficial|unauthorized|complete|ultimate|prima|bradygames|brady|versus|versus books|strategy guide|guide|walkthrough|secrets?|tips?|codes?|hint book|player'?s guide)\b/gi, ' ')
+    .replace(/\b(official|unofficial|unauthorized|complete|ultimate|prima|bradygames|brady|versus|versus books|strategy guide|guide|walkthrough|secrets?|tips?|codes?|hint book|player'?s guide|manual|instruction\s*book(?:let)?|booklet)\b/gi, ' ')
     .replace(/[#:\-_/\\]+/g, ' ')
     .replace(/\s+/g, ' ')
     .trim();
@@ -13280,7 +13678,7 @@ function metadataBatchYearDistance(a, b) {
 }
 
 function metadataBatchOpenLibrarySearchPlan(item) {
-  const title = metadataBatchItemSearchText(item, ['strategyGuideTitle', 'title', 'name']) || metadataManagerItemName(item);
+  const title = metadataBatchItemSearchText(item, item?.kind === 'Manual' ? ['manualTitle', 'gameTitle', 'title', 'name'] : ['strategyGuideTitle', 'title', 'name']) || metadataManagerItemName(item);
   const gameTitle = metadataBatchItemSearchText(item, ['gameTitle', 'platformMatchTitle', 'franchise', 'series']);
   const publisher = String(item?.publisher || '').trim();
   const year = String(item?.year || item?.publishYear || '').trim();
@@ -13294,7 +13692,7 @@ function metadataBatchOpenLibrarySearchPlan(item) {
     isbn,
     title,
     cleanedTitle && cleanedTitle !== title ? cleanedTitle : '',
-    gameTitle && !openLibrarySameText(gameTitle, title) ? `${gameTitle} strategy guide` : '',
+    item?.kind === 'Strategy Guide' && gameTitle && !openLibrarySameText(gameTitle, title) ? `${gameTitle} strategy guide` : '',
     gameTitle && !openLibrarySameText(gameTitle, title) ? gameTitle : '',
     [cleanedTitle || title, publisher].filter(Boolean).join(' '),
     [gameTitle, publisher].filter(Boolean).join(' ')
@@ -13377,7 +13775,8 @@ async function metadataBatchResolveOpenLibrary(item, signal = null) {
 }
 
 function metadataBatchIgdbSearchPlan(item) {
-  const gameTitle = metadataBatchItemSearchText(item, ['gameTitle', 'platformMatchTitle', 'series', 'franchise']) || metadataManagerItemName(item);
+  const lookupKeys = item?.kind === 'Manual' ? ['gameTitle', 'manualTitle', 'title', 'name', 'franchise'] : ['gameTitle', 'platformMatchTitle', 'franchise', 'series'];
+  const gameTitle = metadataBatchItemSearchText(item, lookupKeys) || metadataManagerItemName(item);
   return {
     q: gameTitle,
     platform: metadataManagerCategoryValue(item) || associatedPlatformsOf(item)[0] || '',
@@ -13387,7 +13786,7 @@ function metadataBatchIgdbSearchPlan(item) {
 
 function metadataBatchEsrbSearchPlan(item) {
   return {
-    q: metadataBatchItemSearchText(item, ['gameTitle', 'platformMatchTitle', 'series', 'franchise']) || metadataManagerItemName(item),
+    q: metadataBatchItemSearchText(item, item?.kind === 'Manual' ? ['gameTitle', 'manualTitle', 'title', 'name', 'franchise'] : ['gameTitle', 'platformMatchTitle', 'franchise', 'series']) || metadataManagerItemName(item),
     platform: metadataManagerCategoryValue(item) || associatedPlatformsOf(item)[0] || ''
   };
 }
@@ -13736,7 +14135,7 @@ function metadataBatchSourceSummaryHtml(row) {
 }
 
 function metadataBatchGuideCellHtml(item, row) {
-  const title = row?.title || metadataManagerItemName(item) || 'Strategy Guide';
+  const title = row?.title || metadataManagerItemName(item) || (item?.kind === 'Manual' ? 'Manual' : 'Strategy Guide');
   const platform = metadataManagerCategoryValue(item) || item?.primarySystem || item?.system || item?.category || '';
   return `<div class="metadata-batch-guide-cell"><strong>${escapeHtml(title)}</strong>${platform ? `<small>${escapeHtml(platform)}</small>` : ''}</div>`;
 }
@@ -13756,7 +14155,7 @@ function renderMetadataBatchSourceResults() {
     const running = !!state.metadataSourceBatch?.running;
     const emptyMessage = running
       ? `Batch lookup is running for ${escapeHtml(metadataBatchSourceLabels([state.metadataSourceBatch?.activeSource || metadataBatchActiveSource()].filter(Boolean)) || 'selected source')}...`
-      : 'No batch lookup results yet. Select Strategy Guide rows, choose lookup sources, then run the lookup.';
+      : 'No batch lookup results yet. Select Manual or Strategy Guide rows, choose lookup sources, then run the lookup.';
     host.innerHTML = `${blockedHtml}<p class="sub">${emptyMessage}</p>`;
     return;
   }
@@ -13768,7 +14167,7 @@ function renderMetadataBatchSourceResults() {
     </div>
     <div class="metadata-manager-table-wrap metadata-batch-source-table-wrap">
       <table class="metadata-manager-table metadata-batch-source-table metadata-batch-source-table-compact">
-        <thead><tr><th>Apply</th><th>Covers</th><th>Strategy Guide</th><th>Lookup Matches</th><th>Fields Ready</th><th>Status</th></tr></thead>
+        <thead><tr><th>Apply</th><th>Covers</th><th>Item</th><th>Lookup Matches</th><th>Fields Ready</th><th>Status</th></tr></thead>
         <tbody>${results.map(row => {
           const item = row.item || {};
           const idRaw = row.id || '';
@@ -13791,8 +14190,8 @@ function renderMetadataBatchSourceResults() {
 }
 
 async function metadataManagerRunBatchSourceLookup() {
-  const items = metadataBatchStrategyItems();
-  if (!items.length) { metadataManagerSetStatus('Select one or more Strategy Guide rows first.', 'error'); return; }
+  const items = metadataBatchGameMetadataItems();
+  if (!items.length) { metadataManagerSetStatus('Select one or more Manual or Strategy Guide rows first.', 'error'); return; }
   const selectedSources = metadataBatchSelectedSources();
   if (!selectedSources.length) { metadataManagerSetStatus('Select one lookup source: Open Library, IGDB, or ESRB.', 'error'); return; }
   const previousWasRunning = !!state.metadataSourceBatch?.running;
@@ -13820,7 +14219,7 @@ async function metadataManagerRunBatchSourceLookup() {
     renderMetadataBatchSourceResults();
     const blockedSourceEntries = Object.fromEntries(Object.entries(blockedSources).map(([source, message]) => [source, { status: 'error', message }]));
     const skippedLabel = Object.keys(blockedSources).length ? ` Skipped ${metadataBatchSourceLabels(Object.keys(blockedSources))}.` : '';
-    metadataManagerSetStatus(`Running ${metadataBatchSourceLabels(activeSources)} batch lookup for ${items.length} Strategy Guide row(s)...${skippedLabel}`, '');
+    metadataManagerSetStatus(`Running ${metadataBatchSourceLabels(activeSources)} batch lookup for ${items.length} manual/guide row(s)...${skippedLabel}`, '');
     let completed = 0;
     for (const item of items) {
       metadataBatchEnsureNotCanceled(signal);
@@ -15468,6 +15867,7 @@ function cleanupReaderResources(options = {}) {
     state.reader.item = null;
     state.reader.pages = [];
     state.reader.index = 0;
+    scheduleHomeAssistantStatusPublish('reader_closed', 'Guidevault reader closed.');
   }
 }
 const GUIDEVAULT_APP_VIEW_IDS = ['libraryView', 'settingsView', 'detailView', 'readerView', 'profileView'];
@@ -15556,6 +15956,7 @@ async function openReader(item) {
   $('readerTitle').textContent = displayTitle(item) || item.title || '';
   await waitForReaderPaint();
   renderSpread(0, { preserveSize: false });
+  scheduleHomeAssistantStatusPublish('reader_opened', `Opened ${displayTitle(item) || item.title || 'item'} in Guidevault.`);
   await requestReaderFullscreenFromProfile();
   updateReaderFullscreenUi();
   requestAnimationFrame(() => {
@@ -15689,6 +16090,7 @@ function renderSpread(index, options = {}) {
     updateReaderPageStackEffect(spread);
     scheduleReaderPageEdgeShadingBounds();
     if (state.reader.magnifierActive) { updateReaderMagnifierContent(); requestAnimationFrame(updateReaderMagnifierFromLastPointer); }
+    scheduleHomeAssistantStatusPublish();
     return;
   }
 
@@ -15701,6 +16103,7 @@ function renderSpread(index, options = {}) {
     updateReaderPageStackEffect(spread);
     scheduleReaderPageEdgeShadingBounds();
     if (state.reader.magnifierActive) { updateReaderMagnifierContent(); requestAnimationFrame(updateReaderMagnifierFromLastPointer); }
+    scheduleHomeAssistantStatusPublish();
     return;
   }
 
@@ -15712,6 +16115,7 @@ function renderSpread(index, options = {}) {
   updateReaderPageStackEffect(spread);
   scheduleReaderPageEdgeShadingBounds();
   if (state.reader.magnifierActive) { updateReaderMagnifierContent(); requestAnimationFrame(updateReaderMagnifierFromLastPointer); }
+  scheduleHomeAssistantStatusPublish();
 }
 
 function refreshReaderBookSize() {
@@ -16070,6 +16474,7 @@ function applyReaderZoom() {
   const zoom = clampNumber(state.reader.zoom, 70, 145, 100);
   state.reader.zoom = zoom;
   if (book) book.style.setProperty('--reader-zoom-scale', (zoom / 100).toFixed(3));
+  scheduleHomeAssistantStatusPublish();
   const zoomIn = $('readerZoomIn');
   const zoomOut = $('readerZoomOut');
   if (zoomIn) zoomIn.disabled = zoom >= 145;
@@ -18253,6 +18658,48 @@ async function showPage(index, dir) {
 }
 
 
+function normalizeTaskTone(tone = '') {
+  const value = String(tone || '').toLowerCase();
+  return ['success', 'error', 'warning', 'info'].includes(value) ? value : 'info';
+}
+
+function taskNotificationStatusForTone(tone = '') {
+  const normalized = normalizeTaskTone(tone);
+  if (normalized === 'error') return 'failed';
+  if (normalized === 'warning') return 'completed';
+  return 'completed';
+}
+
+function addTaskNotification({ id = '', title = 'GuideVault message', message = '', tone = 'info', kind = 'notification', dedupeKey = '', actionUrl = '', actionLabel = '' } = {}) {
+  const text = String(message || '').trim();
+  if (!text) return '';
+  const normalizedTone = normalizeTaskTone(tone);
+  const key = String(dedupeKey || `${kind}:${title}:${text}`).trim();
+  const notificationId = id || `local-notification-${key || Date.now()}-${Math.floor(Math.random() * 10000)}`;
+  const notification = {
+    id: notificationId,
+    kind: kind || 'notification',
+    title: title || 'GuideVault message',
+    status: taskNotificationStatusForTone(normalizedTone),
+    message: text,
+    progressPercent: 100,
+    updatedAt: new Date().toISOString(),
+    tone: normalizedTone,
+    localNotification: true,
+    actionUrl: String(actionUrl || '').trim(),
+    actionLabel: String(actionLabel || '').trim()
+  };
+  const existing = Array.isArray(state.taskNotifications) ? state.taskNotifications : [];
+  state.taskNotifications = [notification, ...existing.filter(t => {
+    const sameId = String(t.id || t.Id || '') === String(notificationId);
+    const sameKey = key && String(t.dedupeKey || t.DedupeKey || '') === key;
+    return !sameId && !sameKey;
+  })].slice(0, 12);
+  state.taskNotifications[0].dedupeKey = key;
+  renderTaskMonitor();
+  return notificationId;
+}
+
 function upsertLibraryTask({ id = null, title = 'Library activity', message = 'Working...', progress = 0, status = 'running', kind = 'library-scan' } = {}) {
   const taskId = id || `local-library-${Date.now()}-${Math.floor(Math.random() * 10000)}`;
   const task = {
@@ -18327,37 +18774,47 @@ function renderTaskMonitor() {
   const badge = $('taskMonitorBadge');
   const title = document.querySelector('.task-panel-title');
   if (!list) return;
-  const tasks = Array.isArray(state.tasks) ? state.tasks : [];
-  const active = tasks.filter(t => String(t.status || '').toLowerCase() === 'running' || String(t.status || '').toLowerCase() === 'queued');
+  const backendTasks = Array.isArray(state.tasks) ? state.tasks : [];
+  const notifications = Array.isArray(state.taskNotifications) ? state.taskNotifications : [];
+  const tasks = [...notifications, ...backendTasks];
+  const active = backendTasks.filter(t => String(t.status || '').toLowerCase() === 'running' || String(t.status || '').toLowerCase() === 'queued');
+  const noticeCount = notifications.length;
   if (title) {
-    const clearable = tasks.some(t => !['running','queued'].includes(String(t.status || t.Status || '').toLowerCase()));
+    const clearable = noticeCount > 0 || tasks.some(t => !['running','queued'].includes(String(t.status || t.Status || '').toLowerCase()));
     title.innerHTML = `<span>Tasks</span><button id="taskClearBtn" class="task-clear-button" type="button" ${clearable ? '' : 'disabled'}>Clear</button>`;
   }
   if (badge) {
-    badge.textContent = String(active.length);
-    badge.classList.toggle('hidden', active.length === 0);
+    const count = active.length + noticeCount;
+    badge.textContent = String(count);
+    badge.classList.toggle('hidden', count === 0);
   }
   if (panel) panel.classList.toggle('hidden', !state.taskPanelVisible);
   if (!tasks.length) {
-    list.innerHTML = '<div class="task-empty">No running tasks.</div>';
+    list.innerHTML = '<div class="task-empty">No running tasks or notifications.</div>';
     return;
   }
-  list.innerHTML = tasks.slice(0, 8).map(task => {
+  list.innerHTML = tasks.slice(0, 10).map(task => {
     const progress = Math.max(0, Math.min(100, Number(task.progressPercent ?? task.ProgressPercent ?? 0) || 0));
     const title = escapeHtml(task.title || task.Title || 'Task');
     const message = escapeHtml(task.message || task.Message || taskStatusLabel(task));
     const status = escapeHtml(taskStatusLabel(task));
     const updated = task.updatedAt || task.UpdatedAt || '';
-    return `<div class="task-card">
+    const tone = escapeForAttribute(task.tone || task.Tone || '');
+    const actionUrl = String(task.actionUrl || task.ActionUrl || '').trim();
+    const actionLabel = task.actionLabel || task.ActionLabel || 'Open';
+    const action = actionUrl ? `<a class="task-card-action" href="${escapeForAttribute(actionUrl)}" target="_blank" rel="noopener noreferrer">${escapeHtml(actionLabel)}</a>` : '';
+    return `<div class="task-card" data-tone="${tone}">
       <strong>${title}</strong>
       <small>${status}${updated ? ` \u2022 ${escapeHtml(new Date(updated).toLocaleTimeString())}` : ''}</small>
       <small>${message}</small>
+      ${action}
       <div class="task-progress" style="--task-progress:${progress}%"><span></span></div>
     </div>`;
   }).join('');
 }
 
 async function clearTaskMessages() {
+  state.taskNotifications = [];
   state.tasks = (state.tasks || []).filter(t => ['running','queued'].includes(String(t.status || t.Status || '').toLowerCase()));
   renderTaskMonitor();
   try { await fetch('/api/tasks/clear', { method: 'POST', cache: 'no-store' }); } catch {}
@@ -20463,6 +20920,9 @@ function metadataManagerOpenFilesWorkspace() {
 
 if ($('integrationsSaveSettings')) $('integrationsSaveSettings').addEventListener('click', e => { e.preventDefault(); saveServerSettings('integrations'); });
 if ($('igdbTestCredentials')) $('igdbTestCredentials').addEventListener('click', e => { e.preventDefault(); testIgdbCredentials(); });
+if ($('homeAssistantSaveSettings')) $('homeAssistantSaveSettings').addEventListener('click', e => { e.preventDefault(); saveServerSettings('home-assistant'); });
+if ($('homeAssistantTestConnection')) $('homeAssistantTestConnection').addEventListener('click', e => { e.preventDefault(); testHomeAssistantConnection(); });
+if ($('homeAssistantCopyCommandToken')) $('homeAssistantCopyCommandToken').addEventListener('click', e => { e.preventDefault(); copyHomeAssistantCommandToken(); });
 if ($('serverResetDefaults')) $('serverResetDefaults').addEventListener('click', e => { e.preventDefault(); resetServerDefaults(); });
 if ($('serverCreateBackup')) $('serverCreateBackup').addEventListener('click', e => { e.preventDefault(); createServerBackup(); });
 if ($('mediaSaveSettings')) $('mediaSaveSettings').addEventListener('click', e => { e.preventDefault(); saveServerSettings('media'); });
@@ -20612,4 +21072,8 @@ installLibraryCardDelegates();
 installGlobalDetailDelegate();
 syncEmailTemplatePreview();
 initializeGuidevaultAuthAndApp();
+loadServerSettings(false).then(() => {
+  startHomeAssistantCommandPolling();
+  scheduleHomeAssistantStatusPublish('client_connected', 'Guidevault browser client connected.');
+}).catch(() => startHomeAssistantCommandPolling());
 

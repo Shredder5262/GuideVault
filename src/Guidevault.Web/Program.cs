@@ -1,4 +1,4 @@
-﻿using System.Collections.Concurrent;
+using System.Collections.Concurrent;
 using System.IO.Compression;
 using System.Security.Cryptography;
 using System.Text;
@@ -17,7 +17,7 @@ using SixLabors.ImageSharp.Processing;
 using Microsoft.AspNetCore.Mvc;
 
 var builder = WebApplication.CreateBuilder(args);
-const string GuidevaultVersion = "0.9.199";
+const string GuidevaultVersion = "0.9.210";
 var app = builder.Build();
 var metadataJsonOptions = new JsonSerializerOptions(JsonSerializerDefaults.Web) { PropertyNameCaseInsensitive = true };
 var options = app.Configuration.GetSection("Guidevault").Get<GuidevaultOptions>() ?? new GuidevaultOptions();
@@ -78,6 +78,7 @@ var fileConversionJobs = new FileConversionJobStore();
 var cache = new LibraryCache(loadedSettings.Libraries, metadataStore, fileIdentityStore, indexCachePath, taskMonitor);
 var updateChecker = new StableUpdateChecker(options.Updates, GuidevaultVersion);
 var categoryCoverPrewarmGate = new SemaphoreSlim(1, 1);
+var homeAssistantConnector = new GuidevaultHomeAssistantConnector(serverSettingsStore, app.Logger);
 
 void RecordSystemEvent(string category, string title, string message = "", string source = "server", string? itemId = null, string? itemTitle = null)
 {
@@ -183,6 +184,44 @@ app.MapPut("/api/server/settings", (GuidevaultServerSettings payload) =>
     RecordSystemEvent("System", "Server settings updated", "Server settings were saved from the web UI.", "api");
     return Results.Ok(saved);
 });
+
+
+app.MapGet("/api/home-assistant/status", () => Results.Ok(homeAssistantConnector.GetStatusSnapshot(cache.GetItemsSnapshot().Count)));
+
+app.MapPost("/api/home-assistant/status", async (GuidevaultHomeAssistantReaderStatus payload) =>
+{
+    var result = await homeAssistantConnector.UpdateReaderStatusAsync(payload ?? new GuidevaultHomeAssistantReaderStatus(), cache.GetItemsSnapshot().Count);
+    if (!string.IsNullOrWhiteSpace(payload?.EventType))
+    {
+        var title = string.IsNullOrWhiteSpace(payload.ItemTitle) ? "Guidevault reader state updated" : $"Guidevault reader: {payload.ItemTitle}";
+        RecordSystemEvent("Home Assistant", title, payload.EventType ?? string.Empty, "home-assistant", payload.ItemId, payload.ItemTitle);
+    }
+    return Results.Ok(result);
+});
+
+app.MapPost("/api/home-assistant/test", async () =>
+{
+    var result = await homeAssistantConnector.TestAsync(cache.GetItemsSnapshot().Count);
+    RecordSystemEvent("Home Assistant", result.Success ? "Home Assistant connection verified" : "Home Assistant connection failed", result.Message, "api");
+    return result.Success ? Results.Ok(result) : Results.BadRequest(result);
+});
+
+app.MapPost("/api/home-assistant/command", (HttpRequest request, GuidevaultHomeAssistantCommandRequest payload) =>
+{
+    var settings = serverSettingsStore.GetSnapshot();
+    if (!settings.HomeAssistantCommandEnabled) return Results.BadRequest(new { error = "Home Assistant command intake is disabled." });
+    if (!GuidevaultHomeAssistantConnector.IsCommandAuthorized(request, settings)) return Results.Unauthorized();
+
+    var command = homeAssistantConnector.EnqueueCommand(payload ?? new GuidevaultHomeAssistantCommandRequest());
+    RecordSystemEvent("Home Assistant", $"Home Assistant command queued: {command.Action}", command.ItemTitle, "home-assistant", command.ItemId, command.ItemTitle);
+    return Results.Ok(new { queued = true, command });
+});
+
+app.MapGet("/api/home-assistant/commands", (long? after) => Results.Ok(new
+{
+    enabled = serverSettingsStore.GetSnapshot().HomeAssistantCommandEnabled,
+    commands = homeAssistantConnector.GetCommands(after ?? 0)
+}));
 
 app.MapPost("/api/server/backup", () =>
 {
@@ -1820,6 +1859,11 @@ app.MapGet("/api/items/{id}/cover", async (string id, HttpResponse response) =>
 {
     var item = cache.TryGetCachedItem(id) ?? (await cache.GetItemsAsync()).FirstOrDefault(i => i.Id == id);
     if (item is null) return Results.NotFound();
+    if (!File.Exists(item.Path))
+    {
+        response.Headers.CacheControl = "no-store";
+        return Results.NotFound();
+    }
     response.Headers.CacheControl = "public, max-age=604800, immutable";
     if (item.Format == "PDF") return Results.Redirect("/assets/pdf-cover.svg");
 
@@ -1851,6 +1895,11 @@ app.MapGet("/api/items/{id}/cover-thumb", async (string id, int? w, HttpResponse
 {
     var item = cache.TryGetCachedItem(id) ?? (await cache.GetItemsAsync()).FirstOrDefault(i => i.Id == id);
     if (item is null) return Results.NotFound();
+    if (!File.Exists(item.Path))
+    {
+        response.Headers.CacheControl = "no-store";
+        return Results.NotFound();
+    }
     response.Headers.CacheControl = "public, max-age=604800, immutable";
     if (item.Format == "PDF") return Results.Redirect("/assets/pdf-cover.svg");
 
@@ -4549,6 +4598,14 @@ public sealed class GuidevaultServerSettingsStore
         value.BookmarksDirectory = NormalizePathValue(value.BookmarksDirectory, "data/bookmarks");
         value.IgdbClientId = Clean(value.IgdbClientId, string.Empty);
         value.IgdbClientSecret = Clean(value.IgdbClientSecret, string.Empty);
+        value.HomeAssistantEnabled = value.HomeAssistantEnabled;
+        value.HomeAssistantUrl = NormalizeHomeAssistantUrl(value.HomeAssistantUrl);
+        value.HomeAssistantLongLivedAccessToken = Clean(value.HomeAssistantLongLivedAccessToken, string.Empty);
+        value.HomeAssistantEntityPrefix = NormalizeHomeAssistantEntityPrefix(value.HomeAssistantEntityPrefix);
+        value.HomeAssistantPushStateEnabled = value.HomeAssistantPushStateEnabled;
+        value.HomeAssistantPushEventsEnabled = value.HomeAssistantPushEventsEnabled;
+        value.HomeAssistantCommandEnabled = value.HomeAssistantCommandEnabled;
+        value.HomeAssistantCommandToken = NormalizeHomeAssistantCommandToken(value.HomeAssistantCommandToken);
         return value;
     }
 
@@ -4562,7 +4619,15 @@ public sealed class GuidevaultServerSettingsStore
         BackupDirectory = value.BackupDirectory,
         BookmarksDirectory = value.BookmarksDirectory,
         IgdbClientId = value.IgdbClientId,
-        IgdbClientSecret = value.IgdbClientSecret
+        IgdbClientSecret = value.IgdbClientSecret,
+        HomeAssistantEnabled = value.HomeAssistantEnabled,
+        HomeAssistantUrl = value.HomeAssistantUrl,
+        HomeAssistantLongLivedAccessToken = value.HomeAssistantLongLivedAccessToken,
+        HomeAssistantEntityPrefix = value.HomeAssistantEntityPrefix,
+        HomeAssistantPushStateEnabled = value.HomeAssistantPushStateEnabled,
+        HomeAssistantPushEventsEnabled = value.HomeAssistantPushEventsEnabled,
+        HomeAssistantCommandEnabled = value.HomeAssistantCommandEnabled,
+        HomeAssistantCommandToken = value.HomeAssistantCommandToken
     };
 
     private static string Clean(string? value, string fallback) => string.IsNullOrWhiteSpace(value) ? fallback : value.Trim();
@@ -4579,6 +4644,32 @@ public sealed class GuidevaultServerSettingsStore
         return allowed.FirstOrDefault(x => string.Equals(x, text, StringComparison.OrdinalIgnoreCase)) ?? "Information";
     }
     private static string NormalizePathValue(string? value, string fallback) => string.IsNullOrWhiteSpace(value) ? fallback : value.Trim().Replace('\\', '/');
+    private static string NormalizeHomeAssistantUrl(string? value)
+    {
+        var text = Clean(value, string.Empty).Trim().TrimEnd('/');
+        if (string.IsNullOrWhiteSpace(text)) return string.Empty;
+        if (!text.StartsWith("http://", StringComparison.OrdinalIgnoreCase) && !text.StartsWith("https://", StringComparison.OrdinalIgnoreCase))
+            text = $"http://{text}";
+
+        // Users often paste the REST API root after testing Home Assistant manually.
+        // Store only the Home Assistant base URL so Guidevault can append /api/... consistently.
+        if (text.EndsWith("/api", StringComparison.OrdinalIgnoreCase))
+            text = text[..^4].TrimEnd('/');
+
+        return text;
+    }
+    private static string NormalizeHomeAssistantEntityPrefix(string? value)
+    {
+        var text = Clean(value, "guidevault").ToLowerInvariant();
+        text = Regex.Replace(text, "[^a-z0-9_]+", "_").Trim('_');
+        return string.IsNullOrWhiteSpace(text) ? "guidevault" : text;
+    }
+    private static string NormalizeHomeAssistantCommandToken(string? value)
+    {
+        var text = Clean(value, string.Empty);
+        if (!string.IsNullOrWhiteSpace(text) && text.Length >= 16) return text;
+        return Convert.ToHexString(RandomNumberGenerator.GetBytes(24)).ToLowerInvariant();
+    }
     private static string ResolveSettingPath(string contentRoot, string value)
     {
         var path = string.IsNullOrWhiteSpace(value) ? "data/backups" : value.Trim();
@@ -4599,9 +4690,462 @@ public sealed class GuidevaultServerSettings
     public string BookmarksDirectory { get; set; } = "data/bookmarks";
     public string IgdbClientId { get; set; } = string.Empty;
     public string IgdbClientSecret { get; set; } = string.Empty;
+    public bool HomeAssistantEnabled { get; set; } = false;
+    public string HomeAssistantUrl { get; set; } = string.Empty;
+    public string HomeAssistantLongLivedAccessToken { get; set; } = string.Empty;
+    public string HomeAssistantEntityPrefix { get; set; } = "guidevault";
+    public bool HomeAssistantPushStateEnabled { get; set; } = true;
+    public bool HomeAssistantPushEventsEnabled { get; set; } = true;
+    public bool HomeAssistantCommandEnabled { get; set; } = true;
+    public string HomeAssistantCommandToken { get; set; } = string.Empty;
 }
 
 public sealed record GuidevaultBackupResult(string FileName, string Path, long SizeBytes, DateTimeOffset CreatedAt, string BackupDirectory);
+
+
+public sealed class GuidevaultHomeAssistantConnector
+{
+    private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web) { WriteIndented = false };
+    private static readonly HttpClient Client = new() { Timeout = TimeSpan.FromSeconds(8) };
+    private readonly GuidevaultServerSettingsStore _settingsStore;
+    private readonly ILogger _logger;
+    private readonly GuidevaultHomeAssistantCommandStore _commands = new();
+    private readonly object _statusGate = new();
+    private GuidevaultHomeAssistantReaderStatus _readerStatus = new();
+
+    public GuidevaultHomeAssistantConnector(GuidevaultServerSettingsStore settingsStore, ILogger logger)
+    {
+        _settingsStore = settingsStore;
+        _logger = logger;
+    }
+
+    public GuidevaultHomeAssistantStatusSnapshot GetStatusSnapshot(int libraryItemCount)
+    {
+        var settings = _settingsStore.GetSnapshot();
+        GuidevaultHomeAssistantReaderStatus reader;
+        lock (_statusGate) reader = _readerStatus.Clone();
+        return new GuidevaultHomeAssistantStatusSnapshot
+        {
+            Enabled = settings.HomeAssistantEnabled,
+            PushStateEnabled = settings.HomeAssistantPushStateEnabled,
+            PushEventsEnabled = settings.HomeAssistantPushEventsEnabled,
+            CommandEnabled = settings.HomeAssistantCommandEnabled,
+            EntityPrefix = settings.HomeAssistantEntityPrefix,
+            CommandToken = settings.HomeAssistantCommandToken,
+            Reader = reader,
+            LibraryItemCount = libraryItemCount,
+            CommandQueueDepth = _commands.Count
+        };
+    }
+
+    public async Task<GuidevaultHomeAssistantPublishResult> TestAsync(int libraryItemCount)
+    {
+        var settings = _settingsStore.GetSnapshot();
+        if (!settings.HomeAssistantEnabled) return new(false, false, "Home Assistant integration is disabled.");
+        if (string.IsNullOrWhiteSpace(settings.HomeAssistantUrl)) return new(false, false, "Home Assistant URL is blank.");
+        if (string.IsNullOrWhiteSpace(settings.HomeAssistantLongLivedAccessToken)) return new(false, false, "Home Assistant long-lived access token is blank.");
+
+        try
+        {
+            var probe = await ProbeHomeAssistantApiAsync(settings);
+            if (!probe.Success)
+            {
+                return new(false, false, probe.Message);
+            }
+
+            var status = GetStatusSnapshot(libraryItemCount).Reader;
+            status.EventType = "connection_test";
+            status.Message = "Guidevault connection test";
+            var publish = await PublishStatusAsync(settings, status, libraryItemCount, force: true);
+            if (!publish.Success) return publish;
+            return new(true, true, "Home Assistant connection verified and Guidevault test sensors were published.");
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Home Assistant connection test failed.");
+            return new(false, false, $"Home Assistant connection failed: {ex.Message}");
+        }
+    }
+
+    public async Task<GuidevaultHomeAssistantPublishResult> UpdateReaderStatusAsync(GuidevaultHomeAssistantReaderStatus payload, int libraryItemCount)
+    {
+        var normalized = NormalizeReaderStatus(payload);
+        lock (_statusGate) _readerStatus = normalized.Clone();
+
+        var settings = _settingsStore.GetSnapshot();
+        if (!settings.HomeAssistantEnabled || !settings.HomeAssistantPushStateEnabled)
+            return new(true, false, "Reader status saved locally; Home Assistant publishing is disabled.");
+
+        return await PublishStatusAsync(settings, normalized, libraryItemCount, force: false);
+    }
+
+    public GuidevaultHomeAssistantCommand EnqueueCommand(GuidevaultHomeAssistantCommandRequest request)
+    {
+        var normalized = NormalizeCommandRequest(request);
+        return _commands.Enqueue(normalized);
+    }
+
+    public IReadOnlyList<GuidevaultHomeAssistantCommand> GetCommands(long after) => _commands.GetAfter(after);
+
+    public static bool IsCommandAuthorized(HttpRequest request, GuidevaultServerSettings settings)
+    {
+        var configured = settings.HomeAssistantCommandToken?.Trim() ?? string.Empty;
+        if (string.IsNullOrWhiteSpace(configured)) return false;
+
+        string supplied = string.Empty;
+        if (request.Headers.TryGetValue("Authorization", out var authHeader))
+        {
+            var text = authHeader.ToString().Trim();
+            if (text.StartsWith("Bearer ", StringComparison.OrdinalIgnoreCase)) supplied = text[7..].Trim();
+        }
+        if (string.IsNullOrWhiteSpace(supplied) && request.Headers.TryGetValue("X-Guidevault-Token", out var customHeader)) supplied = customHeader.ToString().Trim();
+        if (string.IsNullOrWhiteSpace(supplied) && request.Query.TryGetValue("token", out var queryToken)) supplied = queryToken.ToString().Trim();
+        return SlowEquals(configured, supplied);
+    }
+
+    private async Task<GuidevaultHomeAssistantPublishResult> PublishStatusAsync(GuidevaultServerSettings settings, GuidevaultHomeAssistantReaderStatus status, int libraryItemCount, bool force)
+    {
+        if (string.IsNullOrWhiteSpace(settings.HomeAssistantUrl)) return new(false, false, "Home Assistant URL is blank.");
+        if (string.IsNullOrWhiteSpace(settings.HomeAssistantLongLivedAccessToken)) return new(false, false, "Home Assistant access token is blank.");
+
+        try
+        {
+            var prefix = SanitizeEntityPrefix(settings.HomeAssistantEntityPrefix);
+            var activeState = status.ReaderActive ? "reading" : "idle";
+            var titleState = TruncateState(status.ItemTitle, status.ReaderActive ? "Open" : "None");
+            var pageState = status.ReaderActive && status.Page > 0 ? status.Page.ToString() : "0";
+            var attributes = BuildReaderAttributes(status, libraryItemCount);
+
+            await PublishStateAsync(settings, $"sensor.{prefix}_reader", activeState, Merge(attributes, new Dictionary<string, object?>
+            {
+                ["friendly_name"] = "Guidevault Reader",
+                ["icon"] = status.ReaderActive ? "mdi:book-open-page-variant" : "mdi:book-open-blank-variant"
+            }));
+            await PublishStateAsync(settings, $"sensor.{prefix}_current_item", titleState, Merge(attributes, new Dictionary<string, object?>
+            {
+                ["friendly_name"] = "Guidevault Current Item",
+                ["icon"] = "mdi:book-open"
+            }));
+            await PublishStateAsync(settings, $"sensor.{prefix}_page", pageState, Merge(attributes, new Dictionary<string, object?>
+            {
+                ["friendly_name"] = "Guidevault Reader Page",
+                ["unit_of_measurement"] = "page",
+                ["icon"] = "mdi:file-document-outline"
+            }));
+            await PublishStateAsync(settings, $"sensor.{prefix}_library_items", libraryItemCount.ToString(), new Dictionary<string, object?>
+            {
+                ["friendly_name"] = "Guidevault Library Items",
+                ["unit_of_measurement"] = "items",
+                ["icon"] = "mdi:bookshelf"
+            });
+
+            if (settings.HomeAssistantPushEventsEnabled && (!string.IsNullOrWhiteSpace(status.EventType) || force))
+            {
+                await FireEventAsync(settings, "guidevault_event", Merge(attributes, new Dictionary<string, object?>
+                {
+                    ["event_type"] = string.IsNullOrWhiteSpace(status.EventType) ? "reader_status" : status.EventType,
+                    ["message"] = status.Message ?? string.Empty
+                }));
+            }
+
+            return new(true, true, "Published Guidevault state to Home Assistant.");
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Unable to publish Guidevault state to Home Assistant.");
+            return new(false, false, $"Unable to publish to Home Assistant: {ex.Message}");
+        }
+    }
+
+    private static Dictionary<string, object?> BuildReaderAttributes(GuidevaultHomeAssistantReaderStatus status, int libraryItemCount) => new(StringComparer.OrdinalIgnoreCase)
+    {
+        ["reader_active"] = status.ReaderActive,
+        ["view"] = status.View,
+        ["item_id"] = status.ItemId,
+        ["item_title"] = status.ItemTitle,
+        ["item_kind"] = status.ItemKind,
+        ["page"] = status.Page,
+        ["page_count"] = status.PageCount,
+        ["progress_percent"] = status.ProgressPercent,
+        ["zoom"] = status.Zoom,
+        ["display_mode"] = status.DisplayMode,
+        ["transition_mode"] = status.TransitionMode,
+        ["library_item_count"] = libraryItemCount,
+        ["updated_at"] = DateTimeOffset.UtcNow.ToString("O")
+    };
+
+    private static GuidevaultHomeAssistantReaderStatus NormalizeReaderStatus(GuidevaultHomeAssistantReaderStatus value)
+    {
+        value ??= new GuidevaultHomeAssistantReaderStatus();
+        var pageCount = Math.Max(0, value.PageCount);
+        var page = pageCount > 0 ? Math.Clamp(value.Page, 1, pageCount) : Math.Max(0, value.Page);
+        var progress = pageCount > 1 && page > 0 ? Math.Round(((page - 1) / (double)(pageCount - 1)) * 100.0, 2) : (pageCount == 1 ? 100 : 0);
+        return new GuidevaultHomeAssistantReaderStatus
+        {
+            ReaderActive = value.ReaderActive,
+            View = Clean(value.View, value.ReaderActive ? "reader" : "library"),
+            ItemId = Clean(value.ItemId, string.Empty),
+            ItemTitle = Clean(value.ItemTitle, string.Empty),
+            ItemKind = Clean(value.ItemKind, string.Empty),
+            Page = page,
+            PageCount = pageCount,
+            ProgressPercent = value.ProgressPercent > 0 ? Math.Round(Math.Clamp(value.ProgressPercent, 0, 100), 2) : progress,
+            Zoom = Math.Clamp(value.Zoom <= 0 ? 100 : value.Zoom, 50, 250),
+            DisplayMode = Clean(value.DisplayMode, string.Empty),
+            TransitionMode = Clean(value.TransitionMode, string.Empty),
+            EventType = Clean(value.EventType, string.Empty),
+            Message = Clean(value.Message, string.Empty),
+            UpdatedAt = DateTimeOffset.UtcNow
+        };
+    }
+
+    private static GuidevaultHomeAssistantCommandRequest NormalizeCommandRequest(GuidevaultHomeAssistantCommandRequest request)
+    {
+        request ??= new GuidevaultHomeAssistantCommandRequest();
+        return new GuidevaultHomeAssistantCommandRequest
+        {
+            Action = NormalizeAction(request.Action),
+            ItemId = Clean(request.ItemId, string.Empty),
+            ItemTitle = Clean(request.ItemTitle, string.Empty),
+            Query = Clean(request.Query, string.Empty),
+            Page = Math.Max(0, request.Page),
+            Zoom = request.Zoom,
+            DisplayMode = Clean(request.DisplayMode, string.Empty),
+            Message = Clean(request.Message, string.Empty)
+        };
+    }
+
+    private static string NormalizeAction(string? action)
+    {
+        var text = Clean(action, "status").Trim().ToLowerInvariant().Replace('-', '_').Replace(' ', '_');
+        return text switch
+        {
+            "next" => "next_page",
+            "previous" => "previous_page",
+            "prev" => "previous_page",
+            "open_guide" => "open",
+            "open_item" => "open",
+            "jump" => "set_page",
+            "page" => "set_page",
+            "zoom" => "set_zoom",
+            "close" => "close_reader",
+            _ => text
+        };
+    }
+
+    private static async Task<GuidevaultHomeAssistantProbeResult> ProbeHomeAssistantApiAsync(GuidevaultServerSettings settings)
+    {
+        var primary = await ProbeHomeAssistantApiPathAsync(settings, "/api/");
+        if (primary.Success) return primary;
+
+        // Defensive fallback for proxies that normalize away the trailing slash.
+        if (primary.StatusCode == 404)
+        {
+            var fallback = await ProbeHomeAssistantApiPathAsync(settings, "/api");
+            if (fallback.Success) return fallback;
+        }
+
+        var baseUrl = settings.HomeAssistantUrl?.Trim() ?? string.Empty;
+        if (primary.StatusCode == 404)
+        {
+            return new(false, primary.StatusCode, $"Home Assistant API returned 404 at {baseUrl}/api/. Guidevault reached the server, but not the Home Assistant REST API. Use the Home Assistant base URL only, for example http://homeassistant.local:8123 or http://192.168.1.217:8123.");
+        }
+
+        return primary;
+    }
+
+    private static async Task<GuidevaultHomeAssistantProbeResult> ProbeHomeAssistantApiPathAsync(GuidevaultServerSettings settings, string path)
+    {
+        using var apiRequest = BuildHomeAssistantRequest(HttpMethod.Get, settings, path);
+        using var apiResponse = await Client.SendAsync(apiRequest);
+        var apiBody = await apiResponse.Content.ReadAsStringAsync();
+        if (apiResponse.IsSuccessStatusCode)
+            return new(true, (int)apiResponse.StatusCode, "Home Assistant API is reachable.");
+
+        var detail = string.IsNullOrWhiteSpace(apiBody) ? apiResponse.ReasonPhrase ?? "No response body" : apiBody;
+        return new(false, (int)apiResponse.StatusCode, $"Home Assistant API returned {(int)apiResponse.StatusCode}: {detail}");
+    }
+
+    private static async Task PublishStateAsync(GuidevaultServerSettings settings, string entityId, string state, Dictionary<string, object?> attributes)
+    {
+        var body = new { state = TruncateState(state, "unknown"), attributes };
+        using var request = BuildHomeAssistantRequest(HttpMethod.Post, settings, $"/api/states/{entityId}", body);
+        using var response = await Client.SendAsync(request);
+        if (!response.IsSuccessStatusCode)
+        {
+            var text = await response.Content.ReadAsStringAsync();
+            throw new InvalidOperationException($"Home Assistant state publish failed for {entityId}: {(int)response.StatusCode} {text}");
+        }
+    }
+
+    private static async Task FireEventAsync(GuidevaultServerSettings settings, string eventType, Dictionary<string, object?> eventData)
+    {
+        using var request = BuildHomeAssistantRequest(HttpMethod.Post, settings, $"/api/events/{eventType}", eventData);
+        using var response = await Client.SendAsync(request);
+        if (!response.IsSuccessStatusCode)
+        {
+            var text = await response.Content.ReadAsStringAsync();
+            throw new InvalidOperationException($"Home Assistant event publish failed: {(int)response.StatusCode} {text}");
+        }
+    }
+
+    private static HttpRequestMessage BuildHomeAssistantRequest(HttpMethod method, GuidevaultServerSettings settings, string path, object? body = null)
+    {
+        var baseUrl = (settings.HomeAssistantUrl ?? string.Empty).Trim().TrimEnd('/');
+        var request = new HttpRequestMessage(method, baseUrl + path);
+        request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", settings.HomeAssistantLongLivedAccessToken?.Trim() ?? string.Empty);
+        if (body is not null)
+        {
+            request.Content = new StringContent(JsonSerializer.Serialize(body, JsonOptions), Encoding.UTF8, "application/json");
+        }
+        return request;
+    }
+
+    private static Dictionary<string, object?> Merge(Dictionary<string, object?> a, Dictionary<string, object?> b)
+    {
+        var merged = new Dictionary<string, object?>(a, StringComparer.OrdinalIgnoreCase);
+        foreach (var kv in b) merged[kv.Key] = kv.Value;
+        return merged;
+    }
+
+    private static string SanitizeEntityPrefix(string? prefix)
+    {
+        var text = Clean(prefix, "guidevault").ToLowerInvariant();
+        text = Regex.Replace(text, "[^a-z0-9_]+", "_").Trim('_');
+        return string.IsNullOrWhiteSpace(text) ? "guidevault" : text;
+    }
+
+    private static string TruncateState(string? value, string fallback)
+    {
+        var text = Clean(value, fallback);
+        return text.Length <= 240 ? text : text[..240];
+    }
+
+    private static string Clean(string? value, string fallback) => string.IsNullOrWhiteSpace(value) ? fallback : value.Trim();
+
+    private static bool SlowEquals(string a, string b)
+    {
+        if (string.IsNullOrEmpty(a) || string.IsNullOrEmpty(b)) return false;
+        var left = Encoding.UTF8.GetBytes(a);
+        var right = Encoding.UTF8.GetBytes(b);
+        return left.Length == right.Length && CryptographicOperations.FixedTimeEquals(left, right);
+    }
+}
+
+public sealed class GuidevaultHomeAssistantCommandStore
+{
+    private readonly object _gate = new();
+    private readonly List<GuidevaultHomeAssistantCommand> _commands = new();
+    private long _nextId = 0;
+
+    public int Count { get { lock (_gate) return _commands.Count; } }
+
+    public GuidevaultHomeAssistantCommand Enqueue(GuidevaultHomeAssistantCommandRequest request)
+    {
+        lock (_gate)
+        {
+            var command = new GuidevaultHomeAssistantCommand
+            {
+                Id = ++_nextId,
+                Action = request.Action,
+                ItemId = request.ItemId,
+                ItemTitle = request.ItemTitle,
+                Query = request.Query,
+                Page = request.Page,
+                Zoom = request.Zoom,
+                DisplayMode = request.DisplayMode,
+                Message = request.Message,
+                CreatedAt = DateTimeOffset.UtcNow
+            };
+            _commands.Add(command);
+            if (_commands.Count > 100) _commands.RemoveRange(0, _commands.Count - 100);
+            return command;
+        }
+    }
+
+    public IReadOnlyList<GuidevaultHomeAssistantCommand> GetAfter(long after)
+    {
+        lock (_gate) return _commands.Where(c => c.Id > after).OrderBy(c => c.Id).ToList();
+    }
+}
+
+public sealed class GuidevaultHomeAssistantReaderStatus
+{
+    public bool ReaderActive { get; set; }
+    public string View { get; set; } = "library";
+    public string ItemId { get; set; } = string.Empty;
+    public string ItemTitle { get; set; } = string.Empty;
+    public string ItemKind { get; set; } = string.Empty;
+    public int Page { get; set; }
+    public int PageCount { get; set; }
+    public double ProgressPercent { get; set; }
+    public int Zoom { get; set; } = 100;
+    public string DisplayMode { get; set; } = string.Empty;
+    public string TransitionMode { get; set; } = string.Empty;
+    public string EventType { get; set; } = string.Empty;
+    public string Message { get; set; } = string.Empty;
+    public DateTimeOffset UpdatedAt { get; set; } = DateTimeOffset.UtcNow;
+
+    public GuidevaultHomeAssistantReaderStatus Clone() => new()
+    {
+        ReaderActive = ReaderActive,
+        View = View,
+        ItemId = ItemId,
+        ItemTitle = ItemTitle,
+        ItemKind = ItemKind,
+        Page = Page,
+        PageCount = PageCount,
+        ProgressPercent = ProgressPercent,
+        Zoom = Zoom,
+        DisplayMode = DisplayMode,
+        TransitionMode = TransitionMode,
+        EventType = EventType,
+        Message = Message,
+        UpdatedAt = UpdatedAt
+    };
+}
+
+public sealed class GuidevaultHomeAssistantCommandRequest
+{
+    public string Action { get; set; } = "status";
+    public string ItemId { get; set; } = string.Empty;
+    public string ItemTitle { get; set; } = string.Empty;
+    public string Query { get; set; } = string.Empty;
+    public int Page { get; set; }
+    public int Zoom { get; set; }
+    public string DisplayMode { get; set; } = string.Empty;
+    public string Message { get; set; } = string.Empty;
+}
+
+public sealed class GuidevaultHomeAssistantCommand
+{
+    public long Id { get; set; }
+    public string Action { get; set; } = "status";
+    public string ItemId { get; set; } = string.Empty;
+    public string ItemTitle { get; set; } = string.Empty;
+    public string Query { get; set; } = string.Empty;
+    public int Page { get; set; }
+    public int Zoom { get; set; }
+    public string DisplayMode { get; set; } = string.Empty;
+    public string Message { get; set; } = string.Empty;
+    public DateTimeOffset CreatedAt { get; set; } = DateTimeOffset.UtcNow;
+}
+
+public sealed class GuidevaultHomeAssistantStatusSnapshot
+{
+    public bool Enabled { get; set; }
+    public bool PushStateEnabled { get; set; }
+    public bool PushEventsEnabled { get; set; }
+    public bool CommandEnabled { get; set; }
+    public string EntityPrefix { get; set; } = "guidevault";
+    public string CommandToken { get; set; } = string.Empty;
+    public GuidevaultHomeAssistantReaderStatus Reader { get; set; } = new();
+    public int LibraryItemCount { get; set; }
+    public int CommandQueueDepth { get; set; }
+}
+
+public sealed record GuidevaultHomeAssistantProbeResult(bool Success, int StatusCode, string Message);
+public sealed record GuidevaultHomeAssistantPublishResult(bool Success, bool Published, string Message);
 
 public sealed class GuidevaultEmailSettingsStore
 {
@@ -7574,15 +8118,42 @@ public sealed class LibraryCache
             var json = File.ReadAllText(_cachePath);
             var cached = JsonSerializer.Deserialize<List<LibraryItem>>(json, CacheJsonOptions);
             if (cached is null || cached.Count == 0) return null;
-            var validRoots = new HashSet<string>(LibraryPaths.Select(p => Path.GetFullPath(p)), StringComparer.OrdinalIgnoreCase);
+            var validRoots = new HashSet<string>(LibraryPaths.Select(p => Path.GetFullPath(p).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar)), StringComparer.OrdinalIgnoreCase);
+            var cacheInvalidated = false;
             var stillRelevant = cached
                 .Where(item =>
                 {
-                    if (string.IsNullOrWhiteSpace(item.Path)) return false;
+                    if (string.IsNullOrWhiteSpace(item.Path))
+                    {
+                        cacheInvalidated = true;
+                        return false;
+                    }
+
                     string itemPath;
                     try { itemPath = Path.GetFullPath(item.Path); }
-                    catch { return false; }
-                    return validRoots.Count == 0 || validRoots.Any(root => itemPath.StartsWith(root, StringComparison.OrdinalIgnoreCase));
+                    catch
+                    {
+                        cacheInvalidated = true;
+                        return false;
+                    }
+
+                    var belongsToConfiguredRoot = validRoots.Count == 0 || validRoots.Any(root =>
+                        itemPath.Equals(root, StringComparison.OrdinalIgnoreCase)
+                        || itemPath.StartsWith(root + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase)
+                        || itemPath.StartsWith(root + Path.AltDirectorySeparatorChar, StringComparison.OrdinalIgnoreCase));
+                    if (!belongsToConfiguredRoot)
+                    {
+                        cacheInvalidated = true;
+                        return false;
+                    }
+
+                    if (!File.Exists(itemPath))
+                    {
+                        cacheInvalidated = true;
+                        return false;
+                    }
+
+                    return true;
                 })
                 .Select(_metadataStore.ApplyOverride)
                 .GroupBy(i => NormalizeFilePathKey(i.Path), StringComparer.OrdinalIgnoreCase)
@@ -7590,7 +8161,11 @@ public sealed class LibraryCache
                 .GroupBy(i => i.Id, StringComparer.OrdinalIgnoreCase)
                 .Select(g => g.First())
                 .ToList();
-            return stillRelevant.Count > 0 ? stillRelevant : null;
+
+            // If files were renamed/moved outside GuideVault, the persisted cache can
+            // point at old paths.  Do not keep serving those stale rows with missing
+            // covers; force a real scan so the renamed files are rediscovered.
+            return !cacheInvalidated && stillRelevant.Count > 0 ? stillRelevant : null;
         }
         catch
         {
@@ -8298,6 +8873,10 @@ public static class MetadataInferer
         var associatedPlatforms = kind == "Strategy Guide" && !IsUnsorted(system) ? new[] { system } : [];
         var platformMatchTitle = kind == "Strategy Guide" ? DeriveStrategyGuideGameTitle(name) : string.Empty;
         var strategyGameTitle = kind == "Strategy Guide" ? FirstNonEmpty(platformMatchTitle, DeriveStrategyGuideGameTitle(name), name) : string.Empty;
+        var manualGameTitle = kind == "Manual" ? CleanManualGameTitle(name) : string.Empty;
+        var gameTitle = kind == "Strategy Guide" ? strategyGameTitle : manualGameTitle;
+        var gameReleaseYear = kind == "Manual" && !string.Equals(year, "Unknown", StringComparison.OrdinalIgnoreCase) ? year : string.Empty;
+        var gamePublisher = kind == "Manual" && !string.Equals(publisher, "Unknown", StringComparison.OrdinalIgnoreCase) ? publisher : string.Empty;
         var strategyGuideType = kind == "Strategy Guide" ? DetectGuideType(name, relativePath) : string.Empty;
         var strategyTopics = kind == "Strategy Guide" ? ExtractStrategyGuideTopics($"{name} {relativePath}") : [];
         var strategySpecialFeatures = kind == "Strategy Guide" ? ExtractSpecialFeatures($"{name} {relativePath}") : [];
@@ -8395,9 +8974,11 @@ public static class MetadataInferer
             PlatformMatchTitle: platformMatchTitle,
             PlatformResolverSource: associatedPlatforms.Length > 0 ? "Folder/File name" : string.Empty,
             PlatformResolverConfidence: associatedPlatforms.Length > 0 ? 0.62 : 0,
-            GameTitle: strategyGameTitle,
+            GameTitle: gameTitle,
             GuideType: strategyGuideType,
-            Franchise: strategyGameTitle,
+            Franchise: kind == "Strategy Guide" ? strategyGameTitle : string.Empty,
+            GamePublisher: gamePublisher,
+            GameReleaseYear: gameReleaseYear,
             Genre: string.Empty,
             CoveredGames: strategyCoveredGames,
             CoveredPlatforms: strategyCoveredPlatforms,
@@ -8475,6 +9056,14 @@ public static class MetadataInferer
                 detectedSystem = series;
                 category = series;
             }
+            var manualTextBlock = $"{comicInfo.Tags} {comicInfo.Genre} {comicInfo.Information} {comicInfo.Summary} {title} {inferred.Title}";
+            gameTitle = FirstNonEmpty(inferred.GameTitle, ExtractFieldFromText(manualTextBlock, "Game Title", "Title"), title, inferred.Title);
+            franchise = FirstNonEmpty(inferred.Franchise, ExtractFieldFromText(manualTextBlock, "Franchise", "Game Franchise"));
+            developer = FirstNonEmpty(inferred.Developer, ExtractFieldFromText(manualTextBlock, "Developer", "Game Developer"));
+            gamePublisher = FirstNonEmpty(inferred.GamePublisher, ExtractFieldFromText(manualTextBlock, "Game Publisher"), publisher);
+            gameReleaseYear = FirstNonEmpty(inferred.GameReleaseYear, ExtractFieldFromText(manualTextBlock, "Game Release Year", "Release Year"), comicInfo.Year, inferred.Year == "Unknown" ? string.Empty : inferred.Year);
+            genre = FirstNonEmpty(comicInfo.Genre, inferred.Genre);
+            metadataSource = "ComicInfo / filename";
         }
         else if (inferred.Kind == "Strategy Guide")
         {
@@ -8577,15 +9166,15 @@ public static class MetadataInferer
             FeaturedGames = inferred.Kind == "Magazine" ? featuredGames : [],
             FeaturedPlatforms = inferred.Kind == "Magazine" ? featuredPlatforms : [],
             SpecialFeatures = inferred.Kind == "Magazine" ? specialFeatures : [],
-            IncludedExtras = inferred.Kind == "Magazine" || inferred.Kind == "Strategy Guide" ? includedExtras : [],
-            GameTitle = inferred.Kind == "Strategy Guide" ? gameTitle : string.Empty,
+            IncludedExtras = inferred.Kind == "Magazine" || inferred.Kind == "Strategy Guide" || inferred.Kind == "Manual" ? includedExtras : [],
+            GameTitle = inferred.Kind == "Strategy Guide" || inferred.Kind == "Manual" ? gameTitle : string.Empty,
             GuideType = inferred.Kind == "Strategy Guide" ? guideType : string.Empty,
             Edition = inferred.Kind == "Strategy Guide" ? edition : string.Empty,
-            Franchise = inferred.Kind == "Strategy Guide" ? franchise : string.Empty,
-            Developer = inferred.Kind == "Strategy Guide" ? developer : string.Empty,
-            GamePublisher = inferred.Kind == "Strategy Guide" ? gamePublisher : string.Empty,
-            GameReleaseYear = inferred.Kind == "Strategy Guide" ? gameReleaseYear : string.Empty,
-            Genre = inferred.Kind == "Strategy Guide" ? genre : string.Empty,
+            Franchise = inferred.Kind == "Strategy Guide" || inferred.Kind == "Manual" ? franchise : string.Empty,
+            Developer = inferred.Kind == "Strategy Guide" || inferred.Kind == "Manual" ? developer : string.Empty,
+            GamePublisher = inferred.Kind == "Strategy Guide" || inferred.Kind == "Manual" ? gamePublisher : string.Empty,
+            GameReleaseYear = inferred.Kind == "Strategy Guide" || inferred.Kind == "Manual" ? gameReleaseYear : string.Empty,
+            Genre = inferred.Kind == "Strategy Guide" || inferred.Kind == "Manual" ? genre : string.Empty,
             CoveredGames = inferred.Kind == "Strategy Guide" ? coveredGames : [],
             CoveredPlatforms = inferred.Kind == "Strategy Guide" ? coveredPlatforms : [],
             GuideTopics = inferred.Kind == "Strategy Guide" ? guideTopics : [],
@@ -8595,6 +9184,20 @@ public static class MetadataInferer
         };
     }
 
+
+    private static string CleanManualGameTitle(string value)
+    {
+        var text = FirstNonEmpty(value).Trim();
+        if (string.IsNullOrWhiteSpace(text)) return string.Empty;
+        text = Regex.Replace(text, @"\b(?:instruction\s*)?manuals?\b", " ", RegexOptions.IgnoreCase);
+        text = Regex.Replace(text, @"\binstruction\s*book(?:let)?\b", " ", RegexOptions.IgnoreCase);
+        text = Regex.Replace(text, @"\bbooklet\b", " ", RegexOptions.IgnoreCase);
+        text = Regex.Replace(text, @"\b(?:usa|us|eu|europe|japan|jp|rev\s*[a-z0-9]+)\b", " ", RegexOptions.IgnoreCase);
+        text = Regex.Replace(text, @"\((?:usa|us|eu|europe|japan|jp|rev[^)]*)\)", " ", RegexOptions.IgnoreCase);
+        text = Regex.Replace(text, @"[\-_]+", " ");
+        text = Regex.Replace(text, @"\s+", " ").Trim(' ', '-', '_', '.');
+        return string.IsNullOrWhiteSpace(text) ? FirstNonEmpty(value).Trim() : text;
+    }
 
     private static string DetectGuideType(string name, string context)
     {
@@ -9923,8 +10526,8 @@ public static class ArchiveReader
     private static readonly string[] ImageExtensions = [".jpg", ".jpeg", ".png", ".webp", ".gif", ".bmp"];
     private static readonly ConcurrentDictionary<string, string[]> EntryCache = new();
     private static readonly ConcurrentDictionary<string, Lazy<Task<(byte[] Bytes, string ContentType)?>>> CoverCache = new(StringComparer.OrdinalIgnoreCase);
-    private static readonly SemaphoreSlim CoverReadGate = new(2, 2);
-    private static readonly SemaphoreSlim CoverThumbnailGate = new(1, 1);
+    private static readonly SemaphoreSlim CoverReadGate = new(3, 3);
+    private static readonly SemaphoreSlim CoverThumbnailGate = new(2, 2);
     private static string CoverCacheDirectory = Path.Combine(AppContext.BaseDirectory, "data", "cache", "covers");
     private static string CoverThumbnailCacheDirectory = Path.Combine(AppContext.BaseDirectory, "data", "cache", "cover-thumbs");
     private static readonly string[] KnownCoverCacheExtensions = [".jpg", ".jpeg", ".png", ".webp", ".gif", ".bmp"];
@@ -13098,6 +13701,5 @@ static class GuidevaultLibraryIoGate
 
 static class GuidevaultBuildInfo
 {
-    public const string Version = "0.9.199";
+    public const string Version = "0.9.210";
 }
-

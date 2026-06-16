@@ -1,12 +1,12 @@
-<!doctype html>
+﻿<!doctype html>
 <html lang="en">
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Guidevault</title>
-  <link rel="icon" type="image/x-icon" href="/assets/favicon.ico?v=0.9.199" />
-  <link rel="shortcut icon" type="image/x-icon" href="/assets/favicon.ico?v=0.9.199" />
-  <link rel="stylesheet" href="/styles.css?v=0.9.199-template-extension" />
+  <link rel="icon" type="image/x-icon" href="/assets/favicon.ico?v=0.9.210" />
+  <link rel="shortcut icon" type="image/x-icon" href="/assets/favicon.ico?v=0.9.210" />
+  <link rel="stylesheet" href="/styles.css?v=0.9.210" />
 </head>
 <body class="right-collapsed auth-locked">
   <section id="loginView" class="login-view" aria-labelledby="loginTitle">
@@ -1509,6 +1509,43 @@
                 </div>
                 <p id="integrationsSettingsStatus" class="sub account-status" aria-live="polite"></p>
               </article>
+              <article class="settings-card integration-source-card integration-homeassistant-card">
+                <div class="integration-card-head">
+                  <span class="integration-source-icon">HA</span>
+                  <div>
+                    <h2>Home Assistant</h2>
+                    <p class="sub">Publish GuideVault reader status into Home Assistant and allow Home Assistant automations to control the active GuideVault reader.</p>
+                    <p class="field-help metadata-source-note">Create a Home Assistant long-lived access token, paste your Home Assistant base URL, then use the GuideVault command token in HA REST commands or automations.</p>
+                  </div>
+                </div>
+                <div class="preference-toggle-row preference-toggle-row-master">
+                  <div><strong>Enable Home Assistant Connector</strong><span>Turn on state publishing and command endpoints.</span></div>
+                  <label class="gv-toggle" for="homeAssistantEnabled">
+                    <input id="homeAssistantEnabled" type="checkbox" />
+                    <span class="gv-toggle-track"><span class="gv-toggle-thumb"></span></span>
+                  </label>
+                </div>
+                <div class="server-settings-grid server-metadata-source-grid integrations-credential-grid">
+                  <label for="homeAssistantUrl">Home Assistant URL<input id="homeAssistantUrl" type="text" autocomplete="off" placeholder="http://homeassistant.local:8123" /><span class="field-help">Base URL only, reachable from the GuideVault server/container. Do not include /api or a dashboard path.</span></label>
+                  <label for="homeAssistantToken">Long-Lived Access Token<input id="homeAssistantToken" type="password" autocomplete="new-password" placeholder="Paste Home Assistant token" /><span class="field-help">Stored locally in GuideVault config; treat it like a password.</span></label>
+                  <label for="homeAssistantEntityPrefix">Entity Prefix<input id="homeAssistantEntityPrefix" type="text" placeholder="guidevault" /><span class="field-help">Creates sensors such as sensor.guidevault_reader and sensor.guidevault_page.</span></label>
+                  <label for="homeAssistantCommandToken">GuideVault Command Token<input id="homeAssistantCommandToken" type="text" autocomplete="off" placeholder="Generated after save" /><span class="field-help">Use this as a Bearer token when Home Assistant posts commands to GuideVault.</span></label>
+                </div>
+                <div class="checkbox-list refined-checkbox-list homeassistant-option-list">
+                  <label><input id="homeAssistantPushStateEnabled" type="checkbox" checked /> Publish reader sensors</label>
+                  <label><input id="homeAssistantPushEventsEnabled" type="checkbox" checked /> Fire guidevault_event events</label>
+                  <label><input id="homeAssistantCommandEnabled" type="checkbox" checked /> Allow Home Assistant commands</label>
+                </div>
+                <div class="settings-actions inline-actions integrations-actions">
+                  <button id="homeAssistantSaveSettings" class="primary" type="button">Save Home Assistant</button>
+                  <button id="homeAssistantTestConnection" class="ghost blue-gradient-action" type="button">Test Home Assistant</button>
+                  <button id="homeAssistantCopyCommandToken" class="ghost" type="button">Copy Command Token</button>
+                </div>
+                <div class="server-files-writeback-callout">
+                  <strong>Command endpoint:</strong>
+                  <span>POST /api/home-assistant/command with Authorization: Bearer &lt;GuideVault Command Token&gt;. Supported actions include open, next_page, previous_page, set_page, zoom_in, zoom_out, set_zoom, set_display_mode, close_reader, and toggle_overlay.</span>
+                </div>
+              </article>
             </div>
           </section>
 
@@ -1827,6 +1864,122 @@
               <h2>Update History</h2>
             </div>
             <div class="system-update-list">
+              <details class="system-update-entry" open>
+                <summary>
+                  <span>Guidevault 0.9.210 - Cover Loading Responsiveness</span>
+                  <em>Installed</em>
+                </summary>
+                <ul>
+                  <li>Makes visible library covers load sooner while keeping the bounded cover pipeline in place.</li>
+                  <li>Prioritizes on-screen and near-screen covers ahead of off-screen covers.</li>
+                  <li>Uses a slightly wider but still controlled cover request queue and server thumbnail gate.</li>
+                </ul>
+              </details>
+              <details class="system-update-entry" open>
+                <summary>
+                  <span>Guidevault 0.9.209 - Task Menu Notifications</span>
+                  <em>Installed</em>
+                </summary>
+                <ul>
+                  <li>Routes Home Assistant integration messages through the top Tasks notification menu instead of floating toast popups.</li>
+                  <li>Routes stable update notices through the Tasks notification menu with an optional release link.</li>
+                  <li>Keeps running task counts and notification counts together in the top task badge.</li>
+                </ul>
+              </details>
+              <details class="system-update-entry" open>
+                <summary>
+                  <span>Guidevault 0.9.208 - Home Assistant API Probe Fix</span>
+                  <em>Installed</em>
+                </summary>
+                <ul>
+                  <li>Tests the Home Assistant REST API at /api/ before publishing sensors.</li>
+                  <li>Strips an accidental /api suffix from the saved Home Assistant URL.</li>
+                  <li>Improves 404 guidance when GuideVault reaches the wrong Home Assistant endpoint.</li>
+                </ul>
+              </details>
+              <details class="system-update-entry" open>
+                <summary>
+                  <span>Guidevault 0.9.207 - Integration Toast Messages</span>
+                  <em>Installed</em>
+                </summary>
+                <ul>
+                  <li>Moved Integration and Home Assistant save/test/copy messages out of the old inline status container and into the GuideVault toast message stack.</li>
+                  <li>Kept the old inline integration status placeholder cleared so Home Assistant messages no longer appear under the previous provider card.</li>
+                </ul>
+              </details>
+              <details class="system-update-entry" open>
+                <summary>
+                  <span>Guidevault 0.9.206 - Home Assistant Layout Polish</span>
+                  <em>Installed</em>
+                </summary>
+                <ul>
+                  <li>Expanded the Home Assistant integration card to span the full Integrations workspace width.</li>
+                  <li>Widened the Home Assistant credential fields so URL, token, entity prefix, and command token have more usable horizontal space on desktop screens.</li>
+                </ul>
+              </details>
+              <details class="system-update-entry" open>
+                <summary>
+                  <span>Guidevault 0.9.205 - Home Assistant Build Fix</span>
+                  <em>Installed</em>
+                </summary>
+                <ul>
+                  <li>Fixed the Home Assistant command DTO build error where a command model tried to derive from a sealed request model.</li>
+                </ul>
+              </details>
+              <details class="system-update-entry" open>
+                <summary>
+                  <span>Guidevault 0.9.204 - Cover Cache Recovery</span>
+                  <em>Installed</em>
+                </summary>
+                <ul>
+                  <li>Pruned disconnected in-flight cover image loads so stale browser work cannot block covers in the next library view.</li>
+                  <li>Invalidated stale persisted library caches when files were renamed or moved outside GuideVault, forcing a rescan instead of showing old rows with missing covers.</li>
+                  <li>Made cover endpoints return no-store 404s for cached items whose source file no longer exists, preventing bad cover responses from being cached.</li>
+                </ul>
+              </details>
+              <details class="system-update-entry" open>
+                <summary>
+                  <span>Guidevault 0.9.203 - Home Assistant Connector</span>
+                  <em>Installed</em>
+                </summary>
+                <ul>
+                  <li>Added Home Assistant integration settings for URL, long-lived access token, entity prefix, state publishing, event publishing, and command intake.</li>
+                  <li>Added GuideVault-to-Home Assistant sensors for reader state, current item, page position, and library item count.</li>
+                  <li>Added a Home Assistant command bus so automations can open items and control the active GuideVault reader with next page, previous page, page jump, zoom, display mode, overlay, and close commands.</li>
+                </ul>
+              </details>
+              <details class="system-update-entry" open>
+                <summary>
+                  <span>Guidevault 0.9.202 - Cover Pipeline Stability</span>
+                  <em>Installed</em>
+                </summary>
+                <ul>
+                  <li>Added a bounded browser-side cover loading queue so fast navigation cannot flood the browser with stale image requests.</li>
+                  <li>Cancel pending and in-flight cover loads before replacing library, group, virtual-grid, and home-shelf views.</li>
+                  <li>Changed cover retries to re-enter the same bounded queue so slow or busy cover requests degrade gracefully instead of starving later Magazine views.</li>
+                </ul>
+              </details>
+              <details class="system-update-entry" open>
+                <summary>
+                  <span>Guidevault 0.9.201 - Manual Game Metadata Fields</span>
+                  <em>Installed</em>
+                </summary>
+                <ul>
+                  <li>Updated Metadata Manager automatic manual columns to include shared game metadata fields: game title, franchise/series, developer, game publisher, game release year, and genre.</li>
+                  <li>Moved shared game fields into a dedicated Game fields group in the column picker so manuals and strategy guides use the same game-level vocabulary.</li>
+                  <li>Expanded batch metadata lookup wording and selection handling so Manual rows can use IGDB/ESRB game metadata lookup alongside Strategy Guide rows.</li>
+                </ul>
+              </details>
+              <details class="system-update-entry" open>
+                <summary>
+                  <span>Guidevault 0.9.200 - Docker Poppler Runtime</span>
+                  <em>Installed</em>
+                </summary>
+                <ul>
+                  <li>Added a Dockerfile runtime dependency on Poppler so published GuideVault images include pdftoppm and pdftocairo for PDF-to-CBZ conversion.</li>
+                  <li>Added Docker build exclusions for bin, obj, and local data folders so the container image is built from source without carrying development artifacts.</li>
+                </ul>
+              </details>
               <details class="system-update-entry" open>
                 <summary>
                   <span>Guidevault 0.9.199 - Magazine Template Extension Fix</span>
@@ -2832,6 +2985,7 @@
   </dialog>
 
 
-  <script src="/app.js?v=0.9.199-template-extension"></script>
+  <script src="/app.js?v=0.9.210-common-game-fields"></script>
 </body>
 </html>
+
