@@ -4,9 +4,9 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Guidevault</title>
-  <link rel="icon" type="image/x-icon" href="/assets/favicon.ico?v=0.9.213" />
-  <link rel="shortcut icon" type="image/x-icon" href="/assets/favicon.ico?v=0.9.213" />
-  <link rel="stylesheet" href="/styles.css?v=0.9.216" />
+  <link rel="icon" type="image/x-icon" href="/assets/favicon.ico?v=0.9.214" />
+  <link rel="shortcut icon" type="image/x-icon" href="/assets/favicon.ico?v=0.9.214" />
+  <link rel="stylesheet" href="/styles.css?v=0.9.217" />
 </head>
 <body class="right-collapsed auth-locked">
   <section id="loginView" class="login-view" aria-labelledby="loginTitle">
@@ -1866,13 +1866,13 @@
             <div class="system-update-list">
               <details class="system-update-entry" open>
                 <summary>
-                  <span>Guidevault 0.9.214 - Docker Poppler Runtime Fix</span>
+                  <span>Guidevault 0.9.214 - Docker PDF Conversion Runtime</span>
                   <em>Installed</em>
                 </summary>
                 <ul>
-                  <li>Fixes the Docker runtime image so Poppler is installed in the final ASP.NET container layer instead of being absent from published images.</li>
-                  <li>Adds poppler-utils to the runtime PATH so PDF-to-CBZ conversion can find pdftoppm and pdftocairo inside the GuideVault container.</li>
-                  <li>Reformats the root Dockerfile into clear build and runtime stages so future runtime dependencies are easier to verify.</li>
+                  <li>Adds Poppler to the final Docker runtime image so PDF-to-CBZ conversion has pdftoppm and pdftocairo available by default.</li>
+                  <li>Updates Docker install files to use the current GuideVault service name, port 5478, /data app storage, and /library mounted content path.</li>
+                  <li>Adds a Docker build-time verification step so package builds fail early if the PDF rasterizer tools are missing.</li>
                 </ul>
               </details>
               <details class="system-update-entry" open>
@@ -3029,7 +3029,7 @@
   </dialog>
 
 
-  <script src="/app.js?v=0.9.216-common-game-fields"></script>
+  <script src="/app.js?v=0.9.217"></script>
 </body>
 </html>
 

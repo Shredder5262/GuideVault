@@ -1,21 +1,22 @@
-# Guidevault Docker container
+# GuideVault Docker container
 
-Guidevault can run as a Docker container for self-hosted use.
+GuideVault can run as a Docker container for self-hosted use.
 
-## Quick start
+The published GuideVault image includes `poppler-utils` in the final runtime image. That provides `pdftoppm` and `pdftocairo`, which GuideVault uses for PDF-to-CBZ conversion. No manual `apt-get install` should be needed after pulling a newly published image.
 
-From the repo root:
+## Quick start from published package
+
+Create or update `.env` from `.env.example`, then run:
 
 ```powershell
-copy .env.example .env
-notepad .env
-docker compose up -d --build
+docker compose pull
+docker compose up -d
 ```
 
 Open:
 
 ```text
-http://localhost:5000
+http://localhost:5478
 ```
 
 ## Required paths
@@ -23,14 +24,14 @@ http://localhost:5000
 The container has two important paths:
 
 ```text
-/app/data   persistent Guidevault app data
-/library    mounted manuals / strategy guides / magazines library
+/data      persistent GuideVault app data
+/library   mounted manuals / strategy guides / magazines library
 ```
 
 The default Compose file maps them from your host like this:
 
 ```text
-GUIDEVAULT_DATA_PATH=./data
+GUIDEVAULT_DATA_PATH=./guidevault-data
 GUIDEVAULT_LIBRARY_PATH=./library
 ```
 
@@ -42,7 +43,7 @@ Example Windows path:
 GUIDEVAULT_LIBRARY_PATH=C:/Users/Andrew/Documents/GuidevaultLibrary
 ```
 
-Inside Guidevault, scan this path:
+Inside GuideVault, scan this path:
 
 ```text
 /library
@@ -55,7 +56,7 @@ Docker cannot read arbitrary Windows paths from inside the container unless thos
 Keep this mounted between updates:
 
 ```text
-GUIDEVAULT_DATA_PATH=./data
+GUIDEVAULT_DATA_PATH=./guidevault-data
 ```
 
 It stores:
@@ -72,10 +73,10 @@ local library settings
 
 Do not delete it unless you intentionally want to reset the container.
 
-## Build manually
+## Build locally
 
 ```powershell
-docker build -t guidevault:0.9.22 -t guidevault:latest .
+docker build --no-cache -t guidevault:latest .
 ```
 
 ## Run manually without Compose
@@ -83,34 +84,52 @@ docker build -t guidevault:0.9.22 -t guidevault:latest .
 ```powershell
 docker run -d `
   --name guidevault `
-  -p 5000:8080 `
+  -p 5478:5478 `
+  -e ASPNETCORE_URLS=http://+:5478 `
+  -e GUIDEVAULT_DATA=/data `
   -e GUIDEVAULT_LIBRARY_PATH=/library `
-  -v ${PWD}/data:/app/data `
+  -v ${PWD}/guidevault-data:/data `
   -v C:/Users/Andrew/Documents/GuidevaultLibrary:/library:ro `
-  guidevault:0.9.22
+  ghcr.io/shredder5262/guidevault:latest
 ```
 
 Then open:
 
 ```text
-http://localhost:5000
+http://localhost:5478
 ```
 
-## Build release helper files
+## Verify PDF rasterizer support
+
+After pulling or building a new image, verify Poppler is available inside the running container:
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File .\scripts\release\Build-GuidevaultDocker.ps1
+docker exec guidevault sh -lc "command -v pdftoppm; pdftoppm -v; command -v pdftocairo; pdftocairo -v"
 ```
 
-To export a Docker image tar for another machine:
+Expected paths:
 
-```powershell
-powershell -ExecutionPolicy Bypass -File .\scripts\release\Build-GuidevaultDocker.ps1 -SaveImageArchive
+```text
+/usr/bin/pdftoppm
+/usr/bin/pdftocairo
 ```
 
-Load it elsewhere:
+If those commands are missing, the running container was created from an older image and needs to be recreated after pulling the newly published package.
+
+## Update to the latest package
 
 ```powershell
-docker load -i Guidevault-0.9.22-docker-image.tar
+docker compose pull
+docker compose down
 docker compose up -d
 ```
+
+Or without Compose:
+
+```powershell
+docker stop guidevault
+docker rm guidevault
+docker pull ghcr.io/shredder5262/guidevault:latest
+```
+
+Then recreate the container using your normal `docker run` command.

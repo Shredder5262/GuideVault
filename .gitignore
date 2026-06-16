@@ -3,9 +3,12 @@
 .vs/
 .vscode/
 *.user
-src/PageQuest.Web/data/library/*.cbr
-src/PageQuest.Web/data/library/*.pdf
-src/PageQuest.Web/data/pagequest.json
+*.suo
+*.tmp
+*.log
+/data/
+/guidevault-data/
+/library/
 _repo/
 _packaged/
 Guidevault-source-clean/

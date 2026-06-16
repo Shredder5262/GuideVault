@@ -37,15 +37,19 @@ GuideVault helps organize and read video game literature collections, including:
 * Customizable home shelves and navigation
 * OPDS support for compatible readers
 * Docker deployment support
+* PDF-to-CBZ conversion with Poppler included in the published Docker image
 
 ## Supported File Types
 
-GuideVault is currently focused on comic/archive-style scanned reading formats:
+GuideVault is currently focused on scanned reading formats:
 
 ```text
 .cbz
 .cbr
+.pdf
 ```
+
+The published Docker image includes Poppler so PDF-to-CBZ conversion works without manually installing `pdftoppm` or `pdftocairo` inside the container.
 
 ## Suggested Library Layout
 
@@ -93,6 +97,7 @@ services:
 Start the container:
 
 ```bash
+docker compose pull
 docker compose up -d
 ```
 
