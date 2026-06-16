@@ -104,7 +104,7 @@ const GUIDEVAULT_LIBRARY_CHUNK_YIELD_MS = 30;
 const GUIDEVAULT_STARTUP_STATUS_HIDE_MS = 2400;
 const GUIDEVAULT_LIBRARY_SEARCH_DEBOUNCE_MS = 180;
 const GUIDEVAULT_SORT_COLLATOR = new Intl.Collator(undefined, { numeric: true, sensitivity: 'base' });
-const GUIDEVAULT_APP_VERSION = '0.9.211';
+const GUIDEVAULT_APP_VERSION = '0.9.212';
 const GUIDEVAULT_FILENAME_SCHEMA_KEY = 'guidevault.filenameRename.schema.v1';
 const GUIDEVAULT_FILE_ORGANIZATION_TEMPLATE_PRESETS_KEY = 'guidevault.fileOrganization.templatePresets.v2';
 const GUIDEVAULT_FILE_ORGANIZATION_TEMPLATE_PRESETS_LEGACY_KEY = 'guidevault.fileOrganization.templatePresets.v1';
@@ -3515,6 +3515,14 @@ async function resolveHomeAssistantCommandItem(command = {}) {
   return items.find(item => titleText(item).toLowerCase() === lower) || items[0] || null;
 }
 
+async function waitForHomeAssistantReaderReady(timeoutMs = 2500) {
+  const started = Date.now();
+  while (state.reader?.animating && Date.now() - started < timeoutMs) {
+    await new Promise(resolve => window.setTimeout(resolve, 75));
+  }
+  return !state.reader?.animating;
+}
+
 async function applyHomeAssistantCommand(command = {}) {
   if (state.homeAssistant.applyingCommand) return;
   state.homeAssistant.applyingCommand = true;
@@ -3533,8 +3541,14 @@ async function applyHomeAssistantCommand(command = {}) {
     if (action === 'close_reader') { await exitReaderToLibrary(); scheduleHomeAssistantStatusPublish('command_close', 'Closed reader from Home Assistant.'); return; }
     if (!isReaderActiveForKeys()) { scheduleHomeAssistantStatusPublish('command_failed', `Reader is not active for ${action}.`); return; }
 
-    if (action === 'next_page') await showPage(state.reader.index, 'next');
-    else if (action === 'previous_page') await showPage(state.reader.index, 'prev');
+    if (action === 'next_page') {
+      if (!(await waitForHomeAssistantReaderReady())) { scheduleHomeAssistantStatusPublish('command_failed', 'Reader is still busy; next_page was not applied.'); return; }
+      await showPage(state.reader.index, 'next');
+    }
+    else if (action === 'previous_page') {
+      if (!(await waitForHomeAssistantReaderReady())) { scheduleHomeAssistantStatusPublish('command_failed', 'Reader is still busy; previous_page was not applied.'); return; }
+      await showPage(state.reader.index, 'prev');
+    }
     else if (action === 'first_page') jumpReaderToPage(1);
     else if (action === 'last_page') jumpReaderToPage(readerPageCount());
     else if (action === 'set_page') jumpReaderToPage(Number(command.page) || 1);
@@ -8580,6 +8594,13 @@ function resetAllKeybinds() {
 function isReaderActiveForKeybinds() {
   const reader = $('readerView');
   return !!reader && !reader.classList.contains('hidden') && !!state.reader.item && Array.isArray(state.reader.pages) && state.reader.pages.length > 0;
+}
+
+function isReaderActiveForKeys() {
+  // Home Assistant reader commands share the same active-reader guard as keyboard controls.
+  // Keep this compatibility alias so command handlers do not fail before they can apply
+  // next_page, previous_page, zoom, or overlay actions.
+  return isReaderActiveForKeybinds();
 }
 
 function isEditableKeyTarget(target) {

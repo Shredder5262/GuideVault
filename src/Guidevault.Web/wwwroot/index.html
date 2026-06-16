@@ -4,9 +4,9 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Guidevault</title>
-  <link rel="icon" type="image/x-icon" href="/assets/favicon.ico?v=0.9.211" />
-  <link rel="shortcut icon" type="image/x-icon" href="/assets/favicon.ico?v=0.9.211" />
-  <link rel="stylesheet" href="/styles.css?v=0.9.211" />
+  <link rel="icon" type="image/x-icon" href="/assets/favicon.ico?v=0.9.212" />
+  <link rel="shortcut icon" type="image/x-icon" href="/assets/favicon.ico?v=0.9.212" />
+  <link rel="stylesheet" href="/styles.css?v=0.9.212" />
 </head>
 <body class="right-collapsed auth-locked">
   <section id="loginView" class="login-view" aria-labelledby="loginTitle">
@@ -1866,6 +1866,17 @@
             <div class="system-update-list">
               <details class="system-update-entry" open>
                 <summary>
+                  <span>Guidevault 0.9.212 - Home Assistant Reader Command Fix</span>
+                  <em>Installed</em>
+                </summary>
+                <ul>
+                  <li>Fixes Home Assistant reader-control commands such as next_page, previous_page, zoom, overlay, and close_reader by restoring the active-reader guard used by the command handler.</li>
+                  <li>Adds a short reader-ready wait so page commands are not silently dropped if Home Assistant sends them while the reader is finishing an open or page transition.</li>
+                  <li>Keeps content-type targeting from 0.9.211 for Manual, Strategy Guide, and Magazine open commands.</li>
+                </ul>
+              </details>
+              <details class="system-update-entry" open>
+                <summary>
                   <span>Guidevault 0.9.211 - Home Assistant Content Type Targeting</span>
                   <em>Installed</em>
                 </summary>
@@ -2996,7 +3007,7 @@
   </dialog>
 
 
-  <script src="/app.js?v=0.9.211-common-game-fields"></script>
+  <script src="/app.js?v=0.9.212-common-game-fields"></script>
 </body>
 </html>
 
