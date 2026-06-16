@@ -104,7 +104,7 @@ const GUIDEVAULT_LIBRARY_CHUNK_YIELD_MS = 30;
 const GUIDEVAULT_STARTUP_STATUS_HIDE_MS = 2400;
 const GUIDEVAULT_LIBRARY_SEARCH_DEBOUNCE_MS = 180;
 const GUIDEVAULT_SORT_COLLATOR = new Intl.Collator(undefined, { numeric: true, sensitivity: 'base' });
-const GUIDEVAULT_APP_VERSION = '0.9.212';
+const GUIDEVAULT_APP_VERSION = '0.9.213';
 const GUIDEVAULT_FILENAME_SCHEMA_KEY = 'guidevault.filenameRename.schema.v1';
 const GUIDEVAULT_FILE_ORGANIZATION_TEMPLATE_PRESETS_KEY = 'guidevault.fileOrganization.templatePresets.v2';
 const GUIDEVAULT_FILE_ORGANIZATION_TEMPLATE_PRESETS_LEGACY_KEY = 'guidevault.fileOrganization.templatePresets.v1';
@@ -1112,6 +1112,19 @@ async function requestReaderFullscreenFromProfile() {
     await el.requestFullscreen();
   } catch (err) {
     console.info('Reading profile fullscreen-on-open could not start automatically. The browser may require a fresh user gesture.', err);
+  }
+  updateReaderFullscreenUi();
+  window.setTimeout(refreshReaderBookSize, 80);
+}
+
+async function enterReaderFullscreenFromHomeAssistant() {
+  if (document.fullscreenElement) { updateReaderFullscreenUi(); return; }
+  const el = $('readerStage') || $('readerView');
+  if (!el?.requestFullscreen) return;
+  try {
+    await el.requestFullscreen();
+  } catch (err) {
+    console.info('Home Assistant fullscreen command could not start automatically. The browser may require a fresh user gesture.', err);
   }
   updateReaderFullscreenUi();
   window.setTimeout(refreshReaderBookSize, 80);
@@ -3485,34 +3498,97 @@ function normalizeHomeAssistantCommandItemKind(value = '') {
   return String(value || '').trim();
 }
 
+function homeAssistantMagazineSequenceValue(...values) {
+  for (const value of values) {
+    const raw = String(value ?? '').trim();
+    if (!raw) continue;
+    const cleaned = raw
+      .replace(/^\s*(volume|vol\.?|v)\s*#?\s*/i, '')
+      .replace(/^\s*(issue|no\.?|number|num\.?|#)\s*#?\s*/i, '')
+      .replace(/\s+/g, ' ')
+      .trim();
+    if (cleaned) return cleaned;
+  }
+  return '';
+}
+
+function homeAssistantMagazineSequenceKey(value = '') {
+  return String(value || '')
+    .trim()
+    .toLowerCase()
+    .replace(/^\s*(volume|vol\.?|v|issue|no\.?|number|num\.?|#)\s*#?\s*/i, '')
+    .replace(/[^a-z0-9.]+/g, '');
+}
+
+function homeAssistantCommandRequestedKind(command = {}) {
+  return normalizeHomeAssistantCommandItemKind(command.itemKind || command.kind || command.contentType || command.itemType || '');
+}
+
+function homeAssistantCommandMagazineIssue(command = {}) {
+  return homeAssistantMagazineSequenceValue(command.issueNumber, command.issue, command.magazineIssueNumber, command.issueNo, command.number);
+}
+
+function homeAssistantCommandMagazineVolume(command = {}) {
+  return homeAssistantMagazineSequenceValue(command.volume, command.magazineVolume, command.vol);
+}
+
+function homeAssistantCommandNeedsMagazineIssue(command = {}) {
+  const requestedKind = homeAssistantCommandRequestedKind(command);
+  const action = String(command.action || '').trim().toLowerCase().replace(/[-\s]+/g, '_');
+  return requestedKind === 'Magazine' && !String(command.itemId || '').trim() && ['open', 'open_item', 'open_guide'].includes(action) && !homeAssistantCommandMagazineIssue(command);
+}
+
 async function resolveHomeAssistantCommandItem(command = {}) {
-  const requestedKind = normalizeHomeAssistantCommandItemKind(command.itemKind || command.kind || command.contentType || command.itemType || '');
+  const requestedKind = homeAssistantCommandRequestedKind(command);
+  const requestedIssue = homeAssistantCommandMagazineIssue(command);
+  const requestedVolume = homeAssistantCommandMagazineVolume(command);
+  const requestedIssueKey = homeAssistantMagazineSequenceKey(requestedIssue);
+  const requestedVolumeKey = homeAssistantMagazineSequenceKey(requestedVolume);
   const kindMatches = item => !requestedKind || normalizeHomeAssistantCommandItemKind(item?.kind || '') === requestedKind;
+  const magazineSequenceMatches = item => {
+    if (requestedKind !== 'Magazine') return true;
+    if (requestedIssueKey && homeAssistantMagazineSequenceKey(item?.issueNumber || item?.IssueNumber || item?.magazineIssueNumber || item?.number) !== requestedIssueKey) return false;
+    if (requestedVolumeKey && homeAssistantMagazineSequenceKey(item?.volume || item?.Volume || item?.magazineVolume || item?.vol) !== requestedVolumeKey) return false;
+    return true;
+  };
   const titleText = item => String(displayTitle(item) || item?.title || '').trim();
+  const magazinePublicationText = item => String(item?.magazineTitle || item?.publicationTitle || item?.series || '').trim();
+  const titleMatchesQuery = (item, lower) => {
+    const values = [titleText(item), magazinePublicationText(item), item?.title, item?.name, item?.series]
+      .map(value => String(value || '').trim().toLowerCase())
+      .filter(Boolean);
+    return values.some(value => value === lower) || values.some(value => value.includes(lower));
+  };
   const itemId = String(command.itemId || '').trim();
   if (itemId) {
-    const local = state.items.find(item => String(item.id || '') === itemId && kindMatches(item));
+    const local = state.items.find(item => String(item.id || '') === itemId && kindMatches(item) && magazineSequenceMatches(item));
     if (local) return local;
     const res = await fetch(`/api/items/${encodeURIComponent(itemId)}`, { cache: 'no-store' });
     if (res.ok) {
       const item = await res.json();
-      return kindMatches(item) ? item : null;
+      return kindMatches(item) && magazineSequenceMatches(item) ? item : null;
     }
   }
 
   const query = String(command.itemTitle || command.query || '').trim();
   if (!query) return null;
   const lower = query.toLowerCase();
-  const local = state.items.find(item => kindMatches(item) && titleText(item).toLowerCase() === lower)
-    || state.items.find(item => kindMatches(item) && titleText(item).toLowerCase().includes(lower));
-  if (local) return local;
+  const localMatches = state.items.filter(item => kindMatches(item) && magazineSequenceMatches(item) && titleMatchesQuery(item, lower));
+  if (localMatches.length) {
+    return localMatches.find(item => titleText(item).toLowerCase() === lower)
+      || localMatches.find(item => magazinePublicationText(item).toLowerCase() === lower)
+      || localMatches[0];
+  }
 
-  const params = new URLSearchParams({ page: '1', pageSize: '50', q: query });
+  const params = new URLSearchParams({ page: '1', pageSize: '100', q: query });
   const res = await fetch(`/api/library/page?${params.toString()}`, { cache: 'no-store' });
   if (!res.ok) return null;
   const data = await res.json();
-  const items = (Array.isArray(data?.items) ? data.items : []).filter(kindMatches);
-  return items.find(item => titleText(item).toLowerCase() === lower) || items[0] || null;
+  const items = (Array.isArray(data?.items) ? data.items : []).filter(item => kindMatches(item) && magazineSequenceMatches(item));
+  return items.find(item => titleText(item).toLowerCase() === lower)
+    || items.find(item => magazinePublicationText(item).toLowerCase() === lower)
+    || items[0]
+    || null;
 }
 
 async function waitForHomeAssistantReaderReady(timeoutMs = 2500) {
@@ -3531,6 +3607,10 @@ async function applyHomeAssistantCommand(command = {}) {
     if (!action || action === 'status') { scheduleHomeAssistantStatusPublish('command_status', 'Home Assistant requested reader status.'); return; }
 
     if (['open', 'open_item', 'open_guide'].includes(action)) {
+      if (homeAssistantCommandNeedsMagazineIssue(command)) {
+        scheduleHomeAssistantStatusPublish('command_failed', 'Magazine open commands need issueNumber. Include volume too when the publication uses volume + issue numbering.');
+        return;
+      }
       const item = await resolveHomeAssistantCommandItem(command);
       if (!item) { scheduleHomeAssistantStatusPublish('command_failed', `Could not find Guidevault item for Home Assistant command.`); return; }
       await openReader(item);
@@ -3549,15 +3629,14 @@ async function applyHomeAssistantCommand(command = {}) {
       if (!(await waitForHomeAssistantReaderReady())) { scheduleHomeAssistantStatusPublish('command_failed', 'Reader is still busy; previous_page was not applied.'); return; }
       await showPage(state.reader.index, 'prev');
     }
-    else if (action === 'first_page') jumpReaderToPage(1);
-    else if (action === 'last_page') jumpReaderToPage(readerPageCount());
-    else if (action === 'set_page') jumpReaderToPage(Number(command.page) || 1);
-    else if (action === 'zoom_in') adjustReaderZoom(10);
-    else if (action === 'zoom_out') adjustReaderZoom(-10);
+    else if (action === 'first_page') jumpReaderToPage(1, { showOverlay: false });
+    else if (action === 'last_page') jumpReaderToPage(readerPageCount(), { showOverlay: false });
+    else if (action === 'set_page') jumpReaderToPage(Number(command.page) || 1, { showOverlay: false });
+    else if (action === 'zoom_in') adjustReaderZoom(10, { showOverlay: false });
+    else if (action === 'zoom_out') adjustReaderZoom(-10, { showOverlay: false });
     else if (action === 'set_zoom') {
       state.reader.zoom = clampNumber(Number(command.zoom) || state.reader.zoom || 100, 70, 145, 100);
       applyReaderZoom();
-      setReaderOverlayVisible(true);
       scheduleReaderPageEdgeShadingBounds();
     }
     else if (action === 'set_display_mode') {
@@ -3566,8 +3645,11 @@ async function applyHomeAssistantCommand(command = {}) {
       setReaderDisplayMode(mode);
     }
     else if (action === 'toggle_overlay') toggleReaderOverlay();
-    else if (action === 'fullscreen') await requestReaderFullscreenFromProfile();
+    else if (action === 'fullscreen' || action === 'enter_fullscreen') await enterReaderFullscreenFromHomeAssistant();
     else if (action === 'exit_fullscreen') await exitReaderFullscreenOnly();
+    else if (action === 'toggle_fullscreen') await toggleReaderFullscreenFromKeybind();
+    else if (action === 'set_background') applyHomeAssistantReaderBackground(command);
+    else if (action === 'set_background_brightness') applyHomeAssistantReaderBackgroundBrightness(command);
     else { scheduleHomeAssistantStatusPublish('command_ignored', `Unknown Home Assistant command: ${action}`); return; }
 
     scheduleHomeAssistantStatusPublish(`command_${action}`, command.message || `Applied Home Assistant command: ${action}`);
@@ -5109,6 +5191,45 @@ function setReaderBackground(name) {
   saveReaderBackgroundChoice(state.reader.background);
   applyReaderBackground();
   updateReaderOverlay();
+}
+
+function resolveReaderBackgroundCommandName(value = '') {
+  const requested = String(value || '').trim();
+  if (!requested) return null;
+  const lower = requested.toLowerCase();
+  if (['default', 'default gradient', 'gradient', 'none', 'clear', 'off'].includes(lower)) return '';
+  const backgrounds = state.reader.backgrounds || [];
+  const exact = backgrounds.find(bg => String(bg.name || '').toLowerCase() === lower);
+  if (exact) return exact.name;
+  const display = backgrounds.find(bg => String(bg.displayName || readerBackgroundDisplayName(bg.name)).toLowerCase() === lower);
+  if (display) return display.name;
+  const partial = backgrounds.find(bg => String(bg.name || '').toLowerCase().includes(lower)
+    || String(bg.displayName || readerBackgroundDisplayName(bg.name)).toLowerCase().includes(lower));
+  return partial ? partial.name : null;
+}
+
+function applyHomeAssistantReaderBackground(command = {}) {
+  const requested = command.background ?? command.backgroundName ?? command.readerBackground ?? command.name ?? '';
+  const resolved = resolveReaderBackgroundCommandName(requested);
+  if (resolved === null) {
+    scheduleHomeAssistantStatusPublish('command_failed', `Reader background was not found: ${requested}`);
+    return;
+  }
+  setReaderBackground(resolved);
+  const brightness = Number(command.backgroundBrightness ?? command.brightness ?? command.readerBackgroundBrightness ?? 0);
+  if (Number.isFinite(brightness) && brightness > 0) {
+    applyHomeAssistantReaderBackgroundBrightness(command);
+  }
+}
+
+function applyHomeAssistantReaderBackgroundBrightness(command = {}) {
+  const raw = command.backgroundBrightness ?? command.brightness ?? command.readerBackgroundBrightness;
+  const value = Number(raw);
+  if (!Number.isFinite(value) || value <= 0) {
+    scheduleHomeAssistantStatusPublish('command_failed', 'Reader background brightness needs a numeric value from 15 to 100.');
+    return;
+  }
+  setReaderBackgroundBrightness(value);
 }
 
 function rgbParts(rgb, fallback = [226, 224, 216]) {
@@ -16521,10 +16642,10 @@ function applyReaderZoom() {
   if (zoomOut) zoomOut.disabled = zoom <= 70;
 }
 
-function adjustReaderZoom(delta) {
+function adjustReaderZoom(delta, options = {}) {
   state.reader.zoom = clampNumber((Number(state.reader.zoom) || 100) + delta, 70, 145, 100);
   applyReaderZoom();
-  setReaderOverlayVisible(true);
+  if (options.showOverlay !== false) setReaderOverlayVisible(true);
   scheduleReaderPageEdgeShadingBounds();
 }
 
@@ -16557,11 +16678,12 @@ function setReaderSliderPreview(pageNumber) {
   if (position) position.textContent = `Jump to page ${page} of ${total}`;
 }
 
-function jumpReaderToPage(pageNumber) {
+function jumpReaderToPage(pageNumber, options = {}) {
   if (!state.reader.pages.length || state.reader.animating) return;
   const page = Math.max(1, Math.min(Number(pageNumber) || 1, readerPageCount()));
   renderSpread(page - 1, { preserveSize: false });
-  setReaderOverlayVisible(true);
+  if (options.showOverlay !== false) setReaderOverlayVisible(true);
+  else updateReaderOverlay();
 }
 
 function wait(ms) {

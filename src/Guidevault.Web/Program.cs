@@ -17,7 +17,7 @@ using SixLabors.ImageSharp.Processing;
 using Microsoft.AspNetCore.Mvc;
 
 var builder = WebApplication.CreateBuilder(args);
-const string GuidevaultVersion = "0.9.212";
+const string GuidevaultVersion = "0.9.213";
 var app = builder.Build();
 var metadataJsonOptions = new JsonSerializerOptions(JsonSerializerDefaults.Web) { PropertyNameCaseInsensitive = true };
 var options = app.Configuration.GetSection("Guidevault").Get<GuidevaultOptions>() ?? new GuidevaultOptions();
@@ -4911,9 +4911,13 @@ public sealed class GuidevaultHomeAssistantConnector
             ItemTitle = Clean(request.ItemTitle, string.Empty),
             ItemKind = NormalizeHomeAssistantItemKind(request.ItemKind, request.Kind, request.ContentType, request.ItemType, impliedItemKind),
             Query = Clean(request.Query, string.Empty),
+            IssueNumber = CleanFirst(request.IssueNumber, request.Issue, request.MagazineIssueNumber, request.IssueNo, request.Number),
+            Volume = CleanFirst(request.Volume, request.MagazineVolume, request.Vol),
             Page = Math.Max(0, request.Page),
             Zoom = request.Zoom,
             DisplayMode = Clean(request.DisplayMode, string.Empty),
+            Background = CleanFirst(request.Background, request.BackgroundName, request.ReaderBackground, request.Name),
+            BackgroundBrightness = request.BackgroundBrightness > 0 ? request.BackgroundBrightness : request.Brightness,
             Message = Clean(request.Message, string.Empty)
         };
     }
@@ -4953,6 +4957,11 @@ public sealed class GuidevaultHomeAssistantConnector
             "jump" => "set_page",
             "page" => "set_page",
             "zoom" => "set_zoom",
+            "background" or "reader_background" => "set_background",
+            "background_brightness" or "brightness" or "reader_background_brightness" => "set_background_brightness",
+            "fullscreen_toggle" or "toggle_full_screen" or "toggle_fullscreen" or "full_screen_toggle" => "toggle_fullscreen",
+            "fullscreen_on" or "enter_full_screen" or "enter_fullscreen" or "full_screen" => "fullscreen",
+            "fullscreen_off" or "exit_full_screen" => "exit_fullscreen",
             "close" => "close_reader",
             _ => text
         };
@@ -5060,6 +5069,16 @@ public sealed class GuidevaultHomeAssistantConnector
 
     private static string Clean(string? value, string fallback) => string.IsNullOrWhiteSpace(value) ? fallback : value.Trim();
 
+    private static string CleanFirst(params string?[] values)
+    {
+        foreach (var value in values)
+        {
+            var cleaned = Clean(value, string.Empty);
+            if (!string.IsNullOrWhiteSpace(cleaned)) return cleaned;
+        }
+        return string.Empty;
+    }
+
     private static bool SlowEquals(string a, string b)
     {
         if (string.IsNullOrEmpty(a) || string.IsNullOrEmpty(b)) return false;
@@ -5089,9 +5108,13 @@ public sealed class GuidevaultHomeAssistantCommandStore
                 ItemTitle = request.ItemTitle,
                 ItemKind = request.ItemKind,
                 Query = request.Query,
+                IssueNumber = request.IssueNumber,
+                Volume = request.Volume,
                 Page = request.Page,
                 Zoom = request.Zoom,
                 DisplayMode = request.DisplayMode,
+                Background = request.Background,
+                BackgroundBrightness = request.BackgroundBrightness,
                 Message = request.Message,
                 CreatedAt = DateTimeOffset.UtcNow
             };
@@ -5153,9 +5176,23 @@ public sealed class GuidevaultHomeAssistantCommandRequest
     public string ContentType { get; set; } = string.Empty;
     public string ItemType { get; set; } = string.Empty;
     public string Query { get; set; } = string.Empty;
+    public string IssueNumber { get; set; } = string.Empty;
+    public string Issue { get; set; } = string.Empty;
+    public string MagazineIssueNumber { get; set; } = string.Empty;
+    public string IssueNo { get; set; } = string.Empty;
+    public string Number { get; set; } = string.Empty;
+    public string Volume { get; set; } = string.Empty;
+    public string MagazineVolume { get; set; } = string.Empty;
+    public string Vol { get; set; } = string.Empty;
     public int Page { get; set; }
     public int Zoom { get; set; }
     public string DisplayMode { get; set; } = string.Empty;
+    public string Background { get; set; } = string.Empty;
+    public string BackgroundName { get; set; } = string.Empty;
+    public string ReaderBackground { get; set; } = string.Empty;
+    public int BackgroundBrightness { get; set; }
+    public int Brightness { get; set; }
+    public string Name { get; set; } = string.Empty;
     public string Message { get; set; } = string.Empty;
 }
 
@@ -5167,9 +5204,13 @@ public sealed class GuidevaultHomeAssistantCommand
     public string ItemTitle { get; set; } = string.Empty;
     public string ItemKind { get; set; } = string.Empty;
     public string Query { get; set; } = string.Empty;
+    public string IssueNumber { get; set; } = string.Empty;
+    public string Volume { get; set; } = string.Empty;
     public int Page { get; set; }
     public int Zoom { get; set; }
     public string DisplayMode { get; set; } = string.Empty;
+    public string Background { get; set; } = string.Empty;
+    public int BackgroundBrightness { get; set; }
     public string Message { get; set; } = string.Empty;
     public DateTimeOffset CreatedAt { get; set; } = DateTimeOffset.UtcNow;
 }
@@ -13744,5 +13785,5 @@ static class GuidevaultLibraryIoGate
 
 static class GuidevaultBuildInfo
 {
-    public const string Version = "0.9.212";
+    public const string Version = "0.9.213";
 }
