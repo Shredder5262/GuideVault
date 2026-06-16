@@ -19759,3 +19759,23 @@ body.colorscape-active.detail-page-mode .metadata-cover-choice.selected{border-c
   .guidevault-update-toast + .guidevault-message-toast-stack,
   .guidevault-message-toast-stack:has(+ .guidevault-update-toast){bottom:86px;}
 }
+
+/* Home Assistant-safe reader fullscreen fallback.
+   Browser-native fullscreen requires a direct user gesture in many browsers, so
+   remote commands use this fixed overlay when requestFullscreen is blocked. */
+#readerView.fullscreen-reader{
+  position:fixed!important;
+  inset:0!important;
+  z-index:9999!important;
+  width:100vw!important;
+  height:100vh!important;
+  max-width:none!important;
+  max-height:none!important;
+  display:flex!important;
+}
+body.reader-is-fullscreen{
+  overflow:hidden!important;
+}
+#readerView.fullscreen-reader .reader-stage{
+  min-height:0!important;
+}

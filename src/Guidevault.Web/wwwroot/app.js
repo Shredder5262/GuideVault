@@ -104,7 +104,7 @@ const GUIDEVAULT_LIBRARY_CHUNK_YIELD_MS = 30;
 const GUIDEVAULT_STARTUP_STATUS_HIDE_MS = 2400;
 const GUIDEVAULT_LIBRARY_SEARCH_DEBOUNCE_MS = 180;
 const GUIDEVAULT_SORT_COLLATOR = new Intl.Collator(undefined, { numeric: true, sensitivity: 'base' });
-const GUIDEVAULT_APP_VERSION = '0.9.214';
+const GUIDEVAULT_APP_VERSION = '0.9.215';
 const GUIDEVAULT_FILENAME_SCHEMA_KEY = 'guidevault.filenameRename.schema.v1';
 const GUIDEVAULT_FILE_ORGANIZATION_TEMPLATE_PRESETS_KEY = 'guidevault.fileOrganization.templatePresets.v2';
 const GUIDEVAULT_FILE_ORGANIZATION_TEMPLATE_PRESETS_LEGACY_KEY = 'guidevault.fileOrganization.templatePresets.v1';
@@ -1104,30 +1104,55 @@ function applyReadingProfileToReader(item) {
   state.reader.fullscreenOnOpen = !!profile.fullscreenOnOpen;
 }
 
-async function requestReaderFullscreenFromProfile() {
-  if (!state.reader.fullscreenOnOpen || document.fullscreenElement) return;
+function isReaderVirtualFullscreen() {
+  return !!$('readerView')?.classList.contains('fullscreen-reader');
+}
+
+function setReaderVirtualFullscreen(enabled) {
+  const view = $('readerView');
+  const stage = $('readerStage');
+  if (!view) return;
+  view.classList.toggle('fullscreen-reader', !!enabled);
+  document.body.classList.toggle('reader-is-fullscreen', !!enabled || document.fullscreenElement === stage);
+  updateReaderFullscreenUi();
+  window.setTimeout(refreshReaderBookSize, 80);
+}
+
+async function requestNativeReaderFullscreen() {
   const el = $('readerStage') || $('readerView');
-  if (!el?.requestFullscreen) return;
+  if (!el?.requestFullscreen) return false;
   try {
     await el.requestFullscreen();
+    setReaderVirtualFullscreen(false);
+    return true;
   } catch (err) {
-    console.info('Reading profile fullscreen-on-open could not start automatically. The browser may require a fresh user gesture.', err);
+    console.info('Native reader fullscreen could not start. The browser may require a direct user gesture.', err);
+    return false;
   }
+}
+
+async function requestReaderFullscreenFromProfile() {
+  if (!state.reader.fullscreenOnOpen || document.fullscreenElement || isReaderVirtualFullscreen()) return;
+  const enteredNativeFullscreen = await requestNativeReaderFullscreen();
+  if (!enteredNativeFullscreen) setReaderVirtualFullscreen(true);
   updateReaderFullscreenUi();
   window.setTimeout(refreshReaderBookSize, 80);
 }
 
 async function enterReaderFullscreenFromHomeAssistant() {
-  if (document.fullscreenElement) { updateReaderFullscreenUi(); return; }
-  const el = $('readerStage') || $('readerView');
-  if (!el?.requestFullscreen) return;
-  try {
-    await el.requestFullscreen();
-  } catch (err) {
-    console.info('Home Assistant fullscreen command could not start automatically. The browser may require a fresh user gesture.', err);
-  }
+  if (document.fullscreenElement || isReaderVirtualFullscreen()) { updateReaderFullscreenUi(); return; }
+  const enteredNativeFullscreen = await requestNativeReaderFullscreen();
+  if (!enteredNativeFullscreen) setReaderVirtualFullscreen(true);
   updateReaderFullscreenUi();
   window.setTimeout(refreshReaderBookSize, 80);
+}
+
+async function toggleReaderFullscreenFromHomeAssistant() {
+  if (document.fullscreenElement || isReaderVirtualFullscreen()) {
+    await exitReaderFullscreenOnly();
+    return;
+  }
+  await enterReaderFullscreenFromHomeAssistant();
 }
 
 
@@ -3647,7 +3672,7 @@ async function applyHomeAssistantCommand(command = {}) {
     else if (action === 'toggle_overlay') toggleReaderOverlay();
     else if (action === 'fullscreen' || action === 'enter_fullscreen') await enterReaderFullscreenFromHomeAssistant();
     else if (action === 'exit_fullscreen') await exitReaderFullscreenOnly();
-    else if (action === 'toggle_fullscreen') await toggleReaderFullscreenFromKeybind();
+    else if (action === 'toggle_fullscreen') await toggleReaderFullscreenFromHomeAssistant();
     else if (action === 'set_background') applyHomeAssistantReaderBackground(command);
     else if (action === 'set_background_brightness') applyHomeAssistantReaderBackgroundBrightness(command);
     else { scheduleHomeAssistantStatusPublish('command_ignored', `Unknown Home Assistant command: ${action}`); return; }
@@ -8770,10 +8795,9 @@ function readerActionForKeyEvent(e) {
 }
 
 async function toggleReaderFullscreenFromKeybind() {
-  const el = $('readerStage') || $('readerView');
   try {
-    if (!document.fullscreenElement) await el?.requestFullscreen?.();
-    else await document.exitFullscreen?.();
+    if (document.fullscreenElement || isReaderVirtualFullscreen()) await exitReaderFullscreenOnly();
+    else if (!(await requestNativeReaderFullscreen())) setReaderVirtualFullscreen(true);
   } catch (err) {
     console.warn('Unable to toggle reader fullscreen', err);
   }
@@ -16291,13 +16315,15 @@ window.addEventListener('resize', () => {
 });
 
 document.addEventListener('fullscreenchange', () => {
-  document.body.classList.toggle('reader-is-fullscreen', document.fullscreenElement === $('readerStage'));
+  const nativeReaderFullscreen = document.fullscreenElement === $('readerStage');
+  if (nativeReaderFullscreen) setReaderVirtualFullscreen(false);
+  document.body.classList.toggle('reader-is-fullscreen', nativeReaderFullscreen || isReaderVirtualFullscreen());
   updateReaderFullscreenUi();
   window.setTimeout(refreshReaderBookSize, 80);
 });
 
 function updateReaderFullscreenUi() {
-  const isReaderFullscreen = document.fullscreenElement === $('readerStage');
+  const isReaderFullscreen = document.fullscreenElement === $('readerStage') || isReaderVirtualFullscreen();
   const fullButton = $('readerFullscreen');
   if (fullButton) fullButton.textContent = isReaderFullscreen ? 'Exit Fullscreen' : 'Fullscreen';
   const trayExit = $('readerExitFullscreen');
@@ -16459,10 +16485,13 @@ function updateReaderBookmarksUi() {
 }
 
 async function exitReaderFullscreenOnly() {
+  setReaderVirtualFullscreen(false);
   if (document.fullscreenElement) {
     try { await document.exitFullscreen(); } catch {}
   }
+  document.body.classList.toggle('reader-is-fullscreen', document.fullscreenElement === $('readerStage') || isReaderVirtualFullscreen());
   updateReaderFullscreenUi();
+  window.setTimeout(refreshReaderBookSize, 80);
 }
 
 async function exitReaderToLibrary() {
@@ -19731,10 +19760,7 @@ document.addEventListener('keydown', e => {
   setReaderOverlayVisible(false);
 });
 if ($('readerFullscreen')) $('readerFullscreen').addEventListener('click', async () => {
-  const el = $('readerStage');
-  try {
-    if (!document.fullscreenElement) await el.requestFullscreen?.(); else await document.exitFullscreen?.();
-  } catch {}
+  await toggleReaderFullscreenFromKeybind();
   updateReaderFullscreenUi();
 });
 
