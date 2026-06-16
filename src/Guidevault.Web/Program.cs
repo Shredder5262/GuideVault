@@ -1,4 +1,4 @@
-using System.Collections.Concurrent;
+﻿using System.Collections.Concurrent;
 using System.IO.Compression;
 using System.Security.Cryptography;
 using System.Text;
@@ -17,7 +17,7 @@ using SixLabors.ImageSharp.Processing;
 using Microsoft.AspNetCore.Mvc;
 
 var builder = WebApplication.CreateBuilder(args);
-const string GuidevaultVersion = "0.9.213";
+const string GuidevaultVersion = "0.9.214";
 var app = builder.Build();
 var metadataJsonOptions = new JsonSerializerOptions(JsonSerializerDefaults.Web) { PropertyNameCaseInsensitive = true };
 var options = app.Configuration.GetSection("Guidevault").Get<GuidevaultOptions>() ?? new GuidevaultOptions();
@@ -1849,10 +1849,14 @@ app.MapDelete("/api/items/{id}", (string id) =>
     //
     // Keep this instant: do not call GetItemsAsync() here because that can wait
     // behind a scan or cold-load the full index.
+    var cachedForRemoval = cache.TryGetCachedItem(id) ?? cache.GetItemsSnapshot().FirstOrDefault(i => string.Equals(i.Id, id, StringComparison.OrdinalIgnoreCase));
+    if (cachedForRemoval is not null)
+        ArchiveReader.ClearCacheForPath(cachedForRemoval.Path);
+
     metadataStore.RemoveOverride(id);
     coverOverrideStore.Remove(id);
     cache.RemoveCachedItem(id, persist: false);
-    return Results.Ok(new { removedId = id, mode = "removed-from-index", rescanWillRediscover = true, pathPreserved = true });
+    return Results.Ok(new { removedId = id, mode = "removed-from-index", rescanWillRediscover = true, pathPreserved = true, readerCacheCleared = cachedForRemoval is not null });
 });
 
 app.MapGet("/api/items/{id}/cover", async (string id, HttpResponse response) =>
@@ -1934,6 +1938,9 @@ app.MapGet("/api/items/{id}/pages", async (string id) =>
     if (item is null) return Results.NotFound();
     RecordSystemEvent("Reader", "Book opened", $"Opened {item.Title} in the reader.", "api", item.Id, item.Title);
 
+    var sourceVersion = ArchiveReader.GetArchiveVersionStamp(item.Path);
+    var escapedId = Uri.EscapeDataString(item.Id);
+
     if (item.Format == "PDF")
     {
         return Results.Ok(new
@@ -1941,7 +1948,8 @@ app.MapGet("/api/items/{id}/pages", async (string id) =>
             item.Id,
             item.PageCount,
             format = item.Format,
-            pdfUrl = $"/api/items/{item.Id}/file"
+            sourceVersion,
+            pdfUrl = $"/api/items/{escapedId}/file?v={sourceVersion}"
         });
     }
 
@@ -1951,10 +1959,11 @@ app.MapGet("/api/items/{id}/pages", async (string id) =>
         item.Id,
         pageCount,
         format = item.Format,
+        sourceVersion,
         pages = Enumerable.Range(0, pageCount).Select(i => new
         {
             index = i,
-            imageUrl = $"/api/items/{item.Id}/page/{i}"
+            imageUrl = $"/api/items/{escapedId}/page/{i}?v={sourceVersion}"
         })
     });
 });
@@ -1963,32 +1972,39 @@ app.MapGet("/api/items/{id}/page/{page:int}", async (string id, int page, HttpRe
 {
     var item = (await cache.GetItemsAsync()).FirstOrDefault(i => i.Id == id);
     if (item is null) return Results.NotFound();
-    response.Headers.CacheControl = "private, max-age=3600";
     if (item.Format == "PDF") return Results.BadRequest(new { error = "PDF pages are handled through the browser PDF viewer in this prototype." });
+
+    var sourceVersion = ArchiveReader.GetArchiveVersionStamp(item.Path);
+    response.Headers.CacheControl = "public, max-age=604800, immutable";
+    response.Headers.ETag = $"\"{item.Id}-{sourceVersion}-page-{page}\"";
 
     var image = await ArchiveReader.GetImagePageAsync(item.Path, page);
     return image is null
         ? Results.NotFound()
-        : Results.File(image.Value.Bytes, image.Value.ContentType, enableRangeProcessing: true);
+        : Results.File(image.Value.Bytes, image.Value.ContentType, lastModified: item.Modified, entityTag: new Microsoft.Net.Http.Headers.EntityTagHeaderValue($"\"{item.Id}-{sourceVersion}-page-{page}\""), enableRangeProcessing: true);
 });
 
 app.MapGet("/api/items/{id}/page/{page:int}/thumb", async (string id, int page, int? w, HttpResponse response) =>
 {
     var item = cache.TryGetCachedItem(id) ?? (await cache.GetItemsAsync()).FirstOrDefault(i => i.Id == id);
     if (item is null) return Results.NotFound();
-    response.Headers.CacheControl = "private, max-age=3600";
     if (item.Format == "PDF") return Results.BadRequest(new { error = "PDF pages are handled through the browser PDF viewer in this prototype." });
     if (GuidevaultLibraryIoGate.IsBusy)
     {
+        response.Headers.CacheControl = "no-store";
         response.Headers["Retry-After"] = "15";
         return Results.StatusCode(503);
     }
+
+    var sourceVersion = ArchiveReader.GetArchiveVersionStamp(item.Path);
+    response.Headers.CacheControl = "public, max-age=604800, immutable";
+    response.Headers.ETag = $"\"{item.Id}-{sourceVersion}-page-{page}-thumb\"";
 
     var width = Math.Clamp(w ?? 180, 80, 360);
     var image = await ArchiveReader.GetImagePageThumbnailAsync(item.Path, page, width);
     return image is null
         ? Results.NotFound()
-        : Results.File(image.Value.Bytes, image.Value.ContentType, enableRangeProcessing: true);
+        : Results.File(image.Value.Bytes, image.Value.ContentType, lastModified: item.Modified, entityTag: new Microsoft.Net.Http.Headers.EntityTagHeaderValue($"\"{item.Id}-{sourceVersion}-page-{page}-thumb-{width}\""), enableRangeProcessing: true);
 });
 
 app.MapGet("/api/items/{id}/cover-options", async (string id) =>
@@ -2008,8 +2024,7 @@ app.MapGet("/api/items/{id}/cover-options", async (string id) =>
 
     var archiveExtension = Path.GetExtension(item.Path);
     var canDeletePages = archiveExtension.Equals(".cbz", StringComparison.OrdinalIgnoreCase) || archiveExtension.Equals(".zip", StringComparison.OrdinalIgnoreCase);
-    var archiveStamp = "0";
-    try { archiveStamp = File.GetLastWriteTimeUtc(item.Path).Ticks.ToString(); } catch { }
+    var archiveStamp = ArchiveReader.GetArchiveVersionStamp(item.Path);
 
     return Results.Ok(new
     {
@@ -8283,6 +8298,13 @@ public sealed class LibraryCache
         }
     }
 
+    private static bool PathsEqual(string? left, string? right)
+    {
+        if (string.IsNullOrWhiteSpace(left) || string.IsNullOrWhiteSpace(right)) return false;
+        try { return string.Equals(Path.GetFullPath(left), Path.GetFullPath(right), StringComparison.OrdinalIgnoreCase); }
+        catch { return string.Equals(left.Trim(), right.Trim(), StringComparison.OrdinalIgnoreCase); }
+    }
+
     private static bool CachedItemMatchesFile(LibraryItem item, FileInfo info)
     {
         try
@@ -8544,6 +8566,8 @@ public sealed class LibraryCache
                 if (cached is null) previousItems.TryGetValue(id, out cached);
                 var hasMatchingCache = cached is not null && CachedItemMatchesFile(cached, info);
                 var hasMovedMatchingCache = !hasMatchingCache && cached is not null && CachedItemLooksLikeSamePhysicalFile(cached, info);
+                if (cached is not null && !hasMatchingCache && PathsEqual(cached.Path, info.FullName))
+                    ArchiveReader.ClearCacheForPath(info.FullName);
                 if ((hasMatchingCache || hasMovedMatchingCache) && cached is not null)
                 {
                     if (hasMovedMatchingCache) _identityStore.RememberRename(cached.Path, info.FullName, cached.Id);
@@ -10637,6 +10661,45 @@ public static class ArchiveReader
         CoverCache.Clear();
     }
 
+    public static string GetArchiveVersionStamp(string archivePath)
+    {
+        try
+        {
+            var info = new FileInfo(archivePath);
+            if (!info.Exists) return "missing";
+            return $"{info.Length:x}-{info.LastWriteTimeUtc.Ticks:x}";
+        }
+        catch
+        {
+            return "0";
+        }
+    }
+
+    public static void ClearCacheForPath(string archivePath)
+    {
+        ClearCoverCacheForPath(archivePath);
+        ClearEntryCacheForPath(archivePath);
+    }
+
+    private static string ArchivePathCachePrefix(string archivePath)
+    {
+        try { return Path.GetFullPath(archivePath).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar).ToLowerInvariant(); }
+        catch { return (archivePath ?? string.Empty).Trim().TrimEnd('/', '\\').ToLowerInvariant(); }
+    }
+
+    private static string ArchiveVersionedCacheKey(string archivePath)
+        => $"{ArchivePathCachePrefix(archivePath)}|{GetArchiveVersionStamp(archivePath)}";
+
+    private static void ClearEntryCacheForPath(string archivePath)
+    {
+        var prefix = ArchivePathCachePrefix(archivePath);
+        foreach (var key in EntryCache.Keys)
+        {
+            if (key.StartsWith(prefix + "|", StringComparison.OrdinalIgnoreCase) || string.Equals(key, archivePath, StringComparison.OrdinalIgnoreCase))
+                EntryCache.TryRemove(key, out _);
+        }
+    }
+
     public static object GetDiagnostics()
     {
         var diskFiles = 0;
@@ -10696,7 +10759,7 @@ public static class ArchiveReader
     {
         try
         {
-            EntryCache.TryRemove(archivePath, out _);
+            ClearEntryCacheForPath(archivePath);
             var key = CoverCacheKey(archivePath);
             CoverCache.TryRemove(key, out _);
             if (Directory.Exists(CoverCacheDirectory))
@@ -11556,8 +11619,7 @@ public static class ArchiveReader
 
     private static void ClearCacheForWrittenArchive(string archivePath)
     {
-        ClearCoverCacheForPath(archivePath);
-        EntryCache.TryRemove(archivePath, out _);
+        ClearCacheForPath(archivePath);
     }
 
     private static void TryDeleteDirectory(string path)
@@ -11807,7 +11869,7 @@ public static class ArchiveReader
             if (image is null)
             {
                 CoverCache.TryRemove(key, out _);
-                EntryCache.TryRemove(archivePath, out _);
+                ClearEntryCacheForPath(archivePath);
                 return null;
             }
             await TryWriteCoverToDiskAsync(key, image.Value.Bytes, image.Value.ContentType);
@@ -11816,7 +11878,7 @@ public static class ArchiveReader
         catch
         {
             CoverCache.TryRemove(key, out _);
-            EntryCache.TryRemove(archivePath, out _);
+            ClearEntryCacheForPath(archivePath);
             return null;
         }
         finally
@@ -12101,8 +12163,7 @@ public static class ArchiveReader
             entry.Delete();
         }
 
-        ClearCoverCacheForPath(archivePath);
-        EntryCache.TryRemove(archivePath, out _);
+        ClearCacheForPath(archivePath);
         return true;
     }
 
@@ -12116,7 +12177,8 @@ public static class ArchiveReader
 
     private static string[] GetImageEntries(string archivePath)
     {
-        if (EntryCache.TryGetValue(archivePath, out var cached) && cached.Length > 0) return cached;
+        var cacheKey = ArchiveVersionedCacheKey(archivePath);
+        if (EntryCache.TryGetValue(cacheKey, out var cached) && cached.Length > 0) return cached;
 
         try
         {
@@ -12124,14 +12186,16 @@ public static class ArchiveReader
 
             // Cache only successful non-empty reads. Temporary network/archive read
             // failures should not poison the session and make covers/pages randomly
-            // unavailable until Guidevault restarts.
-            if (entries.Length > 0) EntryCache[archivePath] = entries;
-            else EntryCache.TryRemove(archivePath, out _);
+            // unavailable until Guidevault restarts. The cache key includes file size
+            // and LastWriteTime so replacing/fixing an archive at the same path cannot
+            // leave the reader using an old page manifest.
+            if (entries.Length > 0) EntryCache[cacheKey] = entries;
+            else EntryCache.TryRemove(cacheKey, out _);
             return entries;
         }
         catch
         {
-            EntryCache.TryRemove(archivePath, out _);
+            EntryCache.TryRemove(cacheKey, out _);
             return [];
         }
     }
@@ -13785,5 +13849,6 @@ static class GuidevaultLibraryIoGate
 
 static class GuidevaultBuildInfo
 {
-    public const string Version = "0.9.213";
+    public const string Version = "0.9.214";
 }
+
