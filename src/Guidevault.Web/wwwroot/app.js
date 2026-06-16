@@ -104,7 +104,7 @@ const GUIDEVAULT_LIBRARY_CHUNK_YIELD_MS = 30;
 const GUIDEVAULT_STARTUP_STATUS_HIDE_MS = 2400;
 const GUIDEVAULT_LIBRARY_SEARCH_DEBOUNCE_MS = 180;
 const GUIDEVAULT_SORT_COLLATOR = new Intl.Collator(undefined, { numeric: true, sensitivity: 'base' });
-const GUIDEVAULT_APP_VERSION = '0.9.210';
+const GUIDEVAULT_APP_VERSION = '0.9.211';
 const GUIDEVAULT_FILENAME_SCHEMA_KEY = 'guidevault.filenameRename.schema.v1';
 const GUIDEVAULT_FILE_ORGANIZATION_TEMPLATE_PRESETS_KEY = 'guidevault.fileOrganization.templatePresets.v2';
 const GUIDEVAULT_FILE_ORGANIZATION_TEMPLATE_PRESETS_LEGACY_KEY = 'guidevault.fileOrganization.templatePresets.v1';
@@ -3473,27 +3473,46 @@ async function pollHomeAssistantCommands() {
   }
 }
 
+function normalizeHomeAssistantCommandItemKind(value = '') {
+  const text = String(value || '').trim().toLowerCase().replace(/[-_]+/g, ' ').replace(/\s+/g, ' ');
+  if (!text) return '';
+  if (['manual', 'manuals', 'game manual', 'game manuals'].includes(text)) return 'Manual';
+  if (['strategy', 'strategy guide', 'strategy guides', 'guide', 'guides', 'walkthrough', 'walkthroughs'].includes(text)) return 'Strategy Guide';
+  if (['magazine', 'magazines', 'issue', 'issues'].includes(text)) return 'Magazine';
+  if (text === 'strategy guide') return 'Strategy Guide';
+  if (text === 'manual') return 'Manual';
+  if (text === 'magazine') return 'Magazine';
+  return String(value || '').trim();
+}
+
 async function resolveHomeAssistantCommandItem(command = {}) {
+  const requestedKind = normalizeHomeAssistantCommandItemKind(command.itemKind || command.kind || command.contentType || command.itemType || '');
+  const kindMatches = item => !requestedKind || normalizeHomeAssistantCommandItemKind(item?.kind || '') === requestedKind;
+  const titleText = item => String(displayTitle(item) || item?.title || '').trim();
   const itemId = String(command.itemId || '').trim();
   if (itemId) {
-    const local = state.items.find(item => String(item.id || '') === itemId);
+    const local = state.items.find(item => String(item.id || '') === itemId && kindMatches(item));
     if (local) return local;
     const res = await fetch(`/api/items/${encodeURIComponent(itemId)}`, { cache: 'no-store' });
-    if (res.ok) return await res.json();
+    if (res.ok) {
+      const item = await res.json();
+      return kindMatches(item) ? item : null;
+    }
   }
 
   const query = String(command.itemTitle || command.query || '').trim();
   if (!query) return null;
   const lower = query.toLowerCase();
-  const local = state.items.find(item => String(displayTitle(item) || item.title || '').toLowerCase() === lower)
-    || state.items.find(item => String(displayTitle(item) || item.title || '').toLowerCase().includes(lower));
+  const local = state.items.find(item => kindMatches(item) && titleText(item).toLowerCase() === lower)
+    || state.items.find(item => kindMatches(item) && titleText(item).toLowerCase().includes(lower));
   if (local) return local;
 
-  const res = await fetch(`/api/library/page?page=1&pageSize=25&q=${encodeURIComponent(query)}`, { cache: 'no-store' });
+  const params = new URLSearchParams({ page: '1', pageSize: '50', q: query });
+  const res = await fetch(`/api/library/page?${params.toString()}`, { cache: 'no-store' });
   if (!res.ok) return null;
   const data = await res.json();
-  const items = Array.isArray(data?.items) ? data.items : [];
-  return items.find(item => String(displayTitle(item) || item.title || '').toLowerCase() === lower) || items[0] || null;
+  const items = (Array.isArray(data?.items) ? data.items : []).filter(kindMatches);
+  return items.find(item => titleText(item).toLowerCase() === lower) || items[0] || null;
 }
 
 async function applyHomeAssistantCommand(command = {}) {

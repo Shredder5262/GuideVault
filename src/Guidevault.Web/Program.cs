@@ -17,7 +17,7 @@ using SixLabors.ImageSharp.Processing;
 using Microsoft.AspNetCore.Mvc;
 
 var builder = WebApplication.CreateBuilder(args);
-const string GuidevaultVersion = "0.9.210";
+const string GuidevaultVersion = "0.9.211";
 var app = builder.Build();
 var metadataJsonOptions = new JsonSerializerOptions(JsonSerializerDefaults.Web) { PropertyNameCaseInsensitive = true };
 var options = app.Configuration.GetSection("Guidevault").Get<GuidevaultOptions>() ?? new GuidevaultOptions();
@@ -4902,17 +4902,42 @@ public sealed class GuidevaultHomeAssistantConnector
     private static GuidevaultHomeAssistantCommandRequest NormalizeCommandRequest(GuidevaultHomeAssistantCommandRequest request)
     {
         request ??= new GuidevaultHomeAssistantCommandRequest();
+        var action = NormalizeAction(request.Action);
+        var impliedItemKind = ItemKindFromOpenAction(request.Action);
         return new GuidevaultHomeAssistantCommandRequest
         {
-            Action = NormalizeAction(request.Action),
+            Action = action,
             ItemId = Clean(request.ItemId, string.Empty),
             ItemTitle = Clean(request.ItemTitle, string.Empty),
+            ItemKind = NormalizeHomeAssistantItemKind(request.ItemKind, request.Kind, request.ContentType, request.ItemType, impliedItemKind),
             Query = Clean(request.Query, string.Empty),
             Page = Math.Max(0, request.Page),
             Zoom = request.Zoom,
             DisplayMode = Clean(request.DisplayMode, string.Empty),
             Message = Clean(request.Message, string.Empty)
         };
+    }
+
+    private static string NormalizeHomeAssistantItemKind(params string?[] values)
+    {
+        foreach (var value in values)
+        {
+            var raw = Clean(value, string.Empty);
+            if (string.IsNullOrWhiteSpace(raw)) continue;
+            var text = raw.Trim().ToLowerInvariant().Replace('-', ' ').Replace('_', ' ');
+            text = Regex.Replace(text, "\\s+", " ").Trim();
+            return text switch
+            {
+                "manual" or "manuals" or "game manual" or "game manuals" => "Manual",
+                "strategy" or "strategy guide" or "strategy guides" or "guide" or "guides" or "walkthrough" or "walkthroughs" => "Strategy Guide",
+                "magazine" or "magazines" or "issue" or "issues" => "Magazine",
+                _ when string.Equals(raw.Trim(), "Strategy Guide", StringComparison.OrdinalIgnoreCase) => "Strategy Guide",
+                _ when string.Equals(raw.Trim(), "Manual", StringComparison.OrdinalIgnoreCase) => "Manual",
+                _ when string.Equals(raw.Trim(), "Magazine", StringComparison.OrdinalIgnoreCase) => "Magazine",
+                _ => raw.Trim()
+            };
+        }
+        return string.Empty;
     }
 
     private static string NormalizeAction(string? action)
@@ -4923,13 +4948,25 @@ public sealed class GuidevaultHomeAssistantConnector
             "next" => "next_page",
             "previous" => "previous_page",
             "prev" => "previous_page",
-            "open_guide" => "open",
             "open_item" => "open",
+            "open_guide" or "open_manual" or "open_manuals" or "open_strategy" or "open_strategy_guide" or "open_strategy_guides" or "open_magazine" or "open_magazines" => "open",
             "jump" => "set_page",
             "page" => "set_page",
             "zoom" => "set_zoom",
             "close" => "close_reader",
             _ => text
+        };
+    }
+
+    private static string ItemKindFromOpenAction(string? action)
+    {
+        var text = Clean(action, string.Empty).Trim().ToLowerInvariant().Replace('-', '_').Replace(' ', '_');
+        return text switch
+        {
+            "open_manual" or "open_manuals" => "Manual",
+            "open_strategy" or "open_strategy_guide" or "open_strategy_guides" or "open_guide" => "Strategy Guide",
+            "open_magazine" or "open_magazines" => "Magazine",
+            _ => string.Empty
         };
     }
 
@@ -5050,6 +5087,7 @@ public sealed class GuidevaultHomeAssistantCommandStore
                 Action = request.Action,
                 ItemId = request.ItemId,
                 ItemTitle = request.ItemTitle,
+                ItemKind = request.ItemKind,
                 Query = request.Query,
                 Page = request.Page,
                 Zoom = request.Zoom,
@@ -5110,6 +5148,10 @@ public sealed class GuidevaultHomeAssistantCommandRequest
     public string Action { get; set; } = "status";
     public string ItemId { get; set; } = string.Empty;
     public string ItemTitle { get; set; } = string.Empty;
+    public string ItemKind { get; set; } = string.Empty;
+    public string Kind { get; set; } = string.Empty;
+    public string ContentType { get; set; } = string.Empty;
+    public string ItemType { get; set; } = string.Empty;
     public string Query { get; set; } = string.Empty;
     public int Page { get; set; }
     public int Zoom { get; set; }
@@ -5123,6 +5165,7 @@ public sealed class GuidevaultHomeAssistantCommand
     public string Action { get; set; } = "status";
     public string ItemId { get; set; } = string.Empty;
     public string ItemTitle { get; set; } = string.Empty;
+    public string ItemKind { get; set; } = string.Empty;
     public string Query { get; set; } = string.Empty;
     public int Page { get; set; }
     public int Zoom { get; set; }
@@ -13701,5 +13744,5 @@ static class GuidevaultLibraryIoGate
 
 static class GuidevaultBuildInfo
 {
-    public const string Version = "0.9.210";
+    public const string Version = "0.9.211";
 }

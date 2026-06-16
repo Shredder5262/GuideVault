@@ -4,9 +4,9 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Guidevault</title>
-  <link rel="icon" type="image/x-icon" href="/assets/favicon.ico?v=0.9.210" />
-  <link rel="shortcut icon" type="image/x-icon" href="/assets/favicon.ico?v=0.9.210" />
-  <link rel="stylesheet" href="/styles.css?v=0.9.210" />
+  <link rel="icon" type="image/x-icon" href="/assets/favicon.ico?v=0.9.211" />
+  <link rel="shortcut icon" type="image/x-icon" href="/assets/favicon.ico?v=0.9.211" />
+  <link rel="stylesheet" href="/styles.css?v=0.9.211" />
 </head>
 <body class="right-collapsed auth-locked">
   <section id="loginView" class="login-view" aria-labelledby="loginTitle">
@@ -1543,7 +1543,7 @@
                 </div>
                 <div class="server-files-writeback-callout">
                   <strong>Command endpoint:</strong>
-                  <span>POST /api/home-assistant/command with Authorization: Bearer &lt;GuideVault Command Token&gt;. Supported actions include open, next_page, previous_page, set_page, zoom_in, zoom_out, set_zoom, set_display_mode, close_reader, and toggle_overlay.</span>
+                  <span>POST /api/home-assistant/command with Authorization: Bearer &lt;GuideVault Command Token&gt;. Supported actions include open, next_page, previous_page, set_page, zoom_in, zoom_out, set_zoom, set_display_mode, close_reader, and toggle_overlay. Open commands can include itemKind Manual, Strategy Guide, or Magazine, or use open_manual, open_strategy_guide, and open_magazine aliases.</span>
                 </div>
               </article>
             </div>
@@ -1864,6 +1864,17 @@
               <h2>Update History</h2>
             </div>
             <div class="system-update-list">
+              <details class="system-update-entry" open>
+                <summary>
+                  <span>Guidevault 0.9.211 - Home Assistant Content Type Targeting</span>
+                  <em>Installed</em>
+                </summary>
+                <ul>
+                  <li>Adds Home Assistant command targeting for Manual, Strategy Guide, and Magazine content types.</li>
+                  <li>Allows open commands to include itemKind, kind, contentType, or itemType when multiple items match the same title.</li>
+                  <li>Improves Home Assistant item resolution so title searches prefer the requested content type.</li>
+                </ul>
+              </details>
               <details class="system-update-entry" open>
                 <summary>
                   <span>Guidevault 0.9.210 - Cover Loading Responsiveness</span>
@@ -2985,7 +2996,7 @@
   </dialog>
 
 
-  <script src="/app.js?v=0.9.210-common-game-fields"></script>
+  <script src="/app.js?v=0.9.211-common-game-fields"></script>
 </body>
 </html>
 

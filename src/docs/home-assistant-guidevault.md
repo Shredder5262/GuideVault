@@ -1,6 +1,6 @@
 # GuideVault Home Assistant Connector
 
-GuideVault 0.9.203 adds a bidirectional Home Assistant connector.
+GuideVault 0.9.211 includes a bidirectional Home Assistant connector with content-type targeting for open commands.
 
 ## GuideVault settings
 
@@ -36,7 +36,8 @@ Content-Type: application/json
 
 Supported actions:
 
-- `open`
+- `open` — accepts `itemId`, `itemTitle`, `query`, and optional `itemKind` / `kind` / `contentType` / `itemType` values such as `Manual`, `Strategy Guide`, or `Magazine`
+- `open_manual`, `open_strategy_guide`, and `open_magazine` — aliases for `open` with the content type inferred
 - `next_page`
 - `previous_page`
 - `first_page`
@@ -78,6 +79,19 @@ rest_command:
       Content-Type: "application/json"
     payload: '{"action":"open","itemId":"{{ item_id }}"}'
 
+  guidevault_open_by_title_and_type:
+    url: "http://GUIDEVAULT_HOST:5478/api/home-assistant/command"
+    method: post
+    headers:
+      Authorization: "Bearer GUIDEVAULT_COMMAND_TOKEN"
+      Content-Type: "application/json"
+    payload: >
+      {
+        "action": "open",
+        "itemTitle": "{{ item_title }}",
+        "itemKind": "{{ item_kind | default('') }}"
+      }
+
   guidevault_set_page:
     url: "http://GUIDEVAULT_HOST:5478/api/home-assistant/command"
     method: post
@@ -94,6 +108,26 @@ rest_command:
       Content-Type: "application/json"
     payload: '{"action":"set_zoom","zoom":{{ zoom | int }}}'
 ```
+
+## Opening a specific content type
+
+When a title exists as a manual, strategy guide, and magazine reference, include `itemKind` so GuideVault opens the intended type:
+
+```yaml
+action: rest_command.guidevault_command
+data:
+  command_action: open
+  item_title: "Super Mario 64"
+  item_kind: "Strategy Guide"
+```
+
+Accepted content-type values include:
+
+- `Manual`
+- `Strategy Guide`
+- `Magazine`
+
+Aliases such as `manuals`, `guides`, `strategy`, and `magazines` are normalized by GuideVault. You can also use `command_action: open_manual`, `command_action: open_strategy_guide`, or `command_action: open_magazine`.
 
 ## Automation idea
 
