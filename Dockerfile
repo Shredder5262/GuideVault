@@ -20,6 +20,12 @@ ENV PAGEQUEST__DATA__ROOT=/data
 ENV GUIDEVAULT_LIBRARY_PATH=/data/library
 ENV PAGEQUEST_LIBRARY_PATH=/data/library
 
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends poppler-utils \
+    && command -v pdftoppm \
+    && command -v pdftocairo \
+    && rm -rf /var/lib/apt/lists/*
+
 RUN mkdir -p /data/library
 
 COPY --from=build /app/publish .

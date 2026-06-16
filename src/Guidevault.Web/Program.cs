@@ -17,7 +17,7 @@ using SixLabors.ImageSharp.Processing;
 using Microsoft.AspNetCore.Mvc;
 
 var builder = WebApplication.CreateBuilder(args);
-const string GuidevaultVersion = "0.9.217";
+const string GuidevaultVersion = "0.9.218";
 var app = builder.Build();
 var metadataJsonOptions = new JsonSerializerOptions(JsonSerializerDefaults.Web) { PropertyNameCaseInsensitive = true };
 var options = app.Configuration.GetSection("Guidevault").Get<GuidevaultOptions>() ?? new GuidevaultOptions();
@@ -13849,6 +13849,6 @@ static class GuidevaultLibraryIoGate
 
 static class GuidevaultBuildInfo
 {
-    public const string Version = "0.9.217";
+    public const string Version = "0.9.218";
 }
 
