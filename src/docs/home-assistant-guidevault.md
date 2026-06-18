@@ -1,6 +1,6 @@
 # GuideVault Home Assistant Connector
 
-GuideVault 0.9.213 includes a bidirectional Home Assistant connector with content-type targeting, magazine issue targeting, reader controls, fullscreen controls, and reader background controls.
+GuideVault 0.9.215 includes a bidirectional Home Assistant connector with content-type targeting, magazine issue targeting, reader controls, fullscreen controls, and reader background controls.
 
 ## GuideVault settings
 
@@ -19,10 +19,37 @@ GuideVault publishes these entities through the Home Assistant REST API:
 - `sensor.guidevault_current_item`
 - `sensor.guidevault_page`
 - `sensor.guidevault_library_items`
+- `sensor.guidevault_background`
+- `binary_sensor.guidevault_fullscreen`
 
-The reader sensors include attributes such as item id, item title, item kind, page, page count, progress percentage, zoom, display mode, and transition mode.
+The reader sensors include attributes such as item id, item title, item kind, page, page count, progress percentage, zoom, display mode, transition mode, fullscreen state, current background, background brightness, and available installed background options.
 
 GuideVault can also fire a `guidevault_event` Home Assistant event when reader activity or commands occur.
+
+
+## Background status payload
+
+`GET /api/home-assistant/status` now includes both the top-level installed background catalog and the current reader background state:
+
+```json
+{
+  "reader": {
+    "fullscreen": false,
+    "background": "librarydesk.png",
+    "backgroundDisplayName": "Library Desk",
+    "backgroundBrightness": 72,
+    "availableBackgrounds": [
+      { "name": "librarydesk.png", "displayName": "Library Desk", "url": "/assets/backgrounds/librarydesk.png" }
+    ]
+  },
+  "availableBackgrounds": [
+    { "name": "librarydesk.png", "displayName": "Library Desk", "url": "/assets/backgrounds/librarydesk.png" }
+  ],
+  "defaultBackground": "librarydesk.png"
+}
+```
+
+The background catalog is read server-side from `/wwwroot/assets/backgrounds` first, then `/wwwroot/backgrounds` as a legacy fallback.
 
 ## Command endpoint
 
@@ -53,6 +80,8 @@ Supported actions:
 - `exit_fullscreen`
 - `toggle_fullscreen`
 - `set_background`
+- `next_background`
+- `previous_background`
 - `set_background_brightness`
 - `close_reader`
 - `status`
@@ -154,6 +183,12 @@ action: rest_command.guidevault_command
 data:
   command_action: set_background
   background: "librarydesk.png"
+```
+
+```yaml
+action: rest_command.guidevault_command
+data:
+  command_action: next_background
 ```
 
 ```yaml

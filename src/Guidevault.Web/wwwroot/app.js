@@ -1,4 +1,4 @@
-﻿const state = {
+const state = {
   items: [], filtered: [], selected: null, filter: 'All Content', categoryFilter: '', viewMode: 'all', activeTab: 'overview', customFilter: null,
   reader: { item: null, pages: [], index: 0, animating: false, displayMode: 2, transitionMode: 'stable', overlayVisible: false, advancedVisible: false, bookmarkMenuOpen: false, magnifierSettingsVisible: false, scrubbing: false, shading: null, zoom: 100, fullscreenOnOpen: false, magnifier: null, magnifierActive: false, longPressTimer: null, suppressHitClickUntil: 0, backgrounds: [], background: '', backgroundBrightness: 72 },
   libraryPath: '',
@@ -104,7 +104,7 @@ const GUIDEVAULT_LIBRARY_CHUNK_YIELD_MS = 30;
 const GUIDEVAULT_STARTUP_STATUS_HIDE_MS = 2400;
 const GUIDEVAULT_LIBRARY_SEARCH_DEBOUNCE_MS = 180;
 const GUIDEVAULT_SORT_COLLATOR = new Intl.Collator(undefined, { numeric: true, sensitivity: 'base' });
-const GUIDEVAULT_APP_VERSION = '0.9.218';
+const GUIDEVAULT_APP_VERSION = '0.9.216';
 const GUIDEVAULT_FILENAME_SCHEMA_KEY = 'guidevault.filenameRename.schema.v1';
 const GUIDEVAULT_FILE_ORGANIZATION_TEMPLATE_PRESETS_KEY = 'guidevault.fileOrganization.templatePresets.v2';
 const GUIDEVAULT_FILE_ORGANIZATION_TEMPLATE_PRESETS_LEGACY_KEY = 'guidevault.fileOrganization.templatePresets.v1';
@@ -1115,6 +1115,7 @@ function setReaderVirtualFullscreen(enabled) {
   view.classList.toggle('fullscreen-reader', !!enabled);
   document.body.classList.toggle('reader-is-fullscreen', !!enabled || document.fullscreenElement === stage);
   updateReaderFullscreenUi();
+  scheduleHomeAssistantStatusPublish();
   window.setTimeout(refreshReaderBookSize, 80);
 }
 
@@ -3447,6 +3448,20 @@ function homeAssistantReaderDisplayModeLabel(mode = state.reader.displayMode) {
   return 'two_page';
 }
 
+function isReaderFullscreenActive() {
+  return document.fullscreenElement === $('readerStage') || isReaderVirtualFullscreen();
+}
+
+function homeAssistantAvailableBackgroundsPayload() {
+  return (state.reader.backgrounds || [])
+    .filter(bg => bg && String(bg.name || '').trim())
+    .map(bg => ({
+      name: String(bg.name || '').trim(),
+      displayName: String(bg.displayName || readerBackgroundDisplayName(bg.name) || bg.name || '').trim(),
+      url: String(bg.url || '').trim()
+    }));
+}
+
 function buildHomeAssistantReaderStatus(eventType = '', message = '') {
   const readerActive = isReaderActiveForKeys();
   const item = readerActive ? (state.reader.item || {}) : {};
@@ -3457,6 +3472,8 @@ function buildHomeAssistantReaderStatus(eventType = '', message = '') {
     : !$('detailView')?.classList.contains('hidden') ? 'details'
     : !$('settingsView')?.classList.contains('hidden') ? 'settings'
     : 'library';
+  const selectedBackgroundName = String(state.reader.background || '').trim();
+  const selectedBackground = selectedReaderBackground();
   return {
     readerActive,
     view: activeView,
@@ -3469,6 +3486,12 @@ function buildHomeAssistantReaderStatus(eventType = '', message = '') {
     zoom: Math.round(clampNumber(state.reader.zoom, 70, 145, 100)),
     displayMode: readerActive ? homeAssistantReaderDisplayModeLabel() : '',
     transitionMode: readerActive ? normalizeReaderTransitionMode(state.reader.transitionMode || 'stable') : '',
+    fullscreen: isReaderFullscreenActive(),
+    background: selectedBackgroundName,
+    backgroundName: selectedBackgroundName,
+    backgroundDisplayName: selectedBackground?.displayName || readerBackgroundDisplayName(selectedBackgroundName) || 'Default Gradient',
+    backgroundBrightness: Math.round(clampNumber(state.reader.backgroundBrightness ?? loadReaderBackgroundBrightness(), 15, 100, 72)),
+    availableBackgrounds: homeAssistantAvailableBackgroundsPayload(),
     eventType: eventType || '',
     message: message || ''
   };
@@ -3674,6 +3697,8 @@ async function applyHomeAssistantCommand(command = {}) {
     else if (action === 'exit_fullscreen') await exitReaderFullscreenOnly();
     else if (action === 'toggle_fullscreen') await toggleReaderFullscreenFromHomeAssistant();
     else if (action === 'set_background') applyHomeAssistantReaderBackground(command);
+    else if (action === 'next_background') cycleReaderBackground(1);
+    else if (action === 'previous_background') cycleReaderBackground(-1);
     else if (action === 'set_background_brightness') applyHomeAssistantReaderBackgroundBrightness(command);
     else { scheduleHomeAssistantStatusPublish('command_ignored', `Unknown Home Assistant command: ${action}`); return; }
 
@@ -5130,6 +5155,7 @@ function setReaderBackgroundBrightness(value) {
   saveReaderBackgroundBrightness(state.reader.backgroundBrightness);
   applyReaderBackground();
   updateReaderOverlay();
+  scheduleHomeAssistantStatusPublish();
 }
 function selectedReaderBackground() {
   const selected = String(state.reader.background || '').trim();
@@ -5196,6 +5222,7 @@ async function loadReaderBackgrounds() {
     populateReaderBackgroundSelect();
     syncReadingProfileBackgroundOptions();
     applyReaderBackground();
+    scheduleHomeAssistantStatusPublish();
   } catch (err) {
     console.warn('Guidevault reader backgrounds unavailable from API; using static /assets/backgrounds fallback.', err);
     state.reader.backgrounds = fallback;
@@ -5206,6 +5233,7 @@ async function loadReaderBackgrounds() {
     populateReaderBackgroundSelect();
     syncReadingProfileBackgroundOptions();
     applyReaderBackground();
+    scheduleHomeAssistantStatusPublish();
   }
 }
 
@@ -5216,6 +5244,17 @@ function setReaderBackground(name) {
   saveReaderBackgroundChoice(state.reader.background);
   applyReaderBackground();
   updateReaderOverlay();
+  scheduleHomeAssistantStatusPublish();
+}
+
+function cycleReaderBackground(step = 1) {
+  const backgrounds = state.reader.backgrounds || [];
+  const options = [{ name: '', displayName: 'Default Gradient' }].concat(backgrounds);
+  if (!options.length) return;
+  const current = String(state.reader.background || '').trim();
+  const currentIndex = Math.max(0, options.findIndex(bg => String(bg.name || '') === current));
+  const nextIndex = (currentIndex + (Number(step) >= 0 ? 1 : -1) + options.length) % options.length;
+  setReaderBackground(options[nextIndex]?.name || '');
 }
 
 function resolveReaderBackgroundCommandName(value = '') {
@@ -16319,6 +16358,7 @@ document.addEventListener('fullscreenchange', () => {
   if (nativeReaderFullscreen) setReaderVirtualFullscreen(false);
   document.body.classList.toggle('reader-is-fullscreen', nativeReaderFullscreen || isReaderVirtualFullscreen());
   updateReaderFullscreenUi();
+  scheduleHomeAssistantStatusPublish();
   window.setTimeout(refreshReaderBookSize, 80);
 });
 
@@ -20989,7 +21029,7 @@ function serverFilesConvertRowsHtml(rows = []) {
       <td><span class="conversion-type-pill">${escapeHtml(row.kind || '')}</span></td>
       <td><strong class="conversion-title">${escapeHtml(row.title || '')}</strong></td>
       <td><b>${escapeHtml(row.sourceFormat || '')}</b><small>${escapeHtml(row.sourceFileName || row.fileName || '')}</small></td>
-      <td><b>${escapeHtml(row.targetFormat || '')}</b><small>${escapeHtml(row.outputFileName || 'â€”')}</small></td>
+      <td><b>${escapeHtml(row.targetFormat || '')}</b><small>${escapeHtml(row.outputFileName || '—')}</small></td>
       <td><span class="conversion-size-text">${serverFilesFormatBytes(row.sourceBytes)} &rarr; ${serverFilesFormatBytes(row.outputBytes)}</span></td>
       <td><b>${escapeHtml(row.success ? 'Created' : 'Failed')}</b>${row.message ? `<small>${escapeHtml(row.message)}</small>` : ''}</td>
     </tr>`).join('')}</tbody></table>`;

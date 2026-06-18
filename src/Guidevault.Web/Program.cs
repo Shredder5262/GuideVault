@@ -1,4 +1,4 @@
-﻿using System.Collections.Concurrent;
+using System.Collections.Concurrent;
 using System.IO.Compression;
 using System.Security.Cryptography;
 using System.Text;
@@ -17,7 +17,7 @@ using SixLabors.ImageSharp.Processing;
 using Microsoft.AspNetCore.Mvc;
 
 var builder = WebApplication.CreateBuilder(args);
-const string GuidevaultVersion = "0.9.218";
+const string GuidevaultVersion = "0.9.216";
 var app = builder.Build();
 var metadataJsonOptions = new JsonSerializerOptions(JsonSerializerDefaults.Web) { PropertyNameCaseInsensitive = true };
 var options = app.Configuration.GetSection("Guidevault").Get<GuidevaultOptions>() ?? new GuidevaultOptions();
@@ -78,7 +78,72 @@ var fileConversionJobs = new FileConversionJobStore();
 var cache = new LibraryCache(loadedSettings.Libraries, metadataStore, fileIdentityStore, indexCachePath, taskMonitor);
 var updateChecker = new StableUpdateChecker(options.Updates, GuidevaultVersion);
 var categoryCoverPrewarmGate = new SemaphoreSlim(1, 1);
-var homeAssistantConnector = new GuidevaultHomeAssistantConnector(serverSettingsStore, app.Logger);
+var homeAssistantConnector = new GuidevaultHomeAssistantConnector(serverSettingsStore, app.Logger, GetReaderBackgroundCatalog);
+
+
+ReaderBackgroundCatalog GetReaderBackgroundCatalog()
+{
+    var allowedExtensions = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+    {
+        ".png", ".jpg", ".jpeg", ".webp", ".gif", ".bmp"
+    };
+
+    var activeBackgroundsPath = Directory.Exists(readerBackgroundsPath)
+        ? readerBackgroundsPath
+        : legacyReaderBackgroundsPath;
+    var backgroundUrlBase = Directory.Exists(readerBackgroundsPath)
+        ? "/assets/backgrounds"
+        : "/backgrounds";
+
+    var backgroundFiles = Directory.Exists(activeBackgroundsPath)
+        ? Directory.EnumerateFiles(activeBackgroundsPath)
+        : Enumerable.Empty<string>();
+
+    var backgrounds = backgroundFiles
+        .Where(file => allowedExtensions.Contains(Path.GetExtension(file)))
+        .Select(file =>
+        {
+            var fileName = Path.GetFileName(file);
+            var baseName = Path.GetFileNameWithoutExtension(fileName)
+                .Replace('-', ' ')
+                .Replace('_', ' ')
+                .Trim();
+            var displayName = fileName.ToLowerInvariant() switch
+            {
+                "adventuremap.png" => "Adventure Map",
+                "bathroom.png" => "Bathroom",
+                "gamerbedroom.png" => "Gamer Bedroom",
+                "librarydesk.png" => "Library Desk",
+                "livingroom.png" => "Living Room",
+                "schoolbus.png" => "School Bus",
+                "spacehud.png" => "Space HUD",
+                "warriorhud.png" => "Warrior HUD",
+                "wood.png" => "Wood",
+                _ => string.IsNullOrWhiteSpace(baseName)
+                    ? fileName
+                    : System.Globalization.CultureInfo.CurrentCulture.TextInfo.ToTitleCase(baseName.ToLowerInvariant())
+            };
+            return new ReaderBackgroundInfo
+            {
+                Name = fileName,
+                DisplayName = displayName,
+                Url = $"{backgroundUrlBase}/{Uri.EscapeDataString(fileName)}"
+            };
+        })
+        .OrderBy(bg => bg.DisplayName, StringComparer.OrdinalIgnoreCase)
+        .ToList();
+
+    var defaultName = backgrounds.FirstOrDefault(bg => bg.Name.Equals("librarydesk.png", StringComparison.OrdinalIgnoreCase))?.Name
+        ?? backgrounds.FirstOrDefault()?.Name
+        ?? string.Empty;
+
+    return new ReaderBackgroundCatalog
+    {
+        Folder = activeBackgroundsPath,
+        DefaultName = defaultName,
+        Backgrounds = backgrounds
+    };
+}
 
 void RecordSystemEvent(string category, string title, string message = "", string source = "server", string? itemId = null, string? itemTitle = null)
 {
@@ -553,69 +618,7 @@ app.MapGet("/api/tasks", () => Results.Ok(new { tasks = taskMonitor.RecentTasks(
 app.MapPost("/api/tasks/clear", () => Results.Ok(new { cleared = taskMonitor.ClearNonRunning(), tasks = taskMonitor.RecentTasks() }));
 
 
-app.MapGet("/api/reader/backgrounds", () =>
-{
-    var allowedExtensions = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
-    {
-        ".png", ".jpg", ".jpeg", ".webp", ".gif", ".bmp"
-    };
-
-    var activeBackgroundsPath = Directory.Exists(readerBackgroundsPath)
-        ? readerBackgroundsPath
-        : legacyReaderBackgroundsPath;
-    var backgroundUrlBase = Directory.Exists(readerBackgroundsPath)
-        ? "/assets/backgrounds"
-        : "/backgrounds";
-
-    var backgroundFiles = Directory.Exists(activeBackgroundsPath)
-        ? Directory.EnumerateFiles(activeBackgroundsPath)
-        : Enumerable.Empty<string>();
-
-    var backgrounds = backgroundFiles
-        .Where(file => allowedExtensions.Contains(Path.GetExtension(file)))
-        .Select(file =>
-        {
-            var fileName = Path.GetFileName(file);
-            var baseName = Path.GetFileNameWithoutExtension(fileName)
-                .Replace('-', ' ')
-                .Replace('_', ' ')
-                .Trim();
-            var displayName = fileName.ToLowerInvariant() switch
-            {
-                "adventuremap.png" => "Adventure Map",
-                "bathroom.png" => "Bathroom",
-                "gamerbedroom.png" => "Gamer Bedroom",
-                "librarydesk.png" => "Library Desk",
-                "livingroom.png" => "Living Room",
-                "schoolbus.png" => "School Bus",
-                "spacehud.png" => "Space HUD",
-                "warriorhud.png" => "Warrior HUD",
-                "wood.png" => "Wood",
-                _ => string.IsNullOrWhiteSpace(baseName)
-                    ? fileName
-                    : System.Globalization.CultureInfo.CurrentCulture.TextInfo.ToTitleCase(baseName.ToLowerInvariant())
-            };
-            return new
-            {
-                name = fileName,
-                displayName,
-                url = $"{backgroundUrlBase}/{Uri.EscapeDataString(fileName)}"
-            };
-        })
-        .OrderBy(bg => bg.displayName, StringComparer.OrdinalIgnoreCase)
-        .ToArray();
-
-    var defaultName = backgrounds.FirstOrDefault(bg => bg.name.Equals("librarydesk.png", StringComparison.OrdinalIgnoreCase))?.name
-        ?? backgrounds.FirstOrDefault()?.name
-        ?? string.Empty;
-
-    return Results.Ok(new
-    {
-        folder = activeBackgroundsPath,
-        defaultName,
-        backgrounds
-    });
-});
+app.MapGet("/api/reader/backgrounds", () => Results.Ok(GetReaderBackgroundCatalog()));
 
 
 app.MapPost("/api/library/rescan", () =>
@@ -4718,20 +4721,38 @@ public sealed class GuidevaultServerSettings
 public sealed record GuidevaultBackupResult(string FileName, string Path, long SizeBytes, DateTimeOffset CreatedAt, string BackupDirectory);
 
 
+
+public sealed class ReaderBackgroundCatalog
+{
+    public static ReaderBackgroundCatalog Empty { get; } = new();
+    public string Folder { get; set; } = string.Empty;
+    public string DefaultName { get; set; } = string.Empty;
+    public IReadOnlyList<ReaderBackgroundInfo> Backgrounds { get; set; } = Array.Empty<ReaderBackgroundInfo>();
+}
+
+public sealed class ReaderBackgroundInfo
+{
+    public string Name { get; set; } = string.Empty;
+    public string DisplayName { get; set; } = string.Empty;
+    public string Url { get; set; } = string.Empty;
+}
+
 public sealed class GuidevaultHomeAssistantConnector
 {
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web) { WriteIndented = false };
     private static readonly HttpClient Client = new() { Timeout = TimeSpan.FromSeconds(8) };
     private readonly GuidevaultServerSettingsStore _settingsStore;
     private readonly ILogger _logger;
+    private readonly Func<ReaderBackgroundCatalog> _readerBackgroundCatalog;
     private readonly GuidevaultHomeAssistantCommandStore _commands = new();
     private readonly object _statusGate = new();
     private GuidevaultHomeAssistantReaderStatus _readerStatus = new();
 
-    public GuidevaultHomeAssistantConnector(GuidevaultServerSettingsStore settingsStore, ILogger logger)
+    public GuidevaultHomeAssistantConnector(GuidevaultServerSettingsStore settingsStore, ILogger logger, Func<ReaderBackgroundCatalog>? readerBackgroundCatalog = null)
     {
         _settingsStore = settingsStore;
         _logger = logger;
+        _readerBackgroundCatalog = readerBackgroundCatalog ?? (() => ReaderBackgroundCatalog.Empty);
     }
 
     public GuidevaultHomeAssistantStatusSnapshot GetStatusSnapshot(int libraryItemCount)
@@ -4739,6 +4760,8 @@ public sealed class GuidevaultHomeAssistantConnector
         var settings = _settingsStore.GetSnapshot();
         GuidevaultHomeAssistantReaderStatus reader;
         lock (_statusGate) reader = _readerStatus.Clone();
+        var backgroundCatalog = GetReaderBackgroundCatalogSafe();
+        var enrichedReader = EnrichReaderStatusWithBackgroundCatalog(reader, backgroundCatalog);
         return new GuidevaultHomeAssistantStatusSnapshot
         {
             Enabled = settings.HomeAssistantEnabled,
@@ -4747,9 +4770,12 @@ public sealed class GuidevaultHomeAssistantConnector
             CommandEnabled = settings.HomeAssistantCommandEnabled,
             EntityPrefix = settings.HomeAssistantEntityPrefix,
             CommandToken = settings.HomeAssistantCommandToken,
-            Reader = reader,
+            Reader = enrichedReader,
             LibraryItemCount = libraryItemCount,
-            CommandQueueDepth = _commands.Count
+            CommandQueueDepth = _commands.Count,
+            AvailableBackgrounds = backgroundCatalog.Backgrounds,
+            DefaultBackground = backgroundCatalog.DefaultName,
+            BackgroundFolder = backgroundCatalog.Folder
         };
     }
 
@@ -4784,7 +4810,8 @@ public sealed class GuidevaultHomeAssistantConnector
 
     public async Task<GuidevaultHomeAssistantPublishResult> UpdateReaderStatusAsync(GuidevaultHomeAssistantReaderStatus payload, int libraryItemCount)
     {
-        var normalized = NormalizeReaderStatus(payload);
+        var backgroundCatalog = GetReaderBackgroundCatalogSafe();
+        var normalized = NormalizeReaderStatus(payload, backgroundCatalog);
         lock (_statusGate) _readerStatus = normalized.Clone();
 
         var settings = _settingsStore.GetSnapshot();
@@ -4829,7 +4856,9 @@ public sealed class GuidevaultHomeAssistantConnector
             var activeState = status.ReaderActive ? "reading" : "idle";
             var titleState = TruncateState(status.ItemTitle, status.ReaderActive ? "Open" : "None");
             var pageState = status.ReaderActive && status.Page > 0 ? status.Page.ToString() : "0";
-            var attributes = BuildReaderAttributes(status, libraryItemCount);
+            var backgroundCatalog = GetReaderBackgroundCatalogSafe();
+            status = EnrichReaderStatusWithBackgroundCatalog(status, backgroundCatalog);
+            var attributes = BuildReaderAttributes(status, libraryItemCount, backgroundCatalog);
 
             await PublishStateAsync(settings, $"sensor.{prefix}_reader", activeState, Merge(attributes, new Dictionary<string, object?>
             {
@@ -4846,6 +4875,18 @@ public sealed class GuidevaultHomeAssistantConnector
                 ["friendly_name"] = "Guidevault Reader Page",
                 ["unit_of_measurement"] = "page",
                 ["icon"] = "mdi:file-document-outline"
+            }));
+            var backgroundState = TruncateState(status.BackgroundDisplayName, string.IsNullOrWhiteSpace(status.Background) ? "Default Gradient" : status.Background);
+            await PublishStateAsync(settings, $"sensor.{prefix}_background", backgroundState, Merge(attributes, new Dictionary<string, object?>
+            {
+                ["friendly_name"] = "Guidevault Reader Background",
+                ["icon"] = "mdi:image-filter-hdr"
+            }));
+            await PublishStateAsync(settings, $"binary_sensor.{prefix}_fullscreen", status.Fullscreen ? "on" : "off", Merge(attributes, new Dictionary<string, object?>
+            {
+                ["friendly_name"] = "Guidevault Reader Fullscreen",
+                ["device_class"] = "running",
+                ["icon"] = status.Fullscreen ? "mdi:fullscreen" : "mdi:fullscreen-exit"
             }));
             await PublishStateAsync(settings, $"sensor.{prefix}_library_items", libraryItemCount.ToString(), new Dictionary<string, object?>
             {
@@ -4872,7 +4913,7 @@ public sealed class GuidevaultHomeAssistantConnector
         }
     }
 
-    private static Dictionary<string, object?> BuildReaderAttributes(GuidevaultHomeAssistantReaderStatus status, int libraryItemCount) => new(StringComparer.OrdinalIgnoreCase)
+    private static Dictionary<string, object?> BuildReaderAttributes(GuidevaultHomeAssistantReaderStatus status, int libraryItemCount, ReaderBackgroundCatalog backgroundCatalog) => new(StringComparer.OrdinalIgnoreCase)
     {
         ["reader_active"] = status.ReaderActive,
         ["view"] = status.View,
@@ -4885,17 +4926,62 @@ public sealed class GuidevaultHomeAssistantConnector
         ["zoom"] = status.Zoom,
         ["display_mode"] = status.DisplayMode,
         ["transition_mode"] = status.TransitionMode,
+        ["fullscreen"] = status.Fullscreen,
+        ["background"] = status.Background,
+        ["background_name"] = status.BackgroundName,
+        ["background_display_name"] = status.BackgroundDisplayName,
+        ["background_brightness"] = status.BackgroundBrightness,
+        ["default_background"] = backgroundCatalog.DefaultName,
+        ["available_backgrounds"] = backgroundCatalog.Backgrounds.Select(bg => bg.Name).ToArray(),
+        ["available_background_options"] = backgroundCatalog.Backgrounds.Select(bg => new Dictionary<string, string>
+        {
+            ["name"] = bg.Name,
+            ["display_name"] = bg.DisplayName,
+            ["url"] = bg.Url
+        }).ToArray(),
         ["library_item_count"] = libraryItemCount,
         ["updated_at"] = DateTimeOffset.UtcNow.ToString("O")
     };
 
-    private static GuidevaultHomeAssistantReaderStatus NormalizeReaderStatus(GuidevaultHomeAssistantReaderStatus value)
+    private ReaderBackgroundCatalog GetReaderBackgroundCatalogSafe()
+    {
+        try
+        {
+            return _readerBackgroundCatalog() ?? ReaderBackgroundCatalog.Empty;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Unable to read Guidevault reader backgrounds for Home Assistant.");
+            return ReaderBackgroundCatalog.Empty;
+        }
+    }
+
+    private static GuidevaultHomeAssistantReaderStatus EnrichReaderStatusWithBackgroundCatalog(GuidevaultHomeAssistantReaderStatus status, ReaderBackgroundCatalog backgroundCatalog)
+    {
+        status ??= new GuidevaultHomeAssistantReaderStatus();
+        backgroundCatalog ??= ReaderBackgroundCatalog.Empty;
+        var clone = status.Clone();
+        var background = CleanFirst(clone.Background, clone.BackgroundName, clone.ReaderBackground);
+        var matched = backgroundCatalog.Backgrounds.FirstOrDefault(bg => bg.Name.Equals(background, StringComparison.OrdinalIgnoreCase))
+            ?? backgroundCatalog.Backgrounds.FirstOrDefault(bg => bg.DisplayName.Equals(background, StringComparison.OrdinalIgnoreCase));
+        clone.Background = matched?.Name ?? background;
+        clone.BackgroundName = clone.Background;
+        clone.BackgroundDisplayName = matched?.DisplayName
+            ?? (!string.IsNullOrWhiteSpace(clone.Background) ? clone.Background : "Default Gradient");
+        clone.BackgroundBrightness = Math.Clamp(clone.BackgroundBrightness <= 0 ? 72 : clone.BackgroundBrightness, 15, 100);
+        clone.AvailableBackgrounds = backgroundCatalog.Backgrounds;
+        return clone;
+    }
+
+    private GuidevaultHomeAssistantReaderStatus NormalizeReaderStatus(GuidevaultHomeAssistantReaderStatus value, ReaderBackgroundCatalog backgroundCatalog)
     {
         value ??= new GuidevaultHomeAssistantReaderStatus();
         var pageCount = Math.Max(0, value.PageCount);
         var page = pageCount > 0 ? Math.Clamp(value.Page, 1, pageCount) : Math.Max(0, value.Page);
         var progress = pageCount > 1 && page > 0 ? Math.Round(((page - 1) / (double)(pageCount - 1)) * 100.0, 2) : (pageCount == 1 ? 100 : 0);
-        return new GuidevaultHomeAssistantReaderStatus
+        var background = CleanFirst(value.Background, value.BackgroundName, value.ReaderBackground);
+        var backgroundBrightness = value.BackgroundBrightness > 0 ? value.BackgroundBrightness : value.Brightness;
+        var normalized = new GuidevaultHomeAssistantReaderStatus
         {
             ReaderActive = value.ReaderActive,
             View = Clean(value.View, value.ReaderActive ? "reader" : "library"),
@@ -4908,10 +4994,15 @@ public sealed class GuidevaultHomeAssistantConnector
             Zoom = Math.Clamp(value.Zoom <= 0 ? 100 : value.Zoom, 50, 250),
             DisplayMode = Clean(value.DisplayMode, string.Empty),
             TransitionMode = Clean(value.TransitionMode, string.Empty),
+            Fullscreen = value.Fullscreen || value.IsFullscreen || value.ReaderFullscreen,
+            Background = background,
+            BackgroundName = background,
+            BackgroundBrightness = Math.Clamp(backgroundBrightness <= 0 ? 72 : backgroundBrightness, 15, 100),
             EventType = Clean(value.EventType, string.Empty),
             Message = Clean(value.Message, string.Empty),
             UpdatedAt = DateTimeOffset.UtcNow
         };
+        return EnrichReaderStatusWithBackgroundCatalog(normalized, backgroundCatalog);
     }
 
     private static GuidevaultHomeAssistantCommandRequest NormalizeCommandRequest(GuidevaultHomeAssistantCommandRequest request)
@@ -4931,8 +5022,10 @@ public sealed class GuidevaultHomeAssistantConnector
             Page = Math.Max(0, request.Page),
             Zoom = request.Zoom,
             DisplayMode = Clean(request.DisplayMode, string.Empty),
-            Background = CleanFirst(request.Background, request.BackgroundName, request.ReaderBackground, request.Name),
-            BackgroundBrightness = request.BackgroundBrightness > 0 ? request.BackgroundBrightness : request.Brightness,
+            Background = CleanFirst(request.Background, request.BackgroundName, request.ReaderBackground, request.BackgroundDisplayName, request.Name),
+            BackgroundBrightness = request.BackgroundBrightness > 0
+                ? request.BackgroundBrightness
+                : (request.ReaderBackgroundBrightness > 0 ? request.ReaderBackgroundBrightness : request.Brightness),
             Message = Clean(request.Message, string.Empty)
         };
     }
@@ -4972,8 +5065,10 @@ public sealed class GuidevaultHomeAssistantConnector
             "jump" => "set_page",
             "page" => "set_page",
             "zoom" => "set_zoom",
-            "background" or "reader_background" => "set_background",
-            "background_brightness" or "brightness" or "reader_background_brightness" => "set_background_brightness",
+            "background" or "reader_background" or "set_reader_background" or "reader_background_set" => "set_background",
+            "next_background" or "background_next" or "toggle_background" or "cycle_background" => "next_background",
+            "previous_background" or "prev_background" or "background_previous" or "background_prev" => "previous_background",
+            "background_brightness" or "brightness" or "reader_background_brightness" or "set_reader_background_brightness" => "set_background_brightness",
             "fullscreen_toggle" or "toggle_full_screen" or "toggle_fullscreen" or "full_screen_toggle" => "toggle_fullscreen",
             "fullscreen_on" or "enter_full_screen" or "enter_fullscreen" or "full_screen" => "fullscreen",
             "fullscreen_off" or "exit_full_screen" => "exit_fullscreen",
@@ -5158,6 +5253,16 @@ public sealed class GuidevaultHomeAssistantReaderStatus
     public int Zoom { get; set; } = 100;
     public string DisplayMode { get; set; } = string.Empty;
     public string TransitionMode { get; set; } = string.Empty;
+    public bool Fullscreen { get; set; }
+    public bool IsFullscreen { get; set; }
+    public bool ReaderFullscreen { get; set; }
+    public string Background { get; set; } = string.Empty;
+    public string BackgroundName { get; set; } = string.Empty;
+    public string ReaderBackground { get; set; } = string.Empty;
+    public string BackgroundDisplayName { get; set; } = string.Empty;
+    public int BackgroundBrightness { get; set; } = 72;
+    public int Brightness { get; set; }
+    public IReadOnlyList<ReaderBackgroundInfo> AvailableBackgrounds { get; set; } = Array.Empty<ReaderBackgroundInfo>();
     public string EventType { get; set; } = string.Empty;
     public string Message { get; set; } = string.Empty;
     public DateTimeOffset UpdatedAt { get; set; } = DateTimeOffset.UtcNow;
@@ -5175,6 +5280,16 @@ public sealed class GuidevaultHomeAssistantReaderStatus
         Zoom = Zoom,
         DisplayMode = DisplayMode,
         TransitionMode = TransitionMode,
+        Fullscreen = Fullscreen,
+        IsFullscreen = IsFullscreen,
+        ReaderFullscreen = ReaderFullscreen,
+        Background = Background,
+        BackgroundName = BackgroundName,
+        ReaderBackground = ReaderBackground,
+        BackgroundDisplayName = BackgroundDisplayName,
+        BackgroundBrightness = BackgroundBrightness,
+        Brightness = Brightness,
+        AvailableBackgrounds = AvailableBackgrounds,
         EventType = EventType,
         Message = Message,
         UpdatedAt = UpdatedAt
@@ -5205,7 +5320,9 @@ public sealed class GuidevaultHomeAssistantCommandRequest
     public string Background { get; set; } = string.Empty;
     public string BackgroundName { get; set; } = string.Empty;
     public string ReaderBackground { get; set; } = string.Empty;
+    public string BackgroundDisplayName { get; set; } = string.Empty;
     public int BackgroundBrightness { get; set; }
+    public int ReaderBackgroundBrightness { get; set; }
     public int Brightness { get; set; }
     public string Name { get; set; } = string.Empty;
     public string Message { get; set; } = string.Empty;
@@ -5241,6 +5358,9 @@ public sealed class GuidevaultHomeAssistantStatusSnapshot
     public GuidevaultHomeAssistantReaderStatus Reader { get; set; } = new();
     public int LibraryItemCount { get; set; }
     public int CommandQueueDepth { get; set; }
+    public IReadOnlyList<ReaderBackgroundInfo> AvailableBackgrounds { get; set; } = Array.Empty<ReaderBackgroundInfo>();
+    public string DefaultBackground { get; set; } = string.Empty;
+    public string BackgroundFolder { get; set; } = string.Empty;
 }
 
 public sealed record GuidevaultHomeAssistantProbeResult(bool Success, int StatusCode, string Message);
@@ -13849,6 +13969,6 @@ static class GuidevaultLibraryIoGate
 
 static class GuidevaultBuildInfo
 {
-    public const string Version = "0.9.218";
+    public const string Version = "0.9.216";
 }
 
