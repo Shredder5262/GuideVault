@@ -104,7 +104,7 @@ const GUIDEVAULT_LIBRARY_CHUNK_YIELD_MS = 30;
 const GUIDEVAULT_STARTUP_STATUS_HIDE_MS = 2400;
 const GUIDEVAULT_LIBRARY_SEARCH_DEBOUNCE_MS = 180;
 const GUIDEVAULT_SORT_COLLATOR = new Intl.Collator(undefined, { numeric: true, sensitivity: 'base' });
-const GUIDEVAULT_APP_VERSION = '0.9.217';
+const GUIDEVAULT_APP_VERSION = '0.9.218';
 const GUIDEVAULT_FILENAME_SCHEMA_KEY = 'guidevault.filenameRename.schema.v1';
 const GUIDEVAULT_FILE_ORGANIZATION_TEMPLATE_PRESETS_KEY = 'guidevault.fileOrganization.templatePresets.v2';
 const GUIDEVAULT_FILE_ORGANIZATION_TEMPLATE_PRESETS_LEGACY_KEY = 'guidevault.fileOrganization.templatePresets.v1';
@@ -1108,15 +1108,36 @@ function isReaderVirtualFullscreen() {
   return !!$('readerView')?.classList.contains('fullscreen-reader');
 }
 
+function scheduleReaderFullscreenLayoutRefresh() {
+  const refresh = () => {
+    if (!isReaderActiveForKeys()) return;
+    renderSpread(state.reader.index, { preserveSize: false });
+    refreshReaderBookSize();
+    scheduleReaderPageEdgeShadingBounds();
+  };
+  requestAnimationFrame(refresh);
+  window.setTimeout(refresh, 80);
+  window.setTimeout(refresh, 260);
+  window.setTimeout(refresh, 620);
+}
+
 function setReaderVirtualFullscreen(enabled) {
   const view = $('readerView');
   const stage = $('readerStage');
-  if (!view) return;
+  if (!view) return false;
+  if (enabled && !isReaderActiveForKeys()) {
+    view.classList.remove('fullscreen-reader');
+    document.body.classList.toggle('reader-is-fullscreen', document.fullscreenElement === stage);
+    updateReaderFullscreenUi();
+    scheduleHomeAssistantStatusPublish('command_failed', 'Reader is not active for fullscreen. Open a manual, guide, or magazine first.');
+    return false;
+  }
   view.classList.toggle('fullscreen-reader', !!enabled);
   document.body.classList.toggle('reader-is-fullscreen', !!enabled || document.fullscreenElement === stage);
   updateReaderFullscreenUi();
   scheduleHomeAssistantStatusPublish();
-  window.setTimeout(refreshReaderBookSize, 80);
+  scheduleReaderFullscreenLayoutRefresh();
+  return true;
 }
 
 async function requestNativeReaderFullscreen() {
@@ -1141,14 +1162,21 @@ async function requestReaderFullscreenFromProfile() {
 }
 
 async function enterReaderFullscreenFromHomeAssistant() {
-  if (document.fullscreenElement === $('readerStage') || isReaderVirtualFullscreen()) { updateReaderFullscreenUi(); return; }
+  if (!isReaderActiveForKeys()) {
+    scheduleHomeAssistantStatusPublish('command_failed', 'Reader is not active for fullscreen. Open a manual, guide, or magazine first.');
+    return;
+  }
+  if (document.fullscreenElement === $('readerStage') || isReaderVirtualFullscreen()) {
+    updateReaderFullscreenUi();
+    scheduleReaderFullscreenLayoutRefresh();
+    return;
+  }
   // Remote Home Assistant commands are not browser user gestures, so native
-  // requestFullscreen() is usually blocked. Use GuideVault's own fixed reader
-  // overlay instead so the HA Fullscreen button reliably fills the app window.
+  // requestFullscreen() is usually blocked. Use GuideVault's in-app reader
+  // fullscreen layout and remeasure the open spread after the shell collapses.
   setReaderVirtualFullscreen(true);
   updateReaderFullscreenUi();
-  window.setTimeout(refreshReaderBookSize, 80);
-  window.setTimeout(refreshReaderBookSize, 260);
+  scheduleReaderFullscreenLayoutRefresh();
 }
 
 async function toggleReaderFullscreenFromHomeAssistant() {
@@ -16534,7 +16562,7 @@ async function exitReaderFullscreenOnly() {
   }
   document.body.classList.toggle('reader-is-fullscreen', document.fullscreenElement === $('readerStage') || isReaderVirtualFullscreen());
   updateReaderFullscreenUi();
-  window.setTimeout(refreshReaderBookSize, 80);
+  scheduleReaderFullscreenLayoutRefresh();
 }
 
 async function exitReaderToLibrary() {

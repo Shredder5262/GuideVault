@@ -19780,11 +19780,12 @@ body.reader-is-fullscreen{
   min-height:0!important;
 }
 
-
-/* Guidevault 0.9.216 - reliable Home Assistant reader fullscreen overlay. */
+/* Guidevault 0.9.217 - Home Assistant reader fullscreen layout guard. */
 body.reader-is-fullscreen .shell{
   grid-template-columns:0 minmax(0,1fr) 0!important;
-  overflow:visible!important;
+  width:100vw!important;
+  height:100vh!important;
+  overflow:hidden!important;
 }
 body.reader-is-fullscreen .sidebar,
 body.reader-is-fullscreen .details,
@@ -19792,14 +19793,20 @@ body.reader-is-fullscreen .topbar{
   display:none!important;
 }
 body.reader-is-fullscreen .main{
-  overflow:visible!important;
-}
-#readerView.fullscreen-reader{
-  position:fixed!important;
-  inset:0!important;
-  z-index:2147483000!important;
   width:100vw!important;
-  height:100dvh!important;
+  height:100vh!important;
+  min-width:0!important;
+  overflow:hidden!important;
+}
+body.reader-is-fullscreen #readerView.reader-view.fullscreen-reader.hidden{
+  display:none!important;
+}
+body.reader-is-fullscreen #readerView.reader-view.fullscreen-reader{
+  position:relative!important;
+  inset:auto!important;
+  z-index:auto!important;
+  width:100%!important;
+  height:100vh!important;
   min-width:0!important;
   max-width:none!important;
   max-height:none!important;
@@ -19808,22 +19815,22 @@ body.reader-is-fullscreen .main{
   transform:none!important;
   display:flex!important;
   flex-direction:column!important;
-  background:#000!important;
+  background:#05090d!important;
 }
-#readerView.fullscreen-reader .reader-toolbar{
+body.reader-is-fullscreen #readerView.fullscreen-reader .reader-toolbar{
   flex:0 0 auto!important;
 }
-#readerView.fullscreen-reader .reader-stage{
+body.reader-is-fullscreen #readerView.fullscreen-reader .reader-stage{
   flex:1 1 auto!important;
-  width:100vw!important;
-  height:auto!important;
+  width:100%!important;
+  min-width:0!important;
   min-height:0!important;
+  height:auto!important;
+  overflow:hidden!important;
   display:grid!important;
   place-items:center!important;
   background:#000!important;
 }
-#readerView.fullscreen-reader #book.book{
+body.reader-is-fullscreen #readerView.fullscreen-reader #book.book.reader-sized{
   margin:auto!important;
-  max-width:calc(100vw - 16px)!important;
-  max-height:calc(100dvh - 74px)!important;
 }

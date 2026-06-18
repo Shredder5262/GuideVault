@@ -4,9 +4,9 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Guidevault</title>
-  <link rel="icon" type="image/x-icon" href="/assets/favicon.ico?v=0.9.216" />
-  <link rel="shortcut icon" type="image/x-icon" href="/assets/favicon.ico?v=0.9.216" />
-  <link rel="stylesheet" href="/styles.css?v=0.9.217" />
+  <link rel="icon" type="image/x-icon" href="/assets/favicon.ico?v=0.9.217" />
+  <link rel="shortcut icon" type="image/x-icon" href="/assets/favicon.ico?v=0.9.217" />
+  <link rel="stylesheet" href="/styles.css?v=0.9.218" />
 </head>
 <body class="right-collapsed auth-locked">
   <section id="loginView" class="login-view" aria-labelledby="loginTitle">
@@ -1866,6 +1866,17 @@
             <div class="system-update-list">
               <details class="system-update-entry" open>
                 <summary>
+                  <span>Guidevault 0.9.217 - Home Assistant Fullscreen Layout Guard</span>
+                  <em>Installed</em>
+                </summary>
+                <ul>
+                  <li>Fixes the Home Assistant Fullscreen command so it no longer opens a blank reader overlay when the browser is not actively viewing a reader item.</li>
+                  <li>Changes the in-app fullscreen layout to collapse the Guidevault shell around the existing reader instead of replacing the reader with a fixed overlay.</li>
+                  <li>Remeasures and redraws the current spread after fullscreen enters or exits so the book remains centered and visible.</li>
+                </ul>
+              </details>
+              <details class="system-update-entry">
+                <summary>
                   <span>Guidevault 0.9.216 - Home Assistant Fullscreen Reliability</span>
                   <em>Installed</em>
                 </summary>
@@ -3051,7 +3062,7 @@
   </dialog>
 
 
-  <script src="/app.js?v=0.9.217"></script>
+  <script src="/app.js?v=0.9.218"></script>
 </body>
 </html>
 
