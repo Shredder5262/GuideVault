@@ -19779,3 +19779,51 @@ body.reader-is-fullscreen{
 #readerView.fullscreen-reader .reader-stage{
   min-height:0!important;
 }
+
+
+/* Guidevault 0.9.216 - reliable Home Assistant reader fullscreen overlay. */
+body.reader-is-fullscreen .shell{
+  grid-template-columns:0 minmax(0,1fr) 0!important;
+  overflow:visible!important;
+}
+body.reader-is-fullscreen .sidebar,
+body.reader-is-fullscreen .details,
+body.reader-is-fullscreen .topbar{
+  display:none!important;
+}
+body.reader-is-fullscreen .main{
+  overflow:visible!important;
+}
+#readerView.fullscreen-reader{
+  position:fixed!important;
+  inset:0!important;
+  z-index:2147483000!important;
+  width:100vw!important;
+  height:100dvh!important;
+  min-width:0!important;
+  max-width:none!important;
+  max-height:none!important;
+  margin:0!important;
+  padding:0!important;
+  transform:none!important;
+  display:flex!important;
+  flex-direction:column!important;
+  background:#000!important;
+}
+#readerView.fullscreen-reader .reader-toolbar{
+  flex:0 0 auto!important;
+}
+#readerView.fullscreen-reader .reader-stage{
+  flex:1 1 auto!important;
+  width:100vw!important;
+  height:auto!important;
+  min-height:0!important;
+  display:grid!important;
+  place-items:center!important;
+  background:#000!important;
+}
+#readerView.fullscreen-reader #book.book{
+  margin:auto!important;
+  max-width:calc(100vw - 16px)!important;
+  max-height:calc(100dvh - 74px)!important;
+}

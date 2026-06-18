@@ -104,7 +104,7 @@ const GUIDEVAULT_LIBRARY_CHUNK_YIELD_MS = 30;
 const GUIDEVAULT_STARTUP_STATUS_HIDE_MS = 2400;
 const GUIDEVAULT_LIBRARY_SEARCH_DEBOUNCE_MS = 180;
 const GUIDEVAULT_SORT_COLLATOR = new Intl.Collator(undefined, { numeric: true, sensitivity: 'base' });
-const GUIDEVAULT_APP_VERSION = '0.9.216';
+const GUIDEVAULT_APP_VERSION = '0.9.217';
 const GUIDEVAULT_FILENAME_SCHEMA_KEY = 'guidevault.filenameRename.schema.v1';
 const GUIDEVAULT_FILE_ORGANIZATION_TEMPLATE_PRESETS_KEY = 'guidevault.fileOrganization.templatePresets.v2';
 const GUIDEVAULT_FILE_ORGANIZATION_TEMPLATE_PRESETS_LEGACY_KEY = 'guidevault.fileOrganization.templatePresets.v1';
@@ -1141,11 +1141,14 @@ async function requestReaderFullscreenFromProfile() {
 }
 
 async function enterReaderFullscreenFromHomeAssistant() {
-  if (document.fullscreenElement || isReaderVirtualFullscreen()) { updateReaderFullscreenUi(); return; }
-  const enteredNativeFullscreen = await requestNativeReaderFullscreen();
-  if (!enteredNativeFullscreen) setReaderVirtualFullscreen(true);
+  if (document.fullscreenElement === $('readerStage') || isReaderVirtualFullscreen()) { updateReaderFullscreenUi(); return; }
+  // Remote Home Assistant commands are not browser user gestures, so native
+  // requestFullscreen() is usually blocked. Use GuideVault's own fixed reader
+  // overlay instead so the HA Fullscreen button reliably fills the app window.
+  setReaderVirtualFullscreen(true);
   updateReaderFullscreenUi();
   window.setTimeout(refreshReaderBookSize, 80);
+  window.setTimeout(refreshReaderBookSize, 260);
 }
 
 async function toggleReaderFullscreenFromHomeAssistant() {

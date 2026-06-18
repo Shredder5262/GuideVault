@@ -4,9 +4,9 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Guidevault</title>
-  <link rel="icon" type="image/x-icon" href="/assets/favicon.ico?v=0.9.215" />
-  <link rel="shortcut icon" type="image/x-icon" href="/assets/favicon.ico?v=0.9.215" />
-  <link rel="stylesheet" href="/styles.css?v=0.9.216" />
+  <link rel="icon" type="image/x-icon" href="/assets/favicon.ico?v=0.9.216" />
+  <link rel="shortcut icon" type="image/x-icon" href="/assets/favicon.ico?v=0.9.216" />
+  <link rel="stylesheet" href="/styles.css?v=0.9.217" />
 </head>
 <body class="right-collapsed auth-locked">
   <section id="loginView" class="login-view" aria-labelledby="loginTitle">
@@ -1866,6 +1866,17 @@
             <div class="system-update-list">
               <details class="system-update-entry" open>
                 <summary>
+                  <span>Guidevault 0.9.216 - Home Assistant Fullscreen Reliability</span>
+                  <em>Installed</em>
+                </summary>
+                <ul>
+                  <li>Fixes the Home Assistant remote fullscreen command so it uses Guidevault's reliable app-window reader overlay instead of relying on browser-native fullscreen permissions.</li>
+                  <li>Strengthens the reader fullscreen layout so the sidebar, details panel, and top bar are hidden while the reader fills the viewport.</li>
+                  <li>Pairs with Home Assistant integration 0.6.2, which fixes button action failures on newer Home Assistant builds.</li>
+                </ul>
+              </details>
+              <details class="system-update-entry">
+                <summary>
                   <span>Guidevault 0.9.215 - Home Assistant Background State</span>
                   <em>Installed</em>
                 </summary>
@@ -3040,7 +3051,7 @@
   </dialog>
 
 
-  <script src="/app.js?v=0.9.216"></script>
+  <script src="/app.js?v=0.9.217"></script>
 </body>
 </html>
 
