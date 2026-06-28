@@ -4,9 +4,9 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Guidevault</title>
-  <link rel="icon" type="image/x-icon" href="/assets/favicon.ico?v=0.9.217" />
-  <link rel="shortcut icon" type="image/x-icon" href="/assets/favicon.ico?v=0.9.217" />
-  <link rel="stylesheet" href="/styles.css?v=0.9.218" />
+  <link rel="icon" type="image/x-icon" href="/assets/favicon.ico?v=0.9.228" />
+  <link rel="shortcut icon" type="image/x-icon" href="/assets/favicon.ico?v=0.9.228" />
+  <link rel="stylesheet" href="/styles.css?v=0.9.258" />
 </head>
 <body class="right-collapsed auth-locked">
   <section id="loginView" class="login-view" aria-labelledby="loginTitle">
@@ -176,7 +176,7 @@
               </div>
             </aside>
             <div class="detail-main-column">
-              <div class="tabs"><button class="tab active" data-tab="overview">Overview</button><button class="tab" data-tab="reviews">Reviews</button><button class="tab" data-tab="metadata">Metadata</button><button class="tab" data-tab="reading-profile">Reading Profile</button><button class="tab" data-tab="notes">Notes</button><button class="tab" data-tab="library-data">Library Data</button></div>
+              <div class="tabs"><button class="tab active" data-tab="overview">Overview</button><button class="tab" data-tab="reviews">Reviews</button><button class="tab" data-tab="metadata">Metadata</button><button class="tab" data-tab="launchbox-links">LaunchBox Links</button><button class="tab" data-tab="reading-profile">Reading Profile</button><button class="tab" data-tab="notes">Notes</button><button class="tab" data-tab="library-data">Library Data</button></div>
               <section id="overviewPanel" class="tab-panel">
                 <p id="description"></p>
                 <div id="meta" class="detail-meta-list"></div>
@@ -306,6 +306,18 @@
                   <button id="igdbSearchBtn" class="metadata-lookup-button" type="button" title="Search IGDB game metadata">IGDB</button>
                   <button id="esrbSearchBtn" class="metadata-lookup-button" type="button" title="Search ESRB rating">ESRB</button>
                 </div>
+              </section>
+              <section id="launchbox-linksPanel" class="tab-panel hidden">
+                <article class="detail-launchbox-links-card">
+                  <div class="detail-launchbox-links-head">
+                    <div>
+                      <h3>LaunchBox Connections</h3>
+                      <p id="detailLaunchBoxLinksSummary" class="sub">Open a manual, strategy guide, or magazine to see its LaunchBox game relationships.</p>
+                    </div>
+                    <button id="refreshDetailLaunchBoxLinks" class="ghost" type="button">Refresh</button>
+                  </div>
+                  <div id="detailLaunchBoxLinks" class="detail-launchbox-links-list" aria-live="polite"></div>
+                </article>
               </section>
               <section id="reading-profilePanel" class="tab-panel hidden">
                 <article class="detail-reading-profile-card effective">
@@ -950,6 +962,10 @@
               </article>
             </div>
             <div id="statisticsManagementPanel" class="statistics-tab-panel hidden">
+              <h3 class="statistics-section-heading">LaunchBox Coverage</h3>
+              <article class="settings-card statistics-management-card statistics-launchbox-card">
+                <div id="statisticsLaunchBoxDashboard" class="statistics-launchbox-dashboard" aria-live="polite"></div>
+              </article>
               <h3 class="statistics-section-heading">Files Added Over Time</h3>
               <article class="settings-card statistics-management-card">
                 <div id="statisticsFilesTimelineLegend" class="statistics-legend statistics-management-legend"></div>
@@ -1472,50 +1488,29 @@
               <div>
                 <div class="settings-page-kicker">SERVER</div>
                 <h1>Integrations</h1>
-                <p class="sub">Connect Guidevault to external metadata and service providers without mixing provider credentials into general server settings.</p>
+                <p class="sub">Manage metadata providers, Home Assistant, and LaunchBox from one cleaner integration dashboard.</p>
               </div>
             </div>
-            <div class="integrations-grid">
+            <div class="integrations-grid integrations-compact-grid">
               <article class="settings-card integration-source-card integration-openlibrary-card">
                 <div class="integration-card-head">
-                  <span class="integration-source-icon">OL</span>
-                  <div><h2>Open Library</h2><p class="sub">Book-style metadata lookup for guides and ISBN-based records. No credentials are required.</p></div>
+                  <span class="integration-source-icon integration-source-icon-image"><img src="assets/integrations/open-library.png" alt="" /></span>
+                  <div><h2>Open Library</h2><p class="sub">Book-style metadata lookup for guides and ISBN-based records.</p></div>
                 </div>
                 <div class="integration-chip-row"><span>Enabled by default</span><span>No API key</span><span>Books / ISBNs</span></div>
               </article>
               <article class="settings-card integration-source-card integration-esrb-card">
                 <div class="integration-card-head">
-                  <span class="integration-source-icon">ER</span>
-                  <div><h2>ESRB.org</h2><p class="sub">Official rating lookup for games. Used by manual and strategy-guide metadata when a title needs an ESRB rating.</p></div>
+                  <span class="integration-source-icon integration-source-icon-image"><img src="assets/integrations/esrb.png" alt="" /></span>
+                  <div><h2>ESRB.org</h2><p class="sub">Official game rating lookup for manuals and strategy guides.</p></div>
                 </div>
                 <div class="integration-chip-row"><span>Enabled by default</span><span>No API key</span><span>Game ratings</span></div>
               </article>
-              <article class="settings-card integration-source-card integration-igdb-card">
-                <div class="integration-card-head">
-                  <span class="integration-source-icon">IG</span>
-                  <div>
-                    <h2>IGDB</h2>
-                    <p class="sub">Game metadata lookup using Twitch Developer application credentials.</p>
-                    <p class="field-help metadata-source-note">Paste the Twitch Developer app Client ID and generated Client Secret. Guidevault uses server-to-server client credentials, so the OAuth redirect URL is not used by the lookup.</p>
-                  </div>
-                </div>
-                <div class="server-settings-grid server-metadata-source-grid integrations-credential-grid">
-                  <label for="igdbClientId">IGDB Client ID<input id="igdbClientId" type="text" autocomplete="off" placeholder="Twitch Developer Client ID" /><span class="field-help">Use the Client ID from your Twitch Developer application.</span></label>
-                  <label for="igdbClientSecret">IGDB Client Secret<input id="igdbClientSecret" type="password" autocomplete="new-password" placeholder="Twitch Developer Client Secret" /><span class="field-help">Use the generated Client Secret value. Stored locally in Guidevault config; treat it like a password.</span></label>
-                </div>
-                <div class="settings-actions inline-actions integrations-actions">
-                  <button id="integrationsSaveSettings" class="primary" type="button">Save Integrations</button>
-                  <button id="igdbTestCredentials" class="ghost blue-gradient-action" type="button">Test IGDB Credentials</button>
-                </div>
-                <p id="integrationsSettingsStatus" class="sub account-status" aria-live="polite"></p>
-              </article>
               <article class="settings-card integration-source-card integration-homeassistant-card">
                 <div class="integration-card-head">
-                  <span class="integration-source-icon">HA</span>
+                  <span class="integration-source-icon integration-source-icon-image"><img src="assets/integrations/home-assistant.png" alt="" /></span>
                   <div>
                     <h2>Home Assistant</h2>
-                    <p class="sub">Publish GuideVault reader status into Home Assistant and allow Home Assistant automations to control the active GuideVault reader.</p>
-                    <p class="field-help metadata-source-note">Create a Home Assistant long-lived access token, paste your Home Assistant base URL, then use the GuideVault command token in HA REST commands or automations.</p>
                   </div>
                 </div>
                 <div class="preference-toggle-row preference-toggle-row-master">
@@ -1526,10 +1521,10 @@
                   </label>
                 </div>
                 <div class="server-settings-grid server-metadata-source-grid integrations-credential-grid">
-                  <label for="homeAssistantUrl">Home Assistant URL<input id="homeAssistantUrl" type="text" autocomplete="off" placeholder="http://homeassistant.local:8123" /><span class="field-help">Base URL only, reachable from the GuideVault server/container. Do not include /api or a dashboard path.</span></label>
-                  <label for="homeAssistantToken">Long-Lived Access Token<input id="homeAssistantToken" type="password" autocomplete="new-password" placeholder="Paste Home Assistant token" /><span class="field-help">Stored locally in GuideVault config; treat it like a password.</span></label>
+                  <label for="homeAssistantUrl">Home Assistant URL<input id="homeAssistantUrl" type="text" autocomplete="off" placeholder="http://homeassistant.local:8123" /></label>
+                  <label for="homeAssistantToken">Long-Lived Access Token<input id="homeAssistantToken" type="password" autocomplete="new-password" placeholder="Paste Home Assistant token" /></label>
                   <label for="homeAssistantEntityPrefix">Entity Prefix<input id="homeAssistantEntityPrefix" type="text" placeholder="guidevault" /><span class="field-help">Creates sensors such as sensor.guidevault_reader and sensor.guidevault_page.</span></label>
-                  <label for="homeAssistantCommandToken">GuideVault Command Token<input id="homeAssistantCommandToken" type="text" autocomplete="off" placeholder="Generated after save" /><span class="field-help">Use this as a Bearer token when Home Assistant posts commands to GuideVault.</span></label>
+                  <label for="homeAssistantCommandToken" class="homeassistant-command-token-label">GuideVault Command Token<div class="homeassistant-token-row"><input id="homeAssistantCommandToken" type="text" autocomplete="off" placeholder="Generated after save" /><button id="homeAssistantRegenerateCommandToken" class="ghost mini icon-button" type="button" title="Generate and save a new GuideVault command token" aria-label="Generate and save a new GuideVault command token">&#x27F3;</button></div></label>
                 </div>
                 <div class="checkbox-list refined-checkbox-list homeassistant-option-list">
                   <label><input id="homeAssistantPushStateEnabled" type="checkbox" checked /> Publish reader sensors</label>
@@ -1541,9 +1536,96 @@
                   <button id="homeAssistantTestConnection" class="ghost blue-gradient-action" type="button">Test Home Assistant</button>
                   <button id="homeAssistantCopyCommandToken" class="ghost" type="button">Copy Command Token</button>
                 </div>
-                <div class="server-files-writeback-callout">
-                  <strong>Command endpoint:</strong>
-                  <span>POST /api/home-assistant/command with Authorization: Bearer &lt;GuideVault Command Token&gt;. Supported actions include open, next_page, previous_page, set_page, zoom_in, zoom_out, set_zoom, set_display_mode, close_reader, and toggle_overlay. Open commands can include itemKind Manual, Strategy Guide, or Magazine, or use open_manual, open_strategy_guide, and open_magazine aliases.</span>
+                <details class="integration-endpoint-details">
+                  <summary>Command endpoint and supported actions</summary>
+                  <div class="integration-endpoint-copy"><strong>POST /api/home-assistant/command</strong><span>Use Authorization: Bearer &lt;GuideVault Command Token&gt;. Actions include open, open_manual, open_strategy_guide, open_magazine, next_page, previous_page, set_page, zoom_in, zoom_out, set_zoom, set_display_mode, close_reader, and toggle_overlay.</span></div>
+                </details>
+              </article>
+              <article class="settings-card integration-source-card integration-igdb-card">
+                <div class="integration-card-head">
+                  <span class="integration-source-icon integration-source-icon-image"><img src="assets/integrations/igdb.png" alt="" /></span>
+                  <div>
+                    <h2>IGDB</h2>
+                    <p class="sub">Game metadata lookup using Twitch Developer app credentials.</p>
+                    <p class="field-help metadata-source-note">Guidevault uses server-to-server client credentials; the OAuth redirect URL is not used.</p>
+                  </div>
+                </div>
+                <div class="server-settings-grid server-metadata-source-grid integrations-credential-grid">
+                  <label for="igdbClientId">IGDB Client ID<input id="igdbClientId" type="text" autocomplete="off" placeholder="Twitch Developer Client ID" /></label>
+                  <label for="igdbClientSecret">IGDB Client Secret<input id="igdbClientSecret" type="password" autocomplete="new-password" placeholder="Twitch Developer Client Secret" /></label>
+                </div>
+                <div class="settings-actions inline-actions integrations-actions">
+                  <button id="integrationsSaveSettings" class="primary" type="button">Save Integrations</button>
+                  <button id="igdbTestCredentials" class="ghost blue-gradient-action" type="button">Test IGDB Credentials</button>
+                </div>
+                <p id="integrationsSettingsStatus" class="sub account-status" aria-live="polite"></p>
+              </article>
+              <article class="settings-card integration-source-card integration-launchbox-card launchbox-coverage-card">
+                <div class="integration-card-head">
+                  <span class="integration-source-icon integration-source-icon-image"><img src="assets/integrations/launchbox.png" alt="" /></span>
+                  <div>
+                    <h2>LaunchBox</h2>
+                  </div>
+                </div>
+                <div class="integration-chip-row"><span>Local sync</span><span>Manual coverage</span><span>Strategy-guide coverage</span><span>Match review</span><span>Platform aliases</span></div>
+                <div class="settings-actions inline-actions integrations-actions launchbox-actions">
+                  <button id="launchBoxRefreshCoverage" class="primary" type="button">Refresh Coverage</button>
+                  <button id="launchBoxStartRematch" class="ghost blue-gradient-action" type="button">Run Rematch</button>
+                  <button id="launchBoxCancelSync" class="ghost" type="button">Cancel Sync</button>
+                </div>
+                <p id="launchBoxCoverageStatus" class="sub account-status" aria-live="polite"></p>
+                <div id="launchBoxJobSummary" class="server-files-writeback-callout launchbox-job-summary hidden"></div>
+                <div class="launchbox-manual-match-panel">
+                  <div class="settings-card-heading-row compact-heading"><div><h3>Manual Match</h3><p class="sub">Search LaunchBox games and GuideVault manuals, strategy guides, or magazines, then confirm the match directly.</p></div></div>
+                  <div class="launchbox-manual-match-grid">
+                    <section class="launchbox-manual-search-column">
+                      <div class="launchbox-manual-search-row">
+                        <input id="launchBoxManualGameSearch" type="search" placeholder="Search LaunchBox games" />
+                        <button id="launchBoxManualSearchGames" class="ghost" type="button">Search</button>
+                      </div>
+                      <div id="launchBoxManualGameResults" class="launchbox-manual-results"><p class="sub">Search synced LaunchBox games.</p></div>
+                    </section>
+                    <section class="launchbox-manual-search-column">
+                      <div class="launchbox-manual-search-row has-kind">
+                        <select id="launchBoxManualItemKind" aria-label="GuideVault item type">
+                          <option value="">All</option>
+                          <option value="Manual">Manuals</option>
+                          <option value="Strategy Guide">Strategy Guides</option>
+                          <option value="Magazine">Magazines</option>
+                        </select>
+                        <input id="launchBoxManualItemSearch" type="search" placeholder="Search GuideVault items" />
+                        <button id="launchBoxManualSearchItems" class="ghost" type="button">Search</button>
+                      </div>
+                      <div id="launchBoxManualItemResults" class="launchbox-manual-results"><p class="sub">Search GuideVault manuals, guides, or magazines.</p></div>
+                    </section>
+                  </div>
+                  <div id="launchBoxManualSelectedPair" class="launchbox-manual-selected-pair"></div>
+                  <div class="settings-actions inline-actions launchbox-manual-actions">
+                    <button id="launchBoxManualConfirm" class="primary" type="button" disabled>Confirm Match</button>
+                    <button id="launchBoxManualReject" class="ghost danger" type="button" disabled>Reject Pair</button>
+                  </div>
+                  <p id="launchBoxManualMatchStatus" class="sub account-status" aria-live="polite"></p>
+                </div>
+                <div class="launchbox-review-layout">
+                  <div class="launchbox-platform-panel">
+                    <div class="settings-card-heading-row compact-heading"><div><h3>Platform Coverage</h3><p class="sub">Platforms from the latest sync, sorted alphabetically.</p></div></div>
+                    <div id="launchBoxPlatformCoverage" class="launchbox-platform-table"></div>
+                  </div>
+                  <div class="launchbox-review-panel">
+                    <div class="settings-card-heading-row compact-heading"><div><h3>Match Review</h3></div></div>
+                    <div class="launchbox-review-controls">
+                      <select id="launchBoxReviewStatus" aria-label="LaunchBox review status">
+                        <option value="ambiguous">Ambiguous</option>
+                        <option value="missing">Missing</option>
+                        <option value="matched">Matched</option>
+                        <option value="confirmed">Confirmed</option>
+                        <option value="rejected">Rejected</option>
+                      </select>
+                      <input id="launchBoxReviewSearch" type="search" placeholder="Search synced games" />
+                      <button id="launchBoxLoadReview" class="ghost" type="button">Refresh Matches</button>
+                    </div>
+                    <div id="launchBoxReviewList" class="launchbox-review-list"></div>
+                  </div>
                 </div>
               </article>
             </div>
@@ -1864,6 +1946,46 @@
               <h2>Update History</h2>
             </div>
             <div class="system-update-list">
+              <details class="system-update-entry" open>
+                <summary>
+                  <span>Guidevault 0.9.246 - LaunchBox Coverage Title</span>
+                  <ul>
+                    <li>Renames the Statistics &gt; Management LaunchBox dashboard title to LaunchBox Coverage.</li>
+                    <li>Adds visual LaunchBox coverage charts for matched/missing games, manual/guide lanes, document pool usage, review debt, and top platform coverage.</li>
+                  </ul>
+                </li>
+                <li>
+                  <span>Guidevault 0.9.228 - LaunchBox Browser Auth Build Fix</span>
+                  <em>Installed</em>
+                </summary>
+                <ul>
+                  <li>Changes LaunchBox review Open actions to stay inside the current GuideVault tab so the user does not have to sign in again in a new browser tab.</li>
+                  <li>Adds a Details action beside matched review rows for opening the matched document details without leaving the current session.</li>
+                  <li>Clarifies what Confirm and Reject do inside the LaunchBox match review workflow.</li>
+                </ul>
+              </details>
+              <details class="system-update-entry">
+                <summary>
+                  <span>Guidevault 0.9.223 - LaunchBox Coverage Layout Fix</span>
+                  <em>Installed</em>
+                </summary>
+                <ul>
+                  <li>Forces a fresh browser load of the latest LaunchBox coverage styles and scripts so the review workspace no longer renders with stale cached assets.</li>
+                  <li>Polishes the LaunchBox coverage cards, sync job callout, platform table, and review controls so totals and platform names wrap cleanly.</li>
+                  <li>Keeps the LaunchBox coverage workspace full width under Server &gt; Integrations for large platform and review result sets.</li>
+                </ul>
+              </details>
+              <details class="system-update-entry" open>
+                <summary>
+                  <span>Guidevault 0.9.222 - LaunchBox Coverage Review</span>
+                  <em>Installed</em>
+                </summary>
+                <ul>
+                  <li>Adds a LaunchBox coverage workspace under Server &gt; Integrations with totals, platform coverage, sync job status, and match review rows.</li>
+                  <li>Adds LaunchBox review endpoints for ambiguous, missing, matched, confirmed, and rejected game-document links.</li>
+                  <li>Improves platform normalization for LaunchBox systems such as PS1/PS2, SNES/Super Famicom, Genesis/Mega Drive, Game Boy variants, PSP, GameCube, Wii, and TurboGrafx/PC Engine.</li>
+                </ul>
+              </details>
               <details class="system-update-entry" open>
                 <summary>
                   <span>Guidevault 0.9.217 - Home Assistant Fullscreen Layout Guard</span>
@@ -3062,7 +3184,7 @@
   </dialog>
 
 
-  <script src="/app.js?v=0.9.218"></script>
+  <script src="/app.js?v=0.9.258"></script>
 </body>
 </html>
 
