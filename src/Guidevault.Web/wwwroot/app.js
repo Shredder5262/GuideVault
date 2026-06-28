@@ -75,6 +75,7 @@ const METADATA_MANAGER_DEFAULT_RENDER_LIMIT = 250;
 const METADATA_MANAGER_RENDER_STEP = 250;
 const METADATA_MANAGER_SEARCH_DEBOUNCE_MS = 220;
 const GUIDEVAULT_LOGIN_PROFILE_KEY = 'guidevault.localLoginProfile.v1';
+const GUIDEVAULT_LOGIN_PROFILE_BACKUP_KEY = 'guidevault.localLoginProfile.backup.v1';
 const GUIDEVAULT_LAUNCHBOX_OPEN_SIGNAL_KEY = 'guidevault.launchboxOpenSignalId.v1';
 const GUIDEVAULT_READING_PROFILES_KEY = 'guidevault.readingProfiles.v1';
 const GUIDEVAULT_READER_PREFERENCES_ENDPOINT = '/api/reader/preferences';
@@ -112,7 +113,7 @@ const GUIDEVAULT_LIBRARY_CHUNK_YIELD_MS = 30;
 const GUIDEVAULT_STARTUP_STATUS_HIDE_MS = 2400;
 const GUIDEVAULT_LIBRARY_SEARCH_DEBOUNCE_MS = 180;
 const GUIDEVAULT_SORT_COLLATOR = new Intl.Collator(undefined, { numeric: true, sensitivity: 'base' });
-const GUIDEVAULT_APP_VERSION = '0.9.259';
+const GUIDEVAULT_APP_VERSION = '0.9.260';
 const GUIDEVAULT_FILENAME_SCHEMA_KEY = 'guidevault.filenameRename.schema.v1';
 const GUIDEVAULT_FILE_ORGANIZATION_TEMPLATE_PRESETS_KEY = 'guidevault.fileOrganization.templatePresets.v2';
 const GUIDEVAULT_FILE_ORGANIZATION_TEMPLATE_PRESETS_LEGACY_KEY = 'guidevault.fileOrganization.templatePresets.v1';
@@ -1501,27 +1502,44 @@ function normalizeLoginProfile(value = {}) {
     updatedAt: value.updatedAt || new Date().toISOString()
   };
 }
-function readLoginProfile() {
+function readStoredLoginProfile(key = GUIDEVAULT_LOGIN_PROFILE_KEY, requirePassword = true) {
   try {
-    const raw = localStorage.getItem(GUIDEVAULT_LOGIN_PROFILE_KEY);
+    const raw = localStorage.getItem(key);
     if (!raw) return null;
     const profile = normalizeLoginProfile(JSON.parse(raw));
-    if (!(profile.username || profile.email) || !profile.password) return null;
-    return profile.username && profile.email && profile.password ? profile : null;
+    if (!(profile.username || profile.email)) return null;
+    if (requirePassword && !profile.password) return null;
+    return profile;
   } catch {
     return null;
   }
 }
+function readLoginProfile() {
+  return readStoredLoginProfile(GUIDEVAULT_LOGIN_PROFILE_KEY, true);
+}
+function readLoginProfileBackup() {
+  return readStoredLoginProfile(GUIDEVAULT_LOGIN_PROFILE_BACKUP_KEY, false);
+}
+function backupLoginProfile(profile = readLoginProfile()) {
+  if (!profile) return;
+  try { localStorage.setItem(GUIDEVAULT_LOGIN_PROFILE_BACKUP_KEY, JSON.stringify(profile)); } catch {}
+}
 function saveLoginProfile(profile) {
   const existing = readLoginProfile();
+  if (existing) backupLoginProfile(existing);
+  const backup = readLoginProfileBackup();
+  const candidateAvatar = profile.avatarDataUrl !== undefined
+    ? profile.avatarDataUrl
+    : (existing?.avatarDataUrl || (backup && profileMatchesLoginIdentity(backup, profile.username || profile.email) ? backup.avatarDataUrl : '') || '');
   const normalized = normalizeLoginProfile({
     ...(existing || {}),
     ...profile,
-    avatarDataUrl: profile.avatarDataUrl !== undefined ? profile.avatarDataUrl : (existing?.avatarDataUrl || ''),
-    createdAt: existing?.createdAt || profile.createdAt || new Date().toISOString(),
+    avatarDataUrl: candidateAvatar,
+    createdAt: existing?.createdAt || profile.createdAt || backup?.createdAt || new Date().toISOString(),
     updatedAt: new Date().toISOString()
   });
   localStorage.setItem(GUIDEVAULT_LOGIN_PROFILE_KEY, JSON.stringify(normalized));
+  backupLoginProfile(normalized);
   state.auth.profile = normalized;
   return normalized;
 }
@@ -1617,16 +1635,15 @@ function updateLoginPageMode() {
     title.classList.toggle('hidden', false);
   }
   if (subtitle) {
-    subtitle.textContent = restoreLocalProfileMode
-      ? 'Existing server users and library settings were found. Re-create this browser login profile to continue; this will not reset your library.'
-      : (firstUse ? 'Create the local login profile for this GuideVault browser.' : 'Sign in with this browser\'s local GuideVault profile.');
-    subtitle.classList.toggle('hidden', false);
+    const subtitleText = firstUse
+      ? 'Create the local login profile for this GuideVault browser.'
+      : (profile ? 'Sign in with this browser\'s local GuideVault profile.' : '');
+    subtitle.textContent = subtitleText;
+    subtitle.classList.toggle('hidden', !subtitleText);
   }
   if (help) {
-    help.textContent = restoreLocalProfileMode
-      ? 'GuideVault currently stores the web login profile in the browser. Your server data exists; only this browser session needs to be restored after the update.'
-      : '';
-    help.classList.toggle('hidden', !restoreLocalProfileMode);
+    help.textContent = '';
+    help.classList.toggle('hidden', true);
   }
 
   const identityMode = !firstUse;
@@ -2458,7 +2475,9 @@ function handleLoginSubmit(e) {
     const matchedServerUser = serverUsers.find(user => profileMatchesLoginIdentity({ username: user.displayName || '', email: user.email || '' }, identity)) || primaryServerLoginUser();
     const email = serverLoginEmailForIdentity(identity, matchedServerUser);
     const username = String(matchedServerUser?.displayName || identity || email || '').trim();
-    saveLoginProfile({ username, email, password: form.password });
+    const backup = readLoginProfileBackup();
+    const backupMatches = backup && profileMatchesLoginIdentity(backup, identity);
+    saveLoginProfile({ username, email, password: form.password, avatarDataUrl: backupMatches ? backup.avatarDataUrl : '' });
     setLoginStatus('Local browser login restored.', 'success');
     showAuthenticatedApp();
     return;
@@ -22605,5 +22624,4 @@ loadServerSettings(false).then(() => {
   startHomeAssistantCommandPolling();
   scheduleHomeAssistantStatusPublish('client_connected', 'Guidevault browser client connected.');
 }).catch(() => startHomeAssistantCommandPolling());
-
 

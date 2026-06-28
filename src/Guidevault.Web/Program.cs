@@ -18,7 +18,7 @@ using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Configuration;
 
 var builder = WebApplication.CreateBuilder(args);
-const string GuidevaultVersion = "0.9.259";
+const string GuidevaultVersion = "0.9.260";
 var app = builder.Build();
 var metadataJsonOptions = new JsonSerializerOptions(JsonSerializerDefaults.Web) { PropertyNameCaseInsensitive = true };
 var options = app.Configuration.GetSection("Guidevault").Get<GuidevaultOptions>() ?? new GuidevaultOptions();
@@ -550,7 +550,24 @@ app.MapGet("/launchbox/browser-login", (string? token) =>
 (() => {
   const profile = {{profileJson}};
   const target = {{targetJson}};
-  try { localStorage.setItem('guidevault.localLoginProfile.v1', JSON.stringify(profile)); } catch (err) { console.warn(err); }
+  const key = 'guidevault.localLoginProfile.v1';
+  const backupKey = 'guidevault.localLoginProfile.backup.v1';
+  try {
+    const existing = JSON.parse(localStorage.getItem(key) || '{}') || {};
+    if (existing && Object.keys(existing).length) {
+      try { localStorage.setItem(backupKey, JSON.stringify(existing)); } catch {}
+    }
+    const now = new Date().toISOString();
+    const merged = {
+      ...existing,
+      ...profile,
+      avatarDataUrl: existing.avatarDataUrl || profile.avatarDataUrl || '',
+      createdAt: existing.createdAt || profile.createdAt || now,
+      updatedAt: now
+    };
+    localStorage.setItem(key, JSON.stringify(merged));
+    localStorage.setItem(backupKey, JSON.stringify(merged));
+  } catch (err) { console.warn(err); }
   try { sessionStorage.setItem('guidevault.launchboxWebView.v1', '1'); } catch {}
   window.location.replace(target || '/');
 })();
@@ -17203,6 +17220,6 @@ static class GuidevaultLibraryIoGate
 
 static class GuidevaultBuildInfo
 {
-    public const string Version = "0.9.259";
+    public const string Version = "0.9.260";
 }
 
