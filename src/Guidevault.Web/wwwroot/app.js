@@ -19,7 +19,7 @@ const state = {
   deferredFullLibraryItems: null,
   libraryBackgroundLoad: { running: false, loaded: 0, total: 0 },
   virtualGrid: null,
-  auth: { profile: null, authenticated: false, editing: false, appStarted: false },
+  auth: { profile: null, authenticated: false, editing: false, appStarted: false, serverUsers: [], serverUsersLoaded: false, serverUsersLoadFailed: false },
   readingProfiles: { presets: {}, defaultPresetId: 'default', groupAssignments: {}, entryAssignments: {} },
   opds: { connectionUrl: '', selectedKeyId: '', keys: [], editingUrl: false, revealUrl: false, creatingKey: false },
   devices: { emailDevices: [], clientDevices: [], generatedAt: null, addingEmail: false, editingEmailId: '', editingClientId: '', clientMenuId: '' },
@@ -112,7 +112,7 @@ const GUIDEVAULT_LIBRARY_CHUNK_YIELD_MS = 30;
 const GUIDEVAULT_STARTUP_STATUS_HIDE_MS = 2400;
 const GUIDEVAULT_LIBRARY_SEARCH_DEBOUNCE_MS = 180;
 const GUIDEVAULT_SORT_COLLATOR = new Intl.Collator(undefined, { numeric: true, sensitivity: 'base' });
-const GUIDEVAULT_APP_VERSION = '0.9.258';
+const GUIDEVAULT_APP_VERSION = '0.9.259';
 const GUIDEVAULT_FILENAME_SCHEMA_KEY = 'guidevault.filenameRename.schema.v1';
 const GUIDEVAULT_FILE_ORGANIZATION_TEMPLATE_PRESETS_KEY = 'guidevault.fileOrganization.templatePresets.v2';
 const GUIDEVAULT_FILE_ORGANIZATION_TEMPLATE_PRESETS_LEGACY_KEY = 'guidevault.fileOrganization.templatePresets.v1';
@@ -1565,23 +1565,68 @@ function setAccountStatus(message = '', tone = '') {
   el.textContent = message;
   el.dataset.tone = tone || '';
 }
+
+function primaryServerLoginUser() {
+  const users = Array.isArray(state.auth.serverUsers) ? state.auth.serverUsers : [];
+  if (!users.length) return null;
+  return users.find(user => String(user.role || '').toLowerCase() === 'admin')
+    || users.find(user => (Array.isArray(user.permissions) ? user.permissions : []).some(p => String(p || '').toLowerCase() === 'admin'))
+    || users[0];
+}
+function serverLoginIdentity(user = primaryServerLoginUser()) {
+  const email = String(user?.email || '').trim();
+  const displayName = String(user?.displayName || '').trim();
+  return email || displayName || '';
+}
+function serverLoginEmailForIdentity(identity, user = primaryServerLoginUser()) {
+  const value = String(identity || '').trim();
+  if (value.includes('@')) return value;
+  const email = String(user?.email || '').trim();
+  if (email) return email;
+  return value ? `${value}@guidevault.local` : '';
+}
+async function loadLoginBootstrapFromServer(force = false) {
+  if (state.auth.serverUsersLoaded && !force) return state.auth.serverUsers || [];
+  try {
+    const res = await fetch('/api/users', { cache: 'no-store' });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const data = await res.json();
+    state.auth.serverUsers = Array.isArray(data.users) ? data.users : [];
+    state.auth.serverUsersLoaded = true;
+    state.auth.serverUsersLoadFailed = false;
+    return state.auth.serverUsers;
+  } catch (err) {
+    console.warn('Unable to load GuideVault login bootstrap users', err);
+    state.auth.serverUsers = [];
+    state.auth.serverUsersLoaded = true;
+    state.auth.serverUsersLoadFailed = true;
+    return [];
+  }
+}
 function updateLoginPageMode() {
   const profile = readLoginProfile();
-  const firstUse = !profile;
+  const serverUsers = Array.isArray(state.auth.serverUsers) ? state.auth.serverUsers : [];
+  const hasServerUsers = serverUsers.length > 0;
+  const restoreLocalProfileMode = !profile && hasServerUsers;
+  const firstUse = !profile && !hasServerUsers;
   const title = $('loginTitle');
   const subtitle = $('loginSubtitle');
   const help = $('loginHelp');
   if (title) {
-    title.textContent = 'Create Guidevault Login';
-    title.classList.toggle('hidden', !firstUse);
+    title.textContent = restoreLocalProfileMode || profile ? 'Sign In to GuideVault' : 'Create GuideVault Login';
+    title.classList.toggle('hidden', false);
   }
   if (subtitle) {
-    subtitle.textContent = 'Create the local login profile for this Guidevault browser.';
-    subtitle.classList.toggle('hidden', !firstUse);
+    subtitle.textContent = restoreLocalProfileMode
+      ? 'Existing server users and library settings were found. Re-create this browser login profile to continue; this will not reset your library.'
+      : (firstUse ? 'Create the local login profile for this GuideVault browser.' : 'Sign in with this browser\'s local GuideVault profile.');
+    subtitle.classList.toggle('hidden', false);
   }
   if (help) {
-    help.textContent = '';
-    help.classList.add('hidden');
+    help.textContent = restoreLocalProfileMode
+      ? 'GuideVault currently stores the web login profile in the browser. Your server data exists; only this browser session needs to be restored after the update.'
+      : '';
+    help.classList.toggle('hidden', !restoreLocalProfileMode);
   }
 
   const identityMode = !firstUse;
@@ -1600,9 +1645,10 @@ function updateLoginPageMode() {
   emailInput?.classList.toggle('hidden', identityMode);
 
   if (identityInput) {
+    const serverIdentity = serverLoginIdentity();
     identityInput.disabled = !identityMode;
     identityInput.required = identityMode;
-    identityInput.value = identityMode ? (profile.username || profile.email || '') : '';
+    identityInput.value = identityMode ? (profile?.username || profile?.email || serverIdentity || identityInput.value || '') : '';
   }
   if (usernameInput) {
     usernameInput.disabled = identityMode;
@@ -2404,6 +2450,20 @@ function handleLoginSubmit(e) {
   e?.preventDefault?.();
   const existing = readLoginProfile();
   const form = getProfileFormValues('login');
+  const serverUsers = Array.isArray(state.auth.serverUsers) ? state.auth.serverUsers : [];
+  if (!existing && serverUsers.length) {
+    const validation = validateExistingLoginCredentials(form);
+    if (validation) { setLoginStatus(validation, 'error'); return; }
+    const identity = form.identity || serverLoginIdentity();
+    const matchedServerUser = serverUsers.find(user => profileMatchesLoginIdentity({ username: user.displayName || '', email: user.email || '' }, identity)) || primaryServerLoginUser();
+    const email = serverLoginEmailForIdentity(identity, matchedServerUser);
+    const username = String(matchedServerUser?.displayName || identity || email || '').trim();
+    saveLoginProfile({ username, email, password: form.password });
+    setLoginStatus('Local browser login restored.', 'success');
+    showAuthenticatedApp();
+    return;
+  }
+
   if (!existing) {
     const validation = validateLoginProfile(form);
     if (validation) { setLoginStatus(validation, 'error'); return; }
@@ -2973,6 +3033,7 @@ async function initializeGuidevaultAuthAndApp() {
   syncCustomizeSettingsFromServer(false);
   loadOpdsSettings();
   syncOpdsSettingsFromServer(false);
+  await loadLoginBootstrapFromServer();
   updateLoginPageMode();
   renderAccountProfile();
 
