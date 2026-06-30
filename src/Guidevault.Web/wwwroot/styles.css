@@ -20520,7 +20520,7 @@ button.danger{border-color:rgba(255,122,122,.34)!important;color:#ffd0d0!importa
 @media(max-width:760px){.detail-launchbox-links-head{display:grid}.detail-launchbox-link-row{grid-template-columns:1fr}.detail-launchbox-link-meta{text-align:left;}}
 
 
-/* GuideVault 0.9.260 - compact update history and login restore polish. */
+/* GuideVault 1.1.0 - compact update history and login restore polish. */
 .system-update-history-head h2{
   font-size:22px!important;
   line-height:1.2!important;
@@ -20866,3 +20866,4 @@ button.warning{border-color:rgba(255,202,102,.4)!important;color:#ffe1a8!importa
     justify-content:flex-start;
   }
 }
+
