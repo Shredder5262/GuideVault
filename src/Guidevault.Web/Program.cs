@@ -18,7 +18,7 @@ using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Configuration;
 
 var builder = WebApplication.CreateBuilder(args);
-const string GuidevaultVersion = "1.1.0";
+const string GuidevaultVersion = "1.1.1";
 var app = builder.Build();
 var metadataJsonOptions = new JsonSerializerOptions(JsonSerializerDefaults.Web) { PropertyNameCaseInsensitive = true };
 var options = app.Configuration.GetSection("Guidevault").Get<GuidevaultOptions>() ?? new GuidevaultOptions();
@@ -17818,4 +17818,5 @@ static class GuidevaultBuildInfo
 {
     public const string Version = "0.9.224";
 }
+
 

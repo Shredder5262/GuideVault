@@ -5197,7 +5197,7 @@ body.left-collapsed .category-body{
     rgba(0,0,0,.32) 100%)!important;
 }
 
-/* v1.1.0: refine Page Turn Experimental face handling.
+/* v1.1.1: refine Page Turn Experimental face handling.
    Keep the sheet opaque, switch from front to true backside page at the midpoint,
    and remove the remaining dissolve/fade behavior after landing. */
 .reader-page-turn-layer{
@@ -20520,7 +20520,7 @@ button.danger{border-color:rgba(255,122,122,.34)!important;color:#ffd0d0!importa
 @media(max-width:760px){.detail-launchbox-links-head{display:grid}.detail-launchbox-link-row{grid-template-columns:1fr}.detail-launchbox-link-meta{text-align:left;}}
 
 
-/* GuideVault 1.1.0 - compact update history and login restore polish. */
+/* GuideVault 1.1.1 - compact update history and login restore polish. */
 .system-update-history-head h2{
   font-size:22px!important;
   line-height:1.2!important;
@@ -20866,4 +20866,5 @@ button.warning{border-color:rgba(255,202,102,.4)!important;color:#ffe1a8!importa
     justify-content:flex-start;
   }
 }
+
 
