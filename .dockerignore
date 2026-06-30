@@ -1,26 +1,46 @@
+# Git / metadata
+.git/
+.gitignore
+
+# Build artifacts
 **/bin/
 **/obj/
+
+# IDE/editor
 **/.vs/
 **/.vscode/
+*.user
+*.suo
+
+# GuideVault runtime/user data
 **/data/
 **/cache/
 **/logs/
 **/covers/
 **/thumbnails/
 **/uploads/
+
+# Local libraries / personal content
 **/library/
 **/libraries/
 **/books/
 **/manuals/
 **/strategy-guides/
 **/magazines/
+
+# Local backups and generated releases
+_backup/
+_releases/
+*.zip
+*.7z
+*.rar
+*.tar
+*.tar.gz
+*.tgz
+
+# Databases
 *.db
 *.db-shm
 *.db-wal
 *.sqlite
 *.sqlite3
-*.cbz
-*.cbr
-*.pdf
-.git/
-.gitignore

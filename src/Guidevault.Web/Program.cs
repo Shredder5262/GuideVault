@@ -45,6 +45,7 @@ var launchBoxIntegrationPath = Path.Combine(dataRoot, "config", "launchbox.integ
 var webRoot = app.Environment.WebRootPath ?? Path.Combine(contentRoot, "wwwroot");
 var readerBackgroundsPath = Path.Combine(webRoot, "assets", "backgrounds");
 var legacyReaderBackgroundsPath = Path.Combine(webRoot, "backgrounds");
+var userReaderBackgroundsPath = Path.Combine(dataRoot, "reader", "backgrounds");
 Directory.CreateDirectory(Path.GetDirectoryName(configPath)!);
 
 var savedSettings = LibrarySettingsStore.Load(configPath);
@@ -92,10 +93,7 @@ var homeAssistantConnector = new GuidevaultHomeAssistantConnector(serverSettings
 
 ReaderBackgroundCatalog GetReaderBackgroundCatalog()
 {
-    var allowedExtensions = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
-    {
-        ".png", ".jpg", ".jpeg", ".webp", ".gif", ".bmp"
-    };
+    var allowedExtensions = GetReaderBackgroundAllowedExtensions();
 
     var activeBackgroundsPath = Directory.Exists(readerBackgroundsPath)
         ? readerBackgroundsPath
@@ -104,54 +102,235 @@ ReaderBackgroundCatalog GetReaderBackgroundCatalog()
         ? "/assets/backgrounds"
         : "/backgrounds";
 
-    var backgroundFiles = Directory.Exists(activeBackgroundsPath)
+    var builtInBackgrounds = Directory.Exists(activeBackgroundsPath)
         ? Directory.EnumerateFiles(activeBackgroundsPath)
-        : Enumerable.Empty<string>();
+            .Where(file => allowedExtensions.Contains(Path.GetExtension(file)))
+            .Select(file => BuildReaderBackgroundInfo(Path.GetFileName(file), $"{backgroundUrlBase}/{Uri.EscapeDataString(Path.GetFileName(file))}", "default", false))
+        : Enumerable.Empty<ReaderBackgroundInfo>();
 
-    var backgrounds = backgroundFiles
-        .Where(file => allowedExtensions.Contains(Path.GetExtension(file)))
-        .Select(file =>
-        {
-            var fileName = Path.GetFileName(file);
-            var baseName = Path.GetFileNameWithoutExtension(fileName)
-                .Replace('-', ' ')
-                .Replace('_', ' ')
-                .Trim();
-            var displayName = fileName.ToLowerInvariant() switch
+    Directory.CreateDirectory(userReaderBackgroundsPath);
+    var uploadedBackgrounds = Directory.Exists(userReaderBackgroundsPath)
+        ? Directory.EnumerateFiles(userReaderBackgroundsPath)
+            .Where(file => allowedExtensions.Contains(Path.GetExtension(file)))
+            .Select(file =>
             {
-                "adventuremap.png" => "Adventure Map",
-                "bathroom.png" => "Bathroom",
-                "gamerbedroom.png" => "Gamer Bedroom",
-                "librarydesk.png" => "Library Desk",
-                "livingroom.png" => "Living Room",
-                "schoolbus.png" => "School Bus",
-                "spacehud.png" => "Space HUD",
-                "warriorhud.png" => "Warrior HUD",
-                "wood.png" => "Wood",
-                _ => string.IsNullOrWhiteSpace(baseName)
-                    ? fileName
-                    : System.Globalization.CultureInfo.CurrentCulture.TextInfo.ToTitleCase(baseName.ToLowerInvariant())
-            };
-            return new ReaderBackgroundInfo
-            {
-                Name = fileName,
-                DisplayName = displayName,
-                Url = $"{backgroundUrlBase}/{Uri.EscapeDataString(fileName)}"
-            };
-        })
-        .OrderBy(bg => bg.DisplayName, StringComparer.OrdinalIgnoreCase)
+                var fileName = Path.GetFileName(file);
+                return BuildReaderBackgroundInfo(fileName, $"/api/reader/backgrounds/user/{Uri.EscapeDataString(fileName)}", "uploaded", true);
+            })
+        : Enumerable.Empty<ReaderBackgroundInfo>();
+
+    var backgrounds = builtInBackgrounds
+        .Concat(uploadedBackgrounds)
+        .OrderBy(bg => bg.IsUserUploaded ? 1 : 0)
+        .ThenBy(bg => bg.DisplayName, StringComparer.OrdinalIgnoreCase)
         .ToList();
 
-    var defaultName = backgrounds.FirstOrDefault(bg => bg.Name.Equals("librarydesk.png", StringComparison.OrdinalIgnoreCase))?.Name
+    var defaultName = backgrounds.FirstOrDefault(bg => !bg.IsUserUploaded && bg.Name.Equals("librarydesk.png", StringComparison.OrdinalIgnoreCase))?.Name
+        ?? backgrounds.FirstOrDefault(bg => !bg.IsUserUploaded)?.Name
         ?? backgrounds.FirstOrDefault()?.Name
         ?? string.Empty;
 
     return new ReaderBackgroundCatalog
     {
         Folder = activeBackgroundsPath,
+        UserFolder = userReaderBackgroundsPath,
         DefaultName = defaultName,
         Backgrounds = backgrounds
     };
+}
+
+HashSet<string> GetReaderBackgroundAllowedExtensions() => new(StringComparer.OrdinalIgnoreCase)
+{
+    ".png", ".jpg", ".jpeg", ".webp", ".gif", ".bmp"
+};
+
+ReaderBackgroundInfo BuildReaderBackgroundInfo(string fileName, string url, string source, bool isUserUploaded)
+{
+    var displayName = ReaderBackgroundDisplayName(fileName);
+    var name = isUserUploaded ? $"user:{fileName}" : fileName;
+    return new ReaderBackgroundInfo
+    {
+        Name = name,
+        FileName = fileName,
+        DisplayName = displayName,
+        Url = url,
+        Source = source,
+        IsUserUploaded = isUserUploaded
+    };
+}
+
+string ReaderBackgroundDisplayName(string fileName)
+{
+    var cleanFileName = Path.GetFileName(fileName ?? string.Empty);
+    var known = cleanFileName.ToLowerInvariant() switch
+    {
+        "adventuremap.png" => "Adventure Map",
+        "bathroom.png" => "Bathroom",
+        "gamerbedroom.png" => "Gamer Bedroom",
+        "librarydesk.png" => "Library Desk",
+        "livingroom.png" => "Living Room",
+        "schoolbus.png" => "School Bus",
+        "spacehud.png" => "Space HUD",
+        "warriorhud.png" => "Warrior HUD",
+        "wood.png" => "Wood",
+        _ => string.Empty
+    };
+    if (!string.IsNullOrWhiteSpace(known)) return known;
+
+    var baseName = Path.GetFileNameWithoutExtension(cleanFileName)
+        .Replace('-', ' ')
+        .Replace('_', ' ')
+        .Trim();
+    return string.IsNullOrWhiteSpace(baseName)
+        ? cleanFileName
+        : System.Globalization.CultureInfo.CurrentCulture.TextInfo.ToTitleCase(baseName.ToLowerInvariant());
+}
+
+string SanitizeReaderBackgroundBaseName(string value)
+{
+    var normalized = Regex.Replace((value ?? string.Empty).Trim(), @"[^a-zA-Z0-9._ -]+", " ").Trim();
+    normalized = Regex.Replace(normalized, @"\s+", "-").Trim('-', '.', '_');
+    if (string.IsNullOrWhiteSpace(normalized)) normalized = "reader-background";
+    if (normalized.Length > 80) normalized = normalized[..80].Trim('-', '.', '_');
+    return string.IsNullOrWhiteSpace(normalized) ? "reader-background" : normalized;
+}
+
+string GetUniqueReaderBackgroundFileName(string folder, string baseName, string extension)
+{
+    var fileName = $"{baseName}{extension}";
+    var index = 2;
+    while (File.Exists(Path.Combine(folder, fileName)))
+    {
+        fileName = $"{baseName}-{index}{extension}";
+        index++;
+    }
+    return fileName;
+}
+
+string GetReaderBackgroundContentType(string extension) => extension.ToLowerInvariant() switch
+{
+    ".png" => "image/png",
+    ".webp" => "image/webp",
+    ".gif" => "image/gif",
+    ".bmp" => "image/bmp",
+    ".jpg" or ".jpeg" => "image/jpeg",
+    _ => "application/octet-stream"
+};
+
+async Task<Image> LoadAndNormalizeReaderBackground(Stream stream)
+{
+    const int targetWidth = 1920;
+    const int targetHeight = 1080;
+    try
+    {
+        var image = await Image.LoadAsync(stream);
+        image.Mutate(operation => operation.Resize(new ResizeOptions
+        {
+            Size = new Size(targetWidth, targetHeight),
+            Mode = ResizeMode.Crop,
+            Position = AnchorPositionMode.Center
+        }));
+        return image;
+    }
+    catch
+    {
+        throw new InvalidDataException("The uploaded file does not appear to be a readable image.");
+    }
+}
+
+IResult GetUserReaderBackgroundFile(string fileName)
+{
+    var safeFileName = Path.GetFileName(Uri.UnescapeDataString(fileName ?? string.Empty));
+    if (string.IsNullOrWhiteSpace(safeFileName)) return Results.NotFound();
+    var extension = Path.GetExtension(safeFileName);
+    if (!GetReaderBackgroundAllowedExtensions().Contains(extension)) return Results.NotFound();
+    var path = Path.Combine(userReaderBackgroundsPath, safeFileName);
+    if (!File.Exists(path)) return Results.NotFound();
+    return Results.File(path, GetReaderBackgroundContentType(extension), enableRangeProcessing: true);
+}
+
+async Task<IResult> UploadUserReaderBackground(HttpRequest request)
+{
+    const long maxBackgroundBytes = 15L * 1024L * 1024L;
+    if (!request.HasFormContentType)
+    {
+        return Results.BadRequest(new { message = "Upload a background image with multipart form data." });
+    }
+
+    var form = await request.ReadFormAsync();
+    var file = form.Files.GetFile("background") ?? form.Files.GetFile("file") ?? form.Files.FirstOrDefault();
+    if (file is null || file.Length <= 0)
+    {
+        return Results.BadRequest(new { message = "Choose an image file to upload." });
+    }
+    if (file.Length > maxBackgroundBytes)
+    {
+        return Results.BadRequest(new { message = "Reader backgrounds must be 15 MB or smaller." });
+    }
+
+    var extension = Path.GetExtension(file.FileName).ToLowerInvariant();
+    if (!GetReaderBackgroundAllowedExtensions().Contains(extension))
+    {
+        return Results.BadRequest(new { message = "Supported background formats are PNG, JPG, JPEG, WebP, GIF, and BMP." });
+    }
+
+    await using var memory = new MemoryStream();
+    await file.CopyToAsync(memory);
+    if (memory.Length <= 0 || memory.Length > maxBackgroundBytes)
+    {
+        return Results.BadRequest(new { message = "Reader backgrounds must be 15 MB or smaller." });
+    }
+
+    memory.Position = 0;
+    Image image;
+    try
+    {
+        image = await LoadAndNormalizeReaderBackground(memory);
+    }
+    catch (InvalidDataException ex)
+    {
+        return Results.BadRequest(new { message = ex.Message });
+    }
+    Directory.CreateDirectory(userReaderBackgroundsPath);
+    var requestedName = string.IsNullOrWhiteSpace(form["displayName"])
+        ? Path.GetFileNameWithoutExtension(file.FileName)
+        : form["displayName"].ToString();
+    var baseName = SanitizeReaderBackgroundBaseName(requestedName);
+    var fileName = GetUniqueReaderBackgroundFileName(userReaderBackgroundsPath, baseName, extension);
+    var targetPath = Path.Combine(userReaderBackgroundsPath, fileName);
+    using (image)
+    {
+        await image.SaveAsync(targetPath);
+    }
+
+    var catalog = GetReaderBackgroundCatalog();
+    var uploaded = catalog.Backgrounds.FirstOrDefault(bg => bg.IsUserUploaded && bg.FileName.Equals(fileName, StringComparison.OrdinalIgnoreCase));
+    return Results.Ok(new
+    {
+        message = "Reader background uploaded.",
+        background = uploaded,
+        catalog
+    });
+}
+
+IResult DeleteUserReaderBackground(string fileName)
+{
+    var safeFileName = Path.GetFileName(Uri.UnescapeDataString(fileName ?? string.Empty));
+    if (string.IsNullOrWhiteSpace(safeFileName)) return Results.BadRequest(new { message = "Choose a user-uploaded reader background to delete." });
+    var extension = Path.GetExtension(safeFileName);
+    if (!GetReaderBackgroundAllowedExtensions().Contains(extension)) return Results.BadRequest(new { message = "That file is not a supported reader background." });
+    var path = Path.Combine(userReaderBackgroundsPath, safeFileName);
+    if (!File.Exists(path)) return Results.NotFound(new { message = "Reader background was not found." });
+
+    try
+    {
+        File.Delete(path);
+        return Results.Ok(new { message = "Reader background deleted.", catalog = GetReaderBackgroundCatalog() });
+    }
+    catch (Exception ex)
+    {
+        return Results.Problem($"Unable to delete reader background: {ex.Message}");
+    }
 }
 
 void RecordSystemEvent(string category, string title, string message = "", string source = "server", string? itemId = null, string? itemTitle = null)
@@ -284,12 +463,15 @@ app.MapGet("/api/integrations/launchbox/status", () =>
 {
     var snapshot = launchBoxIntegrationStore.GetSnapshot();
     var job = launchBoxIntegrationStore.GetJobSnapshot();
+    var connection = launchBoxIntegrationStore.GetConnectionSnapshot();
     var coverage = GuidevaultLaunchBoxMatcher.BuildCoverage(snapshot, cache.GetItemsSnapshot());
     return Results.Ok(new
     {
         enabled = true,
         version = GuidevaultVersion,
         configured = snapshot.Games.Count > 0,
+        connectedSinceBoot = connection.ConnectedSinceBoot,
+        connectedSinceBootAt = connection.ConnectedSinceBootAt,
         source = snapshot.Source,
         pluginVersion = snapshot.PluginVersion,
         lastSyncedAt = snapshot.LastSyncedAt,
@@ -487,6 +669,7 @@ app.MapPost("/api/integrations/launchbox/open", (HttpRequest request, Guidevault
     var items = cache.GetItemsSnapshot();
     var result = GuidevaultLaunchBoxMatcher.ResolveOpenRequest(snapshot, items, payload, PublicBaseUrl(request));
     if (!result.Found) return Results.NotFound(result);
+    launchBoxIntegrationStore.MarkConnectedSinceBoot();
 
     // Important: resolving a LaunchBox item is not the same as broadcasting an
     // open command to every authenticated GuideVault browser tab. The WebView2
@@ -512,6 +695,7 @@ app.MapPost("/api/integrations/launchbox/browser-login-link", (HttpRequest reque
 {
     var result = launchBoxBrowserLoginStore.CreateLink(payload, PublicBaseUrl(request));
     if (!result.Success) return Results.BadRequest(result);
+    launchBoxIntegrationStore.MarkConnectedSinceBoot();
     return Results.Ok(result);
 });
 
@@ -715,6 +899,13 @@ app.MapPost("/api/integrations/launchbox/matches/reject", (GuidevaultLaunchBoxMa
 {
     var result = launchBoxIntegrationStore.RejectMatch(payload, cache.GetItemsSnapshot());
     RecordSystemEvent("Integration", "LaunchBox match rejected", result.Message, "launchbox", result.ItemId, result.ItemTitle);
+    return Results.Ok(result);
+});
+
+app.MapPost("/api/integrations/launchbox/matches/undo", (GuidevaultLaunchBoxMatchDecisionRequest payload) =>
+{
+    var result = launchBoxIntegrationStore.UndoMatchDecision(payload, cache.GetItemsSnapshot());
+    RecordSystemEvent("Integration", "LaunchBox match decision undone", result.Message, "launchbox", result.ItemId, result.ItemTitle);
     return Results.Ok(result);
 });
 
@@ -1115,6 +1306,9 @@ app.MapPost("/api/tasks/clear", () => Results.Ok(new { cleared = taskMonitor.Cle
 
 
 app.MapGet("/api/reader/backgrounds", () => Results.Ok(GetReaderBackgroundCatalog()));
+app.MapGet("/api/reader/backgrounds/user/{fileName}", (string fileName) => GetUserReaderBackgroundFile(fileName));
+app.MapPost("/api/reader/backgrounds/upload", async (HttpRequest request) => await UploadUserReaderBackground(request));
+app.MapDelete("/api/reader/backgrounds/user/{fileName}", (string fileName) => DeleteUserReaderBackground(fileName));
 
 
 app.MapPost("/api/library/rescan", () =>
@@ -1740,7 +1934,7 @@ app.MapPost("/api/items/{id}/metadata/native-export", async (string id, JsonElem
         updated = MetadataStore.ApplyUpdateSnapshot(updated, effectiveUpdate);
         cache.ReplaceCachedItem(updated, persist: false);
 
-        var exportDocument = GuidevaultNativeMetadata.BuildExport(updated, effectiveUpdate, payload);
+        var exportDocument = GuidevaultNativeMetadata.BuildExport(updated, effectiveUpdate, payload, launchBoxIntegrationStore.GetSnapshot());
         var exportJson = JsonSerializer.Serialize(exportDocument, GuidevaultNativeMetadata.JsonOptions);
         var writeResult = await ArchiveReader.WriteGuidevaultMetadataAsync(updated.Path, updated.Kind, exportJson);
         if (!writeResult.Success)
@@ -1785,6 +1979,7 @@ app.MapPost("/api/items/metadata/native-export/bulk", async (JsonElement payload
                 .ToDictionary(group => group.Key, group => group.First(), StringComparer.OrdinalIgnoreCase);
             var results = new List<object>();
             var updatedItems = new List<LibraryItem>();
+            var launchBoxSnapshot = launchBoxIntegrationStore.GetSnapshot();
             var written = 0;
             var failed = 0;
 
@@ -1802,7 +1997,7 @@ app.MapPost("/api/items/metadata/native-export/bulk", async (JsonElement payload
                 cache.ReplaceCachedItem(updated, persist: false);
                 updatedItems.Add(updated);
 
-                var exportDocument = GuidevaultNativeMetadata.BuildExport(updated, new ItemMetadataUpdate());
+                var exportDocument = GuidevaultNativeMetadata.BuildExport(updated, new ItemMetadataUpdate(), launchBoxData: launchBoxSnapshot);
                 var exportJson = JsonSerializer.Serialize(exportDocument, GuidevaultNativeMetadata.JsonOptions);
                 var writeResult = await ArchiveReader.WriteGuidevaultMetadataAsync(updated.Path, updated.Kind, exportJson);
                 if (writeResult.Success) written++; else failed++;
@@ -2037,6 +2232,7 @@ app.MapPost("/api/items/files/convert", (JsonElement payload) =>
                         .Where(item => !string.IsNullOrWhiteSpace(item.Id))
                         .GroupBy(item => item.Id, StringComparer.OrdinalIgnoreCase)
                         .ToDictionary(group => group.Key, group => group.First(), StringComparer.OrdinalIgnoreCase);
+                    var launchBoxSnapshot = launchBoxIntegrationStore.GetSnapshot();
 
                     for (var index = 0; index < ids.Count; index++)
                     {
@@ -2058,7 +2254,7 @@ app.MapPost("/api/items/files/convert", (JsonElement payload) =>
                         taskMonitor.Update(task.Id, $"Converting {itemNumber} of {ids.Count}: {updated.Title}", Math.Min(96, baseProgress));
                         fileConversionJobs.Update(task.Id, "running", $"Converting {itemNumber} of {ids.Count}: {updated.Title}", ids.Count, converted, failed, results);
 
-                        var exportDocument = GuidevaultNativeMetadata.BuildExport(updated, new ItemMetadataUpdate());
+                        var exportDocument = GuidevaultNativeMetadata.BuildExport(updated, new ItemMetadataUpdate(), launchBoxData: launchBoxSnapshot);
                         var exportJson = JsonSerializer.Serialize(exportDocument, GuidevaultNativeMetadata.JsonOptions);
                         var result = await ArchiveReader.ConvertArchiveAsync(updated.Path, updated.Kind, exportJson, targetFormat);
                         if (result.Success) converted++; else failed++;
@@ -5288,6 +5484,7 @@ public sealed class ReaderBackgroundCatalog
 {
     public static ReaderBackgroundCatalog Empty { get; } = new();
     public string Folder { get; set; } = string.Empty;
+    public string UserFolder { get; set; } = string.Empty;
     public string DefaultName { get; set; } = string.Empty;
     public IReadOnlyList<ReaderBackgroundInfo> Backgrounds { get; set; } = Array.Empty<ReaderBackgroundInfo>();
 }
@@ -5295,8 +5492,11 @@ public sealed class ReaderBackgroundCatalog
 public sealed class ReaderBackgroundInfo
 {
     public string Name { get; set; } = string.Empty;
+    public string FileName { get; set; } = string.Empty;
     public string DisplayName { get; set; } = string.Empty;
     public string Url { get; set; } = string.Empty;
+    public string Source { get; set; } = string.Empty;
+    public bool IsUserUploaded { get; set; }
 }
 
 public sealed class GuidevaultHomeAssistantConnector
@@ -6707,6 +6907,12 @@ public sealed class GuidevaultSystemEventRecord
 
 
 
+public sealed class GuidevaultLaunchBoxConnectionState
+{
+    public bool ConnectedSinceBoot { get; set; }
+    public DateTimeOffset? ConnectedSinceBootAt { get; set; }
+}
+
 public sealed class GuidevaultLaunchBoxIntegrationStore
 {
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web) { WriteIndented = true };
@@ -6714,6 +6920,7 @@ public sealed class GuidevaultLaunchBoxIntegrationStore
     private readonly object _gate = new();
     private GuidevaultLaunchBoxIntegrationData _data;
     private GuidevaultLaunchBoxSyncJobStatus _job = new();
+    private DateTimeOffset? _connectedSinceBootAt;
     private CancellationTokenSource? _jobCancellation;
     private int _jobSequence;
 
@@ -6737,6 +6944,26 @@ public sealed class GuidevaultLaunchBoxIntegrationStore
         lock (_gate)
         {
             return CloneJob(_job);
+        }
+    }
+
+    public GuidevaultLaunchBoxConnectionState GetConnectionSnapshot()
+    {
+        lock (_gate)
+        {
+            return new GuidevaultLaunchBoxConnectionState
+            {
+                ConnectedSinceBoot = _connectedSinceBootAt.HasValue,
+                ConnectedSinceBootAt = _connectedSinceBootAt
+            };
+        }
+    }
+
+    public void MarkConnectedSinceBoot()
+    {
+        lock (_gate)
+        {
+            _connectedSinceBootAt ??= DateTimeOffset.UtcNow;
         }
     }
 
@@ -6811,6 +7038,7 @@ public sealed class GuidevaultLaunchBoxIntegrationStore
             _data.LaunchBoxRoot = safeRequest.LaunchBoxRoot?.Trim() ?? string.Empty;
             _data.PluginVersion = safeRequest.PluginVersion?.Trim() ?? string.Empty;
             _data.LastSyncedAt = DateTimeOffset.UtcNow;
+            _connectedSinceBootAt ??= _data.LastSyncedAt;
 
             if (mergeSelectedPlatforms)
             {
@@ -7096,6 +7324,26 @@ public sealed class GuidevaultLaunchBoxIntegrationStore
     private static bool IsJobActive(string? status) => string.Equals(status, "Queued", StringComparison.OrdinalIgnoreCase)
         || string.Equals(status, "Running", StringComparison.OrdinalIgnoreCase)
         || string.Equals(status, "CancelRequested", StringComparison.OrdinalIgnoreCase);
+    private static bool IsReviewableDecisionStatus(string? status) =>
+        string.Equals(status, "AutoMatched", StringComparison.OrdinalIgnoreCase) ||
+        string.Equals(status, "Ambiguous", StringComparison.OrdinalIgnoreCase) ||
+        string.Equals(status, "Missing", StringComparison.OrdinalIgnoreCase);
+
+    private static string PreviousStatusForUndo(GuidevaultLaunchBoxMatch match)
+    {
+        var previous = (match.PreviousMatchStatus ?? string.Empty).Trim();
+        if (IsReviewableDecisionStatus(previous)) return previous;
+        if (match.ConfidenceScore >= 75) return "AutoMatched";
+        if (match.ConfidenceScore > 0) return "Ambiguous";
+        return "Missing";
+    }
+
+    private static void RememberPreviousMatchStatus(GuidevaultLaunchBoxMatch match)
+    {
+        var current = (match.MatchStatus ?? string.Empty).Trim();
+        match.PreviousMatchStatus = IsReviewableDecisionStatus(current) ? current : (string.IsNullOrWhiteSpace(match.PreviousMatchStatus) ? "Missing" : match.PreviousMatchStatus);
+    }
+
     public GuidevaultLaunchBoxDecisionResult ConfirmMatch(GuidevaultLaunchBoxMatchDecisionRequest? request, IReadOnlyList<LibraryItem> guidevaultItems)
     {
         var payload = request ?? new GuidevaultLaunchBoxMatchDecisionRequest();
@@ -7132,10 +7380,12 @@ public sealed class GuidevaultLaunchBoxIntegrationStore
             if (match is null)
             {
                 match = GuidevaultLaunchBoxMatcher.CreateMatch(game, item, matchType, "Confirmed", 100, "Manually confirmed in GuideVault.");
+                match.PreviousMatchStatus = "Missing";
                 _data.Matches.Add(match);
             }
             else
             {
+                RememberPreviousMatchStatus(match);
                 match.MatchStatus = "Confirmed";
                 match.ConfidenceScore = Math.Max(match.ConfidenceScore, 100);
                 match.MatchReason = "Manually confirmed in GuideVault.";
@@ -7191,6 +7441,7 @@ public sealed class GuidevaultLaunchBoxIntegrationStore
                     GuideVaultItemTitle = item?.Title ?? string.Empty,
                     MatchType = matchType,
                     MatchStatus = "Rejected",
+                    PreviousMatchStatus = "Missing",
                     ConfidenceScore = 0,
                     MatchReason = "Manually rejected in GuideVault.",
                     Source = "Manual",
@@ -7201,6 +7452,7 @@ public sealed class GuidevaultLaunchBoxIntegrationStore
             }
             else
             {
+                RememberPreviousMatchStatus(match);
                 match.MatchStatus = "Rejected";
                 match.MatchReason = "Manually rejected in GuideVault.";
                 match.UpdatedAt = DateTimeOffset.UtcNow;
@@ -7217,6 +7469,71 @@ public sealed class GuidevaultLaunchBoxIntegrationStore
                 MatchType = matchType,
                 MatchStatus = "Rejected",
                 Message = $"Rejected {matchType} match: {game.Title} -> {(item?.Title ?? itemId)}."
+            };
+        }
+    }
+
+    public GuidevaultLaunchBoxDecisionResult UndoMatchDecision(GuidevaultLaunchBoxMatchDecisionRequest? request, IReadOnlyList<LibraryItem> guidevaultItems)
+    {
+        var payload = request ?? new GuidevaultLaunchBoxMatchDecisionRequest();
+        var gameId = (payload.LaunchBoxGameId ?? string.Empty).Trim();
+        var itemId = (payload.GuideVaultItemId ?? payload.ItemId ?? string.Empty).Trim();
+        var matchType = GuidevaultLaunchBoxMatcher.NormalizeMatchType(payload.MatchType ?? payload.Kind);
+        if (string.IsNullOrWhiteSpace(gameId) || string.IsNullOrWhiteSpace(itemId))
+            return new GuidevaultLaunchBoxDecisionResult { Success = false, Message = "LaunchBox game id and GuideVault item id are required." };
+
+        var item = guidevaultItems.FirstOrDefault(i => string.Equals(i.Id, itemId, StringComparison.OrdinalIgnoreCase));
+        lock (_gate)
+        {
+            var game = _data.Games.FirstOrDefault(g => string.Equals(g.Id, gameId, StringComparison.OrdinalIgnoreCase));
+            if (game is null)
+                return new GuidevaultLaunchBoxDecisionResult { Success = false, LaunchBoxGameId = gameId, ItemId = itemId, Message = "LaunchBox game was not found in the last sync." };
+
+            matchType = string.IsNullOrWhiteSpace(matchType) && item is not null ? GuidevaultLaunchBoxMatcher.MatchTypeFromItem(item) : matchType;
+            matchType = string.IsNullOrWhiteSpace(matchType) ? "Manual" : matchType;
+            var match = _data.Matches.FirstOrDefault(m => string.Equals(m.LaunchBoxGameId, gameId, StringComparison.OrdinalIgnoreCase)
+                && string.Equals(m.GuideVaultItemId, itemId, StringComparison.OrdinalIgnoreCase)
+                && string.Equals(m.MatchType, matchType, StringComparison.OrdinalIgnoreCase));
+
+            if (match is null)
+                return new GuidevaultLaunchBoxDecisionResult { Success = false, LaunchBoxGameId = gameId, ItemId = itemId, MatchType = matchType, Message = "No saved match decision was found to undo." };
+
+            var previousStatus = PreviousStatusForUndo(match);
+            var title = item?.Title ?? match.GuideVaultItemTitle ?? itemId;
+            if (string.Equals(previousStatus, "Missing", StringComparison.OrdinalIgnoreCase))
+            {
+                _data.Matches.Remove(match);
+                Save();
+                return new GuidevaultLaunchBoxDecisionResult
+                {
+                    Success = true,
+                    LaunchBoxGameId = gameId,
+                    GuideVaultItemId = itemId,
+                    ItemId = itemId,
+                    ItemTitle = title,
+                    MatchType = matchType,
+                    MatchStatus = "Missing",
+                    Message = $"Undid match decision: {game.Title} -> {title}. Item returned to Missing."
+                };
+            }
+
+            match.MatchStatus = previousStatus;
+            match.MatchReason = string.Equals(previousStatus, "Ambiguous", StringComparison.OrdinalIgnoreCase)
+                ? "Reopened for review after undo."
+                : "Returned to review after undo.";
+            match.PreviousMatchStatus = string.Empty;
+            match.UpdatedAt = DateTimeOffset.UtcNow;
+            Save();
+            return new GuidevaultLaunchBoxDecisionResult
+            {
+                Success = true,
+                LaunchBoxGameId = gameId,
+                GuideVaultItemId = itemId,
+                ItemId = itemId,
+                ItemTitle = title,
+                MatchType = matchType,
+                MatchStatus = previousStatus,
+                Message = $"Undid match decision: {game.Title} -> {title}. Item returned to {previousStatus}."
             };
         }
     }
@@ -7423,6 +7740,12 @@ public static class GuidevaultLaunchBoxMatcher
             .Select(CloneMatch)
             .ToList();
 
+        foreach (var nativeMatch in BuildNativeConfirmedMatches(safeGames, guidevaultItems ?? Array.Empty<LibraryItem>(), matchTypes))
+        {
+            if (!preserved.Any(m => string.Equals(m.Id, nativeMatch.Id, StringComparison.OrdinalIgnoreCase)))
+                preserved.Add(nativeMatch);
+        }
+
         var blockedKeys = preserved
             .Where(m => string.Equals(m.MatchStatus, "Rejected", StringComparison.OrdinalIgnoreCase))
             .Select(m => MatchId(m.LaunchBoxGameId, m.GuideVaultItemId, m.MatchType))
@@ -7510,6 +7833,75 @@ public static class GuidevaultLaunchBoxMatcher
             .ThenBy(m => m.MatchType, StringComparer.OrdinalIgnoreCase)
             .ToList();
     }
+
+    private static IReadOnlyList<GuidevaultLaunchBoxMatch> BuildNativeConfirmedMatches(IReadOnlyList<GuidevaultLaunchBoxGame> games, IReadOnlyList<LibraryItem> guidevaultItems, IReadOnlyCollection<string>? matchTypes)
+    {
+        if (games is null || games.Count == 0 || guidevaultItems is null || guidevaultItems.Count == 0)
+            return Array.Empty<GuidevaultLaunchBoxMatch>();
+
+        var scopedTypes = (matchTypes ?? Array.Empty<string>())
+            .Select(NormalizeMatchType)
+            .Where(t => !string.IsNullOrWhiteSpace(t))
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var typeScoped = scopedTypes.Count > 0;
+
+        var gamesById = games
+            .Where(g => !string.IsNullOrWhiteSpace(g.Id))
+            .GroupBy(g => g.Id, StringComparer.OrdinalIgnoreCase)
+            .ToDictionary(group => group.Key, group => group.First(), StringComparer.OrdinalIgnoreCase);
+
+        var gamesByDatabaseId = games
+            .Where(g => !string.IsNullOrWhiteSpace(g.DatabaseId))
+            .GroupBy(g => g.DatabaseId, StringComparer.OrdinalIgnoreCase)
+            .ToDictionary(group => group.Key, group => group.First(), StringComparer.OrdinalIgnoreCase);
+
+        var restored = new List<GuidevaultLaunchBoxMatch>();
+        foreach (var item in guidevaultItems)
+        {
+            if (item is null || string.IsNullOrWhiteSpace(item.Id)) continue;
+            if (!string.Equals(item.LaunchBoxMatchStatus, "Confirmed", StringComparison.OrdinalIgnoreCase)) continue;
+
+            var matchType = NormalizeMatchType(item.LaunchBoxMatchType);
+            if (string.IsNullOrWhiteSpace(matchType)) matchType = MatchTypeFromItem(item);
+            if (typeScoped && !scopedTypes.Contains(matchType)) continue;
+            if (!IsNativeMetadataMatchType(matchType)) continue;
+
+            GuidevaultLaunchBoxGame? game = null;
+            if (!string.IsNullOrWhiteSpace(item.LaunchBoxGameId)) gamesById.TryGetValue(item.LaunchBoxGameId, out game);
+            if (game is null && !string.IsNullOrWhiteSpace(item.LaunchBoxDatabaseId)) gamesByDatabaseId.TryGetValue(item.LaunchBoxDatabaseId, out game);
+            if (game is null)
+            {
+                var targetTitle = NormalizeTitle(item.LaunchBoxGameTitle);
+                var targetPlatform = NormalizePlatform(item.LaunchBoxPlatform);
+                if (!string.IsNullOrWhiteSpace(targetTitle))
+                {
+                    game = games.FirstOrDefault(g =>
+                        GameTitleCandidates(g).Select(NormalizeTitle).Any(title => string.Equals(title, targetTitle, StringComparison.OrdinalIgnoreCase))
+                        && (string.IsNullOrWhiteSpace(targetPlatform) || string.Equals(NormalizePlatform(g.Platform), targetPlatform, StringComparison.OrdinalIgnoreCase)));
+                }
+            }
+            if (game is null) continue;
+
+            var match = CreateMatch(game, item, matchType, "Confirmed", 100, "Confirmed LaunchBox link restored from GuideVault JSON metadata.");
+            match.Source = string.IsNullOrWhiteSpace(item.LaunchBoxMatchSource) ? "GuideVault JSON" : item.LaunchBoxMatchSource;
+            if (DateTimeOffset.TryParse(item.LaunchBoxMatchedAt, out var matchedAt))
+            {
+                match.MatchedAt = matchedAt;
+                match.UpdatedAt = matchedAt;
+            }
+            restored.Add(match);
+        }
+
+        return restored
+            .GroupBy(m => m.Id, StringComparer.OrdinalIgnoreCase)
+            .Select(group => group.OrderByDescending(m => m.UpdatedAt).First())
+            .ToList();
+    }
+
+    private static bool IsNativeMetadataMatchType(string matchType)
+        => string.Equals(matchType, "Manual", StringComparison.OrdinalIgnoreCase)
+            || string.Equals(matchType, "Strategy Guide", StringComparison.OrdinalIgnoreCase)
+            || string.Equals(matchType, "Magazine", StringComparison.OrdinalIgnoreCase);
 
     private static void PublishMatchProgress(Action<GuidevaultLaunchBoxMatchProgress>? progress, int processed, int total, IReadOnlyList<GuidevaultLaunchBoxMatch> matches, bool includeMatches)
     {
@@ -7754,6 +8146,7 @@ public static class GuidevaultLaunchBoxMatcher
                         GuideVaultItemTitle = title,
                         MatchType = m.MatchType,
                         MatchStatus = m.MatchStatus,
+                        PreviousMatchStatus = m.PreviousMatchStatus,
                         ConfidenceScore = Math.Round(m.ConfidenceScore, 2),
                         MatchReason = m.MatchReason,
                         ReaderUrl = item is null ? string.Empty : $"/?read={Uri.EscapeDataString(item.Id)}",
@@ -7765,18 +8158,21 @@ public static class GuidevaultLaunchBoxMatcher
 
         bool MatchesStatus(GuidevaultLaunchBoxGame game, List<GuidevaultLaunchBoxMatch> matches)
         {
+            var reviewable = matches.Any(m => IsReviewableMatchStatus(m.MatchStatus));
+            var autoMatched = matches.Any(m => string.Equals(m.MatchStatus, "AutoMatched", StringComparison.OrdinalIgnoreCase));
             var active = matches.Any(m => IsActiveMatchStatus(m.MatchStatus));
             var ambiguous = matches.Any(m => string.Equals(m.MatchStatus, "Ambiguous", StringComparison.OrdinalIgnoreCase));
             var confirmed = matches.Any(m => string.Equals(m.MatchStatus, "Confirmed", StringComparison.OrdinalIgnoreCase));
             var rejected = matches.Any(m => string.Equals(m.MatchStatus, "Rejected", StringComparison.OrdinalIgnoreCase));
             return normalizedStatus switch
             {
-                "matched" => active,
+                "needs-review" => reviewable,
+                "matched" => autoMatched,
                 "ambiguous" => ambiguous,
                 "missing" => !active && !ambiguous,
                 "confirmed" => confirmed,
                 "rejected" => rejected,
-                _ => true
+                _ => reviewable
             };
         }
 
@@ -7801,7 +8197,7 @@ public static class GuidevaultLaunchBoxMatcher
             var ambiguousCount = rawMatches.Count(m => string.Equals(m.MatchStatus, "Ambiguous", StringComparison.OrdinalIgnoreCase));
             var visibleMatches = FilterReviewMatchesForStatus(rawMatches, normalizedStatus).ToList();
             var views = BuildMatchViews(visibleMatches);
-            var activeViews = BuildMatchViews(activeMatches);
+            var activeViews = BuildMatchViews(FilterReviewActiveMatchesForStatus(activeMatches, normalizedStatus));
 
             rows.Add(new GuidevaultLaunchBoxReviewItem
             {
@@ -7840,14 +8236,29 @@ public static class GuidevaultLaunchBoxMatcher
         var list = matches ?? Enumerable.Empty<GuidevaultLaunchBoxMatch>();
         return normalizedStatus switch
         {
+            "needs-review" => list.Where(m => IsReviewableMatchStatus(m.MatchStatus)),
             "ambiguous" => list.Where(m => string.Equals(m.MatchStatus, "Ambiguous", StringComparison.OrdinalIgnoreCase)),
-            "matched" => list.Where(m => IsActiveMatchStatus(m.MatchStatus)),
+            "matched" => list.Where(m => string.Equals(m.MatchStatus, "AutoMatched", StringComparison.OrdinalIgnoreCase)),
             "confirmed" => list.Where(m => string.Equals(m.MatchStatus, "Confirmed", StringComparison.OrdinalIgnoreCase)),
             "rejected" => list.Where(m => string.Equals(m.MatchStatus, "Rejected", StringComparison.OrdinalIgnoreCase)),
             "missing" => Enumerable.Empty<GuidevaultLaunchBoxMatch>(),
-            _ => list
+            _ => list.Where(m => IsReviewableMatchStatus(m.MatchStatus))
         };
     }
+
+    private static IEnumerable<GuidevaultLaunchBoxMatch> FilterReviewActiveMatchesForStatus(IEnumerable<GuidevaultLaunchBoxMatch> matches, string normalizedStatus)
+    {
+        var list = matches ?? Enumerable.Empty<GuidevaultLaunchBoxMatch>();
+        return normalizedStatus switch
+        {
+            "confirmed" => list.Where(m => string.Equals(m.MatchStatus, "Confirmed", StringComparison.OrdinalIgnoreCase)),
+            _ => list.Where(m => !string.Equals(m.MatchStatus, "Confirmed", StringComparison.OrdinalIgnoreCase))
+        };
+    }
+
+    private static bool IsReviewableMatchStatus(string? status) =>
+        string.Equals(status, "AutoMatched", StringComparison.OrdinalIgnoreCase) ||
+        string.Equals(status, "Ambiguous", StringComparison.OrdinalIgnoreCase);
 
     private static int MatchTypeSortKey(string? matchType)
     {
@@ -7873,11 +8284,12 @@ public static class GuidevaultLaunchBoxMatcher
         return value switch
         {
             "matched" or "match" or "automatched" or "auto-matched" => "matched",
-            "ambiguous" or "review" or "needs-review" => "ambiguous",
+            "ambiguous" => "ambiguous",
+            "review" or "needs-review" or "needsreview" or "pending" or "pending-review" or "unconfirmed" => "needs-review",
             "missing" or "unmatched" => "missing",
             "confirmed" => "confirmed",
             "rejected" => "rejected",
-            _ => "ambiguous"
+            _ => "needs-review"
         };
     }
 
@@ -8158,6 +8570,7 @@ public static class GuidevaultLaunchBoxMatcher
                     GuideVaultItemTitle = item?.Title ?? m.GuideVaultItemTitle,
                     MatchType = m.MatchType,
                     MatchStatus = m.MatchStatus,
+                    PreviousMatchStatus = m.PreviousMatchStatus,
                     ConfidenceScore = m.ConfidenceScore,
                     MatchReason = m.MatchReason,
                     ReaderUrl = item is null ? string.Empty : $"/?read={Uri.EscapeDataString(item.Id)}",
@@ -8300,6 +8713,7 @@ public static class GuidevaultLaunchBoxMatcher
         GuideVaultKind = match.GuideVaultKind,
         MatchType = match.MatchType,
         MatchStatus = match.MatchStatus,
+        PreviousMatchStatus = match.PreviousMatchStatus,
         ConfidenceScore = match.ConfidenceScore,
         MatchReason = match.MatchReason,
         Source = match.Source,
@@ -8618,6 +9032,7 @@ public sealed class GuidevaultLaunchBoxMatch
     public string GuideVaultKind { get; set; } = string.Empty;
     public string MatchType { get; set; } = string.Empty;
     public string MatchStatus { get; set; } = "AutoMatched";
+    public string PreviousMatchStatus { get; set; } = string.Empty;
     public double ConfidenceScore { get; set; }
     public string MatchReason { get; set; } = string.Empty;
     public string Source { get; set; } = "Auto";
@@ -8974,6 +9389,7 @@ public sealed class GuidevaultLaunchBoxDocumentRelationshipConnection
     public string LaunchBoxReleaseYear { get; set; } = string.Empty;
     public string MatchType { get; set; } = string.Empty;
     public string MatchStatus { get; set; } = string.Empty;
+    public string PreviousMatchStatus { get; set; } = string.Empty;
     public double ConfidenceScore { get; set; }
     public string MatchReason { get; set; } = string.Empty;
     public string Source { get; set; } = string.Empty;
@@ -9026,6 +9442,7 @@ public sealed class GuidevaultLaunchBoxMatchView
     public string GuideVaultItemTitle { get; set; } = string.Empty;
     public string MatchType { get; set; } = string.Empty;
     public string MatchStatus { get; set; } = string.Empty;
+    public string PreviousMatchStatus { get; set; } = string.Empty;
     public double ConfidenceScore { get; set; }
     public string MatchReason { get; set; } = string.Empty;
     public string ReaderUrl { get; set; } = string.Empty;
@@ -10151,6 +10568,14 @@ public sealed record LibraryItem(
     string MetadataSource = "",
     string BarcodeUpcIssn = "",
     string MetadataStatus = "Unreviewed",
+    string LaunchBoxGameId = "",
+    string LaunchBoxGameTitle = "",
+    string LaunchBoxPlatform = "",
+    string LaunchBoxDatabaseId = "",
+    string LaunchBoxMatchType = "",
+    string LaunchBoxMatchStatus = "",
+    string LaunchBoxMatchSource = "",
+    string LaunchBoxMatchedAt = "",
     Dictionary<string, MetadataFieldLock>? MetadataLocks = null);
 
 public sealed record MetadataFieldLock(
@@ -10221,6 +10646,14 @@ public sealed record ItemMetadataUpdate(
     string? MetadataStatus = null,
     string? Notes = null,
     bool? Removed = null,
+    string? LaunchBoxGameId = null,
+    string? LaunchBoxGameTitle = null,
+    string? LaunchBoxPlatform = null,
+    string? LaunchBoxDatabaseId = null,
+    string? LaunchBoxMatchType = null,
+    string? LaunchBoxMatchStatus = null,
+    string? LaunchBoxMatchSource = null,
+    string? LaunchBoxMatchedAt = null,
     Dictionary<string, MetadataFieldLock>? MetadataLocks = null);
 
 public static class ItemMetadataJsonReader
@@ -10305,6 +10738,14 @@ public static class ItemMetadataJsonReader
             MetadataStatus: MetadataStatusHelper.NormalizeOrNull(FirstText(GetString(payload, "metadataStatus"), GetString(payload, "metadataReviewStatus"), GetString(payload, "reviewStatus"))),
             Notes: GetString(payload, "notes"),
             Removed: GetBool(payload, "removed"),
+            LaunchBoxGameId: FirstText(GetString(payload, "launchBoxGameId"), GetString(payload, "launchBoxId")),
+            LaunchBoxGameTitle: FirstText(GetString(payload, "launchBoxGameTitle"), GetString(payload, "launchBoxTitle")),
+            LaunchBoxPlatform: GetString(payload, "launchBoxPlatform"),
+            LaunchBoxDatabaseId: GetString(payload, "launchBoxDatabaseId"),
+            LaunchBoxMatchType: GetString(payload, "launchBoxMatchType"),
+            LaunchBoxMatchStatus: GetString(payload, "launchBoxMatchStatus"),
+            LaunchBoxMatchSource: GetString(payload, "launchBoxMatchSource"),
+            LaunchBoxMatchedAt: GetString(payload, "launchBoxMatchedAt"),
             MetadataLocks: GetMetadataLocks(payload, "metadataLocks"));
     }
 
@@ -10937,6 +11378,14 @@ public static class MetadataLockHelper
             MetadataStatus: update.MetadataStatus,
             Notes: S("notes", update.Notes),
             Removed: update.Removed,
+            LaunchBoxGameId: S("launchBoxGameId", update.LaunchBoxGameId),
+            LaunchBoxGameTitle: S("launchBoxGameTitle", update.LaunchBoxGameTitle),
+            LaunchBoxPlatform: S("launchBoxPlatform", update.LaunchBoxPlatform),
+            LaunchBoxDatabaseId: S("launchBoxDatabaseId", update.LaunchBoxDatabaseId),
+            LaunchBoxMatchType: S("launchBoxMatchType", update.LaunchBoxMatchType),
+            LaunchBoxMatchStatus: S("launchBoxMatchStatus", update.LaunchBoxMatchStatus),
+            LaunchBoxMatchSource: S("launchBoxMatchSource", update.LaunchBoxMatchSource),
+            LaunchBoxMatchedAt: S("launchBoxMatchedAt", update.LaunchBoxMatchedAt),
             MetadataLocks: update.MetadataLocks);
     }
 }
@@ -11023,6 +11472,14 @@ public sealed class MetadataStore
                 MetadataSource = First(o.MetadataSource, item.MetadataSource),
                 MetadataStatus = MetadataStatusHelper.Normalize(o.MetadataStatus, item.MetadataStatus),
                 Notes = First(o.Notes, item.Notes),
+                LaunchBoxGameId = First(o.LaunchBoxGameId, item.LaunchBoxGameId),
+                LaunchBoxGameTitle = First(o.LaunchBoxGameTitle, item.LaunchBoxGameTitle),
+                LaunchBoxPlatform = First(o.LaunchBoxPlatform, item.LaunchBoxPlatform),
+                LaunchBoxDatabaseId = First(o.LaunchBoxDatabaseId, item.LaunchBoxDatabaseId),
+                LaunchBoxMatchType = First(o.LaunchBoxMatchType, item.LaunchBoxMatchType),
+                LaunchBoxMatchStatus = First(o.LaunchBoxMatchStatus, item.LaunchBoxMatchStatus),
+                LaunchBoxMatchSource = First(o.LaunchBoxMatchSource, item.LaunchBoxMatchSource),
+                LaunchBoxMatchedAt = First(o.LaunchBoxMatchedAt, item.LaunchBoxMatchedAt),
                 MetadataLocks = MetadataLockHelper.NormalizeLocks(o.MetadataLocks ?? item.MetadataLocks)
             };
         }
@@ -11093,6 +11550,14 @@ public sealed class MetadataStore
             MetadataSource = Keep(update.MetadataSource, item.MetadataSource),
             MetadataStatus = MetadataStatusHelper.Normalize(update.MetadataStatus, item.MetadataStatus),
             Notes = Keep(update.Notes, item.Notes),
+            LaunchBoxGameId = Keep(update.LaunchBoxGameId, item.LaunchBoxGameId),
+            LaunchBoxGameTitle = Keep(update.LaunchBoxGameTitle, item.LaunchBoxGameTitle),
+            LaunchBoxPlatform = Keep(update.LaunchBoxPlatform, item.LaunchBoxPlatform),
+            LaunchBoxDatabaseId = Keep(update.LaunchBoxDatabaseId, item.LaunchBoxDatabaseId),
+            LaunchBoxMatchType = Keep(update.LaunchBoxMatchType, item.LaunchBoxMatchType),
+            LaunchBoxMatchStatus = Keep(update.LaunchBoxMatchStatus, item.LaunchBoxMatchStatus),
+            LaunchBoxMatchSource = Keep(update.LaunchBoxMatchSource, item.LaunchBoxMatchSource),
+            LaunchBoxMatchedAt = Keep(update.LaunchBoxMatchedAt, item.LaunchBoxMatchedAt),
             MetadataLocks = MetadataLockHelper.MergeLocks(item.MetadataLocks, update.MetadataLocks)
         };
     }
@@ -11249,6 +11714,14 @@ public sealed class MetadataStore
             MetadataStatus: update.MetadataStatus ?? existing?.MetadataStatus,
             Notes: update.Notes ?? existing?.Notes,
             Removed: update.Removed ?? existing?.Removed,
+            LaunchBoxGameId: update.LaunchBoxGameId ?? existing?.LaunchBoxGameId,
+            LaunchBoxGameTitle: update.LaunchBoxGameTitle ?? existing?.LaunchBoxGameTitle,
+            LaunchBoxPlatform: update.LaunchBoxPlatform ?? existing?.LaunchBoxPlatform,
+            LaunchBoxDatabaseId: update.LaunchBoxDatabaseId ?? existing?.LaunchBoxDatabaseId,
+            LaunchBoxMatchType: update.LaunchBoxMatchType ?? existing?.LaunchBoxMatchType,
+            LaunchBoxMatchStatus: update.LaunchBoxMatchStatus ?? existing?.LaunchBoxMatchStatus,
+            LaunchBoxMatchSource: update.LaunchBoxMatchSource ?? existing?.LaunchBoxMatchSource,
+            LaunchBoxMatchedAt: update.LaunchBoxMatchedAt ?? existing?.LaunchBoxMatchedAt,
             MetadataLocks: MetadataLockHelper.MergeLocks(existing?.MetadataLocks, update.MetadataLocks));
 }
 
@@ -13504,10 +13977,10 @@ public static class GuidevaultNativeMetadata
         WriteIndented = true
     };
 
-    public static object BuildExport(LibraryItem item, ItemMetadataUpdate update, JsonElement? submittedMetadata = null)
+    public static object BuildExport(LibraryItem item, ItemMetadataUpdate update, JsonElement? submittedMetadata = null, GuidevaultLaunchBoxIntegrationData? launchBoxData = null)
     {
         if (submittedMetadata.HasValue && submittedMetadata.Value.ValueKind == JsonValueKind.Object)
-            return BuildExportFromSubmittedMetadata(item, update, submittedMetadata.Value);
+            return BuildExportFromSubmittedMetadata(item, update, submittedMetadata.Value, launchBoxData);
 
         var metadata = new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase)
         {
@@ -13604,6 +14077,10 @@ public static class GuidevaultNativeMetadata
             Put(metadata, "locationsCovered", update.LocationsCovered ?? item.LocationsCovered ?? []);
         }
 
+        var launchBoxMatch = BuildConfirmedLaunchBoxAssociation(item, update, kind, launchBoxData);
+        ClearLaunchBoxAssociation(metadata);
+        ApplyLaunchBoxAssociation(metadata, launchBoxMatch);
+
         var fileSizeBytes = item.SizeBytes;
         var exportedItem = new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase)
         {
@@ -13615,6 +14092,7 @@ public static class GuidevaultNativeMetadata
             ["pageCount"] = metadata.TryGetValue("pageCount", out var pc) ? pc : item.PageCount,
             ["metadata"] = metadata
         };
+        if (launchBoxMatch is not null) exportedItem["launchBoxMatch"] = launchBoxMatch;
 
         return new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase)
         {
@@ -13626,7 +14104,7 @@ public static class GuidevaultNativeMetadata
         };
     }
 
-    private static object BuildExportFromSubmittedMetadata(LibraryItem item, ItemMetadataUpdate update, JsonElement submittedMetadata)
+    private static object BuildExportFromSubmittedMetadata(LibraryItem item, ItemMetadataUpdate update, JsonElement submittedMetadata, GuidevaultLaunchBoxIntegrationData? launchBoxData)
     {
         var metadata = JsonSerializer.Deserialize<Dictionary<string, object?>>(submittedMetadata.GetRawText(), JsonOptions)
             ?? new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase);
@@ -13670,6 +14148,10 @@ public static class GuidevaultNativeMetadata
         PutIfMissing("magazineTitle", First(update.MagazineTitle, item.MagazineTitle));
         PutIfMissing("barcodeUpcIssn", First(update.BarcodeUpcIssn, item.BarcodeUpcIssn));
 
+        var launchBoxMatch = BuildConfirmedLaunchBoxAssociation(item, update, kind, launchBoxData);
+        ClearLaunchBoxAssociation(metadata);
+        ApplyLaunchBoxAssociation(metadata, launchBoxMatch);
+
         var exportedItem = new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase)
         {
             ["suggestedFileName"] = SuggestedFileName(item, metadata),
@@ -13680,6 +14162,7 @@ public static class GuidevaultNativeMetadata
             ["metadata"] = metadata
         };
         if (pageCount > 0) exportedItem["pageCount"] = pageCount;
+        if (launchBoxMatch is not null) exportedItem["launchBoxMatch"] = launchBoxMatch;
 
         return new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase)
         {
@@ -13970,6 +14453,119 @@ public static class GuidevaultNativeMetadata
         if (string.IsNullOrWhiteSpace(title)) title = item.Title;
         var safeTitle = Regex.Replace(title ?? "Guidevault Metadata", "[\\/:*?\"<>|]+", " - ").Trim();
         return $"{safeTitle}{Path.GetExtension(item.FileName)}";
+    }
+
+    private static Dictionary<string, object?>? BuildConfirmedLaunchBoxAssociation(LibraryItem item, ItemMetadataUpdate update, string kind, GuidevaultLaunchBoxIntegrationData? launchBoxData)
+    {
+        if (launchBoxData is null || item is null) return null;
+
+        var matchType = GuidevaultLaunchBoxMatcher.NormalizeMatchType(kind);
+        if (string.IsNullOrWhiteSpace(matchType)) matchType = GuidevaultLaunchBoxMatcher.MatchTypeFromItem(item);
+        if (!IsLaunchBoxExportMatchType(matchType)) return null;
+
+        var match = (launchBoxData.Matches ?? new List<GuidevaultLaunchBoxMatch>())
+            .Where(m => string.Equals(m.GuideVaultItemId, item.Id, StringComparison.OrdinalIgnoreCase)
+                && string.Equals(m.MatchStatus, "Confirmed", StringComparison.OrdinalIgnoreCase)
+                && string.Equals(GuidevaultLaunchBoxMatcher.NormalizeMatchType(m.MatchType), matchType, StringComparison.OrdinalIgnoreCase))
+            .OrderByDescending(m => m.UpdatedAt)
+            .ThenByDescending(m => m.MatchedAt)
+            .FirstOrDefault();
+        if (match is null) return null;
+
+        var game = (launchBoxData.Games ?? new List<GuidevaultLaunchBoxGame>())
+            .FirstOrDefault(g => string.Equals(g.Id, match.LaunchBoxGameId, StringComparison.OrdinalIgnoreCase));
+
+        var gameId = First(match.LaunchBoxGameId, game?.Id ?? string.Empty);
+        if (string.IsNullOrWhiteSpace(gameId)) return null;
+
+        var gameTitle = First(match.LaunchBoxGameTitle, game?.Title ?? string.Empty);
+        var platform = First(match.LaunchBoxPlatform, game?.Platform ?? string.Empty);
+        var databaseId = game?.DatabaseId ?? string.Empty;
+        var matchedAt = match.UpdatedAt != default ? match.UpdatedAt : match.MatchedAt;
+
+        var launchBoxGame = new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase)
+        {
+            ["id"] = gameId,
+            ["title"] = gameTitle,
+            ["platform"] = platform,
+            ["databaseId"] = databaseId,
+            ["sortTitle"] = game?.SortTitle ?? string.Empty,
+            ["releaseYear"] = game?.ReleaseYear ?? string.Empty,
+            ["developer"] = game?.Developer ?? string.Empty,
+            ["publisher"] = game?.Publisher ?? string.Empty,
+            ["series"] = game?.Series ?? string.Empty,
+            ["applicationPath"] = game?.ApplicationPath ?? string.Empty
+        };
+
+        return new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase)
+        {
+            ["matchStatus"] = "Confirmed",
+            ["matchType"] = matchType,
+            ["source"] = string.IsNullOrWhiteSpace(match.Source) ? "GuideVault" : match.Source,
+            ["confidenceScore"] = match.ConfidenceScore,
+            ["matchReason"] = match.MatchReason,
+            ["matchedAt"] = matchedAt == default ? string.Empty : matchedAt.ToString("O"),
+            ["launchBoxGame"] = launchBoxGame
+        };
+    }
+
+    private static void ClearLaunchBoxAssociation(Dictionary<string, object?> metadata)
+    {
+        if (metadata is null) return;
+        foreach (var key in new[]
+        {
+            "launchBoxGameId",
+            "launchBoxGameTitle",
+            "launchBoxPlatform",
+            "launchBoxDatabaseId",
+            "launchBoxMatchType",
+            "launchBoxMatchStatus",
+            "launchBoxMatchSource",
+            "launchBoxMatchedAt"
+        })
+        {
+            metadata.Remove(key);
+        }
+    }
+
+    private static void ApplyLaunchBoxAssociation(Dictionary<string, object?> metadata, Dictionary<string, object?>? launchBoxMatch)
+    {
+        if (metadata is null || launchBoxMatch is null) return;
+        if (!launchBoxMatch.TryGetValue("launchBoxGame", out var gameObject) || gameObject is not IDictionary<string, object?> game) return;
+
+        var gameId = DictionaryValue(game, "id");
+        var gameTitle = DictionaryValue(game, "title");
+        var platform = DictionaryValue(game, "platform");
+        var databaseId = DictionaryValue(game, "databaseId");
+        var matchType = DictionaryValue(launchBoxMatch, "matchType");
+        var status = DictionaryValue(launchBoxMatch, "matchStatus");
+        var source = DictionaryValue(launchBoxMatch, "source");
+        var matchedAt = DictionaryValue(launchBoxMatch, "matchedAt");
+
+        if (!string.IsNullOrWhiteSpace(gameId)) metadata["launchBoxGameId"] = gameId;
+        if (!string.IsNullOrWhiteSpace(gameTitle)) metadata["launchBoxGameTitle"] = gameTitle;
+        if (!string.IsNullOrWhiteSpace(platform)) metadata["launchBoxPlatform"] = platform;
+        if (!string.IsNullOrWhiteSpace(databaseId)) metadata["launchBoxDatabaseId"] = databaseId;
+        if (!string.IsNullOrWhiteSpace(matchType)) metadata["launchBoxMatchType"] = matchType;
+        if (!string.IsNullOrWhiteSpace(status)) metadata["launchBoxMatchStatus"] = status;
+        if (!string.IsNullOrWhiteSpace(source)) metadata["launchBoxMatchSource"] = source;
+        if (!string.IsNullOrWhiteSpace(matchedAt)) metadata["launchBoxMatchedAt"] = matchedAt;
+    }
+
+    private static bool IsLaunchBoxExportMatchType(string matchType)
+        => string.Equals(matchType, "Manual", StringComparison.OrdinalIgnoreCase)
+            || string.Equals(matchType, "Strategy Guide", StringComparison.OrdinalIgnoreCase)
+            || string.Equals(matchType, "Magazine", StringComparison.OrdinalIgnoreCase);
+
+    private static string DictionaryValue(IDictionary<string, object?> values, string key)
+    {
+        if (values is null || !values.TryGetValue(key, out var value) || value is null) return string.Empty;
+        if (value is JsonElement element)
+        {
+            if (element.ValueKind == JsonValueKind.String) return element.GetString()?.Trim() ?? string.Empty;
+            return element.ToString().Trim();
+        }
+        return value.ToString()?.Trim() ?? string.Empty;
     }
 
     private static void Put(Dictionary<string, object?> metadata, string key, object? value)
@@ -17220,6 +17816,5 @@ static class GuidevaultLibraryIoGate
 
 static class GuidevaultBuildInfo
 {
-    public const string Version = "0.9.260";
+    public const string Version = "0.9.224";
 }
-

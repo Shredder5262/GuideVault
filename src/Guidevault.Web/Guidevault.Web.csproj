@@ -10,4 +10,14 @@
     <PackageReference Include="SharpCompress" Version="0.48.1" />
     <PackageReference Include="SixLabors.ImageSharp" Version="3.1.11" />
   </ItemGroup>
+
+  <ItemGroup>
+    <!-- Runtime data is user-specific and must not be copied into publish/Docker packages.
+         Built-in reader backgrounds live under wwwroot/assets/backgrounds and remain packaged.
+         Uploaded backgrounds live under data/reader/backgrounds and stay on the user's mounted data volume. -->
+    <Content Remove="data\**" />
+    <None Remove="data\**" />
+    <Content Remove="wwwroot\reader\backgrounds\**" />
+    <None Remove="wwwroot\reader\backgrounds\**" />
+  </ItemGroup>
 </Project>

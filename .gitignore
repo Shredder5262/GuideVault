@@ -1,14 +1,60 @@
+# Build output
 **/bin/
 **/obj/
+
+# IDE / editor
 .vs/
 .vscode/
 *.user
 *.suo
+
+# Temp / logs
 *.tmp
+*.temp
 *.log
+*.bak
+*.orig
+*.rej
+
+# OS junk
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# GuideVault runtime/user data - never commit personal runtime state
+src/Guidevault.Web/data/
 /data/
 /guidevault-data/
 /library/
+
+# Local backup/source snapshot folders
+_backup/
 _repo/
 _packaged/
 Guidevault-source-clean/
+src-before-clean-sync-*/
+
+# Generated release/package artifacts
+_releases/
+*.zip
+*.7z
+*.rar
+*.tar
+*.tar.gz
+*.tgz
+
+# Local Docker/runtime files
+docker-compose.yml
+.env
+.env.*
+# Local env examples / release automation not intended for repo
+.env.example
+scripts/release/
+
+# Local database/cache/runtime files
+*.db
+*.db-shm
+*.db-wal
+*.sqlite
+*.sqlite3
+cache/

@@ -6,7 +6,7 @@
   <title>Guidevault</title>
   <link rel="icon" type="image/x-icon" href="/assets/favicon.ico?v=0.9.228" />
   <link rel="shortcut icon" type="image/x-icon" href="/assets/favicon.ico?v=0.9.228" />
-  <link rel="stylesheet" href="/styles.css?v=0.9.260" />
+  <link rel="stylesheet" href="/styles.css?v=0.9.228" />
 </head>
 <body class="right-collapsed auth-locked">
   <section id="loginView" class="login-view" aria-labelledby="loginTitle">
@@ -49,33 +49,39 @@
       <nav id="settingsSideNav" class="settings-side-nav hidden" aria-label="Settings navigation">
         <button class="settings-side-back" id="settingsBackToLibrary" type="button">&#x2190; Library</button>
         <h3>Settings</h3>
-        <button class="settings-nav settings-nav-group active" data-settings-tab="account" data-settings-group="account" aria-expanded="true" aria-controls="settingsSubmenuAccount" type="button"><span class="settings-nav-icon">&#x1F464;</span><span class="settings-nav-text">Account</span><span class="settings-nav-chevron" aria-hidden="true">&#x203A;</span></button>
-        <div id="settingsSubmenuAccount" class="settings-submenu" data-settings-parent="account" aria-label="Account settings subsections">
+        <button class="settings-nav settings-nav-group active collapsed" data-settings-tab="account" data-settings-group="account" aria-expanded="false" aria-controls="settingsSubmenuAccount" type="button"><span class="settings-nav-icon">&#x1F464;</span><span class="settings-nav-text">Account</span><span class="settings-nav-chevron" aria-hidden="true">&#x203A;</span></button>
+        <div id="settingsSubmenuAccount" class="settings-submenu hidden collapsed" data-settings-parent="account" aria-label="Account settings subsections">
           <button id="settingsPreferencesNav" class="settings-subnav" data-settings-tab="preferences" type="button">Preferences</button>
           <button id="settingsKeybindsNav" class="settings-subnav" data-settings-tab="keybinds" type="button">Key Binds</button>
           <button id="settingsReadingProfilesNav" class="settings-subnav" data-settings-tab="reading-profiles" type="button">Reading Profiles</button>
           <button id="settingsCustomizeNav" class="settings-subnav" data-settings-tab="customize" type="button">Customize</button>
           <button id="settingsDevicesNav" class="settings-subnav" data-settings-tab="devices" type="button">Devices</button>
         </div>
-        <button class="settings-nav settings-nav-group" data-settings-tab="insights" data-settings-group="insights" aria-expanded="true" aria-controls="settingsSubmenuInsights" type="button"><span class="settings-nav-icon">&#x25C8;</span><span class="settings-nav-text">Insights</span><span class="settings-nav-chevron" aria-hidden="true">&#x203A;</span></button>
-        <div id="settingsSubmenuInsights" class="settings-submenu" data-settings-parent="insights" aria-label="Insights subsections">
+        <button class="settings-nav settings-nav-group collapsed" data-settings-tab="insights" data-settings-group="insights" aria-expanded="false" aria-controls="settingsSubmenuInsights" type="button"><span class="settings-nav-icon">&#x25C8;</span><span class="settings-nav-text">Insights</span><span class="settings-nav-chevron" aria-hidden="true">&#x203A;</span></button>
+        <div id="settingsSubmenuInsights" class="settings-submenu hidden collapsed" data-settings-parent="insights" aria-label="Insights subsections">
           <button id="settingsInsightDevicesNav" class="settings-subnav" data-settings-tab="insights-devices" type="button">Devices</button>
           <button id="settingsStatisticsNav" class="settings-subnav" data-settings-tab="statistics" type="button">Statistics</button>
         </div>
-        <button class="settings-nav settings-nav-group" data-settings-tab="server" data-settings-group="server" aria-expanded="true" aria-controls="settingsSubmenuServer" type="button"><span class="settings-nav-icon">&#x2699;</span><span class="settings-nav-text">Server</span><span class="settings-nav-chevron" aria-hidden="true">&#x203A;</span></button>
-        <div id="settingsSubmenuServer" class="settings-submenu" data-settings-parent="server" aria-label="Server settings subsections">
+        <button class="settings-nav settings-nav-group collapsed" data-settings-tab="files-organize" data-settings-group="file-management" aria-expanded="false" aria-controls="settingsSubmenuFileManagement" type="button"><span class="settings-nav-icon">&#x1F5C2;</span><span class="settings-nav-text">Library Tools</span><span class="settings-nav-chevron" aria-hidden="true">&#x203A;</span></button>
+        <div id="settingsSubmenuFileManagement" class="settings-submenu hidden collapsed" data-settings-parent="file-management" aria-label="Library tools subsections">
+          <button id="settingsFilesOrganizeNav" class="settings-subnav" data-settings-tab="files-organize" type="button">Organize Files</button>
+          <button id="settingsFilesWriteBackNav" class="settings-subnav" data-settings-tab="files-writeback" type="button">JSON Write-Back</button>
+          <button id="settingsFilesConvertNav" class="settings-subnav" data-settings-tab="files-convert" type="button">Format Conversion</button>
+          <button id="settingsMetadataManagerNav" class="settings-subnav" data-settings-tab="metadata-manager" type="button">Metadata Manager</button>
+          <button id="settingsLaunchBoxMatchReviewNav" class="settings-subnav" data-settings-tab="launchbox-match-review" type="button">LaunchBox Match Review</button>
+        </div>
+        <button class="settings-nav settings-nav-group collapsed" data-settings-tab="server" data-settings-group="server" aria-expanded="false" aria-controls="settingsSubmenuServer" type="button"><span class="settings-nav-icon">&#x2699;</span><span class="settings-nav-text">Server</span><span class="settings-nav-chevron" aria-hidden="true">&#x203A;</span></button>
+        <div id="settingsSubmenuServer" class="settings-submenu hidden collapsed" data-settings-parent="server" aria-label="Server settings subsections">
           <button id="settingsServerGeneralNav" class="settings-subnav" data-settings-tab="server" type="button">General</button>
-          <button id="settingsFilesNav" class="settings-subnav" data-settings-tab="files" type="button">Files</button>
           <button id="settingsIntegrationsNav" class="settings-subnav" data-settings-tab="integrations" type="button">Integrations</button>
           <button id="settingsMediaNav" class="settings-subnav" data-settings-tab="media" type="button">Media</button>
           <button id="settingsOpdsNav" class="settings-subnav" data-settings-tab="opds" type="button">OPDS / Auth Keys</button>
           <button id="settingsEmailNav" class="settings-subnav" data-settings-tab="email" type="button">Email</button>
           <button id="settingsUsersNav" class="settings-subnav" data-settings-tab="users" type="button">Users</button>
           <button id="settingsTasksNav" class="settings-subnav" data-settings-tab="tasks" type="button">Tasks</button>
-          <button id="settingsMetadataManagerNav" class="settings-subnav" data-settings-tab="metadata-manager" type="button">Metadata Manager</button>
         </div>
-        <button class="settings-nav settings-nav-group" data-settings-tab="info" data-settings-group="info" aria-expanded="true" aria-controls="settingsSubmenuInfo" type="button"><span class="settings-nav-icon">i</span><span class="settings-nav-text">Info</span><span class="settings-nav-chevron" aria-hidden="true">&#x203A;</span></button>
-        <div id="settingsSubmenuInfo" class="settings-submenu" data-settings-parent="info" aria-label="Info subsections">
+        <button class="settings-nav settings-nav-group collapsed" data-settings-tab="info" data-settings-group="info" aria-expanded="false" aria-controls="settingsSubmenuInfo" type="button"><span class="settings-nav-icon">i</span><span class="settings-nav-text">Info</span><span class="settings-nav-chevron" aria-hidden="true">&#x203A;</span></button>
+        <div id="settingsSubmenuInfo" class="settings-submenu hidden collapsed" data-settings-parent="info" aria-label="Info subsections">
           <button id="settingsInfoSystemNav" class="settings-subnav" data-settings-tab="info" type="button">System</button>
           <button id="settingsEventsNav" class="settings-subnav" data-settings-tab="events" type="button">Events</button>
         </div>
@@ -576,7 +582,10 @@
                     <h3>Profile Presets</h3>
                     <p class="sub">Presets define how the reader opens: page display, transition, background, and zoom.</p>
                   </div>
-                  <button id="readingProfileNewPreset" class="ghost" type="button">&#xFF0B; New</button>
+                  <div class="reading-profile-header-actions">
+                    <button id="readingProfileNewPreset" class="ghost" type="button">&#xFF0B; New</button>
+                    <button id="readingProfileDuplicatePreset" class="ghost" type="button">Duplicate</button>
+                  </div>
                 </div>
                 <label for="readingProfilePresetSelect">Preset</label>
                 <select id="readingProfilePresetSelect"></select>
@@ -618,6 +627,13 @@
                     <span>Open reader fullscreen by default</span>
                   </label>
                 </div>
+                <div class="reading-profile-background-preview-card" aria-live="polite">
+                  <div id="readingProfileBackgroundPreview" class="reading-profile-background-preview empty" aria-hidden="true"></div>
+                  <div class="reading-profile-background-preview-copy">
+                    <strong id="readingProfileBackgroundPreviewName">Default Gradient</strong>
+                    <span id="readingProfileBackgroundPreviewMeta">Preview the selected profile background and brightness.</span>
+                  </div>
+                </div>
                 <div class="settings-actions account-actions">
                   <button id="readingProfileSavePreset" class="primary" type="button">Save Preset</button>
                   <button id="readingProfileSetDefaultPreset" class="ghost" type="button">Set as Default</button>
@@ -631,6 +647,29 @@
                 <div id="readingProfilePresetList" class="reading-profile-preset-list"></div>
               </article>
             </div>
+            <article class="settings-card reading-profile-backgrounds-card">
+              <div class="reading-profile-card-header">
+                <div>
+                  <h3>Background Library</h3>
+                  <p class="sub">Upload custom reader backgrounds here. Uploaded images are normalized to 1920 × 1080 and appear in the Background Type list for every reading profile.</p>
+                </div>
+                <button id="readerBackgroundRefreshUploads" class="ghost" type="button">Refresh</button>
+              </div>
+              <div class="reader-background-upload-grid">
+                <label for="readerBackgroundUploadFile">Background Image <span class="field-hint">1920 × 1080 output</span>
+                  <input id="readerBackgroundUploadFile" type="file" accept="image/png,image/jpeg,image/webp,image/gif,image/bmp" />
+                </label>
+                <label for="readerBackgroundUploadName">Display Name
+                  <input id="readerBackgroundUploadName" type="text" placeholder="Arcade Room, CRT Glow, Strategy Desk" />
+                </label>
+              </div>
+              <div class="settings-actions account-actions reader-background-upload-actions">
+                <button id="readerBackgroundUploadButton" class="primary" type="button">Upload Background</button>
+              </div>
+              <p id="readerBackgroundUploadStatus" class="sub account-status" aria-live="polite"></p>
+              <div id="readerBackgroundUploadedList" class="reader-background-uploaded-list" aria-live="polite"></div>
+            </article>
+
             <article class="settings-card reading-profile-effective-card">
               <h3>Assignment Precedence</h3>
               <p class="sub">Series/category assignment wins first. Entry assignment is used second. The global default preset is used last.</p>
@@ -987,7 +1026,7 @@
           <section id="settingsMetadataManagerPanel" class="settings-section-panel hidden metadata-manager-panel">
             <div class="settings-title-row metadata-manager-title-row">
               <div>
-                <div class="settings-page-kicker">SERVER</div>
+                <div class="settings-page-kicker">FILE MANAGEMENT</div>
                 <h1>Metadata Manager</h1>
                 <p class="sub">View, normalize, and edit Manual, Strategy Guide, and Magazine metadata at scale without opening each details page.</p>
               </div>
@@ -1078,7 +1117,7 @@
                 <button id="metadataManagerSaveDirty" class="primary" type="button">Save Edited Rows</button>
                 <button id="metadataManagerScrape" class="ghost" type="button">Scrape / Import Metadata</button>
                 <button id="metadataManagerWriteBackSelected" class="ghost" type="button">Write JSON to Selected Files</button>
-                <button id="metadataManagerOpenFilesWorkspace" class="ghost" type="button">Open Files Workspace</button>
+                <button id="metadataManagerOpenFilesWorkspace" class="ghost" type="button">Open JSON Write-Back</button>
               </div>
                             </details>
               <details class="metadata-manager-batch-panel metadata-manager-source-batch-panel">
@@ -1257,25 +1296,25 @@
           <section id="settingsFilesPanel" class="settings-section-panel hidden server-files-panel">
             <div class="settings-title-row server-files-title-row">
               <div>
-                <div class="settings-page-kicker">SERVER</div>
-                <h1>Files</h1>
-                <p class="sub">Organize source files, preview bulk rename/move plans, and write Guidevault JSON metadata back into selected CBZ/CBR/PDF packages.</p>
+                <div id="serverFilesPageKicker" class="settings-page-kicker">LIBRARY TOOLS</div>
+                <h1 id="serverFilesPageTitle">Organize Files</h1>
+                <p id="serverFilesPageSub" class="sub">Select target files, then preview a rename/move plan before applying it.</p>
               </div>
               <button id="serverFilesRefreshSelection" class="ghost" type="button">Refresh Selection</button>
             </div>
 
-            <div class="server-files-summary" id="serverFilesSummary" aria-live="polite">Use the Files workspace list to select one file or a group of files, then preview rename/move changes or write embedded metadata.</div>
+            <div class="server-files-summary" id="serverFilesSummary" aria-live="polite">Select the target files for this task. This page only shows the action tools that match the selected Library Tools menu.</div>
 
-            <div class="server-files-workflow-strip" aria-label="Files workspace workflow">
+            <div id="serverFilesWorkflowStrip" class="server-files-workflow-strip" aria-label="Files workspace workflow">
               <div><span>1</span><strong>Select Target Files</strong><em>Pick one entry, visible rows, matching rows, or import the Metadata Manager selection.</em></div>
               <div><span>2</span><strong>Build File Names</strong><em>Use friendly template buttons for folder and filename patterns.</em></div>
-              <div><span>3</span><strong>Preview Before Applying</strong><em>Review before/after paths before moving files or writing Guidevault JSON.</em></div>
+              <div><span>3</span><strong>Preview Before Applying</strong><em>Review before/after paths before moving files.</em></div>
             </div>
 
             <article class="settings-card server-files-card server-files-selector-card">
               <div class="file-metadata-card-heading">
                 <h3>Target Files</h3>
-                <p class="sub">Select exactly which entries should be renamed, moved, or written back. You can still pull in a Metadata Manager selection as a shortcut.</p>
+                <p class="sub">Select exactly which entries this task should affect. You can still pull in a Metadata Manager selection as a shortcut.</p>
               </div>
               <div class="server-files-filter-bar">
                 <label for="serverFilesSearch">Search Files
@@ -1329,7 +1368,7 @@
             </article>
 
             <div class="server-files-grid">
-              <article class="settings-card server-files-card organize-files-card">
+              <article class="settings-card server-files-card organize-files-card" data-server-files-action-card="organize">
                 <div class="file-metadata-card-heading">
                   <h3>Organize Files</h3>
                   <p class="sub">Preview bulk rename and move paths from metadata. Files stay inside their current library root.</p>
@@ -1442,7 +1481,7 @@
                 <div id="serverFilesPreviewTable" class="server-files-preview-table"></div>
               </article>
 
-              <article class="settings-card server-files-card metadata-writeback-card">
+              <article class="settings-card server-files-card metadata-writeback-card" data-server-files-action-card="writeback">
                 <div class="file-metadata-card-heading">
                   <h3>Metadata Write-Back</h3>
                   <p class="sub">Write the current GuideVault metadata from the database/override store back into selected source packages as Guidevault JSON.</p>
@@ -1458,7 +1497,7 @@
                 <div id="serverFilesWriteBackResults" class="server-files-preview-table compact"></div>
               </article>
 
-              <article class="settings-card server-files-card file-conversion-card">
+              <article class="settings-card server-files-card file-conversion-card" data-server-files-action-card="convert">
                 <div class="file-metadata-card-heading">
                   <h3>Format Conversion</h3>
                   <p class="sub">Show the current source format for the selected files and create converted copies beside the original packages.</p>
@@ -1565,6 +1604,7 @@
                   <span class="integration-source-icon integration-source-icon-image"><img src="assets/integrations/launchbox.png" alt="" /></span>
                   <div>
                     <h2>LaunchBox</h2>
+                    <p class="sub launchbox-connection-line"><span id="launchBoxConnectionBadge" class="launchbox-connection-badge disconnected">Disconnected</span><span id="launchBoxConnectionText">No successful LaunchBox connection since this server boot.</span></p>
                   </div>
                 </div>
                 <div class="integration-chip-row"><span>Local sync</span><span>Manual coverage</span><span>Strategy-guide coverage</span><span>Match review</span><span>Platform aliases</span></div>
@@ -1575,7 +1615,31 @@
                 </div>
                 <p id="launchBoxCoverageStatus" class="sub account-status" aria-live="polite"></p>
                 <div id="launchBoxJobSummary" class="server-files-writeback-callout launchbox-job-summary hidden"></div>
-                <div class="launchbox-manual-match-panel">
+                <details id="launchBoxPlatformCoverageDetails" class="launchbox-platform-panel launchbox-platform-details">
+                  <summary>
+                    <span><strong>Platform Coverage</strong><em>Platforms from the latest sync. Select a platform to review missing matches in Library Tools.</em></span>
+                    <span class="launchbox-details-chevron" aria-hidden="true">&#x203A;</span>
+                  </summary>
+                  <div id="launchBoxPlatformCoverage" class="launchbox-platform-table"></div>
+                </details>
+              </article>
+            </div>
+          </section>
+
+          <section id="settingsLaunchBoxMatchReviewPanel" class="settings-section-panel hidden launchbox-match-review-panel">
+            <div class="settings-title-row launchbox-match-review-title-row">
+              <div>
+                <div class="settings-page-kicker">LIBRARY TOOLS</div>
+                <h1>LaunchBox Match Review</h1>
+                <p class="sub">Review unresolved LaunchBox-to-GuideVault candidates, manually pair items, and audit resolved decisions from one dedicated queue.</p>
+              </div>
+              <div class="launchbox-title-actions">
+                <button id="launchBoxReviewRefreshCoverage" class="ghost" type="button">Refresh Coverage</button>
+              </div>
+            </div>
+            <p id="launchBoxMatchReviewStatus" class="sub account-status" aria-live="polite"></p>
+            <article class="settings-card launchbox-manual-match-card">
+              <div class="launchbox-manual-match-panel">
                   <div class="settings-card-heading-row compact-heading"><div><h3>Manual Match</h3><p class="sub">Search LaunchBox games and GuideVault manuals, strategy guides, or magazines, then confirm the match directly.</p></div></div>
                   <div class="launchbox-manual-match-grid">
                     <section class="launchbox-manual-search-column">
@@ -1606,29 +1670,25 @@
                   </div>
                   <p id="launchBoxManualMatchStatus" class="sub account-status" aria-live="polite"></p>
                 </div>
-                <div class="launchbox-review-layout">
-                  <div class="launchbox-platform-panel">
-                    <div class="settings-card-heading-row compact-heading"><div><h3>Platform Coverage</h3><p class="sub">Platforms from the latest sync, sorted alphabetically.</p></div></div>
-                    <div id="launchBoxPlatformCoverage" class="launchbox-platform-table"></div>
-                  </div>
-                  <div class="launchbox-review-panel">
-                    <div class="settings-card-heading-row compact-heading"><div><h3>Match Review</h3></div></div>
-                    <div class="launchbox-review-controls">
-                      <select id="launchBoxReviewStatus" aria-label="LaunchBox review status">
-                        <option value="ambiguous">Ambiguous</option>
-                        <option value="missing">Missing</option>
-                        <option value="matched">Matched</option>
-                        <option value="confirmed">Confirmed</option>
-                        <option value="rejected">Rejected</option>
-                      </select>
-                      <input id="launchBoxReviewSearch" type="search" placeholder="Search synced games" />
-                      <button id="launchBoxLoadReview" class="ghost" type="button">Refresh Matches</button>
-                    </div>
-                    <div id="launchBoxReviewList" class="launchbox-review-list"></div>
-                  </div>
+            </article>
+            <article class="settings-card launchbox-review-card">
+              <div class="launchbox-review-panel">
+                <div class="settings-card-heading-row compact-heading"><div><h3>Match Review</h3><p class="sub">Default view shows only items that still need disposition. Confirmed and rejected items are history filters for audit or undo.</p></div></div>
+                <div class="launchbox-review-controls">
+                  <select id="launchBoxReviewStatus" aria-label="LaunchBox review status">
+                    <option value="needs-review" selected>Needs Review</option>
+                    <option value="ambiguous">Ambiguous</option>
+                    <option value="matched">Auto Matched</option>
+                    <option value="missing">Missing</option>
+                    <option value="confirmed">Confirmed</option>
+                    <option value="rejected">Rejected</option>
+                  </select>
+                  <input id="launchBoxReviewSearch" type="search" placeholder="Search synced games" />
+                  <button id="launchBoxLoadReview" class="ghost" type="button">Refresh Matches</button>
                 </div>
-              </article>
-            </div>
+                <div id="launchBoxReviewList" class="launchbox-review-list"></div>
+              </div>
+            </article>
           </section>
 
           <section id="settingsMediaPanel" class="settings-section-panel hidden media-settings-panel">
@@ -1996,7 +2056,7 @@
                 </summary>
                 <ul>
                   <li>Adds a LaunchBox coverage workspace under Server &gt; Integrations with totals, platform coverage, sync job status, and match review rows.</li>
-                  <li>Adds LaunchBox review endpoints for ambiguous, missing, matched, confirmed, and rejected game-document links.</li>
+                  <li>Adds LaunchBox review endpoints for needs-review, ambiguous, missing, auto-matched, confirmed, and rejected game-document links.</li>
                   <li>Improves platform normalization for LaunchBox systems such as PS1/PS2, SNES/Super Famicom, Genesis/Mega Drive, Game Boy variants, PSP, GameCube, Wii, and TurboGrafx/PC Engine.</li>
                 </ul>
               </details>
@@ -3198,7 +3258,6 @@
   </dialog>
 
 
-  <script src="/app.js?v=0.9.260"></script>
+  <script src="/app.js?v=0.9.228"></script>
 </body>
 </html>
-

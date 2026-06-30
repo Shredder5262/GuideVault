@@ -31,7 +31,7 @@ const state = {
   customize: { activeTab: 'home', homeShelves: [], sideNav: { customItems: [] } },
   serverSettings: null,
   homeAssistant: { pollTimer: null, lastCommandId: 0, lastStatusSignature: '', statusTimer: null, applyingCommand: false },
-  launchBox: { status: null, coverage: null, review: null, reviewStatus: 'ambiguous', reviewSearch: '', reviewPlatform: '', openPollTimer: null, openPollInFlight: false, lastOpenSignalId: 0, statsCoverageLoading: false, statsCoverageAttempted: false, manualMatch: { gameQuery: '', itemQuery: '', itemKind: '', games: [], items: [], selectedGame: null, selectedItem: null } },
+  launchBox: { status: null, coverage: null, review: null, reviewStatus: 'needs-review', reviewSearch: '', reviewPlatform: '', openPollTimer: null, openPollInFlight: false, lastOpenSignalId: 0, statsCoverageLoading: false, statsCoverageAttempted: false, manualMatch: { gameQuery: '', itemQuery: '', itemKind: '', games: [], items: [], selectedGame: null, selectedItem: null } },
   emailSettings: null,
   emailHistory: [],
   systemEvents: [],
@@ -82,7 +82,7 @@ const GUIDEVAULT_READER_PREFERENCES_ENDPOINT = '/api/reader/preferences';
 const GUIDEVAULT_READER_PROFILE_RESOLVE_ENDPOINT_BASE = '/api/reader/preferences/resolve';
 const GUIDEVAULT_OPDS_SETTINGS_KEY = 'guidevault.opdsSettings.v1';
 const GUIDEVAULT_PREFERENCES_KEY = 'guidevault.preferences.v1';
-const GUIDEVAULT_SETTINGS_NAV_KEY = 'guidevault.settingsNavCollapsed.v1';
+const GUIDEVAULT_SETTINGS_NAV_KEY = 'guidevault.settingsNavCollapsed.v2';
 const GUIDEVAULT_KEYBINDS_KEY = 'guidevault.keybinds.v1';
 const GUIDEVAULT_CUSTOMIZE_KEY = 'guidevault.customize.v1';
 let guidevaultCustomizeSaveTimer = null;
@@ -1056,15 +1056,27 @@ function profilePresetOptionsHtml(selectedId = '', options = {}) {
   return chunks.join('');
 }
 
+function readerBackgroundOptionsHtml(selectedValue = '') {
+  const backgrounds = state.reader.backgrounds || [];
+  const defaultOption = `<option value=""${String(selectedValue || '') === '' ? ' selected' : ''}>Default Gradient</option>`;
+  const builtIn = backgrounds.filter(bg => !bg.isUserUploaded && !String(bg.name || '').startsWith('user:'));
+  const uploaded = backgrounds.filter(bg => bg.isUserUploaded || String(bg.name || '').startsWith('user:'));
+  const optionHtml = bg => `<option value="${escapeHtml(bg.name)}"${String(bg.name) === String(selectedValue || '') ? ' selected' : ''}>${escapeHtml(bg.displayName || readerBackgroundDisplayName(bg.name))}</option>`;
+  const groups = [defaultOption];
+  if (builtIn.length) groups.push(`<optgroup label="Default Backgrounds">${builtIn.map(optionHtml).join('')}</optgroup>`);
+  if (uploaded.length) groups.push(`<optgroup label="Uploaded Backgrounds">${uploaded.map(optionHtml).join('')}</optgroup>`);
+  return groups.join('');
+}
+
 function syncReadingProfileBackgroundOptions() {
-  const options = ['<option value="">Default Gradient</option>'].concat((state.reader.backgrounds || []).map(bg => `<option value="${escapeHtml(bg.name)}">${escapeHtml(bg.displayName || readerBackgroundDisplayName(bg.name))}</option>`));
   ['readingProfilePresetBackground'].forEach(id => {
     const select = $(id);
     if (!select) return;
     const current = select.value;
-    select.innerHTML = options.join('');
+    select.innerHTML = readerBackgroundOptionsHtml(current);
     if ([...select.options].some(opt => opt.value === current)) select.value = current;
   });
+  updateReadingProfileBackgroundPreview();
 }
 
 function setReadingProfileStatus(message = '', tone = '') {
@@ -1109,6 +1121,7 @@ function setReadingProfilePresetFormValues(preset = null) {
   if ($(ids.zoomValue)) $(ids.zoomValue).textContent = `${normalized.zoom}%`;
   if ($(ids.fullscreen)) $(ids.fullscreen).checked = !!normalized.fullscreenOnOpen;
   if ($('readingProfileDeletePreset')) $('readingProfileDeletePreset').disabled = normalized.id === 'default';
+  updateReadingProfileBackgroundPreview();
 }
 
 function getReadingProfilePresetFormValues() {
@@ -1133,6 +1146,7 @@ function refreshReadingProfilePresetBrightnessOutput() {
   const ids = readingProfilePresetFormIds();
   const brightness = clampNumber($(ids.brightness)?.value, 15, 100, 72);
   if ($(ids.brightnessValue)) $(ids.brightnessValue).textContent = `${brightness}%`;
+  updateReadingProfileBackgroundPreview();
 }
 
 function fillReadingProfilePresetSelector(preferredId = '') {
@@ -1180,6 +1194,186 @@ function renderReadingProfileSettings(preferredId = '') {
   fillReadingProfilePresetSelector(preferredId);
   loadSelectedReadingProfilePresetForm();
   renderReadingProfilePresetList();
+  renderReaderBackgroundUploadList();
+}
+
+function setReaderBackgroundUploadStatus(message = '', tone = '') {
+  const el = $('readerBackgroundUploadStatus');
+  if (!el) return;
+  el.textContent = message;
+  el.dataset.tone = tone || '';
+}
+
+function uploadedReaderBackgrounds() {
+  return (state.reader.backgrounds || [])
+    .filter(bg => bg?.isUserUploaded || String(bg?.name || '').startsWith('user:'))
+    .sort((a, b) => String(a.displayName || '').localeCompare(String(b.displayName || '')));
+}
+
+function userReaderBackgroundFileName(backgroundName = '') {
+  const raw = String(backgroundName || '').trim();
+  if (!raw.startsWith('user:')) return '';
+  return raw.slice(5).trim();
+}
+
+function findReaderBackgroundByName(backgroundName = '') {
+  const name = String(backgroundName || '').trim();
+  if (!name) return null;
+  return (state.reader.backgrounds || []).find(bg => String(bg?.name || '') === name) || null;
+}
+
+function readerBackgroundProfileUsage(backgroundName = '') {
+  const name = String(backgroundName || '').trim();
+  if (!name) return { count: 0, names: [] };
+  const profiles = state.readingProfiles || loadReadingProfiles();
+  const names = Object.values(profiles.presets || {})
+    .filter(profile => String(profile?.background || '').trim() === name)
+    .map(profile => String(profile?.name || profile?.id || 'Reading Profile').trim())
+    .filter(Boolean)
+    .sort((a, b) => a.localeCompare(b));
+  return { count: names.length, names };
+}
+
+function updateReadingProfileBackgroundPreview() {
+  const preview = $('readingProfileBackgroundPreview');
+  const nameEl = $('readingProfileBackgroundPreviewName');
+  const metaEl = $('readingProfileBackgroundPreviewMeta');
+  if (!preview && !nameEl && !metaEl) return;
+  const ids = readingProfilePresetFormIds();
+  const selected = String($(ids.background)?.value || '').trim();
+  const brightness = clampNumber($(ids.brightness)?.value, 15, 100, 72);
+  const bg = findReaderBackgroundByName(selected);
+  if (preview) {
+    preview.classList.toggle('empty', !bg?.url);
+    preview.style.backgroundImage = bg?.url ? `url("${String(bg.url).replace(/"/g, '%22')}")` : '';
+    preview.style.filter = `brightness(${Math.max(.15, Math.min(1, brightness / 100)).toFixed(3)})`;
+  }
+  if (nameEl) nameEl.textContent = bg?.displayName || readerBackgroundDisplayName(selected) || 'Default Gradient';
+  if (metaEl) {
+    const source = bg?.isUserUploaded ? 'Uploaded background' : (bg ? 'Default background' : 'Default gradient');
+    const size = bg?.url ? '1920 × 1080' : 'CSS gradient';
+    metaEl.textContent = `${source} • ${size} • ${Math.round(brightness)}% brightness`;
+  }
+}
+
+function renderReaderBackgroundUploadList() {
+  const host = $('readerBackgroundUploadedList');
+  if (!host) return;
+  const uploaded = uploadedReaderBackgrounds();
+  if (!uploaded.length) {
+    host.innerHTML = '<div class="reader-background-empty">No uploaded backgrounds yet. Upload an image and it will appear in the reading profile Background Type list.</div>';
+    return;
+  }
+  host.innerHTML = uploaded.map(bg => {
+    const name = String(bg.name || '');
+    const fileName = userReaderBackgroundFileName(name) || String(bg.fileName || '');
+    const usage = readerBackgroundProfileUsage(name);
+    const usageText = usage.count
+      ? `Used by ${usage.count} preset${usage.count === 1 ? '' : 's'}: ${usage.names.slice(0, 3).join(', ')}${usage.names.length > 3 ? ` +${usage.names.length - 3} more` : ''}`
+      : 'Not used by any preset yet';
+    return `<article class="reader-background-uploaded-row">
+      <div class="reader-background-uploaded-preview" style="background-image:url('${escapeHtml(String(bg.url || '').replace(/'/g, '%27'))}')" aria-hidden="true"></div>
+      <div class="reader-background-uploaded-main">
+        <strong>${escapeHtml(bg.displayName || readerBackgroundDisplayName(name))}</strong>
+        <em>${escapeHtml(fileName)}</em>
+        <span class="reader-background-uploaded-usage">${escapeHtml(usageText)}</span>
+      </div>
+      <div class="reader-background-uploaded-actions">
+        <button class="ghost" type="button" data-reader-background-use="${escapeHtml(name)}">Use in Selected Profile</button>
+        <button class="danger" type="button" data-reader-background-delete="${escapeHtml(name)}">Delete</button>
+      </div>
+    </article>`;
+  }).join('');
+}
+
+async function uploadReaderBackgroundFromSettings() {
+  const input = $('readerBackgroundUploadFile');
+  const nameInput = $('readerBackgroundUploadName');
+  const file = input?.files?.[0] || null;
+  if (!file) {
+    setReaderBackgroundUploadStatus('Choose an image file before uploading.', 'error');
+    return;
+  }
+  const form = new FormData();
+  form.append('background', file);
+  const displayName = String(nameInput?.value || '').trim();
+  if (displayName) form.append('displayName', displayName);
+
+  setReaderBackgroundUploadStatus('Uploading reader background...', 'info');
+  try {
+    const res = await fetch('/api/reader/backgrounds/upload', { method: 'POST', body: form });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data?.message || 'Unable to upload reader background.');
+    if (input) input.value = '';
+    if (nameInput) nameInput.value = '';
+    await loadReaderBackgrounds();
+    const uploadedName = data?.background?.name || '';
+    if (uploadedName && $('readingProfilePresetBackground')) {
+      $('readingProfilePresetBackground').value = uploadedName;
+    }
+    setReaderBackgroundUploadStatus('Reader background uploaded at 1920 × 1080. It is now available in Background Type.', 'success');
+  } catch (err) {
+    setReaderBackgroundUploadStatus(err?.message || 'Unable to upload reader background.', 'error');
+  }
+}
+
+function useUploadedBackgroundInSelectedProfile(backgroundName = '') {
+  const selected = String(backgroundName || '').trim();
+  const exists = selected && (state.reader.backgrounds || []).some(bg => bg.name === selected);
+  if (!exists) {
+    setReaderBackgroundUploadStatus('That uploaded background is no longer available.', 'error');
+    return;
+  }
+  syncReadingProfileBackgroundOptions();
+  const select = $('readingProfilePresetBackground');
+  if (select) select.value = selected;
+  updateReadingProfileBackgroundPreview();
+  setReaderBackgroundUploadStatus('Uploaded background selected for the current profile. Save the profile to keep it.', 'success');
+}
+
+async function deleteUploadedReaderBackground(backgroundName = '') {
+  const fileName = userReaderBackgroundFileName(backgroundName);
+  if (!fileName) return;
+  const usage = readerBackgroundProfileUsage(backgroundName);
+  const usageNote = usage.count
+    ? ` It is currently used by ${usage.count} preset${usage.count === 1 ? '' : 's'}: ${usage.names.slice(0, 5).join(', ')}${usage.names.length > 5 ? ` +${usage.names.length - 5} more` : ''}. Those presets will be reset to Default Gradient.`
+    : '';
+  const confirmed = await showAppConfirm({
+    title: 'Delete reader background?',
+    message: `Delete this uploaded reader background?${usageNote}`,
+    okText: 'Delete Background',
+    cancelText: 'Keep Background',
+    danger: true
+  });
+  if (!confirmed) return;
+  setReaderBackgroundUploadStatus('Deleting reader background...', 'info');
+  try {
+    const res = await fetch(`/api/reader/backgrounds/user/${encodeURIComponent(fileName)}`, { method: 'DELETE' });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data?.message || 'Unable to delete reader background.');
+    if (state.reader.background === backgroundName) setReaderBackground('');
+
+    const profiles = state.readingProfiles || loadReadingProfiles();
+    let resetCount = 0;
+    Object.values(profiles.presets || {}).forEach(profile => {
+      if (String(profile?.background || '').trim() !== backgroundName) return;
+      profile.background = '';
+      profile.updatedAt = new Date().toISOString();
+      resetCount += 1;
+    });
+    if (resetCount) saveReadingProfiles(profiles);
+
+    const profileSelect = $('readingProfilePresetBackground');
+    if (profileSelect?.value === backgroundName) profileSelect.value = '';
+    await loadReaderBackgrounds();
+    syncReadingProfileBackgroundOptions();
+    updateReadingProfileBackgroundPreview();
+    renderReadingProfilePresetList();
+    renderReaderBackgroundUploadList();
+    setReaderBackgroundUploadStatus(resetCount ? `Reader background deleted. Reset ${resetCount} preset${resetCount === 1 ? '' : 's'} to Default Gradient.` : 'Reader background deleted.', 'success');
+  } catch (err) {
+    setReaderBackgroundUploadStatus(err?.message || 'Unable to delete reader background.', 'error');
+  }
 }
 
 function createReadingProfilePreset() {
@@ -1189,6 +1383,27 @@ function createReadingProfilePreset() {
   saveReadingProfiles(profiles);
   renderReadingProfileSettings(id);
   setReadingProfileStatus('New reading profile preset created. Rename it and save when ready.', 'success');
+}
+
+function duplicateReadingProfilePreset() {
+  const profiles = loadReadingProfiles();
+  const selectedId = $('readingProfilePresetSelect')?.value || profiles.defaultPresetId || 'default';
+  const source = profiles.presets?.[selectedId] || getDefaultReadingProfilePreset();
+  const sourceName = String(source?.name || 'Reading Profile').trim() || 'Reading Profile';
+  const copyName = `${sourceName} Copy`;
+  const id = makeReadingProfilePresetId(copyName, profiles.presets);
+  profiles.presets[id] = normalizeReadingProfilePreset({
+    ...source,
+    id,
+    name: copyName,
+    builtIn: false,
+    autoGenerated: false,
+    source: '',
+    updatedAt: new Date().toISOString()
+  }, id);
+  saveReadingProfiles(profiles);
+  renderReadingProfileSettings(id);
+  setReadingProfileStatus(`Duplicated ${sourceName}. Rename it and save when ready.`, 'success');
 }
 
 function saveReadingProfilePreset() {
@@ -3651,8 +3866,10 @@ function renderOpdsSettings() {
 
 
 function setLaunchBoxCoverageStatus(message = '', tone = '') {
-  const el = $('launchBoxCoverageStatus');
-  if (el) { el.textContent = message || ''; el.dataset.tone = tone || ''; }
+  ['launchBoxCoverageStatus', 'launchBoxMatchReviewStatus'].forEach(id => {
+    const el = $(id);
+    if (el) { el.textContent = message || ''; el.dataset.tone = tone || ''; }
+  });
   if (message && tone === 'error') showGuidevaultMessageToast(message, 'error', { title: 'LaunchBox' });
 }
 function launchBoxNumber(value) {
@@ -3666,8 +3883,31 @@ function launchBoxPercent(value) {
 function launchBoxCoverageMetric(label, value, sub = '') {
   return `<div class="launchbox-metric"><strong>${escapeHtml(value)}</strong><span>${escapeHtml(label)}</span>${sub ? `<em>${escapeHtml(sub)}</em>` : ''}</div>`;
 }
+
+function renderLaunchBoxConnectionIndicators() {
+  const status = state.launchBox.status || {};
+  const connected = !!status.connectedSinceBoot;
+  const connectedAt = status.connectedSinceBootAt || status.lastConnectedAt || '';
+  const label = connected ? 'Connected' : 'Disconnected';
+  const detail = connected
+    ? `LaunchBox connected to GuideVault during this server boot${connectedAt ? ` at ${new Date(connectedAt).toLocaleString()}` : ''}.`
+    : 'No successful LaunchBox connection since this server boot.';
+  const badgeIds = ['launchBoxConnectionBadge'];
+  badgeIds.forEach(id => {
+    const el = $(id);
+    if (!el) return;
+    el.textContent = label;
+    el.title = detail;
+    el.classList.toggle('connected', connected);
+    el.classList.toggle('disconnected', !connected);
+    el.dataset.state = connected ? 'connected' : 'disconnected';
+  });
+  const text = $('launchBoxConnectionText');
+  if (text) text.textContent = detail;
+}
 function renderLaunchBoxCoverage() {
   const status = state.launchBox.status || {};
+  renderLaunchBoxConnectionIndicators();
   const coverage = status.coverage || state.launchBox.coverage || {};
   const job = status.syncJob || {};
   const summary = $('launchBoxCoverageSummary');
@@ -3730,6 +3970,8 @@ async function loadLaunchBoxCoverage(showStatus = false) {
     await loadLaunchBoxReview(false);
   } catch (err) {
     console.error('Unable to load LaunchBox coverage', err);
+    state.launchBox.status = { connectedSinceBoot: false };
+    renderLaunchBoxConnectionIndicators();
     setLaunchBoxCoverageStatus(`Unable to load LaunchBox coverage: ${err?.message || err}`, 'error');
   }
 }
@@ -3758,7 +4000,7 @@ async function cancelLaunchBoxSync() {
   }
 }
 async function loadLaunchBoxReview(showStatus = false) {
-  const status = $('launchBoxReviewStatus')?.value || state.launchBox.reviewStatus || 'ambiguous';
+  const status = $('launchBoxReviewStatus')?.value || state.launchBox.reviewStatus || 'needs-review';
   const q = $('launchBoxReviewSearch')?.value || state.launchBox.reviewSearch || '';
   state.launchBox.reviewStatus = status;
   state.launchBox.reviewSearch = q;
@@ -3918,12 +4160,44 @@ function renderLaunchBoxReview() {
 function launchBoxReviewMatchVisibleForStatus(match = {}, status = '') {
   const normalized = String(status || '').toLowerCase().replace(/\s+/g, '-');
   const matchStatus = String(match.matchStatus || '').toLowerCase();
+  if (normalized === 'needs-review') return matchStatus === 'ambiguous' || matchStatus === 'automatched';
   if (normalized === 'ambiguous') return matchStatus === 'ambiguous';
-  if (normalized === 'matched') return matchStatus === 'confirmed' || matchStatus === 'automatched';
+  if (normalized === 'matched') return matchStatus === 'automatched';
   if (normalized === 'confirmed') return matchStatus === 'confirmed';
   if (normalized === 'rejected') return matchStatus === 'rejected';
   if (normalized === 'missing') return false;
   return true;
+}
+function launchBoxReviewStatusKey(value = '') {
+  return String(value || '').toLowerCase().replace(/\s+/g, '-');
+}
+function launchBoxReviewIsResolvedStatus(value = '') {
+  const key = launchBoxReviewStatusKey(value);
+  return key === 'confirmed' || key === 'rejected';
+}
+function launchBoxReviewMatchLabel(match = {}, reviewStatus = '') {
+  const status = launchBoxReviewStatusKey(match.matchStatus || reviewStatus);
+  if (status === 'confirmed') return 'Confirmed Match';
+  if (status === 'rejected') return 'Rejected Match';
+  return 'Review Candidate';
+}
+function launchBoxReviewMatchActionsHtml(match = {}, reviewStatus = '') {
+  const status = launchBoxReviewStatusKey(match.matchStatus || reviewStatus);
+  const details = '<button type="button" class="ghost mini" data-launchbox-action="match-details" title="Review this match with cover art, GuideVault metadata, and LaunchBox game details.">Details</button>';
+  if (status === 'confirmed') {
+    return `${details}<button type="button" class="ghost mini warning" data-launchbox-action="undo-match" title="Undo this confirmation and return the item to its previous review bucket.">Undo</button>`;
+  }
+  if (status === 'rejected') {
+    return `${details}<button type="button" class="ghost mini warning" data-launchbox-action="undo-match" title="Undo this rejection and return the item to its previous review bucket.">Undo</button>`;
+  }
+  return `${details}<button type="button" class="ghost mini" data-launchbox-action="confirm-match" title="Mark this as the trusted match for this game and document type.">Confirm</button><button type="button" class="ghost mini danger" data-launchbox-action="reject-match" title="Reject this candidate so it is not treated as an active match.">Reject</button>`;
+}
+function launchBoxMatchDetailsFooterHtml(match = {}) {
+  const status = launchBoxReviewStatusKey(match.matchStatus || state.launchBox?.pendingDetailMatch?.matchStatus || '');
+  if (status === 'confirmed' || status === 'rejected') {
+    return '<button type="button" class="ghost warning" data-launchbox-modal-action="undo-match">Undo decision</button>';
+  }
+  return '<button type="button" class="primary" data-launchbox-modal-action="confirm-match">Confirm match</button><button type="button" class="ghost danger" data-launchbox-modal-action="reject-match">Reject match</button>';
 }
 function launchBoxMatchTypeKey(match = {}) {
   const type = String(match.matchType || '').toLowerCase();
@@ -3971,17 +4245,16 @@ function launchBoxReviewRowHtml(row) {
   const reviewStatus = state.launchBox?.review?.status || state.launchBox?.reviewStatus || '';
   const rawMatches = Array.isArray(row.matches) ? row.matches : [];
   const matches = rawMatches.filter(m => launchBoxReviewMatchVisibleForStatus(m, reviewStatus));
+  const missingActionHtml = launchBoxReviewStatusKey(reviewStatus) === 'missing'
+    ? `<p class="sub launchbox-missing-action">No candidate match was saved for this game yet. <button type="button" class="ghost mini" data-launchbox-action="manual-match-game" data-launchbox-game-id="${escapeForAttribute(game.id || '')}">Find Match</button></p>`
+    : '<p class="sub">No candidate match was saved for this game yet.</p>';
   const matchHtml = matches.length ? matches.map(m => `
     <div class="launchbox-match-line" data-launchbox-game-id="${escapeForAttribute(game.id || '')}" data-guidevault-item-id="${escapeForAttribute(m.guideVaultItemId || '')}" data-match-type="${escapeForAttribute(m.matchType || '')}">
-      <span class="launchbox-match-kind"><span>Review Candidate</span><b>${escapeHtml(m.matchType || 'Match')}</b></span>
+      <span class="launchbox-match-kind"><span>${escapeHtml(launchBoxReviewMatchLabel(m, reviewStatus))}</span><b>${escapeHtml(m.matchType || 'Match')}</b></span>
       <strong>${escapeHtml(m.guideVaultItemTitle || m.guideVaultItemId || 'Unknown item')}</strong>
       <em>${escapeHtml(m.matchStatus || '')} · ${Math.round(Number(m.confidenceScore || 0))}% · ${escapeHtml(m.matchReason || '')}</em>
-      <span class="launchbox-match-actions">
-        <button type="button" class="ghost mini" data-launchbox-action="match-details" title="Review this candidate with cover art, GuideVault metadata, and LaunchBox game details.">Details</button>
-        <button type="button" class="ghost mini" data-launchbox-action="confirm-match" title="Mark this as the trusted match for this game and document type.">Confirm</button>
-        <button type="button" class="ghost mini danger" data-launchbox-action="reject-match" title="Reject this candidate so it is not treated as an active match.">Reject</button>
-      </span>
-    </div>`).join('') : '<p class="sub">No candidate match was saved for this game yet.</p>';
+      <span class="launchbox-match-actions">${launchBoxReviewMatchActionsHtml(m, reviewStatus)}</span>
+    </div>`).join('') : missingActionHtml;
   const activeHtml = launchBoxActiveMatchesHtml(row);
   const candidateTitle = matches.length ? '<div class="launchbox-candidate-title">Review candidates</div>' : '';
   return `<article class="launchbox-review-row">
@@ -3994,6 +4267,22 @@ function launchBoxReviewRowHtml(row) {
   </article>`;
 }
 
+function focusLaunchBoxManualMatchForGame(gameId = '') {
+  const rows = Array.isArray(state.launchBox?.review?.items) ? state.launchBox.review.items : [];
+  const row = rows.find(r => String(r?.game?.id || '').toLowerCase() === String(gameId || '').toLowerCase()) || null;
+  const game = row?.game || null;
+  if (!game?.id) return;
+  if (state.settingsActiveTab !== 'launchbox-match-review') showSettingsScreen('launchbox-match-review');
+  const mm = launchBoxManualMatchState();
+  mm.games = [game];
+  mm.selectedGame = game;
+  mm.items = [];
+  mm.selectedItem = null;
+  if ($('launchBoxManualGameSearch')) $('launchBoxManualGameSearch').value = game.title || '';
+  renderLaunchBoxManualMatchResults();
+  setLaunchBoxManualMatchStatus(`Selected ${game.title || 'LaunchBox game'}. Search GuideVault items to create a manual match.`, 'info');
+  $('launchBoxManualGameSearch')?.scrollIntoView?.({ behavior: 'smooth', block: 'center' });
+}
 function launchBoxFindReviewMatch(line) {
   const gameId = line?.dataset?.launchboxGameId || '';
   const itemId = line?.dataset?.guidevaultItemId || '';
@@ -4006,6 +4295,52 @@ function launchBoxFindReviewMatch(line) {
     || matches.find(m => String(m?.guideVaultItemId || '').toLowerCase() === String(itemId).toLowerCase())
     || {};
   return { row, game, match, gameId, itemId, matchType };
+}
+function launchBoxReviewCandidateKey(candidate = {}) {
+  return [candidate.gameId || candidate.launchBoxGameId || candidate.game?.id || '', candidate.itemId || candidate.guideVaultItemId || candidate.match?.guideVaultItemId || '', candidate.matchType || candidate.match?.matchType || '']
+    .map(value => String(value || '').trim().toLowerCase())
+    .join('::');
+}
+function launchBoxVisibleReviewCandidates() {
+  const rows = Array.isArray(state.launchBox?.review?.items) ? state.launchBox.review.items : [];
+  const reviewStatus = state.launchBox?.review?.status || state.launchBox?.reviewStatus || '';
+  const candidates = [];
+  rows.forEach(row => {
+    const game = row?.game || {};
+    const matches = Array.isArray(row?.matches) ? row.matches : [];
+    matches
+      .filter(match => launchBoxReviewMatchVisibleForStatus(match, reviewStatus))
+      .forEach(match => {
+        const gameId = game.id || '';
+        const itemId = match.guideVaultItemId || '';
+        const matchType = match.matchType || '';
+        if (gameId && itemId) candidates.push({ row, game, match, gameId, itemId, matchType });
+      });
+  });
+  return candidates;
+}
+function launchBoxFindVisibleReviewCandidate(candidate = null) {
+  if (!candidate) return null;
+  const key = launchBoxReviewCandidateKey(candidate);
+  if (!key.replace(/:/g, '')) return null;
+  return launchBoxVisibleReviewCandidates().find(next => launchBoxReviewCandidateKey(next) === key) || null;
+}
+function launchBoxFindNextReviewCandidate(candidate = null) {
+  if (!candidate) return null;
+  const candidates = launchBoxVisibleReviewCandidates();
+  const key = launchBoxReviewCandidateKey(candidate);
+  const index = candidates.findIndex(next => launchBoxReviewCandidateKey(next) === key);
+  return index >= 0 ? (candidates[index + 1] || null) : null;
+}
+function launchBoxShowNoMoreMatchDetails() {
+  const modal = ensureLaunchBoxMatchDetailsModal();
+  const body = $('launchBoxMatchDetailsBody');
+  const footer = $('launchBoxMatchDetailsFooter');
+  const reviewStatus = state.launchBox?.review?.status || state.launchBox?.reviewStatus || 'current filter';
+  state.launchBox.pendingDetailMatch = null;
+  modal.classList.remove('hidden');
+  if (body) body.innerHTML = `<div class="launchbox-match-modal-loading"><strong>No more candidates in ${escapeHtml(reviewStatus)}.</strong><span>Choose another filter or close this window.</span></div>`;
+  if (footer) footer.innerHTML = '<button type="button" class="ghost" data-launchbox-modal-close="1">Close</button>';
 }
 function launchBoxDetailValue(label, value) {
   const clean = Array.isArray(value) ? value.filter(Boolean).join(', ') : String(value ?? '').trim();
@@ -4080,10 +4415,7 @@ function ensureLaunchBoxMatchDetailsModal() {
     <div class="launchbox-match-modal-card">
       <header><div><span class="eyebrow">LaunchBox match review</span><h2>Candidate details</h2></div><button type="button" class="ghost mini" data-launchbox-modal-close="1">Close</button></header>
       <div id="launchBoxMatchDetailsBody" class="launchbox-match-modal-body"></div>
-      <footer>
-        <button type="button" class="primary" data-launchbox-modal-action="confirm-match">Confirm match</button>
-        <button type="button" class="ghost danger" data-launchbox-modal-action="reject-match">Reject match</button>
-      </footer>
+      <footer id="launchBoxMatchDetailsFooter"></footer>
     </div>`;
   document.body.appendChild(modal);
   modal.addEventListener('click', async e => {
@@ -4094,8 +4426,23 @@ function ensureLaunchBoxMatchDetailsModal() {
     e.preventDefault();
     const detail = state.launchBox.pendingDetailMatch || null;
     if (!detail?.gameId || !detail?.itemId) return;
-    await decideLaunchBoxMatch(action, { dataset: { launchboxGameId: detail.gameId, guidevaultItemId: detail.itemId, matchType: detail.matchType || '' } });
-    hideLaunchBoxMatchDetailsModal();
+    const nextCandidate = launchBoxFindNextReviewCandidate(detail);
+    const body = $('launchBoxMatchDetailsBody');
+    const footer = $('launchBoxMatchDetailsFooter');
+    const verb = action === 'confirm-match' ? 'Confirming' : action === 'undo-match' ? 'Undoing' : 'Rejecting';
+    if (body) body.innerHTML = `<div class="launchbox-match-modal-loading">${escapeHtml(verb)} match decision...</div>`;
+    if (footer) footer.innerHTML = '';
+    const result = await decideLaunchBoxMatch(action, { dataset: { launchboxGameId: detail.gameId, guidevaultItemId: detail.itemId, matchType: detail.matchType || '' } });
+    if (!result?.success) {
+      await showLaunchBoxMatchDetailsForDetail(detail);
+      return;
+    }
+    const nextVisibleCandidate = nextCandidate ? launchBoxFindVisibleReviewCandidate(nextCandidate) : null;
+    if (nextVisibleCandidate) {
+      await showLaunchBoxMatchDetailsForDetail(nextVisibleCandidate);
+      return;
+    }
+    launchBoxShowNoMoreMatchDetails();
   });
   document.addEventListener('keydown', e => { if (e.key === 'Escape' && !modal.classList.contains('hidden')) hideLaunchBoxMatchDetailsModal(); });
   return modal;
@@ -4105,34 +4452,48 @@ function hideLaunchBoxMatchDetailsModal() {
   if (modal) modal.classList.add('hidden');
   state.launchBox.pendingDetailMatch = null;
 }
-async function showLaunchBoxMatchDetails(line) {
-  const detail = launchBoxFindReviewMatch(line);
-  if (!detail.itemId) return;
-  state.launchBox.pendingDetailMatch = { gameId: detail.gameId, itemId: detail.itemId, matchType: detail.matchType };
+async function showLaunchBoxMatchDetailsForDetail(detail = {}) {
+  if (!detail?.itemId) return;
+  state.launchBox.pendingDetailMatch = { gameId: detail.gameId, itemId: detail.itemId, matchType: detail.matchType, matchStatus: detail.match?.matchStatus || '' };
   const modal = ensureLaunchBoxMatchDetailsModal();
   const body = $('launchBoxMatchDetailsBody');
+  const footer = $('launchBoxMatchDetailsFooter');
+  if (footer) footer.innerHTML = launchBoxMatchDetailsFooterHtml(detail.match);
   modal.classList.remove('hidden');
   if (body) body.innerHTML = '<div class="launchbox-match-modal-loading">Loading match details...</div>';
   let item = null;
   try { item = await fetchGuidevaultItemById(detail.itemId); } catch {}
   if (body) body.innerHTML = launchBoxMatchDetailsHtml(detail.game, detail.match, item);
 }
+async function showLaunchBoxMatchDetails(line) {
+  const detail = launchBoxFindReviewMatch(line);
+  await showLaunchBoxMatchDetailsForDetail(detail);
+}
 async function decideLaunchBoxMatch(action, line) {
   const gameId = line?.dataset?.launchboxGameId || '';
   const itemId = line?.dataset?.guidevaultItemId || '';
   const matchType = line?.dataset?.matchType || '';
   if (!gameId || !itemId) return;
-  const endpoint = action === 'confirm-match' ? '/api/integrations/launchbox/matches/confirm' : '/api/integrations/launchbox/matches/reject';
-  setLaunchBoxCoverageStatus(`${action === 'confirm-match' ? 'Confirming' : 'Rejecting'} LaunchBox match...`, 'info');
+  const endpoint = action === 'confirm-match'
+    ? '/api/integrations/launchbox/matches/confirm'
+    : action === 'undo-match'
+      ? '/api/integrations/launchbox/matches/undo'
+      : '/api/integrations/launchbox/matches/reject';
+  const verb = action === 'confirm-match' ? 'Confirming' : action === 'undo-match' ? 'Undoing' : 'Rejecting';
+  setLaunchBoxCoverageStatus(`${verb} LaunchBox match...`, 'info');
   try {
     const res = await fetch(endpoint, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ launchBoxGameId: gameId, guideVaultItemId: itemId, matchType }) });
     const data = await res.json().catch(() => null);
     if (!res.ok || data?.success === false) throw new Error(data?.message || `Match decision failed: ${res.status}`);
-    setLaunchBoxCoverageStatus(data?.message || 'LaunchBox match updated.', 'success');
+    const baseMessage = data?.message || (action === 'confirm-match' ? 'Match confirmed.' : action === 'undo-match' ? 'Match decision undone.' : 'Match rejected.');
+    const reviewMessage = action === 'undo-match' ? baseMessage : `${baseMessage} Removed from review.`;
+    setLaunchBoxCoverageStatus(reviewMessage, 'success');
     await loadLaunchBoxCoverage(false);
     await loadLaunchBoxReview(false);
+    return { success: true, action, data, message: reviewMessage };
   } catch (err) {
     setLaunchBoxCoverageStatus(`Unable to update match: ${err?.message || err}`, 'error');
+    return { success: false, action, error: err };
   }
 }
 async function fetchGuidevaultItemById(id = '') {
@@ -4237,6 +4598,7 @@ function stopLaunchBoxOpenSignalPolling() {
 
 function bindLaunchBoxCoverageActions() {
   if ($('launchBoxRefreshCoverage')) $('launchBoxRefreshCoverage').addEventListener('click', e => { e.preventDefault(); loadLaunchBoxCoverage(true); });
+  if ($('launchBoxReviewRefreshCoverage')) $('launchBoxReviewRefreshCoverage').addEventListener('click', e => { e.preventDefault(); loadLaunchBoxCoverage(true); });
   if ($('launchBoxStartRematch')) $('launchBoxStartRematch').addEventListener('click', e => { e.preventDefault(); startLaunchBoxRematch(); });
   if ($('launchBoxCancelSync')) $('launchBoxCancelSync').addEventListener('click', e => { e.preventDefault(); cancelLaunchBoxSync(); });
   if ($('launchBoxLoadReview')) $('launchBoxLoadReview').addEventListener('click', e => { e.preventDefault(); state.launchBox.reviewPlatform = ''; loadLaunchBoxReview(true); });
@@ -4256,6 +4618,7 @@ function bindLaunchBoxCoverageActions() {
     e.preventDefault();
     state.launchBox.reviewPlatform = btn.dataset.launchboxPlatform || '';
     if ($('launchBoxReviewStatus')) $('launchBoxReviewStatus').value = 'missing';
+    showSettingsScreen('launchbox-match-review');
     loadLaunchBoxReview(true);
   });
   const manualGameHost = $('launchBoxManualGameResults');
@@ -4278,9 +4641,10 @@ function bindLaunchBoxCoverageActions() {
     if (!btn) return;
     e.preventDefault();
     const action = btn.dataset.launchboxAction;
+    if (action === 'manual-match-game') { focusLaunchBoxManualMatchForGame(btn.dataset.launchboxGameId || ''); return; }
     const line = btn.closest('.launchbox-match-line');
     if (action === 'match-details') { showLaunchBoxMatchDetails(line); return; }
-    if (action === 'confirm-match' || action === 'reject-match') decideLaunchBoxMatch(action, line);
+    if (action === 'confirm-match' || action === 'reject-match' || action === 'undo-match') decideLaunchBoxMatch(action, line);
   });
 }
 
@@ -6114,7 +6478,9 @@ function alpha(value) {
 }
 
 function readerBackgroundDisplayName(name) {
-  const key = String(name || '').toLowerCase();
+  const raw = String(name || '').trim();
+  const clean = raw.startsWith('user:') ? raw.slice(5) : raw;
+  const key = clean.toLowerCase();
   const known = {
     'adventuremap.png': 'Adventure Map',
     'bathroom.png': 'Bathroom',
@@ -6127,7 +6493,7 @@ function readerBackgroundDisplayName(name) {
     'wood.png': 'Wood'
   };
   if (known[key]) return known[key];
-  const base = String(name || '').replace(/\.[^.]+$/, '').replace(/[-_]+/g, ' ').trim();
+  const base = clean.replace(/\.[^.]+$/, '').replace(/[-_]+/g, ' ').trim();
   if (!base) return 'Default Gradient';
   return base.replace(/\b\w/g, c => c.toUpperCase());
 }
@@ -6146,18 +6512,30 @@ function fallbackReaderBackgrounds() {
   ];
   return names.map(name => ({
     name,
+    fileName: name,
     displayName: readerBackgroundDisplayName(name),
-    url: `/assets/backgrounds/${encodeURIComponent(name)}`
+    url: `/assets/backgrounds/${encodeURIComponent(name)}`,
+    source: 'default',
+    isUserUploaded: false
   }));
 }
 function mergeReaderBackgroundLists(primary = [], fallback = []) {
   const seen = new Set();
   return [...primary, ...fallback]
-    .map(bg => ({
-      name: String(bg?.name || '').trim(),
-      displayName: String(bg?.displayName || readerBackgroundDisplayName(bg?.name)).trim(),
-      url: String(bg?.url || '').trim()
-    }))
+    .map(bg => {
+      const name = String(bg?.name || '').trim();
+      const source = String(bg?.source || '').trim().toLowerCase();
+      const isUserUploaded = !!bg?.isUserUploaded || source === 'uploaded' || name.startsWith('user:');
+      const fileName = String(bg?.fileName || (name.startsWith('user:') ? name.slice(5) : name) || '').trim();
+      return {
+        name,
+        fileName,
+        displayName: String(bg?.displayName || readerBackgroundDisplayName(name || fileName)).trim(),
+        url: String(bg?.url || '').trim(),
+        source: isUserUploaded ? 'uploaded' : (source || 'default'),
+        isUserUploaded
+      };
+    })
     .filter(bg => {
       if (!bg.name || !bg.url) return false;
       const key = bg.name.toLowerCase();
@@ -6233,9 +6611,8 @@ function populateReaderBackgroundSelect() {
   const select = $('readerBackgroundSelect');
   if (!select) return;
   const current = String(state.reader.background || '');
-  const options = ['<option value="">Default Gradient</option>'].concat((state.reader.backgrounds || []).map(bg => `<option value="${escapeHtml(bg.name)}">${escapeHtml(bg.displayName || readerBackgroundDisplayName(bg.name))}</option>`));
-  select.innerHTML = options.join('');
-  select.value = current;
+  select.innerHTML = readerBackgroundOptionsHtml(current);
+  select.value = [...select.options].some(opt => opt.value === current) ? current : '';
 }
 async function loadReaderBackgrounds() {
   const readerProfileAlreadyApplied = !!state.reader?.item && !!state.reader?.appliedProfileId;
@@ -6259,6 +6636,7 @@ async function loadReaderBackgrounds() {
     }
     populateReaderBackgroundSelect();
     syncReadingProfileBackgroundOptions();
+    renderReaderBackgroundUploadList();
     applyReaderBackground();
     scheduleHomeAssistantStatusPublish();
   } catch (err) {
@@ -6270,6 +6648,7 @@ async function loadReaderBackgrounds() {
     saveReaderBackgroundChoice(state.reader.background);
     populateReaderBackgroundSelect();
     syncReadingProfileBackgroundOptions();
+    renderReaderBackgroundUploadList();
     applyReaderBackground();
     scheduleHomeAssistantStatusPublish();
   }
@@ -20647,12 +21026,14 @@ function updateSettingsInsights() {
 const GUIDEVAULT_SETTINGS_GROUPS = {
   account: ['account', 'preferences', 'keybinds', 'reading-profiles', 'customize', 'devices'],
   insights: ['insights', 'insights-devices', 'statistics'],
-  server: ['server', 'files', 'integrations', 'metadata-manager', 'opds', 'media', 'email', 'users', 'tasks'],
+  'file-management': ['files-organize', 'files-writeback', 'files-convert', 'metadata-manager', 'launchbox-match-review'],
+  server: ['server', 'integrations', 'opds', 'media', 'email', 'users', 'tasks'],
   info: ['info', 'events']
 };
 
 function settingsGroupForTab(tab = 'account') {
-  const normalized = tab === 'insights' ? 'statistics' : tab;
+  let normalized = tab === 'insights' ? 'statistics' : tab;
+  if (normalized === 'files') normalized = 'files-organize';
   return Object.entries(GUIDEVAULT_SETTINGS_GROUPS).find(([, tabs]) => tabs.includes(normalized))?.[0] || 'account';
 }
 
@@ -20662,9 +21043,9 @@ function loadSettingsNavCollapsed() {
   try {
     const raw = localStorage.getItem(GUIDEVAULT_SETTINGS_NAV_KEY);
     const saved = raw ? JSON.parse(raw) : {};
-    Object.keys(GUIDEVAULT_SETTINGS_GROUPS).forEach(group => { collapsed[group] = !!saved?.[group]; });
+    Object.keys(GUIDEVAULT_SETTINGS_GROUPS).forEach(group => { collapsed[group] = typeof saved?.[group] === 'boolean' ? !!saved[group] : true; });
   } catch {
-    Object.keys(GUIDEVAULT_SETTINGS_GROUPS).forEach(group => { collapsed[group] = false; });
+    Object.keys(GUIDEVAULT_SETTINGS_GROUPS).forEach(group => { collapsed[group] = true; });
   }
   state.settingsNavCollapsed = collapsed;
   return collapsed;
@@ -20708,10 +21089,19 @@ function handleSettingsNavClick(btn) {
   if (btn.classList.contains('settings-subnav')) {
     state.settingsNavCollapsed[group] = false;
     saveSettingsNavCollapsed();
-  } else if (btn.classList.contains('settings-nav-group')) {
+    activateSettingsTab(tab);
+    return;
+  }
+  if (btn.classList.contains('settings-nav-group')) {
     const activeGroup = settingsGroupForTab(state.settingsActiveTab || 'account');
     const alreadyActiveGroup = activeGroup === group;
     const currentlyCollapsed = !!state.settingsNavCollapsed[group];
+    if (group === 'file-management') {
+      state.settingsNavCollapsed[group] = !currentlyCollapsed;
+      saveSettingsNavCollapsed();
+      updateSettingsNavGroups(state.settingsActiveTab || 'account');
+      return;
+    }
     if (alreadyActiveGroup && (state.settingsActiveTab === tab || btn.classList.contains('active'))) {
       state.settingsNavCollapsed[group] = !currentlyCollapsed;
     } else {
@@ -20774,10 +21164,20 @@ function showSettingsScreen(tab = 'account') {
 function activateSettingsTab(tab = 'account') {
   if (tab === 'insights') tab = 'statistics';
   if (tab === 'email-history') tab = 'email';
-  const allowed = new Set(['account', 'preferences', 'keybinds', 'reading-profiles', 'customize', 'opds', 'devices', 'insights-devices', 'statistics', 'server', 'files', 'integrations', 'metadata-manager', 'media', 'email', 'users', 'tasks', 'info', 'events']);
+  if (tab === 'files') tab = 'files-organize';
+  const serverFilesTabs = new Set(['files-organize', 'files-writeback', 'files-convert']);
+  const allowed = new Set(['account', 'preferences', 'keybinds', 'reading-profiles', 'customize', 'opds', 'devices', 'insights-devices', 'statistics', 'server', 'files-organize', 'files-writeback', 'files-convert', 'integrations', 'metadata-manager', 'launchbox-match-review', 'media', 'email', 'users', 'tasks', 'info', 'events']);
   const active = allowed.has(tab) ? tab : 'account';
   state.settingsActiveTab = active;
   const activeGroup = settingsGroupForTab(active);
+  const activeGroupParent = document.querySelector(`.settings-nav-group[data-settings-group="${activeGroup}"]`);
+  const activeGroupParentTab = activeGroupParent?.dataset.settingsTab || '';
+  const activeIsParentLanding = active === activeGroupParentTab || (activeGroupParentTab === 'insights' && active === 'statistics');
+  if (!activeIsParentLanding) {
+    loadSettingsNavCollapsed();
+    state.settingsNavCollapsed[activeGroup] = false;
+    saveSettingsNavCollapsed();
+  }
   document.querySelectorAll('.settings-nav, .settings-subnav').forEach(btn => {
     const navTab = btn.dataset.settingsTab || '';
     const navGroup = btn.dataset.settingsGroup || settingsGroupForTab(navTab);
@@ -20796,13 +21196,14 @@ function activateSettingsTab(tab = 'account') {
   if ($('settingsOpdsPanel')) $('settingsOpdsPanel').classList.toggle('hidden', active !== 'opds');
   if ($('settingsDevicesPanel')) $('settingsDevicesPanel').classList.toggle('hidden', active !== 'devices');
   if ($('settingsServerPanel')) $('settingsServerPanel').classList.toggle('hidden', active !== 'server');
-  if ($('settingsFilesPanel')) $('settingsFilesPanel').classList.toggle('hidden', active !== 'files');
+  if ($('settingsFilesPanel')) $('settingsFilesPanel').classList.toggle('hidden', !serverFilesTabs.has(active));
   if ($('settingsIntegrationsPanel')) $('settingsIntegrationsPanel').classList.toggle('hidden', active !== 'integrations');
   if ($('settingsMediaPanel')) $('settingsMediaPanel').classList.toggle('hidden', active !== 'media');
   if ($('settingsEmailPanel')) $('settingsEmailPanel').classList.toggle('hidden', active !== 'email');
   if ($('settingsUsersPanel')) $('settingsUsersPanel').classList.toggle('hidden', active !== 'users');
   if ($('settingsTasksPanel')) $('settingsTasksPanel').classList.toggle('hidden', active !== 'tasks');
   if ($('settingsMetadataManagerPanel')) $('settingsMetadataManagerPanel').classList.toggle('hidden', active !== 'metadata-manager');
+  if ($('settingsLaunchBoxMatchReviewPanel')) $('settingsLaunchBoxMatchReviewPanel').classList.toggle('hidden', active !== 'launchbox-match-review');
   if ($('settingsImportPanel')) $('settingsImportPanel').classList.toggle('hidden', active !== 'media');
   if ($('settingsInfoPanel')) $('settingsInfoPanel').classList.toggle('hidden', active !== 'info');
   if ($('settingsEventsPanel')) $('settingsEventsPanel').classList.toggle('hidden', active !== 'events');
@@ -20810,8 +21211,9 @@ function activateSettingsTab(tab = 'account') {
   if (active === 'keybinds') renderKeybindsSettings();
   if (active === 'customize') renderCustomizeSettings();
   if (active === 'server') loadServerSettings(false);
-  if (active === 'files') renderServerFilesWorkspace();
+  if (serverFilesTabs.has(active)) renderServerFilesWorkspace();
   if (active === 'integrations') { loadServerSettings(false); loadLaunchBoxCoverage(false); }
+  if (active === 'launchbox-match-review') { loadLaunchBoxCoverage(false); loadLaunchBoxReview(false); }
   if (active === 'media') loadServerSettings(false);
   if (active === 'email') { if (!state.serverSettings) loadServerSettings(false); loadEmailSettings(false); loadEmailHistory(false); requestAnimationFrame(syncEmailTemplatePreview); }
   if (active === 'users') { renderUsersLoadingState(); deferAfterVisiblePaint(() => openUsersSettingsPanel(), 120); }
@@ -21194,11 +21596,22 @@ if ($('folderBrowseUse')) $('folderBrowseUse').addEventListener('click', e => { 
 if ($('folderBrowseList')) $('folderBrowseList').addEventListener('click', e => { const btn = e.target.closest?.('[data-folder-path]'); if (btn) { e.preventDefault(); loadFolderBrowserPath(btn.dataset.folderPath || ''); } });
 if ($('folderBrowseQuickRoots')) $('folderBrowseQuickRoots').addEventListener('click', e => { const btn = e.target.closest?.('[data-folder-path]'); if (btn) { e.preventDefault(); loadFolderBrowserPath(btn.dataset.folderPath || ''); } });
 if ($('readingProfilePresetSelect')) $('readingProfilePresetSelect').addEventListener('change', () => loadSelectedReadingProfilePresetForm());
-if ($('readingProfilePresetZoom')) $('readingProfilePresetZoom').addEventListener('input', refreshReadingProfilePresetZoomOutput); if ($('readingProfilePresetBrightness')) $('readingProfilePresetBrightness').addEventListener('input', refreshReadingProfilePresetBrightnessOutput);
+if ($('readingProfilePresetZoom')) $('readingProfilePresetZoom').addEventListener('input', refreshReadingProfilePresetZoomOutput);
+if ($('readingProfilePresetBrightness')) $('readingProfilePresetBrightness').addEventListener('input', refreshReadingProfilePresetBrightnessOutput);
+if ($('readingProfilePresetBackground')) $('readingProfilePresetBackground').addEventListener('change', updateReadingProfileBackgroundPreview);
 if ($('readingProfileNewPreset')) $('readingProfileNewPreset').addEventListener('click', e => { e.preventDefault(); createReadingProfilePreset(); });
+if ($('readingProfileDuplicatePreset')) $('readingProfileDuplicatePreset').addEventListener('click', e => { e.preventDefault(); duplicateReadingProfilePreset(); });
 if ($('readingProfileSavePreset')) $('readingProfileSavePreset').addEventListener('click', e => { e.preventDefault(); saveReadingProfilePreset(); });
 if ($('readingProfileDeletePreset')) $('readingProfileDeletePreset').addEventListener('click', e => { e.preventDefault(); deleteReadingProfilePreset(); });
 if ($('readingProfileSetDefaultPreset')) $('readingProfileSetDefaultPreset').addEventListener('click', e => { e.preventDefault(); setDefaultReadingProfilePreset(); });
+if ($('readerBackgroundUploadButton')) $('readerBackgroundUploadButton').addEventListener('click', e => { e.preventDefault(); uploadReaderBackgroundFromSettings(); });
+if ($('readerBackgroundRefreshUploads')) $('readerBackgroundRefreshUploads').addEventListener('click', async e => { e.preventDefault(); setReaderBackgroundUploadStatus('Refreshing reader backgrounds...', 'info'); await loadReaderBackgrounds(); setReaderBackgroundUploadStatus('Reader backgrounds refreshed.', 'success'); });
+if ($('readerBackgroundUploadedList')) $('readerBackgroundUploadedList').addEventListener('click', e => {
+  const useBtn = e.target.closest?.('[data-reader-background-use]');
+  if (useBtn) { e.preventDefault(); useUploadedBackgroundInSelectedProfile(useBtn.dataset.readerBackgroundUse || ''); return; }
+  const deleteBtn = e.target.closest?.('[data-reader-background-delete]');
+  if (deleteBtn) { e.preventDefault(); deleteUploadedReaderBackground(deleteBtn.dataset.readerBackgroundDelete || ''); }
+});
 if ($('readingProfilePresetList')) $('readingProfilePresetList').addEventListener('click', e => {
   const row = e.target.closest?.('.reading-profile-preset-row');
   if (!row) return;
@@ -21495,11 +21908,88 @@ function metadataManagerSelectedItemsFromState() {
   return (state.items || []).filter(item => ids.has(metadataManagerItemId(item)));
 }
 
+
+const SERVER_FILES_MODES = {
+  organize: {
+    tab: 'files-organize',
+    title: 'Organize Files',
+    subtitle: 'Select target files, then preview a rename/move plan before applying it.',
+    summary: 'Select the target files you want to rename or move. Only the organize tools are shown on this page.',
+    emptyLabel: 'organize action',
+    selectedLabel: 'organize actions',
+    workflow: [
+      ['Select Target Files', 'Pick one entry, visible rows, matching rows, or import the Metadata Manager selection.'],
+      ['Build File Names', 'Choose or edit rename/move templates for the selected content type.'],
+      ['Preview Before Applying', 'Review before/after paths before moving files.']
+    ]
+  },
+  writeback: {
+    tab: 'files-writeback',
+    title: 'JSON Write-Back',
+    subtitle: 'Select target files, then write the current GuideVault metadata JSON into the selected packages.',
+    summary: 'Select the target files that should receive updated GuideVault JSON metadata. Only JSON write-back tools are shown on this page.',
+    emptyLabel: 'JSON write-back',
+    selectedLabel: 'JSON write-back',
+    workflow: [
+      ['Select Target Files', 'Pick one entry, visible rows, matching rows, or import the Metadata Manager selection.'],
+      ['Confirm Metadata Source', 'Uses the current GuideVault database and override metadata for each selected item.'],
+      ['Write JSON', 'Writes GuideVault JSON metadata to the selected source packages.']
+    ]
+  },
+  convert: {
+    tab: 'files-convert',
+    title: 'Format Conversion',
+    subtitle: 'Select target files, review their current formats, then create converted copies beside the original packages.',
+    summary: 'Select the target files you want to convert. Only format conversion tools are shown on this page.',
+    emptyLabel: 'format conversion',
+    selectedLabel: 'format conversion',
+    workflow: [
+      ['Select Target Files', 'Pick one entry, visible rows, matching rows, or import the Metadata Manager selection.'],
+      ['Review Current Formats', 'Check the selected source formats before converting.'],
+      ['Create Converted Copies', 'GuideVault creates new CBZ or PDF copies and leaves originals untouched.']
+    ]
+  }
+};
+
+function serverFilesModeFromTab(tab = state.settingsActiveTab || 'files-organize') {
+  if (tab === 'files-writeback') return 'writeback';
+  if (tab === 'files-convert') return 'convert';
+  return 'organize';
+}
+
+function serverFilesCurrentMode() {
+  const files = serverFilesEnsureState();
+  const fromTab = serverFilesModeFromTab(state.settingsActiveTab || 'files-organize');
+  files.mode = fromTab;
+  return fromTab;
+}
+
+function serverFilesModeConfig(mode = serverFilesCurrentMode()) {
+  return SERVER_FILES_MODES[mode] || SERVER_FILES_MODES.organize;
+}
+
+function renderServerFilesModeChrome() {
+  const mode = serverFilesCurrentMode();
+  const config = serverFilesModeConfig(mode);
+  if ($('serverFilesPageTitle')) $('serverFilesPageTitle').textContent = config.title;
+  if ($('serverFilesPageSub')) $('serverFilesPageSub').textContent = config.subtitle;
+  if ($('serverFilesPageKicker')) $('serverFilesPageKicker').textContent = 'LIBRARY TOOLS';
+  const workflow = $('serverFilesWorkflowStrip');
+  if (workflow) {
+    workflow.innerHTML = (config.workflow || []).map((step, index) => `
+      <div><span>${index + 1}</span><strong>${escapeHtml(step[0] || '')}</strong><em>${escapeHtml(step[1] || '')}</em></div>`).join('');
+  }
+  document.querySelectorAll('[data-server-files-action-card]').forEach(card => {
+    card.classList.toggle('hidden', (card.dataset.serverFilesActionCard || '') !== mode);
+  });
+}
+
 function serverFilesEnsureState() {
-  state.serverFiles = state.serverFiles || { selectedIds: [], kindFilters: ['Manual','Strategy Guide','Magazine'], search: '', renderLimit: METADATA_MANAGER_DEFAULT_RENDER_LIMIT, templateKind: 'manual', templateTargetId: 'serverFilesManualTemplate' };
+  state.serverFiles = state.serverFiles || { selectedIds: [], kindFilters: ['Manual','Strategy Guide','Magazine'], search: '', renderLimit: METADATA_MANAGER_DEFAULT_RENDER_LIMIT, templateKind: 'manual', templateTargetId: 'serverFilesManualTemplate', mode: 'organize' };
   if (!Array.isArray(state.serverFiles.selectedIds)) state.serverFiles.selectedIds = [];
   if (!Array.isArray(state.serverFiles.kindFilters) || !state.serverFiles.kindFilters.length) state.serverFiles.kindFilters = ['Manual','Strategy Guide','Magazine'];
   if (!Number.isFinite(Number(state.serverFiles.renderLimit)) || Number(state.serverFiles.renderLimit) <= 0) state.serverFiles.renderLimit = METADATA_MANAGER_DEFAULT_RENDER_LIMIT;
+  if (!SERVER_FILES_MODES[state.serverFiles.mode]) state.serverFiles.mode = serverFilesModeFromTab(state.settingsActiveTab || 'files-organize');
   return state.serverFiles;
 }
 
@@ -21601,11 +22091,12 @@ function serverFilesSelectedItemsFromState() {
 
 function serverFilesSelectedSummaryText() {
   const files = serverFilesEnsureState();
+  const config = serverFilesModeConfig(files.mode || serverFilesCurrentMode());
   const items = serverFilesSelectedItemsFromState();
   const matched = serverFilesMatchingItems().length;
-  if (!items.length) return `No files selected. Use the list below to select one file or a group of files. ${matched} matching file(s) available.`;
+  if (!items.length) return `No files selected for ${config.emptyLabel}. Use the target list below to select one file or a group of files. ${matched} matching file(s) available.`;
   const counts = items.reduce((acc, item) => { acc[item.kind || 'Other'] = (acc[item.kind || 'Other'] || 0) + 1; return acc; }, {});
-  return `${items.length} selected for file actions: ${Object.entries(counts).map(([kind, count]) => `${count} ${kind}${count === 1 ? '' : 's'}`).join(', ')}. ${matched} matching file(s) shown by the current filters.`;
+  return `${items.length} selected for ${config.selectedLabel}: ${Object.entries(counts).map(([kind, count]) => `${count} ${kind}${count === 1 ? '' : 's'}`).join(', ')}. ${matched} matching file(s) shown by the current filters.`;
 }
 
 function serverFilesSetStatus(targetId, message = '', tone = '') {
@@ -21630,7 +22121,7 @@ function serverFilesRefreshSummary() {
 
 function serverFilesRowsHtml(items = []) {
   const selected = new Set(serverFilesCurrentSelectedIds());
-  if (!items.length) return '<tr><td colspan="7" class="metadata-manager-empty">No files match the current Files workspace filter.</td></tr>';
+  if (!items.length) return '<tr><td colspan="7" class="metadata-manager-empty">No files match the current target file filter.</td></tr>';
   return items.map(item => {
     const id = metadataManagerItemId(item);
     const name = metadataManagerItemName(item) || item.title || item.fileName || 'Untitled';
@@ -21652,6 +22143,7 @@ function serverFilesRowsHtml(items = []) {
 
 function renderServerFilesWorkspace() {
   if (!$('settingsFilesPanel')) return;
+  renderServerFilesModeChrome();
   hydrateServerFilesTemplatePresets(false);
   const files = serverFilesEnsureState();
   if ($('serverFilesSearch')) $('serverFilesSearch').value = files.search || '';
@@ -22219,7 +22711,7 @@ async function serverFilesPreviewSelected() {
   const applyBtn = $('serverFilesApplyPreview');
   serverFilesRefreshSummary();
   if (!ids.length) {
-    serverFilesSetStatus('serverFilesOrganizeStatus', 'Select one or more files from the Files workspace list first.', 'error');
+    serverFilesSetStatus('serverFilesOrganizeStatus', 'Select one or more target files first.', 'error');
     return;
   }
   state.serverFilesPreviewShowAll = false;
@@ -22253,7 +22745,7 @@ async function serverFilesPreviewSelected() {
 async function serverFilesApplyPreview() {
   const ids = serverFilesCurrentSelectedIds();
   if (!ids.length) {
-    serverFilesSetStatus('serverFilesOrganizeStatus', 'Select one or more files from the Files workspace list first.', 'error');
+    serverFilesSetStatus('serverFilesOrganizeStatus', 'Select one or more target files first.', 'error');
     return;
   }
   const confirmed = await showAppConfirm({
@@ -22382,7 +22874,7 @@ async function serverFilesPollConversionJob(taskId) {
 async function serverFilesConvertSelected(targetFormat = 'cbz') {
   const ids = serverFilesCurrentSelectedIds();
   if (!ids.length) {
-    serverFilesSetStatus('serverFilesConvertStatus', 'Select one or more files from the Files workspace list first.', 'error');
+    serverFilesSetStatus('serverFilesConvertStatus', 'Select one or more target files first.', 'error');
     return;
   }
   const labels = { cbz: 'CBZ', pdf: 'PDF' };
@@ -22426,7 +22918,7 @@ async function serverFilesConvertSelected(targetFormat = 'cbz') {
 async function metadataManagerWriteBackSelected(source = 'metadata') {
   const ids = source === 'files' ? serverFilesCurrentSelectedIds() : metadataManagerCurrentSelectedIds();
   if (!ids.length) {
-    if (source === 'files') serverFilesSetStatus('serverFilesWriteBackStatus', 'Select one or more files from the Files workspace list first.', 'error');
+    if (source === 'files') serverFilesSetStatus('serverFilesWriteBackStatus', 'Select one or more target files first.', 'error');
     else metadataManagerSetStatus('Select one or more rows first.', 'error');
     return;
   }
@@ -22460,7 +22952,7 @@ function metadataManagerOpenFilesWorkspace() {
     files.selectedIds = ids;
     files.renderLimit = Math.max(files.renderLimit || metadataManagerDefaultRenderLimit(), ids.length, metadataManagerDefaultRenderLimit());
   }
-  activateSettingsTab('files');
+  activateSettingsTab('files-writeback');
   renderServerFilesWorkspace();
 }
 
