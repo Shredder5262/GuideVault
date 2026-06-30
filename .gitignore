@@ -47,7 +47,8 @@ _releases/
 docker-compose.yml
 .env
 .env.*
-# Local env examples / release automation not intended for repo
+
+# Personal/local-only files
 .env.example
 scripts/release/
 
