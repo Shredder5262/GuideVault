@@ -1,46 +1,21 @@
-# Git / metadata
-.git/
-.gitignore
-
-# Build artifacts
+# Build artifacts should never be part of the Docker build context.
 **/bin/
 **/obj/
 
-# IDE/editor
-**/.vs/
-**/.vscode/
+# GuideVault runtime data is user-specific and must stay out of Docker images.
+# This includes uploaded reader backgrounds, local settings, caches, histories,
+# LaunchBox sync state, and generated library data.
+**/data/
+
+# Extra explicit guard for uploaded reader backgrounds if data layout changes later.
+**/reader/backgrounds/
+**/data/reader/backgrounds/
+
+# Local/editor noise.
+.git/
+.vs/
+.vscode/
 *.user
 *.suo
-
-# GuideVault runtime/user data
-**/data/
-**/cache/
-**/logs/
-**/covers/
-**/thumbnails/
-**/uploads/
-
-# Local libraries / personal content
-**/library/
-**/libraries/
-**/books/
-**/manuals/
-**/strategy-guides/
-**/magazines/
-
-# Local backups and generated releases
-_backup/
-_releases/
-*.zip
-*.7z
-*.rar
-*.tar
-*.tar.gz
-*.tgz
-
-# Databases
-*.db
-*.db-shm
-*.db-wal
-*.sqlite
-*.sqlite3
+*.tmp
+*.log

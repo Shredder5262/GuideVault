@@ -6,7 +6,7 @@
   <title>Guidevault</title>
   <link rel="icon" type="image/x-icon" href="/assets/favicon.ico?v=0.9.228" />
   <link rel="shortcut icon" type="image/x-icon" href="/assets/favicon.ico?v=0.9.228" />
-  <link rel="stylesheet" href="/styles.css?v=0.9.228" />
+  <link rel="stylesheet" href="/styles.css?v=1.1.2" />
 </head>
 <body class="right-collapsed auth-locked">
   <section id="loginView" class="login-view" aria-labelledby="loginTitle">
@@ -44,6 +44,7 @@
         <button class="nav" data-view="guide-systems" data-filter="Strategy Guide" title="Strategy Guides"><span class="nav-icon homebar-icon"><img src="/assets/icons/homebar/strategy_guide.png" alt="" loading="eager" draggable="false" /></span><span class="nav-label">Strategy Guides</span><em id="countGuides">0</em></button>
         <button class="nav" data-view="magazine-series" data-filter="Magazine" title="Magazines"><span class="nav-icon homebar-icon"><img src="/assets/icons/homebar/magazines.png" data-fallback-src="/assets/icons/homebar/magainzes.png" alt="" loading="eager" draggable="false" onerror="if(this.dataset.fallbackUsed!=='1'&&this.dataset.fallbackSrc){this.dataset.fallbackUsed='1';this.src=this.dataset.fallbackSrc}else{this.classList.add('homebar-icon-missing')}" /></span><span class="nav-label">Magazines</span><em id="countMags">0</em></button>
         <button class="nav" data-view="favorites" data-filter="Favorites" title="Favorites"><span class="nav-icon">&#x2605;</span><span class="nav-label">Favorites</span><em id="countFavs">0</em></button>
+        <button id="collectionsNav" class="nav" data-view="collections" data-filter="All Content" title="Collections"><span class="nav-icon">&#x2637;</span><span class="nav-label">Collections</span><em id="countCollections">0</em></button>
         <div id="customSideNavItems" class="custom-side-nav-items" aria-label="Custom side navigation"></div>
       </nav>
       <nav id="settingsSideNav" class="settings-side-nav hidden" aria-label="Settings navigation">
@@ -114,7 +115,7 @@
 
     <main class="main">
       <header class="topbar">
-        <div class="search">&#x2315; <input id="search" placeholder="Search guides, manuals, magazines, systems, publishers, tags..." /></div>
+        <div class="search">&#x2315; <input id="search" placeholder="Search titles, platforms, metadata, tags, LaunchBox matches..." /></div>
         <div class="task-monitor-wrap">
           <button id="taskMonitorBtn" class="icon-button top-icon-button task-monitor-button" title="Tasks" aria-label="Tasks">&#x2611;<span id="taskMonitorBadge" class="task-monitor-badge hidden">0</span></button>
           <div id="taskMonitorPanel" class="task-monitor-panel hidden" role="dialog" aria-label="Running tasks">
@@ -141,6 +142,7 @@
         <div id="libraryGridScroll" class="library-grid-scroll">
         <div class="heading-row"><div><h1 id="pageTitle">Home</h1><span id="itemCount" class="pill">0 items</span></div><div class="library-heading-controls"><label class="cover-size-control" for="coverSizeSlider"><span>Cover size</span><input id="coverSizeSlider" type="range" min="75" max="140" step="5" value="100" /><em id="coverSizeValue">100%</em></label><label class="library-sort-control" for="sort"><span>Sort by</span><select id="sort" aria-label="Sort library"><option value="recent">Date Added</option><option value="title">Title A-Z</option><option value="issue">Issue #</option><option value="kind">Library Type</option><option value="category">Platform/Series</option></select></label></div></div>
         <div id="homeShelves" class="home-shelves"></div>
+        <section id="homeCollections" class="home-collections hidden" aria-label="User collections"></section>
         <h2 class="section-recent-title hidden">Recently Added</h2>
         <div id="recentGrid" class="card-row hidden"></div>
         <h2 class="section-browse-title">Browse by Content Type</h2>
@@ -178,6 +180,11 @@
               <div class="detail-action-stack">
                 <button id="readBtn" class="primary full" type="button">Open Reader</button>
                 <button id="downloadBtn" class="ghost full" type="button">Open / Download File</button>
+                <div class="detail-collection-box">
+                  <label for="detailCollectionSelect">Collection<select id="detailCollectionSelect"></select></label>
+                  <button id="detailAddCollectionBtn" class="ghost full" type="button">Add to Collection</button>
+                  <p id="detailCollectionStatus" class="sub" aria-live="polite"></p>
+                </div>
                 <button id="deleteBtn" class="danger full" type="button">Remove from Library</button>
               </div>
             </aside>
@@ -686,6 +693,7 @@
             </div>
             <div class="customize-tabs" role="tablist" aria-label="Customize sections">
               <button class="customize-tab active" data-customize-tab="home" type="button">Home</button>
+              <button class="customize-tab" data-customize-tab="collections" type="button">Collections</button>
               <button class="customize-tab" data-customize-tab="side-nav" type="button">Side Nav</button>
             </div>
             <article id="customizeHomePanel" class="settings-card customize-tab-panel">
@@ -701,6 +709,55 @@
               </div>
               <div id="customizeShelfList" class="customize-shelf-list"></div>
               <p id="customizeStatus" class="sub account-status" aria-live="polite"></p>
+            </article>
+            <article id="customizeCollectionsPanel" class="settings-card customize-tab-panel hidden collections-customize-card">
+              <div class="customize-home-header collections-title-row">
+                <div>
+                  <h2>Collections & Curated Shelves</h2>
+                  <p class="sub">Create your own mixed shelves of manuals, strategy guides, and magazines without adding extra search filters.</p>
+                </div>
+              </div>
+              <div class="collections-layout-grid">
+                <section class="collection-builder-card">
+                  <div class="side-nav-card-heading">
+                    <span class="side-nav-card-icon">&#x25A3;</span>
+                    <div>
+                      <h3>Create Collection</h3>
+                      <p class="sub">Name a curated group, then add items from details or the collection manager.</p>
+                    </div>
+                  </div>
+                  <div class="collection-builder-grid">
+                    <label for="collectionNameInput">Collection Name<input id="collectionNameInput" type="text" placeholder="Zelda Guides, NES Favorites, Arcade Manuals" /></label>
+                    <label for="collectionDescriptionInput">Description<input id="collectionDescriptionInput" type="text" placeholder="Optional shelf description" /></label>
+                    <label for="collectionHomeDisplayInput">Home Placement<select id="collectionHomeDisplayInput">
+                      <option value="shelf" selected>Full item shelf</option>
+                      <option value="card">Compact collection card</option>
+                      <option value="hidden">Hide from Home</option>
+                    </select></label>
+                    <label class="collection-checkbox-label"><input id="collectionShowInSidebarInput" type="checkbox" /> Show in sidebar</label>
+                  </div>
+                  <div class="settings-actions inline-actions">
+                    <button id="collectionCreateButton" class="primary" type="button">&#xFF0B; Create Collection</button>
+                  </div>
+                  <p id="collectionsStatus" class="sub account-status" aria-live="polite"></p>
+                </section>
+                <section class="collection-builder-card collection-manager-card">
+                  <div class="side-nav-card-heading">
+                    <span class="side-nav-card-icon">&#x2637;</span>
+                    <div>
+                      <h3>Collection Items</h3>
+                      <p class="sub">Pick a collection from the list below, then add, remove, or reorder its items.</p>
+                    </div>
+                  </div>
+                  <select id="collectionManageSelect" class="hidden" aria-label="Selected collection"></select>
+                  <div id="collectionEditPanel" class="collection-edit-panel"></div>
+                </section>
+              </div>
+              <div class="collections-list-heading">
+                <h3>Your Collections</h3>
+                <p class="sub">Use Manage Items to choose which collection appears in the item manager. Delete removes only the collection, not library items.</p>
+              </div>
+              <div id="collectionsList" class="collections-list"></div>
             </article>
             <article id="customizeSideNavPanel" class="settings-card customize-tab-panel hidden side-nav-customize-card">
               <div class="customize-home-header side-nav-title-row">
@@ -754,7 +811,6 @@
                       <option value="&#x2315;">&#x2315; Search</option>
                       <option value="&#x2605;">&#x2605; Favorite</option>
                     </select></label>
-                    <label for="customSideNavIcon">Custom Icon<input id="customSideNavIcon" type="text" maxlength="4" placeholder="Optional" /></label>
                   </div>
                   <div class="side-nav-help-grid">
                     <div><strong>Example</strong><span>Type: Series, Value: Zelda, Scope: Strategy Guides Only</span></div>
@@ -1240,7 +1296,7 @@
               <div>
                 <div class="settings-page-kicker">SERVER</div>
                 <h1>General</h1>
-                <p class="sub">Configure Guidevault's network identity, listener values, backups, and logging from one place.</p>
+                <p class="sub">Configure Guidevault's network identity, listener values, and backups from one place.</p>
               </div>
               <button id="serverResetDefaults" class="ghost" type="button">Reset to Default</button>
             </div>
@@ -1265,19 +1321,48 @@
                 <div class="server-general-section-head">
                   <span class="server-section-icon">&#x25A3;</span>
                   <div>
-                    <h2>Backups & Logging</h2>
-                    <p class="sub">Choose where maintenance backups are written and how noisy server logs should be.</p>
+                    <h2>Backups</h2>
+                    <p class="sub">Choose where maintenance backups are written and manage guided backup and restore workflows.</p>
                   </div>
                 </div>
-                <div class="server-settings-grid server-maintenance-grid">
+                <div class="server-settings-grid server-maintenance-grid backup-only-grid">
                   <label for="serverBackupDirectory">Backup Directory<input id="serverBackupDirectory" type="text" placeholder="data/backups" /><span class="field-help">Stores generated library/database backup files.</span></label>
-                  <label for="serverLoggingLevel">Logging Level<select id="serverLoggingLevel">
-                    <option>Trace</option><option>Debug</option><option>Information</option><option>Warning</option><option>Error</option><option>Critical</option><option>None</option>
-                  </select><span class="field-help">Information is a good normal default. Debug and Trace are useful for troubleshooting.</span></label>
                 </div>
                 <div class="server-maintenance-actions">
                   <button id="serverCreateBackup" class="ghost" type="button">Create Library Backup</button>
                   <p class="sub">Creates a point-in-time backup using the configured backup directory.</p>
+                </div>
+                <div class="backup-workflow-panel">
+                  <div class="backup-workflow-header">
+                    <div>
+                      <h3>Guided Backup &amp; Restore</h3>
+                      <p class="sub">Back up GuideVault app data, settings, metadata, bookmarks, reader profiles, uploaded backgrounds, LaunchBox matches, and task schedules. Source manuals, guides, magazines, and generated cover caches are not copied.</p>
+                    </div>
+                    <button id="serverRefreshBackups" class="ghost tiny" type="button">Refresh</button>
+                  </div>
+                  <div class="backup-scope-grid">
+                    <span>Included</span><span>Database/index</span><span>Config</span><span>Metadata</span><span>Bookmarks/notes</span><span>Reader profiles</span><span>LaunchBox matches</span><span>Uploaded backgrounds</span>
+                  </div>
+                  <div class="backup-workflow-grid">
+                    <section class="backup-step-card">
+                      <h4>1. Create or choose backup</h4>
+                      <div id="serverBackupList" class="backup-list empty">No backups loaded yet.</div>
+                    </section>
+                    <section class="backup-step-card">
+                      <h4>2. Preview restore</h4>
+                      <label for="serverRestoreFile">Upload backup ZIP<input id="serverRestoreFile" type="file" accept=".zip,application/zip" /></label>
+                      <div class="inline-actions">
+                        <button id="serverPreviewSelectedBackup" class="ghost" type="button">Preview Selected</button>
+                        <button id="serverPreviewUploadedBackup" class="ghost" type="button">Preview Upload</button>
+                      </div>
+                      <div id="serverRestorePreview" class="backup-preview empty">Select or upload a backup to preview what will be restored.</div>
+                    </section>
+                    <section class="backup-step-card danger-zone soft-danger-zone">
+                      <h4>3. Restore</h4>
+                      <p class="sub">Restore overwrites app data with the selected backup. GuideVault creates a safety backup first.</p>
+                      <button id="serverRestoreBackup" class="danger" type="button" disabled>Restore Previewed Backup</button>
+                    </section>
+                  </div>
                 </div>
               </section>
               <div class="settings-actions inline-actions server-general-actions">
@@ -1845,12 +1930,45 @@
               </div>
             </div>
             <article class="settings-card tasks-schedule-card refined-tasks-card">
-              <div class="settings-card-heading-row"><div><h2>Recurring Tasks</h2><p class="sub">These are stored preferences for the server task schedule.</p></div></div>
-              <div class="task-card-grid">
-                <label class="task-setting-card" for="taskLibraryScan"><span>Library Scan</span><em>Refreshes changed files and metadata around the library.</em><select id="taskLibraryScan"><option>Disabled</option><option>Hourly</option><option>Daily</option><option>Weekly</option><option>Custom (0 4 * * *)</option></select></label>
-                <label class="task-setting-card" for="taskGuidevaultBackup"><span>Guidevault Backup</span><em>Backs up config, index, metadata overrides, user settings, and email history.</em><select id="taskGuidevaultBackup"><option>Disabled</option><option>Daily</option><option>Weekly</option><option>Monthly</option><option>Custom (0 3 * * *)</option></select></label>
-                <label class="task-setting-card" for="taskCleanup"><span>Cleanup</span><em>Removes stale entries and trims server-side leftovers.</em><select id="taskCleanup"><option>Disabled</option><option>Daily</option><option>Weekly</option><option>Custom (0 2 * * *)</option></select></label>
-                <label class="task-setting-card" for="taskReadingListSync"><span>Reading List Sync</span><em>Custom cron-style schedule for future reading-list sources.</em><input id="taskReadingListSync" type="text" placeholder="Custom (0 4 * * *)" /></label>
+              <div class="settings-card-heading-row task-scheduler-heading">
+                <div>
+                  <h2>Scheduled Maintenance</h2>
+                  <p class="sub">Use readable presets for common schedules. Custom entries are saved as standard five-field cron on the server.</p>
+                </div>
+                <div class="settings-actions inline-actions"><button id="tasksRefreshSchedule" class="ghost" type="button">Refresh Status</button></div>
+              </div>
+              <div id="taskScheduleOverview" class="task-schedule-overview" aria-live="polite"></div>
+              <div class="task-card-grid task-schedule-card-grid">
+                <div class="task-setting-card enhanced-task-setting-card" data-task-card="libraryScan">
+                  <div class="task-card-title-row"><div><span>Library Scan</span><em>Finds changed files and refreshes the active library index.</em></div><button class="task-mini-run" type="button" data-task-run="libraryScan">Run now</button></div>
+                  <label>Schedule<select id="taskLibraryScan" data-task-schedule="libraryScan"></select></label>
+                  <label class="task-custom-cron hidden" for="taskLibraryScanCustom">Custom cron<input id="taskLibraryScanCustom" data-task-cron="libraryScan" type="text" placeholder="0 2 * * *" /></label>
+                  <small class="task-next-run" data-task-next="libraryScan">Next run: —</small>
+                </div>
+                <div class="task-setting-card enhanced-task-setting-card" data-task-card="metadataCheck">
+                  <div class="task-card-title-row"><div><span>Metadata Checks</span><em>Runs the fast GuideVault JSON metadata reconciliation pass.</em></div><button class="task-mini-run" type="button" data-task-run="metadataCheck">Run now</button></div>
+                  <label>Schedule<select id="taskMetadataCheck" data-task-schedule="metadataCheck"></select></label>
+                  <label class="task-custom-cron hidden" for="taskMetadataCheckCustom">Custom cron<input id="taskMetadataCheckCustom" data-task-cron="metadataCheck" type="text" placeholder="0 3 * * *" /></label>
+                  <small class="task-next-run" data-task-next="metadataCheck">Next run: —</small>
+                </div>
+                <div class="task-setting-card enhanced-task-setting-card" data-task-card="libraryUpkeep">
+                  <div class="task-card-title-row"><div><span>Library Upkeep</span><em>Runs safe cleanup/reconciliation for stale library entries.</em></div><button class="task-mini-run" type="button" data-task-run="libraryUpkeep">Run now</button></div>
+                  <label>Schedule<select id="taskLibraryUpkeep" data-task-schedule="libraryUpkeep"></select></label>
+                  <label class="task-custom-cron hidden" for="taskLibraryUpkeepCustom">Custom cron<input id="taskLibraryUpkeepCustom" data-task-cron="libraryUpkeep" type="text" placeholder="0 3 * * 0" /></label>
+                  <small class="task-next-run" data-task-next="libraryUpkeep">Next run: —</small>
+                </div>
+                <div class="task-setting-card enhanced-task-setting-card" data-task-card="cacheCleanup">
+                  <div class="task-card-title-row"><div><span>Cache Cleanup</span><em>Clears archive/cover memory caches and compacts app memory.</em></div><button class="task-mini-run" type="button" data-task-run="cacheCleanup">Run now</button></div>
+                  <label>Schedule<select id="taskCacheCleanup" data-task-schedule="cacheCleanup"></select></label>
+                  <label class="task-custom-cron hidden" for="taskCacheCleanupCustom">Custom cron<input id="taskCacheCleanupCustom" data-task-cron="cacheCleanup" type="text" placeholder="0 * * * *" /></label>
+                  <small class="task-next-run" data-task-next="cacheCleanup">Next run: —</small>
+                </div>
+                <div class="task-setting-card enhanced-task-setting-card" data-task-card="guidevaultBackup">
+                  <div class="task-card-title-row"><div><span>GuideVault Backup</span><em>Backs up config, index, metadata overrides, user settings, and email history.</em></div><button class="task-mini-run" type="button" data-task-run="guidevaultBackup">Run now</button></div>
+                  <label>Schedule<select id="taskGuidevaultBackup" data-task-schedule="guidevaultBackup"></select></label>
+                  <label class="task-custom-cron hidden" for="taskGuidevaultBackupCustom">Custom cron<input id="taskGuidevaultBackupCustom" data-task-cron="guidevaultBackup" type="text" placeholder="0 4 * * 0" /></label>
+                  <small class="task-next-run" data-task-next="guidevaultBackup">Next run: —</small>
+                </div>
               </div>
               <div class="settings-actions inline-actions"><button id="tasksSaveSettings" class="primary" type="button">Save Task Schedule</button></div>
               <p id="tasksSettingsStatus" class="sub account-status" aria-live="polite"></p>
@@ -1859,6 +1977,8 @@
               <div class="settings-card-heading-row"><div><h2>Ad-hoc Tasks</h2><p class="sub">Run one-time maintenance without changing recurring schedules.</p></div></div>
               <div class="ad-hoc-task-tile-grid">
                 <button id="taskRunRescan" class="task-action-tile" type="button"><strong>Rescan</strong><span>Scan changed files and refresh metadata.</span></button>
+                <button id="taskRunEnrich" class="task-action-tile" type="button"><strong>Metadata Check</strong><span>Run fast GuideVault JSON metadata reconciliation.</span></button>
+                <button id="taskRunCleanup" class="task-action-tile" type="button"><strong>Library Upkeep</strong><span>Run safe cleanup/reconciliation for stale library entries.</span></button>
                 <button id="taskRunComicInfo" class="task-action-tile" type="button"><strong>Legacy ComicInfo Import</strong><span>Optional slower pass for older CBZ ComicInfo.xml metadata.</span></button>
                 <button id="taskRunBackup" class="task-action-tile" type="button"><strong>Backup Database</strong><span>Create a backup of config and index data.</span></button>
                 <button id="taskRunTrim" class="task-action-tile" type="button"><strong>Clear Reading Cache</strong><span>Trim archive and cover request caches.</span></button>
@@ -1913,12 +2033,23 @@
               <div>
                 <div class="settings-page-kicker">INFO</div>
                 <h1>Events</h1>
-                <p class="sub">Review the last 100 Guidevault system events, including reader opens, metadata changes, connections, and server actions.</p>
               </div>
               <div class="settings-actions inline-actions">
                 <button id="systemEventsRefresh" class="ghost" type="button">&#x27F3; Refresh</button>
               </div>
             </div>
+            <article class="settings-card events-logging-card">
+              <div class="events-logging-copy">
+                <h2>Logging Level</h2>
+                <p class="sub">Adjust how much detail GuideVault writes to the system event log.</p>
+              </div>
+              <label for="serverLoggingLevel">Logging Level<select id="serverLoggingLevel">
+                <option>Trace</option><option>Debug</option><option>Information</option><option>Warning</option><option>Error</option><option>Critical</option><option>None</option>
+              </select><span class="field-help">Information is a good normal default. Debug and Trace are useful for troubleshooting.</span></label>
+              <button id="eventsSaveLoggingLevel" class="primary" type="button">Save Logging Level</button>
+              <p id="eventsLoggingStatus" class="sub account-status" aria-live="polite"></p>
+            </article>
+            <p class="sub events-page-intro">Review the last 100 Guidevault system events, including reader opens, metadata changes, connections, and server actions.</p>
             <div class="settings-card events-summary-card">
               <div><span>Recent Events</span><strong id="systemEventsCount">0</strong></div>
               <div><span>Last Captured</span><strong id="systemEventsLast">&#x2014;</strong></div>
@@ -2004,12 +2135,25 @@
 
             <div class="system-update-history-head">
               <h2>Update History</h2>
+              <button id="systemUpdateHistoryToggle" class="ghost tiny system-update-history-toggle" type="button" hidden>Show full history</button>
             </div>
-            <div class="system-update-list">
-              <details class="system-update-entry" open>
+            <div id="systemUpdateHistoryList" class="system-update-list">
+              <details class="system-update-entry">
                 <summary>
-                  <span>Guidevault 1.1.1 - Login Restore and Update History Polish</span>
-                  <em>Installed</em>
+                  <span>GuideVault 1.1.2 - Stable Update Task Notifications</span>
+                </summary>
+                <div class="system-update-body">
+                  <h3><b>1</b> Update Checks</h3>
+                  <ul>
+                    <li>Adds task-menu notifications when the manual stable update check finds either the current version or a newer stable release.</li>
+                    <li>Keeps automatic background checks quiet unless a newer stable version is actually available.</li>
+                    <li>Aligns the displayed app version with the release and Docker package version.</li>
+                  </ul>
+                </div>
+              </details>
+              <details class="system-update-entry">
+                <summary>
+                  <span>Guidevault 0.9.260 - Login Restore and Update History Polish</span>
                 </summary>
                 <div class="system-update-body">
                   <h3><b>1</b> Cleanup</h3>
@@ -2020,7 +2164,7 @@
                   </ul>
                 </div>
               </details>
-              <details class="system-update-entry" open>
+              <details class="system-update-entry">
                 <summary>
                   <span>Guidevault 0.9.246 - LaunchBox Coverage Title</span>
                   <ul>
@@ -2049,7 +2193,7 @@
                   <li>Keeps the LaunchBox coverage workspace full width under Server &gt; Integrations for large platform and review result sets.</li>
                 </ul>
               </details>
-              <details class="system-update-entry" open>
+              <details class="system-update-entry">
                 <summary>
                   <span>Guidevault 0.9.222 - LaunchBox Coverage Review</span>
                   <em>Installed</em>
@@ -2060,7 +2204,7 @@
                   <li>Improves platform normalization for LaunchBox systems such as PS1/PS2, SNES/Super Famicom, Genesis/Mega Drive, Game Boy variants, PSP, GameCube, Wii, and TurboGrafx/PC Engine.</li>
                 </ul>
               </details>
-              <details class="system-update-entry" open>
+              <details class="system-update-entry">
                 <summary>
                   <span>Guidevault 0.9.217 - Home Assistant Fullscreen Layout Guard</span>
                   <em>Installed</em>
@@ -2093,7 +2237,7 @@
                   <li>Adds dedicated Home Assistant pushed entities for the active reader background and fullscreen state.</li>
                 </ul>
               </details>
-              <details class="system-update-entry" open>
+              <details class="system-update-entry">
                 <summary>
                   <span>Guidevault 0.9.214 - Docker PDF Conversion Runtime</span>
                   <em>Installed</em>
@@ -2104,7 +2248,7 @@
                   <li>Adds a Docker build-time verification step so package builds fail early if the PDF rasterizer tools are missing.</li>
                 </ul>
               </details>
-              <details class="system-update-entry" open>
+              <details class="system-update-entry">
                 <summary>
                   <span>Guidevault 0.9.213 - Home Assistant Reader Polish</span>
                   <em>Installed</em>
@@ -2115,7 +2259,7 @@
                   <li>Adds toggle_fullscreen, fullscreen, exit_fullscreen, set_background, and set_background_brightness Home Assistant reader commands.</li>
                 </ul>
               </details>
-              <details class="system-update-entry" open>
+              <details class="system-update-entry">
                 <summary>
                   <span>Guidevault 0.9.212 - Home Assistant Reader Command Fix</span>
                   <em>Installed</em>
@@ -2126,7 +2270,7 @@
                   <li>Keeps content-type targeting from 0.9.211 for Manual, Strategy Guide, and Magazine open commands.</li>
                 </ul>
               </details>
-              <details class="system-update-entry" open>
+              <details class="system-update-entry">
                 <summary>
                   <span>Guidevault 0.9.211 - Home Assistant Content Type Targeting</span>
                   <em>Installed</em>
@@ -2137,7 +2281,7 @@
                   <li>Improves Home Assistant item resolution so title searches prefer the requested content type.</li>
                 </ul>
               </details>
-              <details class="system-update-entry" open>
+              <details class="system-update-entry">
                 <summary>
                   <span>Guidevault 0.9.210 - Cover Loading Responsiveness</span>
                   <em>Installed</em>
@@ -2148,7 +2292,7 @@
                   <li>Uses a slightly wider but still controlled cover request queue and server thumbnail gate.</li>
                 </ul>
               </details>
-              <details class="system-update-entry" open>
+              <details class="system-update-entry">
                 <summary>
                   <span>Guidevault 0.9.209 - Task Menu Notifications</span>
                   <em>Installed</em>
@@ -2159,7 +2303,7 @@
                   <li>Keeps running task counts and notification counts together in the top task badge.</li>
                 </ul>
               </details>
-              <details class="system-update-entry" open>
+              <details class="system-update-entry">
                 <summary>
                   <span>Guidevault 0.9.208 - Home Assistant API Probe Fix</span>
                   <em>Installed</em>
@@ -2170,7 +2314,7 @@
                   <li>Improves 404 guidance when GuideVault reaches the wrong Home Assistant endpoint.</li>
                 </ul>
               </details>
-              <details class="system-update-entry" open>
+              <details class="system-update-entry">
                 <summary>
                   <span>Guidevault 0.9.207 - Integration Toast Messages</span>
                   <em>Installed</em>
@@ -2180,7 +2324,7 @@
                   <li>Kept the old inline integration status placeholder cleared so Home Assistant messages no longer appear under the previous provider card.</li>
                 </ul>
               </details>
-              <details class="system-update-entry" open>
+              <details class="system-update-entry">
                 <summary>
                   <span>Guidevault 0.9.206 - Home Assistant Layout Polish</span>
                   <em>Installed</em>
@@ -2190,7 +2334,7 @@
                   <li>Widened the Home Assistant credential fields so URL, token, entity prefix, and command token have more usable horizontal space on desktop screens.</li>
                 </ul>
               </details>
-              <details class="system-update-entry" open>
+              <details class="system-update-entry">
                 <summary>
                   <span>Guidevault 0.9.205 - Home Assistant Build Fix</span>
                   <em>Installed</em>
@@ -2199,7 +2343,7 @@
                   <li>Fixed the Home Assistant command DTO build error where a command model tried to derive from a sealed request model.</li>
                 </ul>
               </details>
-              <details class="system-update-entry" open>
+              <details class="system-update-entry">
                 <summary>
                   <span>Guidevault 0.9.204 - Cover Cache Recovery</span>
                   <em>Installed</em>
@@ -2210,7 +2354,7 @@
                   <li>Made cover endpoints return no-store 404s for cached items whose source file no longer exists, preventing bad cover responses from being cached.</li>
                 </ul>
               </details>
-              <details class="system-update-entry" open>
+              <details class="system-update-entry">
                 <summary>
                   <span>Guidevault 0.9.203 - Home Assistant Connector</span>
                   <em>Installed</em>
@@ -2221,7 +2365,7 @@
                   <li>Added a Home Assistant command bus so automations can open items and control the active GuideVault reader with next page, previous page, page jump, zoom, display mode, overlay, and close commands.</li>
                 </ul>
               </details>
-              <details class="system-update-entry" open>
+              <details class="system-update-entry">
                 <summary>
                   <span>Guidevault 0.9.202 - Cover Pipeline Stability</span>
                   <em>Installed</em>
@@ -2232,7 +2376,7 @@
                   <li>Changed cover retries to re-enter the same bounded queue so slow or busy cover requests degrade gracefully instead of starving later Magazine views.</li>
                 </ul>
               </details>
-              <details class="system-update-entry" open>
+              <details class="system-update-entry">
                 <summary>
                   <span>Guidevault 0.9.201 - Manual Game Metadata Fields</span>
                   <em>Installed</em>
@@ -2243,7 +2387,7 @@
                   <li>Expanded batch metadata lookup wording and selection handling so Manual rows can use IGDB/ESRB game metadata lookup alongside Strategy Guide rows.</li>
                 </ul>
               </details>
-              <details class="system-update-entry" open>
+              <details class="system-update-entry">
                 <summary>
                   <span>Guidevault 0.9.200 - Docker Poppler Runtime</span>
                   <em>Installed</em>
@@ -2253,7 +2397,7 @@
                   <li>Added Docker build exclusions for bin, obj, and local data folders so the container image is built from source without carrying development artifacts.</li>
                 </ul>
               </details>
-              <details class="system-update-entry" open>
+              <details class="system-update-entry">
                 <summary>
                   <span>Guidevault 0.9.199 - Magazine Template Extension Fix</span>
                   <em>Installed</em>
@@ -2263,7 +2407,7 @@
                   <li>Template extension checks now only trust known GuideVault package extensions such as CBZ, CBR, PDF, and ZIP before deciding not to append the original extension.</li>
                 </ul>
               </details>
-              <details class="system-update-entry" open>
+              <details class="system-update-entry">
                 <summary>
                   <span>Guidevault 0.9.198 - Conversion Progress Tasks</span>
                   <em>Installed</em>
@@ -2274,7 +2418,7 @@
                   <li>Kept conversion output copy-first so original source packages remain untouched.</li>
                 </ul>
               </details>
-              <details class="system-update-entry" open>
+              <details class="system-update-entry">
                 <summary>
                   <span>Guidevault 0.9.197 - Format Conversion Cleanup</span>
                   <em>Installed</em>
@@ -2284,7 +2428,7 @@
                   <li>Kept the working CBZ and PDF conversion actions available as copy-first conversions.</li>
                 </ul>
               </details>
-              <details class="system-update-entry" open>
+              <details class="system-update-entry">
                 <summary>
                   <span>Guidevault 0.9.196 - Conversion Build Cleanup</span>
                   <em>Installed</em>
@@ -2294,7 +2438,7 @@
                   <li>Kept the PDF-to-CBZ rasterizer support from 0.9.195 unchanged.</li>
                 </ul>
               </details>
-              <details class="system-update-entry" open>
+              <details class="system-update-entry">
                 <summary>
                   <span>Guidevault 0.9.195 - PDF to CBZ Rasterizer Support</span>
                   <em>Installed</em>
@@ -2305,7 +2449,7 @@
                   <li>Updated the Format Conversion panel help text so PDF rasterizer requirements are clearer.</li>
                 </ul>
               </details>
-              <details class="system-update-entry" open>
+              <details class="system-update-entry">
                 <summary>
                   <span>Guidevault 0.9.194 - Scan and Cover Load Throttle</span>
                   <em>Installed</em>
@@ -2316,7 +2460,7 @@
                   <li>Blocked on-demand cover page enumeration while scans are running to keep Library Data actions from hammering the same archive files.</li>
                 </ul>
               </details>
-              <details class="system-update-entry" open>
+              <details class="system-update-entry">
                 <summary>
                   <span>Guidevault 0.9.192 - PDF Conversion Build Fix</span>
                   <em>Installed</em>
@@ -2326,7 +2470,7 @@
                   <li>Kept the Format Conversion tools behavior unchanged while cleaning up the build issue.</li>
                 </ul>
               </details>
-              <details class="system-update-entry" open>
+              <details class="system-update-entry">
                 <summary>
                   <span>Guidevault 0.9.191 - Format Conversion Tools</span>
                   <em>Installed</em>
@@ -2336,7 +2480,7 @@
                   <li>Kept CBR creation visible but disabled because writing RAR/CBR requires external archive tooling.</li>
                 </ul>
               </details>
-              <details class="system-update-entry" open>
+              <details class="system-update-entry">
                 <summary>
                   <span>Guidevault 0.9.190 - Archive Delete Build Warning Cleanup</span>
                   <em>Installed</em>
@@ -2346,7 +2490,7 @@
                   <li>Kept the delete-page endpoint behavior unchanged while cleaning up the compile warning.</li>
                 </ul>
               </details>
-              <details class="system-update-entry" open>
+              <details class="system-update-entry">
                 <summary>
                   <span>Guidevault 0.9.189 - Delete Endpoint Startup Fix</span>
                   <em>Installed</em>
@@ -2355,7 +2499,7 @@
                   <li>Explicitly marked the archive page delete payload as a request body so ASP.NET endpoint routing starts correctly.</li>
                 </ul>
               </details>
-              <details class="system-update-entry" open>
+              <details class="system-update-entry">
                 <summary>
                   <span>Guidevault 0.9.188 - Cover Picker Show All and Page Delete</span>
                   <em>Installed</em>
@@ -2366,7 +2510,7 @@
                   <li>Refreshes cover/page caches after a page delete and keeps CBR/RAR archives preview-only.</li>
                 </ul>
               </details>
-              <details class="system-update-entry" open>
+              <details class="system-update-entry">
                 <summary>
                   <span>Guidevault 0.9.187 - On-Demand Cover Picker Loading</span>
                   <em>Installed</em>
@@ -2377,7 +2521,7 @@
                   <li>Normal library cover loading continues to use the existing cover cache and manual override selection, without loading the picker grid in the background.</li>
                 </ul>
               </details>
-              <details class="system-update-entry" open>
+              <details class="system-update-entry">
                 <summary>
                   <span>Guidevault 0.9.186 - Library Data Cover Picker</span>
                   <em>Installed</em>
@@ -2388,7 +2532,7 @@
                   <li>Added lightweight page thumbnail endpoints for the cover picker and cache-busts cover URLs after a cover override changes.</li>
                 </ul>
               </details>
-              <details class="system-update-entry" open>
+              <details class="system-update-entry">
                 <summary>
                   <span>Guidevault 0.9.185 - ComicInfo Cover Page Support</span>
                   <em>Installed</em>
@@ -2399,7 +2543,7 @@
                   <li>Bumped the cover cache key so affected covers and thumbnails rebuild after update.</li>
                 </ul>
               </details>
-              <details class="system-update-entry" open>
+              <details class="system-update-entry">
                 <summary>
                   <span>Guidevault 0.9.184 - Cover Page Zero Letter Fix</span>
                   <em>Installed</em>
@@ -2409,7 +2553,7 @@
                   <li>Bumped the cover cache key again so existing wrong cover thumbnails are regenerated after update.</li>
                 </ul>
               </details>
-              <details class="system-update-entry" open>
+              <details class="system-update-entry">
                 <summary>
                   <span>Guidevault 0.9.183 - File Template Builder Dropdown</span>
                   <em>Installed</em>
@@ -2420,7 +2564,7 @@
                   <li>Removed the placeholder File Validation card from the Files page.</li>
                 </ul>
               </details>
-              <details class="system-update-entry" open>
+              <details class="system-update-entry">
                 <summary>
                   <span>Guidevault 0.9.182 - File Template Builder Cleanup</span>
                   <em>Installed</em>
@@ -2431,7 +2575,7 @@
                   <li>Added clearer optional tokens such as Issue Part, Volume Part, Number Part, and Edition Part so missing metadata does not leave orphan labels in filenames.</li>
                 </ul>
               </details>
-              <details class="system-update-entry" open>
+              <details class="system-update-entry">
                 <summary>
                   <span>Guidevault 0.9.181 - Natural Cover Selection</span>
                   <em>Installed</em>
@@ -2441,7 +2585,7 @@
                   <li>Added cover-name priority for front/cover files, 00/000 pages, and 01/001 pages so archives with out-of-order entries display the correct first page.</li>
                 </ul>
               </details>
-              <details class="system-update-entry" open>
+              <details class="system-update-entry">
                 <summary>
                   <span>Guidevault 0.9.180 - Strategy Metadata TLC</span>
                   <em>Installed</em>
@@ -2451,7 +2595,7 @@
                   <li>Expanded the automatic Strategy Guide Metadata Manager column set to include platform resolver, coverage, game publisher/developer, page count, rating, and topics fields.</li>
                 </ul>
               </details>
-              <details class="system-update-entry" open>
+              <details class="system-update-entry">
                 <summary>
                   <span>Guidevault 0.9.179 - Preserve File Identity on Rename</span>
                   <em>Installed</em>
@@ -2462,7 +2606,7 @@
                   <li>Added scan-time recovery for moved files using the file identity map and unchanged file size/modified-time signature.</li>
                 </ul>
               </details>
-              <details class="system-update-entry" open>
+              <details class="system-update-entry">
                 <summary>
                   <span>Guidevault 0.9.177 - File Template Presets</span>
                   <em>Installed</em>
@@ -2473,7 +2617,7 @@
                   <li>Added a built-in Publisher / Title / Type / ISBN / Year template set for strategy guide cleanup workflows.</li>
                 </ul>
               </details>
-              <details class="system-update-entry" open>
+              <details class="system-update-entry">
                 <summary>
                   <span>Guidevault 0.9.176 - Windows-Safe File Organizer</span>
                   <em>Installed</em>
@@ -2484,7 +2628,7 @@
                   <li>Cleaned up empty filename template separators and blocked proposed 8.3-style short-name aliases before applying bulk file moves.</li>
                 </ul>
               </details>
-              <details class="system-update-entry" open>
+              <details class="system-update-entry">
                 <summary>
                   <span>Guidevault 0.9.175 - Email Relocation and System Events</span>
                   <em>Installed</em>
@@ -2495,7 +2639,7 @@
                   <li>Refreshed the Server &gt; Email layout with clearer delivery, preview, test, and history sections.</li>
                 </ul>
               </details>
-              <details class="system-update-entry" open>
+              <details class="system-update-entry">
                 <summary>
                   <span>Guidevault 0.9.174 - Files Label Alignment</span>
                   <em>Installed</em>
@@ -2505,7 +2649,7 @@
                   <li>Kept the compact Target Files filter layout introduced for the multi-select content type dropdown.</li>
                 </ul>
               </details>
-              <details class="system-update-entry" open>
+              <details class="system-update-entry">
                 <summary>
                   <span>Guidevault 0.9.173 - Files Content Type Dropdown</span>
                   <em>Installed</em>
@@ -2516,7 +2660,7 @@
                   <li>Reduced vertical clutter in the Files workspace target/filter area.</li>
                 </ul>
               </details>
-              <details class="system-update-entry" open>
+              <details class="system-update-entry">
                 <summary>
                   <span>Guidevault 0.9.172 - Metadata Layout Polish</span>
                   <em>Installed</em>
@@ -2527,7 +2671,7 @@
                   <li>Kept automatic Metadata Manager columns tied to the selected content types.</li>
                 </ul>
               </details>
-              <details class="system-update-entry" open>
+              <details class="system-update-entry">
                 <summary>
                   <span>Guidevault 0.9.171 - Files UI and Metadata Locks</span>
                   <em>Installed</em>
@@ -2538,7 +2682,7 @@
                   <li>Gave Server &gt; Files another visual pass with a clearer workflow strip, template section label, stronger cards, and cleaner selection/preview styling.</li>
                 </ul>
               </details>
-              <details class="system-update-entry" open>
+              <details class="system-update-entry">
                 <summary>
                   <span>Guidevault 0.9.170 - Metadata and Files Polish</span>
                   <em>Installed</em>
@@ -2551,7 +2695,7 @@
                   <li>Simplified the Library Data tab into one direct read-only information container.</li>
                 </ul>
               </details>
-              <details class="system-update-entry" open>
+              <details class="system-update-entry">
                 <summary>
                   <span>Guidevault 0.9.169 - Files Rename Builder Preview</span>
                   <em>Installed</em>
@@ -2563,7 +2707,7 @@
                   <li>Kept JSON metadata write-back tied to the same selected Files workspace rows.</li>
                 </ul>
               </details>
-              <details class="system-update-entry" open>
+              <details class="system-update-entry">
                 <summary>
                   <span>Guidevault 0.9.168 - Selectable Files Workspace</span>
                   <em>Installed</em>
@@ -2576,7 +2720,7 @@
                   <li>Kept the Metadata Manager shortcut for sending selected rows into the Files workspace.</li>
                 </ul>
               </details>
-              <details class="system-update-entry" open>
+              <details class="system-update-entry">
                 <summary>
                   <span>Guidevault 0.9.166 - Metadata Export Filter Guard</span>
                   <em>Installed</em>
@@ -2587,7 +2731,7 @@
                   <li>Export filenames now include the active metadata scope, such as strategy-guide, manual, or magazine.</li>
                 </ul>
               </details>
-              <details class="system-update-entry" open>
+              <details class="system-update-entry">
                 <summary>
                   <span>Guidevault 0.9.165 - Bookmark Arrow Style Match</span>
                   <em>Installed</em>
@@ -2597,7 +2741,7 @@
                   <li>Replaced the solid triangle with a clearer down-chevron icon inside a filled rounded button.</li>
                 </ul>
               </details>
-              <details class="system-update-entry" open>
+              <details class="system-update-entry">
                 <summary>
                   <span>Guidevault 0.9.164 - Solid Bookmark Caret</span>
                   <em>Installed</em>
@@ -2607,7 +2751,7 @@
                   <li>Keeps the compact arrow control beside the bookmark button while making the caret more obvious.</li>
                 </ul>
               </details>
-              <details class="system-update-entry" open>
+              <details class="system-update-entry">
                 <summary>
                   <span>Guidevault 0.9.163 - Filled Bookmark Arrow</span>
                   <em>Installed</em>
@@ -2617,7 +2761,7 @@
                   <li>Keeps the compact arrow treatment beside the bookmark button while improving visual clarity.</li>
                 </ul>
               </details>
-              <details class="system-update-entry" open>
+              <details class="system-update-entry">
                 <summary>
                   <span>Guidevault 0.9.162 - Reader Bookmark Arrow Stability</span>
                   <em>Installed</em>
@@ -2628,7 +2772,7 @@
                   <li>Kept the bookmarked-pages menu and multi-page bookmark jump behavior.</li>
                 </ul>
               </details>
-              <details class="system-update-entry" open>
+              <details class="system-update-entry">
                 <summary>
                   <span>Guidevault 0.9.161 - Reader Bookmark Menu</span>
                   <em>Installed</em>
@@ -2639,7 +2783,7 @@
                   <li>Improved reader responsiveness with capped preload waits, adjacent page prewarming, image source reuse, and transition lag guarding.</li>
                 </ul>
               </details>
-              <details class="system-update-entry" open>
+              <details class="system-update-entry">
                 <summary>
                   <span>Guidevault 0.9.160 - Users Menu Responsiveness</span>
                   <em>Installed</em>
@@ -2650,7 +2794,7 @@
                   <li>Debounced and deferred Users refreshes to avoid visible click-freeze when switching settings tabs.</li>
                 </ul>
               </details>
-              <details class="system-update-entry" open>
+              <details class="system-update-entry">
                 <summary>
                   <span>Guidevault 0.9.159 - Integration Cleanup</span>
                   <em>Installed</em>
@@ -2661,7 +2805,7 @@
                   <li>Kept media scanning and library path actions in the Media section while simplifying the surrounding layout.</li>
                 </ul>
               </details>
-              <details class="system-update-entry" open>
+              <details class="system-update-entry">
                 <summary>
                   <span>Guidevault 0.9.158 - Server Media Visual Pass</span>
                   <em>Installed</em>
@@ -2685,7 +2829,7 @@
                   <li>Updated the Reviews tab rating summary background so the backmost container honors Color Scape while preserving the existing rating gradients.</li>
                 </ul>
               </details>
-              <details class="system-update-entry" open>
+              <details class="system-update-entry">
                 <summary>
                   <span>Guidevault 0.9.156 - Color-Coded Review Ratings</span>
                   <em>Installed</em>
@@ -2696,7 +2840,7 @@
                   <li>Applied the same rating color scale to individual review cards and profile review rating displays.</li>
                 </ul>
               </details>
-              <details class="system-update-entry" open>
+              <details class="system-update-entry">
                 <summary>
                   <span>Guidevault 0.9.155 - Review Rating Summary</span>
                   <em>Installed</em>
@@ -2718,7 +2862,7 @@
                   <li>Public reviews are persisted and shown on the reviewed item's Details &gt; Reviews tab; private reviews stay visible only in the user's profile.</li>
                 </ul>
               </details>
-              <details class="system-update-entry" open>
+              <details class="system-update-entry">
                 <summary>
                   <span>Guidevault 0.9.153 - Account Menu Number Cleanup</span>
                   <em>Installed</em>
@@ -2729,7 +2873,7 @@
                   <li>Tightened the affected grid layouts so the remaining labels, chips, and action buttons align cleanly without the number column.</li>
                 </ul>
               </details>
-              <details class="system-update-entry" open>
+              <details class="system-update-entry">
                 <summary>
                   <span>Guidevault 0.9.152 - Account Menu Visual Pass</span>
                   <em>Installed</em>
@@ -2742,7 +2886,7 @@
                   <li>Updated Devices with cleaner email-device rows, improved connected-client cards, better fact tiles, and more consistent account-menu visual styling.</li>
                 </ul>
               </details>
-              <details class="system-update-entry" open>
+              <details class="system-update-entry">
                 <summary>
                   <span>Guidevault 0.9.151 - Cover Placeholder Stability</span>
                   <em>Installed</em>
@@ -2754,7 +2898,7 @@
                   <li>Kept the persistent thumbnail cache behavior from 0.9.150 intact.</li>
                 </ul>
               </details>
-              <details class="system-update-entry" open>
+              <details class="system-update-entry">
                 <summary>
                   <span>Guidevault 0.9.150 - Persistent Cover Thumbnails</span>
                   <em>Installed</em>
@@ -2766,7 +2910,7 @@
                   <li>Added cover-thumbnail cache diagnostics under System performance data.</li>
                 </ul>
               </details>
-              <details class="system-update-entry" open>
+              <details class="system-update-entry">
                 <summary>
                   <span>Guidevault 0.9.149 - Stable Grid and Cover Loading</span>
                   <em>Installed</em>
@@ -2778,7 +2922,7 @@
                   <li>Kept magazine publication/platform icon behavior from 0.9.148 intact.</li>
                 </ul>
               </details>
-              <details class="system-update-entry" open>
+              <details class="system-update-entry">
                 <summary>
                   <span>Guidevault 0.9.148 - Magazine Icon and Grid Smoothness</span>
                   <em>Installed</em>
@@ -2790,7 +2934,7 @@
                   <li>Started visible grid cards directly with their cover URL instead of briefly painting the missing-cover placeholder first.</li>
                 </ul>
               </details>
-              <details class="system-update-entry" open>
+              <details class="system-update-entry">
                 <summary>
                   <span>Guidevault 0.9.147 - Bulk Metadata Save Stability</span>
                   <em>Installed</em>
@@ -2801,7 +2945,7 @@
                   <li>Optimized JSON import matching with lookup indexes and added browser-yield points during large import/save operations.</li>
                 </ul>
               </details>
-              <details class="system-update-entry" open>
+              <details class="system-update-entry">
                 <summary>
                   <span>Guidevault 0.9.146 - Bulk Metadata Save Hotfix</span>
                   <em>Installed</em>
@@ -2812,7 +2956,7 @@
                   <li>Added server-side error handling around bulk metadata saves so failures return a visible error instead of looking like an app crash.</li>
                 </ul>
               </details>
-              <details class="system-update-entry" open>
+              <details class="system-update-entry">
                 <summary>
                   <span>Guidevault 0.9.145 - Bulk Metadata Import Save</span>
                   <em>Installed</em>
@@ -2824,7 +2968,7 @@
                   <li>Updated the active in-memory library cache in batches so large JSON imports do not repeatedly rebuild client and server state row-by-row.</li>
                 </ul>
               </details>
-              <details class="system-update-entry" open>
+              <details class="system-update-entry">
                 <summary>
                   <span>Guidevault 0.9.144 - Platform Icon Source True-Up</span>
                   <em>Installed</em>
@@ -2835,7 +2979,7 @@
                   <li>Removed the need to rely on stale repo-only icon files when matching Guidevault platforms, categories, and collections.</li>
                 </ul>
               </details>
-                            <details class="system-update-entry" open>
+                            <details class="system-update-entry">
                 <summary>
                   <span>Guidevault 0.9.144 - Platform Icon Source True-Up</span>
                   <em>Installed</em>
@@ -2847,7 +2991,7 @@
                   <li>Reduced the repeated-title navigation pattern where a reader showed the same manual, guide, or magazine issue twice before reaching the item details/actions.</li>
                 </ul>
               </details>
-              <details class="system-update-entry" open>
+              <details class="system-update-entry">
                 <summary>
                   <span>Guidevault 0.9.142 - Insights, Devices, Menu Polish</span>
                   <em>Installed</em>
@@ -2858,7 +3002,7 @@
                   <li>Added more dimensional polish to the Devices summary cards, donut chart containers, legends, and connected-device cards.</li>
                   <li>Applied the squared-gradient Settings sidebar treatment to the main Guidevault sidebar while keeping the main menu item hover/active styling rounded.</li>
                 </ul>
-              </details>              <details class="system-update-entry" open>
+              </details>              <details class="system-update-entry">
                 <summary>
                   <span>Guidevault 0.9.141 - Insights Statistics Graph Polish</span>
                   <em>Installed</em>
@@ -2871,7 +3015,7 @@
               </details>
 
 
-              <details class="system-update-entry" open>
+              <details class="system-update-entry">
                 <summary>
                   <span>Guidevault 0.9.140 - Customize Drag Reorder</span>
                   <em>Installed</em>
@@ -2883,7 +3027,7 @@
                   <li>Added visual drag feedback, insertion markers, and a softer handle treatment so reordering feels intentional.</li>
                 </ul>
               </details>
-              <details class="system-update-entry" open>
+              <details class="system-update-entry">
                 <summary>
                   <span>Guidevault 0.9.139 - Settings Sidebar Corner Refinement</span>
                   <em>Installed</em>
@@ -2893,7 +3037,7 @@
                   <li>Kept the overall Settings sidebar panel itself squared off so the gradient header/sidebar shell still matches the earlier design direction.</li>
                   <li>Applied the corner refinement only to the button, container, submenu, and icon surfaces instead of changing the outer sidebar frame.</li>
                 </ul>
-              </details>              <details class="system-update-entry" open>
+              </details>              <details class="system-update-entry">
                 <summary>
                   <span>Guidevault 0.9.138 - Sidebar, Account, Stack Polish</span>
                   <em>Installed</em>
@@ -2906,7 +3050,7 @@
                 </ul>
               </details>
 
-              <details class="system-update-entry" open>
+              <details class="system-update-entry">
                 <summary>
                   <span>Guidevault 0.9.137 - Top Bar Reliability Hotfix</span>
                   <em>Installed</em>
@@ -2917,7 +3061,7 @@
                   <li>Wrapped category/sidebar startup preference loading with safe fallbacks so a bad local preference cannot prevent the top-bar controls from attaching.</li>
                 </ul>
               </details>
-              <details class="system-update-entry" open>
+              <details class="system-update-entry">
                 <summary>
                   <span>Guidevault 0.9.136 - Account + Info Cleanup</span>
                   <em>Installed</em>
@@ -2929,7 +3073,7 @@
                   <li>Squared off the Settings sidebar container corners while keeping the blue gradient treatment.</li>
                 </ul>
               </details>
-              <details class="system-update-entry" open>
+              <details class="system-update-entry">
                 <summary>
                   <span>Guidevault 0.9.135 - Top Bar Click Hotfix</span>
                   <em>Installed</em>
@@ -2940,7 +3084,7 @@
                   <li>Added a small safety reset for stuck panel-animation state when interacting with the top bar.</li>
                 </ul>
               </details>
-              <details class="system-update-entry" open>
+              <details class="system-update-entry">
                 <summary>
                   <span>Guidevault 0.9.134 - Settings Sidebar + Account Polish</span>
                   <em>Installed</em>
@@ -2951,7 +3095,7 @@
                   <li>Limited the visible Update History list to the latest 20 entries so the System page stays compact as Guidevault keeps shipping frequent updates.</li>
                 </ul>
               </details>
-              <details class="system-update-entry" open>
+              <details class="system-update-entry">
                 <summary>
                   <span>Guidevault 0.9.133 - Fast Three-Cover Stack</span>
                   <em>Installed</em>
@@ -3258,8 +3402,6 @@
   </dialog>
 
 
-  <script src="/app.js?v=0.9.228"></script>
+  <script src="/app.js?v=1.1.2"></script>
 </body>
 </html>
-
-

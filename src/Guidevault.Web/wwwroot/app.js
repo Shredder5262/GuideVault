@@ -1,6 +1,6 @@
 const state = {
   items: [], filtered: [], selected: null, filter: 'All Content', categoryFilter: '', viewMode: 'all', activeTab: 'overview', customFilter: null,
-  reader: { item: null, pages: [], index: 0, animating: false, displayMode: 2, transitionMode: 'stable', overlayVisible: false, advancedVisible: false, bookmarkMenuOpen: false, magnifierSettingsVisible: false, scrubbing: false, shading: null, zoom: 100, fullscreenOnOpen: false, magnifier: null, magnifierActive: false, longPressTimer: null, suppressHitClickUntil: 0, backgrounds: [], background: '', backgroundBrightness: 72 },
+  reader: { item: null, pages: [], index: 0, animating: false, displayMode: 2, transitionMode: 'stable', overlayVisible: false, advancedVisible: false, bookmarkMenuOpen: false, editingBookmarkNotePage: null, magnifierSettingsVisible: false, scrubbing: false, shading: null, zoom: 100, fullscreenOnOpen: false, magnifier: null, magnifierActive: false, longPressTimer: null, suppressHitClickUntil: 0, backgrounds: [], background: '', backgroundBrightness: 72 },
   libraryPath: '',
   libraries: [],
   editingLibraryIndex: null,
@@ -28,7 +28,7 @@ const state = {
   metadataSourceBatch: { results: [], running: false, applied: 0, runId: 0, abortController: null },
   keybinds: { bindings: {}, awaitingId: '' },
   folderBrowser: { targetInputId: '', currentPath: '/app/data/library', roots: [] },
-  customize: { activeTab: 'home', homeShelves: [], sideNav: { customItems: [] } },
+  customize: { activeTab: 'home', homeShelves: [], collections: [], sideNav: { customItems: [] } },
   serverSettings: null,
   homeAssistant: { pollTimer: null, lastCommandId: 0, lastStatusSignature: '', statusTimer: null, applyingCommand: false },
   launchBox: { status: null, coverage: null, review: null, reviewStatus: 'needs-review', reviewSearch: '', reviewPlatform: '', openPollTimer: null, openPollInFlight: false, lastOpenSignalId: 0, statsCoverageLoading: false, statsCoverageAttempted: false, manualMatch: { gameQuery: '', itemQuery: '', itemKind: '', games: [], items: [], selectedGame: null, selectedItem: null } },
@@ -113,7 +113,7 @@ const GUIDEVAULT_LIBRARY_CHUNK_YIELD_MS = 30;
 const GUIDEVAULT_STARTUP_STATUS_HIDE_MS = 2400;
 const GUIDEVAULT_LIBRARY_SEARCH_DEBOUNCE_MS = 180;
 const GUIDEVAULT_SORT_COLLATOR = new Intl.Collator(undefined, { numeric: true, sensitivity: 'base' });
-const GUIDEVAULT_APP_VERSION = '1.1.1';
+const GUIDEVAULT_APP_VERSION = '1.1.2';
 const GUIDEVAULT_FILENAME_SCHEMA_KEY = 'guidevault.filenameRename.schema.v1';
 const GUIDEVAULT_FILE_ORGANIZATION_TEMPLATE_PRESETS_KEY = 'guidevault.fileOrganization.templatePresets.v2';
 const GUIDEVAULT_FILE_ORGANIZATION_TEMPLATE_PRESETS_LEGACY_KEY = 'guidevault.fileOrganization.templatePresets.v1';
@@ -3321,15 +3321,37 @@ function renderSystemInfo(info = state.systemInfo || fallbackSystemInfo()) {
   trimSystemUpdateHistory();
 }
 
-function trimSystemUpdateHistory(limit = 20) {
+function trimSystemUpdateHistory(limit = 10) {
   const panel = $('settingsInfoPanel');
   if (!panel) return;
+
   const explanatory = panel.querySelector('.system-update-history-head .sub');
   if (explanatory) explanatory.remove();
+
   const entries = Array.from(panel.querySelectorAll('.system-update-entry'));
+  const toggle = $('systemUpdateHistoryToggle');
+  const showFull = panel.dataset.updateHistoryFull === 'true';
+
   entries.forEach((entry, index) => {
-    if (index >= limit) entry.remove();
+    entry.open = false;
+    entry.classList.toggle('system-update-entry-hidden', !showFull && index >= limit);
+    entry.hidden = !showFull && index >= limit;
   });
+
+  if (toggle) {
+    const hasFullHistory = entries.length > limit;
+    toggle.hidden = !hasFullHistory;
+    toggle.textContent = showFull ? 'Show latest 10' : 'Show full history';
+    toggle.setAttribute('aria-expanded', showFull ? 'true' : 'false');
+    toggle.setAttribute('aria-controls', 'systemUpdateHistoryList');
+  }
+}
+
+function toggleSystemUpdateHistory() {
+  const panel = $('settingsInfoPanel');
+  if (!panel) return;
+  panel.dataset.updateHistoryFull = panel.dataset.updateHistoryFull === 'true' ? 'false' : 'true';
+  trimSystemUpdateHistory();
 }
 
 function formatDiagnosticBytes(value) {
@@ -3442,38 +3464,71 @@ function renderUpdateNotification() {
   }
 }
 
-function notifyStableUpdateAvailable(update) {
-  if (!update?.updateAvailable) return;
-  const version = String(update.latestVersion || 'stable').trim() || 'stable';
-  const key = `${version}|${update.releaseUrl || update.releasePath || ''}`;
-  try {
-    if (localStorage.getItem(GUIDEVAULT_UPDATE_NOTIFIED_VERSION_KEY) === key) return;
-    localStorage.setItem(GUIDEVAULT_UPDATE_NOTIFIED_VERSION_KEY, key);
-  } catch {}
+function notifyStableUpdateAvailable(update, options = {}) {
+  const manual = !!options.manual;
+  const hasUpdate = !!update?.updateAvailable;
+  const currentVersion = String(update?.currentVersion || GUIDEVAULT_APP_VERSION || '').trim() || 'unknown';
+  const latestVersion = String(update?.latestVersion || currentVersion).trim() || currentVersion;
+  const releaseUrl = update?.releaseUrl || update?.releasePath || '';
+  const status = String(update?.status || '').toLowerCase();
+
+  if (!hasUpdate && !manual) return;
+
+  if (hasUpdate) {
+    const version = latestVersion || 'stable';
+    const key = `${version}|${releaseUrl}`;
+
+    if (!manual) {
+      try {
+        if (localStorage.getItem(GUIDEVAULT_UPDATE_NOTIFIED_VERSION_KEY) === key) return;
+        localStorage.setItem(GUIDEVAULT_UPDATE_NOTIFIED_VERSION_KEY, key);
+      } catch {}
+    }
+
+    addTaskNotification({
+      title: 'New GuideVault update available',
+      message: `GuideVault ${version} is available. Current version: ${currentVersion}.`,
+      tone: 'info',
+      kind: 'update-notification',
+      dedupeKey: manual ? `stable-update-manual-${version}` : `stable-update-${version}`,
+      actionUrl: releaseUrl,
+      actionLabel: 'Open release'
+    });
+
+    try {
+      if ('Notification' in window && Notification.permission === 'granted') {
+        const notification = new Notification(`GuideVault ${version} is available`, {
+          body: `Current version: ${currentVersion}.`,
+          tag: `guidevault-update-${version}`
+        });
+        notification.onclick = () => {
+          window.focus();
+          if (releaseUrl) window.open(releaseUrl, '_blank', 'noopener,noreferrer');
+        };
+      }
+    } catch {}
+
+    return;
+  }
+
+  if (status === 'unverified') {
+    addTaskNotification({
+      title: 'Stable update check failed',
+      message: update?.message || 'Could not verify stable updates right now.',
+      tone: 'warning',
+      kind: 'update-check-notification',
+      dedupeKey: 'stable-update-check-unverified'
+    });
+    return;
+  }
 
   addTaskNotification({
-    title: `Guidevault ${version} is available`,
-    message: 'A new stable Guidevault release has been published.',
-    tone: 'info',
-    kind: 'update-notification',
-    dedupeKey: `stable-update-${version}`,
-    actionUrl: update.releaseUrl || update.releasePath || '',
-    actionLabel: 'Open release'
+    title: 'On current version',
+    message: `GuideVault ${currentVersion} is the current stable version.`,
+    tone: 'success',
+    kind: 'update-check-notification',
+    dedupeKey: `stable-update-current-${currentVersion}-${latestVersion}`
   });
-
-  try {
-    if ('Notification' in window && Notification.permission === 'granted') {
-      const notification = new Notification(`Guidevault ${version} is available`, {
-        body: 'A new stable Guidevault release has been published.',
-        tag: `guidevault-update-${version}`
-      });
-      notification.onclick = () => {
-        window.focus();
-        const url = update.releaseUrl || update.releasePath || '';
-        if (url) window.open(url, '_blank', 'noopener,noreferrer');
-      };
-    }
-  } catch {}
 }
 
 function showStableUpdateToast(update) {
@@ -3562,7 +3617,7 @@ async function checkStableUpdates(force = false) {
     state.updateCheck = await res.json();
     state.updateCheck.checkedAt = Date.now();
     renderUpdateNotification();
-    notifyStableUpdateAvailable(state.updateCheck);
+    notifyStableUpdateAvailable(state.updateCheck, { manual: force });
     return state.updateCheck;
   } catch (err) {
     console.warn('Stable update check failed through backend; trying direct GitHub tag feed.', err);
@@ -3589,7 +3644,7 @@ async function checkStableUpdates(force = false) {
       };
     }
     renderUpdateNotification();
-    notifyStableUpdateAvailable(state.updateCheck);
+    notifyStableUpdateAvailable(state.updateCheck, { manual: force });
     return state.updateCheck;
   }
 }
@@ -4708,6 +4763,7 @@ async function loadServerSettings(showStatus = false) {
     state.serverSettings = normalizeServerSettings(await res.json());
     renderServerSettings();
     if (showStatus) setServerSettingsStatus('General server settings loaded.', 'success');
+    loadServerBackups(false);
   } catch (err) {
     console.warn('Unable to load server settings', err);
     state.serverSettings = state.serverSettings || defaultServerSettings();
@@ -4770,15 +4826,18 @@ async function saveServerSettings(source = 'general') {
     const msg = source === 'media' ? 'Media settings saved.'
       : source === 'home-assistant' ? 'Home Assistant settings saved.'
       : source === 'integrations' ? 'Integrations saved.'
+      : source === 'events' ? 'Logging level saved.'
       : 'General server settings saved. Restart Guidevault if you changed listener values.';
     if (source === 'media') setMediaSettingsStatus(msg, 'success');
     else if (source === 'integrations' || source === 'home-assistant') setIntegrationsSettingsStatus(msg, 'success');
+    else if (source === 'events') setEventsLoggingStatus(msg, 'success');
     else setServerSettingsStatus(msg, 'success');
   } catch (err) {
     console.error('Unable to save server settings', err);
     const msg = `Unable to save settings: ${err?.message || err}`;
     if (source === 'media') setMediaSettingsStatus(msg, 'error');
     else if (source === 'integrations' || source === 'home-assistant') setIntegrationsSettingsStatus(msg, 'error');
+    else if (source === 'events') setEventsLoggingStatus(msg, 'error');
     else setServerSettingsStatus(msg, 'error');
   }
 }
@@ -5138,10 +5197,133 @@ async function createServerBackup() {
     const message = `Backup created: ${data.fileName || 'library backup'} (${fmtBytes(Number(data.sizeBytes || 0))}).`;
     setServerSettingsStatus(message, 'success');
     setTasksSettingsStatus(message, 'success');
+    await loadServerBackups(false);
   } catch (err) {
     const message = `Backup failed: ${err?.message || err}`;
     setServerSettingsStatus(message, 'error');
     setTasksSettingsStatus(message, 'error');
+  }
+}
+
+async function loadServerBackups(showStatus = false) {
+  const host = $('serverBackupList');
+  if (!host) return [];
+  host.classList.remove('empty');
+  host.innerHTML = '<div class="backup-entry"><span>Loading backups...</span></div>';
+  try {
+    const res = await fetch('/api/server/backups', { cache: 'no-store' });
+    const backups = await res.json().catch(() => []);
+    if (!res.ok) throw new Error(backups?.error || `Backup list failed: ${res.status}`);
+    state.serverBackups = Array.isArray(backups) ? backups : [];
+    renderServerBackups(state.serverBackups);
+    if (showStatus) setServerSettingsStatus('Backup history refreshed.', 'success');
+    return Array.isArray(backups) ? backups : [];
+  } catch (err) {
+    host.classList.add('empty');
+    host.textContent = `Unable to load backups: ${err?.message || err}`;
+    if (showStatus) setServerSettingsStatus(`Unable to load backups: ${err?.message || err}`, 'error');
+    return [];
+  }
+}
+function renderServerBackups(backups = []) {
+  const host = $('serverBackupList');
+  if (!host) return;
+  if (!backups.length) {
+    host.classList.add('empty');
+    host.textContent = 'No backup ZIPs found in the configured backup directory yet.';
+    return;
+  }
+  host.classList.remove('empty');
+  const selected = state.serverBackupSelected || backups[0]?.fileName || '';
+  state.serverBackupSelected = selected;
+  host.innerHTML = backups.map(backup => {
+    const name = String(backup.fileName || '').trim();
+    const date = backup.createdAt ? new Date(backup.createdAt).toLocaleString() : 'Unknown date';
+    const size = fmtBytes(Number(backup.sizeBytes || 0));
+    const isSelected = name === selected;
+    return `<div class="backup-entry ${isSelected ? 'selected' : ''}" data-backup-file="${escapeForAttribute(name)}"><div><strong>${escapeHtml(name)}</strong><span>${escapeHtml(date)} • ${escapeHtml(size)}</span></div><button class="ghost tiny" type="button" data-backup-select="${escapeForAttribute(name)}">${isSelected ? 'Selected' : 'Select'}</button></div>`;
+  }).join('');
+}
+function renderBackupPreview(preview = {}) {
+  const host = $('serverRestorePreview');
+  const restore = $('serverRestoreBackup');
+  if (!host) return;
+  state.serverBackupPreviewed = preview;
+  if (restore) restore.disabled = false;
+  host.classList.remove('empty');
+  const entries = Array.isArray(preview.entries) ? preview.entries : [];
+  const manifestText = String(preview.manifest || '').trim();
+  let manifest = null;
+  try { manifest = manifestText ? JSON.parse(manifestText) : null; } catch {}
+  const created = manifest?.createdAt ? new Date(manifest.createdAt).toLocaleString() : 'Unknown';
+  host.innerHTML = `
+    <div class="backup-preview-row"><div><strong>${escapeHtml(preview.fileName || 'Backup package')}</strong><span>${escapeHtml(fmtBytes(Number(preview.sizeBytes || 0)))} • Created ${escapeHtml(created)}</span></div></div>
+    <div class="backup-preview-row"><strong>Config/data files</strong><span>${Number(preview.configEntries || 0)}</span></div>
+    <div class="backup-preview-row"><strong>Library index</strong><span>${Number(preview.cacheEntries || 0)}</span></div>
+    <div class="backup-preview-row"><strong>Uploaded backgrounds</strong><span>${Number(preview.uploadedBackgrounds || 0)}</span></div>
+    <div class="backup-preview-row"><strong>Restorable entries</strong><span>${entries.length}</span></div>
+    <p class="sub">A safety backup will be created before restore. Source media files are not touched.</p>`;
+}
+async function previewSelectedServerBackup() {
+  const fileName = state.serverBackupSelected || '';
+  if (!fileName) { setServerSettingsStatus('Select a backup from the backup history first.', 'error'); return; }
+  try {
+    setServerSettingsStatus('Previewing selected backup...', 'info');
+    const res = await fetch(`/api/server/backups/${encodeURIComponent(fileName)}/preview`, { cache: 'no-store' });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data?.error || `Preview failed: ${res.status}`);
+    state.serverBackupRestoreMode = 'selected';
+    renderBackupPreview(data);
+    setServerSettingsStatus('Backup preview ready.', 'success');
+  } catch (err) {
+    setServerSettingsStatus(`Backup preview failed: ${err?.message || err}`, 'error');
+  }
+}
+async function previewUploadedServerBackup() {
+  const input = $('serverRestoreFile');
+  const file = input?.files?.[0];
+  if (!file) { setServerSettingsStatus('Choose a backup ZIP to preview first.', 'error'); return; }
+  try {
+    setServerSettingsStatus('Previewing uploaded backup...', 'info');
+    const form = new FormData();
+    form.append('backup', file);
+    const res = await fetch('/api/server/backups/preview-upload', { method: 'POST', body: form });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data?.error || `Preview failed: ${res.status}`);
+    state.serverBackupRestoreMode = 'upload';
+    renderBackupPreview(data);
+    setServerSettingsStatus('Uploaded backup preview ready.', 'success');
+  } catch (err) {
+    setServerSettingsStatus(`Uploaded backup preview failed: ${err?.message || err}`, 'error');
+  }
+}
+async function restorePreviewedServerBackup() {
+  const preview = state.serverBackupPreviewed || null;
+  if (!preview) { setServerSettingsStatus('Preview a backup before restoring.', 'error'); return; }
+  const confirmed = typeof showAppConfirm === 'function'
+    ? await showAppConfirm({ title: 'Restore GuideVault backup?', message: 'This overwrites GuideVault app data with the previewed backup. A safety backup will be created first. Source manuals, guides, magazines, and original library files are not touched.', okText: 'Restore backup', cancelText: 'Cancel', danger: true })
+    : window.confirm('Restore the previewed GuideVault backup? A safety backup will be created first.');
+  if (!confirmed) return;
+  try {
+    setServerSettingsStatus('Restoring backup...', 'info');
+    const form = new FormData();
+    if (state.serverBackupRestoreMode === 'upload') {
+      const file = $('serverRestoreFile')?.files?.[0];
+      if (!file) throw new Error('The uploaded backup file is no longer selected. Choose it again and preview it before restore.');
+      form.append('backup', file);
+    } else {
+      form.append('fileName', state.serverBackupSelected || preview.fileName || '');
+    }
+    const res = await fetch('/api/server/backups/restore', { method: 'POST', body: form });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data?.error || `Restore failed: ${res.status}`);
+    const message = `Restore complete: ${Number(data.restoredEntries || 0)} entr${Number(data.restoredEntries || 0) === 1 ? 'y' : 'ies'} restored. Safety backup: ${data.safetyBackupFileName || 'created'}.`;
+    setServerSettingsStatus(message, 'success');
+    showGuidevaultMessageToast(message, 'success', { title: 'Backup restored' });
+    await loadServerSettings(false);
+    await loadServerBackups(false);
+  } catch (err) {
+    setServerSettingsStatus(`Restore failed: ${err?.message || err}`, 'error');
   }
 }
 function normalizeEmailSettings(value = {}) {
@@ -5434,6 +5616,12 @@ function setSystemEventsStatus(message = '', tone = '') {
   el.textContent = message;
   el.dataset.tone = tone || '';
 }
+function setEventsLoggingStatus(message = '', tone = '') {
+  const el = $('eventsLoggingStatus');
+  if (!el) return;
+  el.textContent = message;
+  el.dataset.tone = tone || '';
+}
 function systemEventIcon(category = '') {
   const key = String(category || '').toLowerCase();
   if (key.includes('reader')) return '&#x1F4D6;';
@@ -5617,8 +5805,76 @@ async function inviteUser() {
     setUsersStatus(`Invite failed: ${err?.message || err}`, 'error');
   }
 }
+const TASK_SCHEDULE_PRESETS = {
+  disabled: { label: 'Disabled', stored: 'disabled', cron: '' },
+  hourly: { label: 'Hourly', stored: 'hourly', cron: '0 * * * *' },
+  'every-6-hours': { label: 'Every 6 hours', stored: 'every-6-hours', cron: '0 */6 * * *' },
+  'daily-2am': { label: 'Daily at 2:00 AM', stored: 'daily-2am', cron: '0 2 * * *' },
+  'daily-3am': { label: 'Daily at 3:00 AM', stored: 'daily-3am', cron: '0 3 * * *' },
+  'daily-4am': { label: 'Daily at 4:00 AM', stored: 'daily-4am', cron: '0 4 * * *' },
+  'weekly-sunday-3am': { label: 'Weekly on Sunday at 3:00 AM', stored: 'weekly-sunday-3am', cron: '0 3 * * 0' },
+  'weekly-sunday-4am': { label: 'Weekly on Sunday at 4:00 AM', stored: 'weekly-sunday-4am', cron: '0 4 * * 0' },
+  'monthly-1st-4am': { label: 'Monthly on the 1st at 4:00 AM', stored: 'monthly-1st-4am', cron: '0 4 1 * *' }
+};
+
+const TASK_SETTING_FIELDS = [
+  { key: 'libraryScan', selectId: 'taskLibraryScan', customId: 'taskLibraryScanCustom', fallback: 'daily-2am' },
+  { key: 'metadataCheck', selectId: 'taskMetadataCheck', customId: 'taskMetadataCheckCustom', fallback: 'daily-3am' },
+  { key: 'libraryUpkeep', selectId: 'taskLibraryUpkeep', customId: 'taskLibraryUpkeepCustom', fallback: 'weekly-sunday-3am' },
+  { key: 'cacheCleanup', selectId: 'taskCacheCleanup', customId: 'taskCacheCleanupCustom', fallback: 'hourly' },
+  { key: 'guidevaultBackup', selectId: 'taskGuidevaultBackup', customId: 'taskGuidevaultBackupCustom', fallback: 'weekly-sunday-4am' }
+];
+
+function taskPresetOptionsHtml() {
+  const groups = [
+    ['disabled', 'hourly', 'every-6-hours'],
+    ['daily-2am', 'daily-3am', 'daily-4am'],
+    ['weekly-sunday-3am', 'weekly-sunday-4am', 'monthly-1st-4am']
+  ];
+  return groups.map(group => group.map(key => `<option value="${escapeForAttribute(key)}">${escapeHtml(TASK_SCHEDULE_PRESETS[key].label)}</option>`).join('')).join('') + '<option value="custom">Custom cron...</option>';
+}
+
+function taskCronFromStoredSchedule(value = '') {
+  const raw = String(value || '').trim();
+  const match = raw.match(/\(([^)]+)\)/);
+  if (match) return match[1].trim();
+  if (raw.split(/\s+/).length === 5) return raw;
+  const lower = raw.toLowerCase();
+  const preset = Object.values(TASK_SCHEDULE_PRESETS).find(item => item.stored.toLowerCase() === lower || item.label.toLowerCase() === lower);
+  return preset?.cron || '';
+}
+
+function taskSelectValueFromSchedule(value = '', fallback = 'daily-2am') {
+  const raw = String(value || fallback || '').trim();
+  const lower = raw.toLowerCase();
+  const direct = Object.entries(TASK_SCHEDULE_PRESETS).find(([, preset]) => preset.stored.toLowerCase() === lower || preset.label.toLowerCase() === lower);
+  if (direct) return direct[0];
+  const cron = taskCronFromStoredSchedule(raw);
+  const byCron = Object.entries(TASK_SCHEDULE_PRESETS).find(([, preset]) => preset.cron && preset.cron === cron);
+  return byCron ? byCron[0] : 'custom';
+}
+
+function taskStoredScheduleFromInputs(field) {
+  const select = $(field.selectId);
+  const selected = String(select?.value || field.fallback || '').trim();
+  if (selected === 'custom') {
+    const cron = String($(field.customId)?.value || '').trim() || taskCronFromStoredSchedule(state.taskSettings?.[field.key]) || TASK_SCHEDULE_PRESETS[field.fallback]?.cron || '0 2 * * *';
+    return `Custom (${cron})`;
+  }
+  return TASK_SCHEDULE_PRESETS[selected]?.stored || selected || field.fallback;
+}
+
 function normalizeTaskSettings(value = {}) {
-  return { libraryScan: String(value.libraryScan || 'Daily'), guidevaultBackup: String(value.guidevaultBackup || 'Daily'), cleanup: String(value.cleanup || 'Daily'), readingListSync: String(value.readingListSync || 'Custom (0 4 * * *)') };
+  const cleanupFallback = value.libraryUpkeep || value.cleanup || 'weekly-sunday-3am';
+  return {
+    libraryScan: String(value.libraryScan || 'daily-2am'),
+    metadataCheck: String(value.metadataCheck || 'daily-3am'),
+    libraryUpkeep: String(cleanupFallback),
+    cacheCleanup: String(value.cacheCleanup || 'hourly'),
+    guidevaultBackup: String(value.guidevaultBackup || 'weekly-sunday-4am'),
+    cleanup: String(cleanupFallback),
+    readingListSync: String(value.readingListSync || 'disabled')
+  };
 }
 async function loadTaskSettings(showStatus = false) {
   try {
@@ -5626,6 +5882,7 @@ async function loadTaskSettings(showStatus = false) {
     if (!res.ok) throw new Error(`Task settings request failed: ${res.status}`);
     state.taskSettings = normalizeTaskSettings(await res.json());
     renderTaskSettings();
+    await loadTaskScheduleStatus();
     if (showStatus) setTasksSettingsStatus('Task settings loaded.', 'success');
   } catch (err) {
     console.warn('Unable to load task settings', err);
@@ -5635,14 +5892,29 @@ async function loadTaskSettings(showStatus = false) {
   }
 }
 function renderTaskSettings() {
+  bindTaskScheduleControls();
   const settings = normalizeTaskSettings(state.taskSettings || {});
-  if ($('taskLibraryScan')) $('taskLibraryScan').value = settings.libraryScan;
-  if ($('taskGuidevaultBackup')) $('taskGuidevaultBackup').value = settings.guidevaultBackup;
-  if ($('taskCleanup')) $('taskCleanup').value = settings.cleanup;
-  if ($('taskReadingListSync')) $('taskReadingListSync').value = settings.readingListSync;
+  TASK_SETTING_FIELDS.forEach(field => {
+    const select = $(field.selectId);
+    const custom = $(field.customId);
+    if (select && !select.dataset.populated) {
+      select.innerHTML = taskPresetOptionsHtml();
+      select.dataset.populated = 'true';
+    }
+    const selectValue = taskSelectValueFromSchedule(settings[field.key], field.fallback);
+    if (select) select.value = selectValue;
+    if (custom) {
+      custom.value = taskCronFromStoredSchedule(settings[field.key]) || TASK_SCHEDULE_PRESETS[field.fallback]?.cron || '';
+      custom.closest('.task-custom-cron')?.classList.toggle('hidden', selectValue !== 'custom');
+    }
+  });
 }
 function collectTaskSettings() {
-  return normalizeTaskSettings({ libraryScan: $('taskLibraryScan')?.value, guidevaultBackup: $('taskGuidevaultBackup')?.value, cleanup: $('taskCleanup')?.value, readingListSync: $('taskReadingListSync')?.value });
+  const payload = {};
+  TASK_SETTING_FIELDS.forEach(field => { payload[field.key] = taskStoredScheduleFromInputs(field); });
+  payload.cleanup = payload.libraryUpkeep;
+  payload.readingListSync = 'disabled';
+  return normalizeTaskSettings(payload);
 }
 async function saveTaskSettings() {
   try {
@@ -5650,11 +5922,98 @@ async function saveTaskSettings() {
     if (!res.ok) throw new Error(`Task save failed: ${res.status}`);
     state.taskSettings = normalizeTaskSettings(await res.json());
     renderTaskSettings();
-    setTasksSettingsStatus('Recurring task settings saved.', 'success');
+    await loadTaskScheduleStatus();
+    setTasksSettingsStatus('Recurring task settings saved and scheduler refreshed.', 'success');
   } catch (err) {
     console.error('Unable to save task settings', err);
     setTasksSettingsStatus(`Unable to save task settings: ${err?.message || err}`, 'error');
   }
+}
+
+function formatTaskScheduleDate(value = '') {
+  if (!value) return '—';
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return '—';
+  return date.toLocaleString([], { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
+}
+
+function renderTaskScheduleStatus(snapshot = {}) {
+  const entries = Array.isArray(snapshot.entries || snapshot.Entries) ? (snapshot.entries || snapshot.Entries) : [];
+  const overview = $('taskScheduleOverview');
+  if (overview) {
+    const enabled = entries.filter(entry => entry.enabled ?? entry.Enabled).length;
+    const running = entries.filter(entry => entry.running ?? entry.Running).length;
+    const next = entries
+      .map(entry => entry.nextRunAt || entry.NextRunAt)
+      .filter(Boolean)
+      .map(value => new Date(value))
+      .filter(date => !Number.isNaN(date.getTime()))
+      .sort((a, b) => a - b)[0];
+    overview.innerHTML = `<div><strong>${enabled}</strong><span>Enabled schedules</span></div><div><strong>${running}</strong><span>Running now</span></div><div><strong>${next ? formatTaskScheduleDate(next.toISOString()) : '\u2014'}</strong><span>Next scheduled run</span></div>`;
+  }
+  entries.forEach(entry => {
+    const key = entry.key || entry.Key;
+    const nextEl = document.querySelector(`[data-task-next="${CSS.escape(String(key || ''))}"]`);
+    if (nextEl) {
+      const enabled = entry.enabled ?? entry.Enabled;
+      const running = entry.running ?? entry.Running;
+      const label = entry.label || entry.Label || entry.schedule || entry.Schedule || '—';
+      const next = formatTaskScheduleDate(entry.nextRunAt || entry.NextRunAt || '');
+      const lastStatus = entry.lastStatus || entry.LastStatus || 'not run';
+      nextEl.textContent = enabled ? `${running ? 'Running now' : `Next: ${next}`} • ${label} • Last: ${lastStatus}` : 'Disabled';
+    }
+  });
+}
+
+async function loadTaskScheduleStatus(showStatus = false) {
+  try {
+    const res = await fetch('/api/tasks/schedule', { cache: 'no-store' });
+    if (!res.ok) throw new Error(`Schedule status failed: ${res.status}`);
+    const data = await res.json();
+    renderTaskScheduleStatus(data);
+    if (showStatus) setTasksSettingsStatus('Schedule status refreshed.', 'success');
+  } catch (err) {
+    console.warn('Unable to load task schedule status', err);
+    if (showStatus) setTasksSettingsStatus(`Unable to load schedule status: ${err?.message || err}`, 'error');
+  }
+}
+
+async function runScheduledTaskNow(key) {
+  const taskKey = String(key || '').trim();
+  if (!taskKey) return;
+  try {
+    setTasksSettingsStatus('Queuing scheduled task...', 'info');
+    const res = await fetch(`/api/tasks/schedule/run/${encodeURIComponent(taskKey)}`, { method: 'POST', cache: 'no-store' });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok || data?.success === false) throw new Error(data?.message || `Task request failed: ${res.status}`);
+    setTasksSettingsStatus(data?.message || 'Scheduled task queued.', 'success');
+    addTaskNotification({ title: 'Scheduled task queued', message: data?.message || 'Scheduled task queued.', tone: 'info', kind: 'scheduled-task' });
+    await loadTaskScheduleStatus();
+    await pollTasks(true);
+  } catch (err) {
+    setTasksSettingsStatus(`Unable to queue task: ${err?.message || err}`, 'error');
+  }
+}
+
+function bindTaskScheduleControls() {
+  TASK_SETTING_FIELDS.forEach(field => {
+    const select = $(field.selectId);
+    if (select && !select.dataset.bound) {
+      select.dataset.bound = 'true';
+      select.addEventListener('change', () => {
+        const custom = $(field.customId);
+        custom?.closest('.task-custom-cron')?.classList.toggle('hidden', select.value !== 'custom');
+      });
+    }
+  });
+  document.querySelectorAll('[data-task-run]').forEach(button => {
+    if (button.dataset.bound) return;
+    button.dataset.bound = 'true';
+    button.addEventListener('click', e => {
+      e.preventDefault();
+      runScheduledTaskNow(button.dataset.taskRun || '');
+    });
+  });
 }
 
 function beginOpdsUrlEdit() {
@@ -7393,10 +7752,12 @@ function setupHomebarIconFallbacks() {
 function updateNavActive() {
   document.querySelectorAll('.nav').forEach(btn => {
     const isCustom = !!btn.dataset.customNavId;
+    const isCollectionNav = !!btn.dataset.collectionNavId;
     const matchesCustom = isCustom && state.customFilter?.id === btn.dataset.customNavId;
+    const matchesCollectionNav = isCollectionNav && state.customFilter?.id === `collection-${btn.dataset.collectionNavId}`;
     const matchesCategoryKind = !state.customFilter && !!state.categoryFilter && btn.dataset.filter === state.filter;
     const matchesView = !state.customFilter && !state.categoryFilter && btn.dataset.view === state.viewMode;
-    btn.classList.toggle('active', matchesCustom || matchesCategoryKind || matchesView);
+    btn.classList.toggle('active', matchesCustom || matchesCollectionNav || matchesCategoryKind || matchesView);
   });
   renderCustomSideNavItems();
 }
@@ -8543,19 +8904,86 @@ function sortGroupNamesForCurrentSort(kind, groups, allItems) {
   });
 }
 
+function librarySearchValueParts(value, depth = 0, seen = null) {
+  if (value === null || value === undefined || depth > 5) return [];
+  const type = typeof value;
+  if (type === 'string' || type === 'number' || type === 'boolean') {
+    const text = String(value || '').trim();
+    if (!text) return [];
+    // Skip oversized payload-like strings so the global library search stays fast.
+    if (text.length > 2000 && /^(data:|[A-Za-z0-9+/=]{500,})/.test(text)) return [];
+    return [text];
+  }
+  if (value instanceof Date) return [value.toISOString()];
+  if (Array.isArray(value)) return value.flatMap(entry => librarySearchValueParts(entry, depth + 1, seen));
+  if (type !== 'object') return [];
+
+  seen = seen || (typeof WeakSet === 'function' ? new WeakSet() : null);
+  if (seen) {
+    if (seen.has(value)) return [];
+    seen.add(value);
+  }
+
+  const ignoredKeys = new Set([
+    'path', 'coverUrl', 'coverPath', 'thumbnailUrl', 'imageUrl', 'url', 'webLink',
+    'data', 'bytes', 'buffer', 'content', 'raw', 'html', 'xml'
+  ]);
+  const parts = [];
+  Object.entries(value).forEach(([key, entry]) => {
+    const keyName = String(key || '').trim();
+    if (!keyName) return;
+    const lower = keyName.toLowerCase();
+    if (ignoredKeys.has(key) || ignoredKeys.has(lower) || lower.endsWith('url') || lower.endsWith('path')) {
+      // Keep file names/relative paths searchable, but do not index absolute paths or asset URLs.
+      if (lower !== 'relativepath' && lower !== 'filename') return;
+    }
+    parts.push(keyName);
+    parts.push(...librarySearchValueParts(entry, depth + 1, seen));
+  });
+  return parts;
+}
+
 function libraryItemSearchHaystack(item) {
   if (!item) return '';
   if (guidevaultLibrarySearchCache) {
     const cached = guidevaultLibrarySearchCache.get(item);
     if (cached) return cached;
   }
-  const value = [
-    item.title, item.kind, item.system, categoryOf(item), item.publisher, item.year, item.series,
-    item.writer, item.issueNumber, item.asin, item.isbn10, item.isbn13, item.languageTag,
-    platformListText(item), item.platformMatchTitle, item.platformResolverSource, item.summary,
-    item.notes, item.relativePath, item.manualTitle, item.manualType, item.controlScheme,
-    item.warrantySupport, ...(item.includedSections || []), ...(item.itemsCovered || []), ...(item.tags || [])
-  ].join(' ').toLowerCase();
+
+  const explicitFields = [
+    item.title, item.kind, item.format, item.system, categoryOf(item), item.publisher, item.year,
+    item.contentType, item.summary, item.series, item.writer, item.issueNumber, item.rating,
+    item.asin, item.isbn10, item.isbn13, item.languageTag, item.region, item.relativePath,
+    item.fileName, item.libraryName, item.libraryType, item.notes, item.metadataSource, item.metadataStatus,
+    platformListText(item), item.platformMatchTitle, item.platformResolverSource,
+    item.magazineTitle, item.volume, item.coverDate, item.publicationDate, item.platformFocus,
+    item.primarySystem, item.magazineCategory, item.coverSubject, item.barcodeUpcIssn,
+    item.gameTitle, item.guideType, item.edition, item.franchise, item.developer,
+    item.gamePublisher, item.gameReleaseYear, item.genre, item.manualTitle, item.manualType,
+    item.controlScheme, item.warrantySupport,
+    item.launchBoxGameId, item.launchBoxGameTitle, item.launchBoxPlatform, item.launchBoxDatabaseId,
+    item.launchBoxMatchType, item.launchBoxMatchStatus, item.launchBoxMatchSource,
+    ...(item.tags || []),
+    ...(item.associatedPlatforms || []),
+    ...(item.featuredGames || []),
+    ...(item.featuredPlatforms || []),
+    ...(item.specialFeatures || []),
+    ...(item.includedExtras || []),
+    ...(item.coveredGames || item.CoveredGames || []),
+    ...(item.coveredPlatforms || item.CoveredPlatforms || []),
+    ...(item.guideTopics || item.GuideTopics || []),
+    ...(item.charactersCovered || item.CharactersCovered || []),
+    ...(item.locationsCovered || item.LocationsCovered || []),
+    ...(item.includedSections || item.IncludedSections || []),
+    ...(item.itemsCovered || item.ItemsCovered || [])
+  ];
+
+  const allParts = [...explicitFields, ...librarySearchValueParts(item)];
+  const value = [...new Set(allParts
+    .map(part => String(part ?? '').trim())
+    .filter(Boolean)
+  )].join(' ').toLowerCase();
+
   if (guidevaultLibrarySearchCache) guidevaultLibrarySearchCache.set(item, value);
   return value;
 }
@@ -8580,9 +9008,12 @@ function applyFilters() {
   const sort = $('sort')?.value || defaultLibrarySortForCurrentView();
   state.filtered.sort((a, b) => compareItemsForLibrarySort(a, b, sort));
   if (state.customFilter?.sortMode && state.customFilter.sortMode !== 'default') {
-    if (state.customFilter.sortMode === 'title') state.filtered.sort((a,b) => compareTextForSort(displayTitle(a), displayTitle(b)));
-    if (state.customFilter.sortMode === 'sequence') state.filtered.sort(itemSequenceThenTitle);
-    if (state.customFilter.sortMode === 'recent') state.filtered.sort((a,b) => itemRecentTimestamp(b) - itemRecentTimestamp(a));
+    if (state.customFilter.type === 'collection' && state.customFilter.sortMode === 'sequence') {
+      const order = new Map((state.customFilter.itemIds || []).map((id, index) => [String(id), index]));
+      state.filtered.sort((a,b) => (order.get(String(a.id || a.Id || '')) ?? 999999) - (order.get(String(b.id || b.Id || '')) ?? 999999));
+    } else if (state.customFilter.sortMode === 'title') state.filtered.sort((a,b) => compareTextForSort(displayTitle(a), displayTitle(b)));
+    else if (state.customFilter.sortMode === 'sequence') state.filtered.sort(itemSequenceThenTitle);
+    else if (state.customFilter.sortMode === 'recent') state.filtered.sort((a,b) => itemRecentTimestamp(b) - itemRecentTimestamp(a));
   }
   render();
 }
@@ -9354,29 +9785,51 @@ function render() {
   $('countMags').textContent = count('Magazine');
   if (!state.favorites) loadFavorites();
   $('countFavs').textContent = Object.keys(state.favorites || {}).length;
+  if ($('countCollections')) $('countCollections').textContent = String((state.customize?.collections || loadCustomizeSettings().collections || []).length || 0);
   const groupMode = ['manual-systems', 'guide-systems', 'magazine-series'].includes(state.viewMode);
   const categoryMode = !!state.categoryFilter;
+  const activeSearchQuery = ($('search')?.value || '').trim();
+  const searchMode = !!activeSearchQuery;
 
   $('itemCount').textContent = groupMode ? `${groupCountForView()} categories` : `${currentLibraryTotalCount()} items${state.libraryIsPartial ? ' indexed' : ''}`;
   $('libraryView').classList.toggle('category-mode', categoryMode || groupMode || state.viewMode !== 'all');
   $('libraryView').classList.toggle('group-mode', groupMode);
   $('libraryView').classList.toggle('magazine-mode', state.filter === 'Magazine' || state.viewMode === 'magazine-series');
 
-  $('pageTitle').textContent = pageTitleForView();
-  $('gridTitle').textContent = groupMode ? pageTitleForView() : (state.customFilter ? `${pageTitleForView()} Results` : (categoryMode ? `${currentCategoryName()} Library` : 'Home Library'));
+  $('pageTitle').textContent = searchMode && state.viewMode === 'all' && state.filter === 'All Content' && !state.customFilter && !state.categoryFilter ? 'Search Results' : pageTitleForView();
+  $('gridTitle').textContent = groupMode
+    ? pageTitleForView()
+    : (searchMode
+      ? `Search Results for “${activeSearchQuery}”`
+      : (state.customFilter ? `${pageTitleForView()} Results` : (categoryMode ? `${currentCategoryName()} Library` : 'Home Library')));
   $('manualSummary').textContent = `${count('Manual')} items`;
   $('guideSummary').textContent = `${count('Strategy Guide')} items`;
   $('magSummary').textContent = `${count('Magazine')} items`;
   scheduleRenderCategories();
 
-  const homeMode = !groupMode && !categoryMode && state.viewMode === 'all' && state.filter === 'All Content';
+  const homeMode = !searchMode && !groupMode && !categoryMode && state.viewMode === 'all' && state.filter === 'All Content';
   if ($('homeShelves')) $('homeShelves').classList.toggle('hidden', !homeMode);
+  const browseTitle = document.querySelector('.section-browse-title');
+  const browseRow = document.querySelector('.collection-row');
+  if (browseTitle) browseTitle.classList.toggle('hidden', !homeMode);
+  if (browseRow) browseRow.classList.toggle('hidden', !homeMode);
+  if ($('homeCollections')) $('homeCollections').classList.toggle('hidden', !homeMode);
   if (groupMode) {
     renderGroupGrid('grid', state.viewMode);
     if ($('recentGrid')) { cancelCoverLoadsForRoot($('recentGrid')); $('recentGrid').innerHTML = ''; }
     if ($('homeShelves')) { cancelCoverLoadsForRoot($('homeShelves')); $('homeShelves').innerHTML = ''; }
+    if ($('homeCollections')) $('homeCollections').innerHTML = '';
+  } else if (state.viewMode === 'collections') {
+    if ($('homeShelves')) { cancelCoverLoadsForRoot($('homeShelves')); $('homeShelves').innerHTML = ''; }
+    if ($('homeCollections')) $('homeCollections').innerHTML = '';
+    if ($('recentGrid')) $('recentGrid').innerHTML = '';
+    renderCollectionsLibraryView('grid');
+    renderAlphaRail([]);
   } else {
-    if (homeMode) renderHomeShelves(); else if ($('homeShelves')) { cancelCoverLoadsForRoot($('homeShelves')); $('homeShelves').innerHTML = ''; }
+    if (homeMode) { renderHomeShelves(); renderHomeCollections(); } else {
+      if ($('homeShelves')) { cancelCoverLoadsForRoot($('homeShelves')); $('homeShelves').innerHTML = ''; }
+      if ($('homeCollections')) $('homeCollections').innerHTML = '';
+    }
     if ($('recentGrid')) $('recentGrid').innerHTML = '';
     renderGrid('grid', state.filtered);
     renderAlphaRail(state.filtered.map(displayTitle));
@@ -9396,6 +9849,7 @@ function pageTitleForView() {
   if (state.viewMode === 'guide-systems') return 'Strategy Guides';
   if (state.viewMode === 'magazine-series') return 'Magazines';
   if (state.viewMode === 'favorites' || state.filter === 'Favorites') return 'Favorites';
+  if (state.viewMode === 'collections') return 'Collections';
   return state.filter === 'All Content' ? 'Home' : (state.filter || 'Home');
 }
 
@@ -10055,6 +10509,8 @@ function clearVirtualGridIfHost(id) {
 function renderGrid(id, items) {
   const host = $(id);
   if (!host) return;
+  host.classList.remove('user-collections-grid');
+  host.classList.add('grid');
   const list = Array.isArray(items) ? items : [];
   if (!list.length) {
     clearVirtualGridIfHost(id);
@@ -10154,6 +10610,70 @@ const HOME_SHELF_OPTIONS = [
   { id: 'largest-files', label: 'Largest Files', description: 'Largest files in the current index.', kind: '' }
 ];
 
+function collectionShelfId(id) { return `collection:${String(id || '').trim()}`; }
+function collectionIdFromShelfId(id) { return String(id || '').startsWith('collection:') ? String(id).slice('collection:'.length) : ''; }
+function normalizeCollection(value = {}, index = 0) {
+  const rawId = String(value.id || value.collectionId || '').trim();
+  const id = rawId || `collection-${Date.now()}-${index}-${Math.random().toString(36).slice(2, 7)}`;
+  const name = String(value.name || value.title || `Collection ${index + 1}`).trim() || `Collection ${index + 1}`;
+  const items = Array.isArray(value.items) ? value.items : Array.isArray(value.itemIds) ? value.itemIds : [];
+  const itemIds = [...new Set(items.map(v => String(v || '').trim()).filter(Boolean))];
+  const requestedHomeDisplay = String(value.homeDisplay || value.collectionHomeDisplay || '').toLowerCase();
+  const homeDisplay = ['shelf', 'card', 'hidden'].includes(requestedHomeDisplay)
+    ? requestedHomeDisplay
+    : (value.showOnHome === false ? 'hidden' : 'shelf');
+  return {
+    id,
+    name,
+    title: name,
+    description: String(value.description || '').trim(),
+    homeDisplay,
+    showOnHome: homeDisplay !== 'hidden',
+    showInSidebar: value.showInSidebar === true,
+    coverItemId: String(value.coverItemId || '').trim(),
+    itemIds,
+    items: itemIds
+  };
+}
+function normalizeCollections(value = []) {
+  const items = Array.isArray(value) ? value : [];
+  const seen = new Set();
+  const clean = [];
+  items.map((collection, index) => normalizeCollection(collection, index)).forEach(collection => {
+    const key = collection.id.toLowerCase();
+    if (!collection.name || seen.has(key)) return;
+    seen.add(key);
+    clean.push(collection);
+  });
+  return clean;
+}
+function collectionById(id) {
+  const settings = state.customize || loadCustomizeSettings();
+  return (settings.collections || []).find(collection => collection.id === id) || null;
+}
+function getHomeShelfOptions(settings = state.customize || loadCustomizeSettings()) {
+  const collections = (settings.collections || [])
+    .filter(collection => collection.homeDisplay === 'shelf')
+    .map(collection => ({
+      id: collectionShelfId(collection.id),
+      label: collection.name || collection.title || 'Collection',
+      description: '',
+      kind: '',
+      collectionId: collection.id,
+      isCollection: true
+    }));
+  return HOME_SHELF_OPTIONS.concat(collections);
+}
+function homeShelfOptionFor(id, settings = state.customize || loadCustomizeSettings()) {
+  return getHomeShelfOptions(settings).find(o => o.id === id) || HOME_SHELF_OPTIONS.find(o => o.id === id) || HOME_SHELF_OPTIONS[0];
+}
+function collectionItems(collection, items = state.items) {
+  const ids = new Set((collection?.itemIds || collection?.items || []).map(v => String(v || '').trim()).filter(Boolean));
+  if (!ids.size) return [];
+  const lookup = new Map((Array.isArray(items) ? items : []).map(item => [String(item.id || item.Id || '').trim(), item]));
+  return [...ids].map(id => lookup.get(id)).filter(Boolean);
+}
+
 function normalizeKeybinds(value = {}) {
   const map = {};
   KEYBIND_DEFAULTS.forEach(def => {
@@ -10247,8 +10767,10 @@ function isReaderActiveForKeys() {
 }
 
 function isEditableKeyTarget(target) {
-  const el = target?.closest?.('input, textarea, select, button, [contenteditable="true"]');
-  return !!el && !el.closest?.('#readerView');
+  const el = target?.closest?.('input, textarea, select, button, [contenteditable="true"], [contenteditable=""]');
+  if (!el) return false;
+  if (el.matches?.('[readonly], [disabled]')) return true;
+  return true;
 }
 
 function canonicalKeyLabel(label = '') {
@@ -10301,14 +10823,75 @@ async function toggleReaderFullscreenFromKeybind() {
   updateReaderFullscreenUi();
 }
 
+function ensureAppInfoModal() {
+  let modal = $('appInfoModal');
+  if (modal) return modal;
+
+  modal = document.createElement('div');
+  modal.id = 'appInfoModal';
+  modal.className = 'app-modal app-info-modal hidden';
+  modal.setAttribute('role', 'dialog');
+  modal.setAttribute('aria-modal', 'true');
+  modal.setAttribute('aria-labelledby', 'appInfoTitle');
+  modal.setAttribute('aria-hidden', 'true');
+  modal.innerHTML = `
+    <div class="app-modal-card app-info-modal-card">
+      <header class="app-info-modal-head">
+        <div>
+          <span class="eyebrow">GuideVault Help</span>
+          <h2 id="appInfoTitle">GuideVault</h2>
+        </div>
+        <button id="appInfoClose" class="ghost tiny" type="button" aria-label="Close help">Close</button>
+      </header>
+      <div id="appInfoBody" class="app-info-modal-body"></div>
+    </div>`;
+  document.body.appendChild(modal);
+  return modal;
+}
+
+function showAppInfoModal(options = {}) {
+  const modal = ensureAppInfoModal();
+  const title = $('appInfoTitle');
+  const body = $('appInfoBody');
+  const close = $('appInfoClose');
+  if (!modal || !body || !close) return;
+
+  if (title) title.textContent = options.title || 'GuideVault';
+  body.innerHTML = options.html || `<p class="sub">${escapeHtml(options.message || '')}</p>`;
+  modal.classList.remove('hidden');
+  modal.setAttribute('aria-hidden', 'false');
+  window.setTimeout(() => close.focus(), 0);
+
+  let settled = false;
+  const cleanup = () => {
+    if (settled) return;
+    settled = true;
+    modal.classList.add('hidden');
+    modal.setAttribute('aria-hidden', 'true');
+    close.removeEventListener('click', onClose);
+    modal.removeEventListener('click', onBackdrop);
+    document.removeEventListener('keydown', onKeyDown, true);
+  };
+  const onClose = e => { e.preventDefault(); cleanup(); };
+  const onBackdrop = e => { if (e.target === modal) cleanup(); };
+  const onKeyDown = e => { if (e.key === 'Escape') { e.preventDefault(); cleanup(); } };
+
+  close.addEventListener('click', onClose);
+  modal.addEventListener('click', onBackdrop);
+  document.addEventListener('keydown', onKeyDown, true);
+}
+
 function showReaderKeybindHelp() {
   const bindings = state.keybinds.bindings || loadKeybinds();
-  const lines = KEYBIND_DEFAULTS.map(def => {
+  const rows = KEYBIND_DEFAULTS.map(def => {
     const keys = bindings[def.id]?.keys?.length ? bindings[def.id].keys : def.keys;
-    return `${def.title}: ${keys.join(', ')}`;
-  });
+    return `<div class="reader-keybind-help-row"><div><strong>${escapeHtml(def.title)}</strong><span>${escapeHtml(def.description || '')}</span></div><div class="reader-keybind-help-keys">${keys.map(key => `<kbd>${escapeHtml(key)}</kbd>`).join('')}</div></div>`;
+  }).join('');
   setReaderOverlayVisible(true);
-  alert(`Guidevault Reader Keybinds\n\n${lines.join('\n')}`);
+  showAppInfoModal({
+    title: 'Reader Keybinds',
+    html: `<p class="sub">Keyboard shortcuts available while the reader is active.</p><div class="reader-keybind-help-list">${rows}</div>`
+  });
 }
 
 function promptReaderGoToPage() {
@@ -10414,14 +10997,21 @@ function normalizeSideNavSettings(value = {}) {
   return { customItems: deduped };
 }
 function normalizeCustomize(value = {}) {
-  const ids = new Set(HOME_SHELF_OPTIONS.map(s => s.id));
+  const collections = normalizeCollections(value?.collections || []);
+  const baseIds = new Set(HOME_SHELF_OPTIONS.map(s => s.id));
+  const collectionIds = new Set(collections.filter(collection => collection.homeDisplay === 'shelf').map(collection => collectionShelfId(collection.id)));
   const shelves = Array.isArray(value?.homeShelves) ? value.homeShelves : ['recently-added'];
-  const clean = shelves.map(v => String(v || '').trim()).filter(id => ids.has(id));
+  const clean = shelves.map(v => String(v || '').trim()).filter(id => baseIds.has(id) || collectionIds.has(id));
+  collections.filter(collection => collection.homeDisplay === 'shelf').forEach(collection => {
+    const id = collectionShelfId(collection.id);
+    if (!clean.includes(id)) clean.push(id);
+  });
   const requestedTab = String(value?.activeTab || 'home');
-  const activeTab = requestedTab === 'side-nav' ? 'side-nav' : 'home';
+  const activeTab = requestedTab === 'side-nav' || requestedTab === 'collections' ? requestedTab : 'home';
   return {
     activeTab,
     homeShelves: clean.length ? [...new Set(clean)] : ['recently-added'],
+    collections,
     sideNav: normalizeSideNavSettings(value?.sideNav || {})
   };
 }
@@ -10430,7 +11020,8 @@ function customizeSettingsHasUserContent(settings = {}) {
   const shelves = normalized.homeShelves || [];
   const defaultShelves = shelves.length === 1 && shelves[0] === 'recently-added';
   const customItems = normalized.sideNav?.customItems || [];
-  return !defaultShelves || customItems.length > 0;
+  const collections = normalized.collections || [];
+  return !defaultShelves || customItems.length > 0 || collections.length > 0;
 }
 function loadCustomizeSettings() {
   let parsed = {};
@@ -10522,6 +11113,14 @@ function customSideNavItemMatches(item, custom = state.customFilter) {
   if (!custom) return true;
   const scope = custom.kindScope || 'all';
   if (scope !== 'all' && item.kind !== scope) return false;
+  if (custom.type === 'collection') {
+    const collectionIds = (custom.itemIds || custom.items || [])
+      .map(id => String(id || '').trim())
+      .filter(Boolean);
+    if (!collectionIds.length) return false;
+    const itemId = String(item.id || item.Id || '').trim();
+    return collectionIds.includes(itemId);
+  }
   const value = String(custom.value || '').trim().toLowerCase();
   if (!value) return true;
   const exact = custom.matchMode === 'exact';
@@ -10537,6 +11136,7 @@ function customSideNavItemMatches(item, custom = state.customFilter) {
     case 'publisher': return matchesText(item.publisher);
     case 'list': return matchesText(item.series) || matchesText(item.collectionTitle) || matchesAny(item.tags || []) || matchesAny(item.itemsCovered || []) || matchesText(item.title) || matchesText(item.summary) || matchesText(item.notes);
     case 'search': return exact ? sideNavSearchHaystack(item).split(/\s+/).includes(value) : sideNavSearchHaystack(item).includes(value);
+    case 'collection': return (custom.itemIds || custom.items || []).map(String).includes(String(item.id || item.Id || ''));
     default: return exact ? false : sideNavSearchHaystack(item).includes(value);
   }
 }
@@ -10545,9 +11145,16 @@ function renderCustomSideNavItems() {
   if (!host) return;
   const settings = state.customize || loadCustomizeSettings();
   const items = settings.sideNav?.customItems || [];
-  host.innerHTML = items.map(item => `<button class="nav custom-side-nav-button" type="button" data-custom-nav-id="${escapeForAttribute(item.id)}" title="${escapeForAttribute(item.label)}"><span class="nav-icon custom-list-icon">${escapeHtml(item.icon || customSideNavDefaultIcon(item.type, item.kindScope))}</span><span class="nav-label">${escapeHtml(item.label)}</span><em>${customSideNavCount(item)}</em></button>`).join('');
-  host.classList.toggle('hidden', !items.length);
+  const collections = (settings.collections || []).filter(collection => collection.showInSidebar === true);
+  const customMarkup = items.map(item => `<button class="nav custom-side-nav-button" type="button" data-custom-nav-id="${escapeForAttribute(item.id)}" title="${escapeForAttribute(item.label)}"><span class="nav-icon custom-list-icon">${escapeHtml(item.icon || customSideNavDefaultIcon(item.type, item.kindScope))}</span><span class="nav-label">${escapeHtml(item.label)}</span><em>${customSideNavCount(item)}</em></button>`).join('');
+  const collectionMarkup = collections.map(collection => {
+    const count = (collection.itemIds || collection.items || []).length;
+    return `<button class="nav custom-side-nav-button collection-side-nav-button" type="button" data-collection-nav-id="${escapeForAttribute(collection.id)}" title="${escapeForAttribute(collection.name)}"><span class="nav-icon custom-list-icon">&#x2637;</span><span class="nav-label">${escapeHtml(collection.name)}</span><em>${count}</em></button>`;
+  }).join('');
+  host.innerHTML = customMarkup + collectionMarkup;
+  host.classList.toggle('hidden', !items.length && !collections.length);
   host.querySelectorAll('[data-custom-nav-id]').forEach(btn => btn.classList.toggle('active', state.customFilter?.id === btn.dataset.customNavId));
+  host.querySelectorAll('[data-collection-nav-id]').forEach(btn => btn.classList.toggle('active', state.customFilter?.id === `collection-${btn.dataset.collectionNavId}`));
 }
 function renderCustomSideNavList() {
   const list = $('customSideNavList');
@@ -10564,7 +11171,7 @@ function addCustomSideNavItem() {
     kindScope: $('customSideNavKindScope')?.value,
     matchMode: $('customSideNavMatchMode')?.value,
     sortMode: $('customSideNavSortMode')?.value,
-    icon: $('customSideNavIcon')?.value || $('customSideNavIconPreset')?.value
+    icon: $('customSideNavIconPreset')?.value
   };
   const item = normalizeCustomSideNavItem(raw, (state.customize?.sideNav?.customItems || []).length);
   if (!item.label || !item.value) { setCustomSideNavStatus('Add a label and match value first.', 'error'); return; }
@@ -10573,7 +11180,7 @@ function addCustomSideNavItem() {
   settings.sideNav.customItems.push(item);
   state.customize = settings;
   saveCustomizeSettings();
-  ['customSideNavLabel','customSideNavValue','customSideNavIcon'].forEach(id => { if ($(id)) $(id).value = ''; });
+  ['customSideNavLabel','customSideNavValue'].forEach(id => { if ($(id)) $(id).value = ''; });
   if ($('customSideNavKindScope')) $('customSideNavKindScope').value = 'all';
   if ($('customSideNavMatchMode')) $('customSideNavMatchMode').value = 'contains';
   if ($('customSideNavSortMode')) $('customSideNavSortMode').value = 'default';
@@ -10623,20 +11230,309 @@ function handleCustomSideNavListAction(e) {
   const row = btn.closest('[data-custom-nav-id]');
   if (btn.dataset.customSideNavAction === 'remove') removeCustomSideNavItem(row?.dataset.customNavId || '');
 }
+
+function setCollectionsStatus(text, tone = '') {
+  const el = $('collectionsStatus');
+  if (!el) return;
+  el.textContent = text || '';
+  el.dataset.tone = tone || '';
+}
+function selectedCollectionId() {
+  return $('collectionManageSelect')?.value || (state.customize?.collections || [])[0]?.id || '';
+}
+function ensureCollectionShelfState(collection) {
+  if (!collection?.id) return;
+  const shelfId = collectionShelfId(collection.id);
+  const shelves = state.customize.homeShelves || [];
+  const hasShelf = shelves.includes(shelfId);
+  if (collection.homeDisplay === 'shelf' && !hasShelf) shelves.push(shelfId);
+  if (collection.homeDisplay !== 'shelf' && hasShelf) state.customize.homeShelves = shelves.filter(id => id !== shelfId);
+}
+function renderCollectionsSettings() {
+  const settings = state.customize || loadCustomizeSettings();
+  const collections = settings.collections || [];
+  const select = $('collectionManageSelect');
+  if (select) {
+    const current = select.value || collections[0]?.id || '';
+    select.innerHTML = collections.length
+      ? collections.map(collection => `<option value="${escapeForAttribute(collection.id)}">${escapeHtml(collection.name)} (${collection.itemIds?.length || 0})</option>`).join('')
+      : '<option value="">No collections yet</option>';
+    if (collections.some(collection => collection.id === current)) select.value = current;
+  }
+  const list = $('collectionsList');
+  if (list) {
+    const activeId = selectedCollectionId();
+    list.innerHTML = collections.map(collection => {
+      const count = collection.itemIds?.length || 0;
+      const homeLabel = collection.homeDisplay === 'card' ? 'Compact Home card' : collection.homeDisplay === 'shelf' ? 'Full Home shelf' : 'Hidden from Home';
+      const sidebarLabel = collection.showInSidebar ? 'Shown in sidebar' : 'Sidebar hidden';
+      const isActive = collection.id === activeId;
+      return `<div class="collection-summary-row ${isActive ? 'active' : ''}" data-collection-id="${escapeForAttribute(collection.id)}"><div><strong>${escapeHtml(collection.name)}</strong><p class="sub">${homeLabel} · ${sidebarLabel}</p></div><span>${count} item${count === 1 ? '' : 's'}</span><button class="ghost" type="button" data-collection-action="select">Manage Items</button><button class="danger" type="button" data-collection-action="delete">Delete</button></div>`;
+    }).join('') || '<p class="sub">No user-defined collections yet.</p>';
+  }
+  renderCollectionEditPanel();
+}
+function renderCollectionEditPanel() {
+  const panel = $('collectionEditPanel');
+  if (!panel) return;
+  const collection = collectionById(selectedCollectionId());
+  if (!collection) {
+    panel.innerHTML = '<div class="collection-manager-empty"><strong>No collection selected</strong><p class="sub">Create a collection or choose Manage Items from Your Collections below.</p></div>';
+    return;
+  }
+  const itemOptions = (state.items || []).slice().sort((a,b) => compareTextForSort(displayTitle(a), displayTitle(b))).map(item => {
+    const id = String(item.id || item.Id || '').trim();
+    return `<option value="${escapeForAttribute(id)}">${escapeHtml(displayTitle(item))} — ${escapeHtml(item.kind || 'Item')}</option>`;
+  }).join('');
+  const members = collectionItems(collection, state.items);
+  const homeLabel = collection.homeDisplay === 'card' ? 'Compact Home card' : collection.homeDisplay === 'shelf' ? 'Full Home shelf' : 'Hidden from Home';
+  const sidebarLabel = collection.showInSidebar ? 'Shown in sidebar' : 'Sidebar hidden';
+  panel.innerHTML = `<div class="collection-active-summary">
+    <div>
+      <strong>${escapeHtml(collection.name || 'Untitled Collection')}</strong>
+      <p class="sub">${members.length} item${members.length === 1 ? '' : 's'} · ${escapeHtml(homeLabel)} · ${escapeHtml(sidebarLabel)}</p>
+    </div>
+    <button class="ghost" type="button" data-open-collection="${escapeForAttribute(collection.id)}">Open Collection</button>
+  </div>
+  <div class="collection-add-row"><select id="collectionItemAddSelect">${itemOptions}</select><button id="collectionAddItemButton" class="ghost" type="button">Add Item</button></div>
+  <div class="collection-member-list">${members.map((item, index) => {
+    const itemId = String(item.id || item.Id || '').trim();
+    return `<div class="collection-member-row" data-item-id="${escapeForAttribute(itemId)}"><span class="collection-member-order">${index + 1}</span><div><strong>${escapeHtml(displayTitle(item))}</strong><p class="sub">${escapeHtml(item.kind || 'Item')} · ${escapeHtml(preferredPlatformOf(item) || categoryOf(item) || 'Unsorted')}</p></div><button class="ghost" type="button" data-collection-item-action="up" ${index === 0 ? 'disabled' : ''}>Up</button><button class="ghost" type="button" data-collection-item-action="down" ${index === members.length - 1 ? 'disabled' : ''}>Down</button><button class="danger" type="button" data-collection-item-action="remove">Remove</button></div>`;
+  }).join('') || '<p class="sub">No items in this collection yet. Add from this panel or from an item details page.</p>'}</div>`;
+}
+
+function collectionFilterFor(collection) {
+  return {
+    id: `collection-${collection.id}`,
+    label: collection.name || 'Collection',
+    type: 'collection',
+    kindScope: 'all',
+    matchMode: 'contains',
+    sortMode: 'sequence',
+    itemIds: (collection.itemIds || collection.items || []).map(String)
+  };
+}
+function openUserCollection(collectionId) {
+  const collection = collectionById(collectionId);
+  if (!collection) return;
+  showLibraryScreen();
+  state.customFilter = collectionFilterFor(collection);
+  state.viewMode = 'custom';
+  state.filter = 'All Content';
+  state.categoryFilter = '';
+  if ($('search')) $('search').value = '';
+  if ($('sort')) $('sort').value = 'title';
+  document.querySelectorAll('.chip').forEach(c => c.classList.remove('active'));
+  updateNavActive();
+  scrollMainToTop();
+  applyFilters();
+}
+function collectionBestItem(collection) {
+  return collectionItems(collection, state.items)[0] || null;
+}
+function collectionCardMarkup(collection, options = {}) {
+  const members = collectionItems(collection, state.items);
+  const coverItem = collectionBestItem(collection);
+  const cover = coverItem ? coverUrl(coverItem, { width: 240 }) : '';
+  const counts = members.reduce((acc, item) => {
+    const kind = String(item.kind || '').trim();
+    acc[kind] = (acc[kind] || 0) + 1;
+    return acc;
+  }, {});
+  const countText = `${members.length} item${members.length === 1 ? '' : 's'}`;
+  const detailBits = [
+    counts.Manual ? `${counts.Manual} manual${counts.Manual === 1 ? '' : 's'}` : '',
+    counts['Strategy Guide'] ? `${counts['Strategy Guide']} guide${counts['Strategy Guide'] === 1 ? '' : 's'}` : '',
+    counts.Magazine ? `${counts.Magazine} magazine${counts.Magazine === 1 ? '' : 's'}` : ''
+  ].filter(Boolean).join(' · ');
+  return `<article class="user-collection-card ${options.compact ? 'compact' : ''}" data-open-collection="${escapeForAttribute(collection.id)}" tabindex="0" role="button" aria-label="Open ${escapeForAttribute(collection.name)} collection">
+    <div class="user-collection-cover">${cover ? `<img decoding="async" loading="lazy" src="${escapeForAttribute(cover)}" alt="" />` : '<span>☷</span>'}</div>
+    <div class="user-collection-copy"><strong>${escapeHtml(collection.name || 'Untitled Collection')}</strong><small>${escapeHtml(countText)}</small>${detailBits ? `<em>${escapeHtml(detailBits)}</em>` : ''}</div>
+    <button class="ghost" type="button" data-open-collection="${escapeForAttribute(collection.id)}">Open</button>
+  </article>`;
+}
+function visibleUserCollections() {
+  return ((state.customize || loadCustomizeSettings()).collections || []).filter(collection => (collection.itemIds || collection.items || []).length);
+}
+function renderHomeCollections() {
+  const host = $('homeCollections');
+  if (!host) return;
+  const collections = visibleUserCollections().filter(collection => collection.homeDisplay === 'card');
+  host.classList.toggle('hidden', !collections.length);
+  host.innerHTML = collections.length ? `<div class="home-shelf-heading"><div class="home-shelf-title-block"><h2>My Collections</h2></div></div><div class="user-collection-strip">${collections.slice(0, 6).map(collection => collectionCardMarkup(collection, { compact: true })).join('')}</div>` : '';
+}
+function renderCollectionsLibraryView(gridId = 'grid') {
+  const host = $(gridId);
+  if (!host) return;
+  const collections = (state.customize || loadCustomizeSettings()).collections || [];
+  host.className = 'user-collections-grid';
+  host.innerHTML = collections.length ? collections.map(collection => collectionCardMarkup(collection)).join('') : '<div class="empty-message">No collections yet. Create one from Settings → Account → Customize → Collections.</div>';
+}
+function createCollection() {
+  const name = String($('collectionNameInput')?.value || '').trim();
+  if (!name) { setCollectionsStatus('Enter a collection name first.', 'error'); return; }
+  const settings = state.customize || loadCustomizeSettings();
+  const collection = normalizeCollection({
+    name,
+    description: $('collectionDescriptionInput')?.value || '',
+    homeDisplay: $('collectionHomeDisplayInput')?.value || 'shelf',
+    showInSidebar: $('collectionShowInSidebarInput')?.checked === true
+  }, settings.collections?.length || 0);
+  settings.collections = normalizeCollections([...(settings.collections || []), collection]);
+  state.customize = settings;
+  ensureCollectionShelfState(collection);
+  saveCustomizeSettings();
+  ['collectionNameInput','collectionDescriptionInput'].forEach(id => { if ($(id)) $(id).value = ''; });
+  if ($('collectionHomeDisplayInput')) $('collectionHomeDisplayInput').value = 'shelf';
+  if ($('collectionShowInSidebarInput')) $('collectionShowInSidebarInput').checked = false;
+  renderCustomizeSettings();
+  renderHomeShelves();
+  renderHomeCollections();
+  renderCustomSideNavItems();
+  updateNavActive();
+  setCollectionsStatus('Collection created.', 'success');
+}
+function saveSelectedCollection() {
+  const settings = state.customize || loadCustomizeSettings();
+  const collection = settings.collections.find(c => c.id === selectedCollectionId());
+  if (!collection) return;
+  collection.name = String($('collectionEditName')?.value || collection.name).trim() || collection.name;
+  collection.title = collection.name;
+  collection.description = String($('collectionEditDescription')?.value || '').trim();
+  collection.homeDisplay = ['shelf', 'card', 'hidden'].includes($('collectionEditHomeDisplay')?.value) ? $('collectionEditHomeDisplay').value : 'shelf';
+  collection.showOnHome = collection.homeDisplay !== 'hidden';
+  collection.showInSidebar = $('collectionEditShowInSidebar')?.checked === true;
+  ensureCollectionShelfState(collection);
+  saveCustomizeSettings();
+  renderCustomizeSettings();
+  renderHomeShelves();
+  renderHomeCollections();
+  renderCustomSideNavItems();
+  updateNavActive();
+  setCollectionsStatus('Collection saved.', 'success');
+}
+async function deleteCollection(id) {
+  const settings = state.customize || loadCustomizeSettings();
+  const collection = settings.collections.find(c => c.id === id);
+  if (!collection) return;
+  const confirmed = typeof showAppConfirm === 'function'
+    ? await showAppConfirm({ title: 'Delete collection?', message: `Delete "${collection.name}"? Items stay in your library.`, okText: 'Delete collection', cancelText: 'Cancel', danger: true })
+    : window.confirm(`Delete collection "${collection.name}"? Items stay in your library.`);
+  if (!confirmed) return;
+  settings.collections = settings.collections.filter(c => c.id !== id);
+  settings.homeShelves = (settings.homeShelves || []).filter(shelfId => shelfId !== collectionShelfId(id));
+  saveCustomizeSettings();
+  renderCustomizeSettings();
+  renderHomeShelves();
+  renderHomeCollections();
+  renderCustomSideNavItems();
+  updateNavActive();
+  setCollectionsStatus('Collection deleted. Library items were not removed.', 'success');
+}
+function addItemToCollection(collectionId, itemId) {
+  const settings = state.customize || loadCustomizeSettings();
+  const collection = settings.collections.find(c => c.id === collectionId);
+  if (!collection || !itemId) return false;
+  collection.itemIds = collection.itemIds || collection.items || [];
+  if (!collection.itemIds.includes(itemId)) collection.itemIds.push(itemId);
+  collection.items = collection.itemIds;
+  saveCustomizeSettings();
+  renderCustomizeSettings();
+  renderHomeShelves();
+  renderHomeCollections();
+  renderCustomSideNavItems();
+  return true;
+}
+function removeItemFromCollection(collectionId, itemId) {
+  const settings = state.customize || loadCustomizeSettings();
+  const collection = settings.collections.find(c => c.id === collectionId);
+  if (!collection) return;
+  collection.itemIds = (collection.itemIds || collection.items || []).filter(id => id !== itemId);
+  collection.items = collection.itemIds;
+  saveCustomizeSettings();
+  renderCustomizeSettings();
+  renderHomeShelves();
+  renderHomeCollections();
+  renderCustomSideNavItems();
+}
+function moveCollectionItem(collectionId, itemId, direction) {
+  const settings = state.customize || loadCustomizeSettings();
+  const collection = settings.collections.find(c => c.id === collectionId);
+  if (!collection) return;
+  const ids = (collection.itemIds || collection.items || []).slice();
+  const index = ids.indexOf(itemId);
+  const target = index + direction;
+  if (index < 0 || target < 0 || target >= ids.length) return;
+  [ids[index], ids[target]] = [ids[target], ids[index]];
+  collection.itemIds = ids;
+  collection.items = ids;
+  saveCustomizeSettings();
+  renderCustomizeSettings();
+  renderHomeShelves();
+  renderHomeCollections();
+  renderCustomSideNavItems();
+}
+async function handleCollectionListClick(e) {
+  const btn = e.target.closest?.('[data-collection-action]');
+  if (!btn) return;
+  const row = btn.closest('[data-collection-id]');
+  const id = row?.dataset.collectionId || '';
+  if (btn.dataset.collectionAction === 'select') {
+    if ($('collectionManageSelect')) $('collectionManageSelect').value = id;
+    renderCollectionEditPanel();
+  } else if (btn.dataset.collectionAction === 'delete') await deleteCollection(id);
+}
+function handleCollectionEditClick(e) {
+  const btn = e.target.closest?.('button');
+  if (!btn) return;
+  const collectionId = selectedCollectionId();
+  if (btn.id === 'collectionSaveButton') { saveSelectedCollection(); return; }
+  if (btn.id === 'collectionAddItemButton') {
+    const itemId = $('collectionItemAddSelect')?.value || '';
+    if (addItemToCollection(collectionId, itemId)) setCollectionsStatus('Item added to collection.', 'success');
+    return;
+  }
+  const row = btn.closest?.('[data-item-id]');
+  const itemId = row?.dataset.itemId || '';
+  if (btn.dataset.collectionItemAction === 'remove') removeItemFromCollection(collectionId, itemId);
+  if (btn.dataset.collectionItemAction === 'up') moveCollectionItem(collectionId, itemId, -1);
+  if (btn.dataset.collectionItemAction === 'down') moveCollectionItem(collectionId, itemId, 1);
+}
+function renderDetailCollectionControls(item) {
+  const select = $('detailCollectionSelect');
+  const button = $('detailAddCollectionBtn');
+  if (!select || !button) return;
+  const collections = (state.customize || loadCustomizeSettings()).collections || [];
+  select.innerHTML = collections.length ? collections.map(collection => `<option value="${escapeForAttribute(collection.id)}">${escapeHtml(collection.name)}</option>`).join('') : '<option value="">No collections yet</option>';
+  button.disabled = !collections.length;
+  const status = $('detailCollectionStatus');
+  if (status) status.textContent = collections.length ? '' : 'Create collections from Customize first.';
+}
+function addSelectedDetailItemToCollection() {
+  if (!state.selected) return;
+  const itemId = String(state.selected.id || state.selected.Id || '').trim();
+  const collectionId = $('detailCollectionSelect')?.value || '';
+  const collection = collectionById(collectionId);
+  const status = $('detailCollectionStatus');
+  if (!collectionId || !itemId) return;
+  const already = (collection?.itemIds || []).includes(itemId);
+  addItemToCollection(collectionId, itemId);
+  if (status) status.textContent = already ? 'Already in this collection.' : 'Added to collection.';
+}
 function renderCustomizeSettings() {
   const settings = state.customize || loadCustomizeSettings();
   const select = $('customizeShelfSelect');
   if (select) {
     const active = new Set(settings.homeShelves || []);
-    select.innerHTML = HOME_SHELF_OPTIONS.map(opt => `<option value="${escapeForAttribute(opt.id)}" ${active.has(opt.id) ? 'disabled' : ''}>${escapeHtml(opt.label)}</option>`).join('');
+    select.innerHTML = getHomeShelfOptions(settings).map(opt => `<option value="${escapeForAttribute(opt.id)}" ${active.has(opt.id) ? 'disabled' : ''}>${escapeHtml(opt.label)}</option>`).join('');
   }
   const list = $('customizeShelfList');
   if (list) {
     list.innerHTML = (settings.homeShelves || []).map((id) => {
-      const opt = HOME_SHELF_OPTIONS.find(o => o.id === id) || HOME_SHELF_OPTIONS[0];
+      const opt = homeShelfOptionFor(id, settings);
       return `<div class="customize-shelf-row" data-shelf-id="${escapeForAttribute(id)}">
         <span class="customize-shelf-handle" draggable="true" role="button" aria-label="Drag ${escapeForAttribute(opt.label)} shelf" title="Drag to reorder">\u283F</span>
-        <div class="customize-shelf-copy"><strong>${escapeHtml(opt.label)}</strong><p class="sub">${escapeHtml(opt.description)}</p><span class="customize-shelf-pill">Visible on Home</span></div>
+        <div class="customize-shelf-copy"><strong>${escapeHtml(opt.label)}</strong><span class="customize-shelf-pill">Visible on Home</span></div>
         <div class="customize-shelf-actions">
           <button class="danger" data-shelf-action="remove" type="button">Remove</button>
         </div>
@@ -10645,8 +11541,9 @@ function renderCustomizeSettings() {
   }
   renderCustomSideNavItems();
   renderCustomSideNavList();
+  renderCollectionsSettings();
   document.querySelectorAll('.customize-tab').forEach(btn => btn.classList.toggle('active', (btn.dataset.customizeTab || 'home') === (settings.activeTab || 'home')));
-  const tabIds = { home: 'customizeHomePanel', 'side-nav': 'customizeSideNavPanel' };
+  const tabIds = { home: 'customizeHomePanel', collections: 'customizeCollectionsPanel', 'side-nav': 'customizeSideNavPanel' };
   Object.entries(tabIds).forEach(([key, id]) => $(id)?.classList.toggle('hidden', (settings.activeTab || 'home') !== key));
 }
 function handleCustomizeTabClick(e) {
@@ -10658,7 +11555,7 @@ function handleCustomizeTabClick(e) {
 }
 function addCustomizeShelf() {
   const select = $('customizeShelfSelect');
-  const id = select?.value || HOME_SHELF_OPTIONS.find(opt => !(state.customize.homeShelves || []).includes(opt.id))?.id || '';
+  const id = select?.value || getHomeShelfOptions(state.customize).find(opt => !(state.customize.homeShelves || []).includes(opt.id))?.id || '';
   if (!id) return;
   const settings = state.customize || loadCustomizeSettings();
   if (!settings.homeShelves.includes(id)) settings.homeShelves.push(id);
@@ -10784,7 +11681,10 @@ function shelfItemsFor(id, items = state.items, limit = HOME_SHELF_MAX_ITEMS) {
   const byTitle = (a,b) => compareTextForSort(displayTitle(a), displayTitle(b));
   const byLargest = (a,b) => (Number(b.sizeBytes||b.SizeBytes||0)-Number(a.sizeBytes||a.SizeBytes||0)) || byTitle(a,b);
   let result = [];
-  if (id === 'recently-added') result = takeBestLibraryItems(all, limit, byRecent);
+  const collectionId = collectionIdFromShelfId(id);
+  if (collectionId) {
+    result = collectionItems(collectionById(collectionId), all).slice(0, limit);
+  } else if (id === 'recently-added') result = takeBestLibraryItems(all, limit, byRecent);
   else if (id === 'manuals') result = takeBestLibraryItems(all, limit, byRecent, i => i.kind === 'Manual');
   else if (id === 'strategy-guides') result = takeBestLibraryItems(all, limit, byRecent, i => i.kind === 'Strategy Guide');
   else if (id === 'magazines') result = takeBestLibraryItems(all, limit, byRecent, i => i.kind === 'Magazine');
@@ -10809,7 +11709,7 @@ function renderHomeShelves() {
   state.homeShelfSlideDirection = state.homeShelfSlideDirection || {};
   cancelCoverLoadsForRoot(host);
   host.innerHTML = shelves.map(id => {
-    const opt = HOME_SHELF_OPTIONS.find(o => o.id === id) || HOME_SHELF_OPTIONS[0];
+    const opt = homeShelfOptionFor(id, settings);
     const items = shelfItemsFor(id, state.items);
     const maxOffset = Math.max(0, items.length - HOME_SHELF_PAGE_SIZE);
     const offset = Math.min(Math.max(0, Number(state.homeShelfOffsets[id] || 0)), maxOffset);
@@ -10821,7 +11721,7 @@ function renderHomeShelves() {
     const slideClass = slideDirection > 0 ? ' slide-in-from-right' : slideDirection < 0 ? ' slide-in-from-left' : '';
     return `<section class="home-shelf" data-home-shelf="${escapeForAttribute(id)}">
       <div class="home-shelf-heading">
-        <div class="home-shelf-title-block"><h2>${escapeHtml(opt.label)}</h2><p class="sub">${escapeHtml(opt.description)}</p></div>
+        <div class="home-shelf-title-block"><h2>${escapeHtml(opt.label)}</h2></div>
         ${hasPages ? `<div class="home-shelf-controls" aria-label="${escapeForAttribute(opt.label)} shelf navigation"><span>${escapeHtml(rangeText)}</span><button class="home-shelf-arrow" data-home-shelf-nav="prev" data-home-shelf-id="${escapeForAttribute(id)}" type="button" ${offset <= 0 ? 'disabled' : ''} aria-label="Previous ${escapeForAttribute(opt.label)} items">\u2039</button><button class="home-shelf-arrow" data-home-shelf-nav="next" data-home-shelf-id="${escapeForAttribute(id)}" type="button" ${offset >= maxOffset ? 'disabled' : ''} aria-label="Next ${escapeForAttribute(opt.label)} items">\u203A</button></div>` : ''}
       </div>
       <div class="card-row home-shelf-row${slideClass}" data-home-shelf-row="${escapeForAttribute(id)}">${visible.length ? visible.map(item => cardMarkupForItem(item)).join('') : `<div class="empty-message compact">No items for this shelf yet.</div>`}</div>
@@ -17356,6 +18256,7 @@ function renderDetails(item) {
   $('editTags').value = (item.tags || []).join(', ');
   $('notesText').value = item.notes || '';
   renderDetailReadingProfilePanel(item);
+  renderDetailCollectionControls(item);
   updateMetadataExportButtonLabel(item.kind || '');
   ensureOpenLibraryMetadataUi();
   ensureIgdbMetadataUi();
@@ -17943,20 +18844,30 @@ function readerBookmarkKey() {
   return String(item.id || item.filePath || item.path || item.title || '').trim();
 }
 
+function normalizeReaderBookmarkNote(value) {
+  return String(value || '')
+    .replace(/\r\n?/g, '\n')
+    .replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f]/g, '')
+    .trim()
+    .slice(0, 1000);
+}
+
 function normalizeReaderBookmarkRecord(value = null, item = state.reader.item || {}) {
   const pagesSource = Array.isArray(value?.pages)
     ? value.pages
     : (Number(value?.page) ? [{
         page: value.page,
         displayMode: value.displayMode,
-        savedAt: value.savedAt
+        savedAt: value.savedAt,
+        note: value.note
       }] : []);
   const seen = new Set();
   const pages = pagesSource
     .map(entry => ({
       page: Math.max(1, Math.min(Number(entry?.page) || 1, readerPageCount())),
       displayMode: normalizeReaderDisplayMode(entry?.displayMode ?? state.reader.displayMode),
-      savedAt: entry?.savedAt || value?.savedAt || new Date().toISOString()
+      savedAt: entry?.savedAt || value?.savedAt || new Date().toISOString(),
+      note: normalizeReaderBookmarkNote(entry?.note)
     }))
     .filter(entry => {
       const key = String(entry.page);
@@ -18027,6 +18938,7 @@ function readerBookmarkPageDescription(page) {
 
 function setReaderBookmarkMenuVisible(visible) {
   state.reader.bookmarkMenuOpen = !!visible && !!state.reader.overlayVisible;
+  if (!state.reader.bookmarkMenuOpen) state.reader.editingBookmarkNotePage = null;
   updateReaderBookmarksUi();
 }
 
@@ -18037,6 +18949,64 @@ function toggleReaderBookmarkMenu() {
 function jumpReaderToBookmarkedPage(page) {
   setReaderBookmarkMenuVisible(false);
   jumpReaderToPage(page);
+}
+
+function setReaderBookmarkNoteEditor(page) {
+  const numeric = Math.max(1, Math.min(Number(page) || 1, readerPageCount()));
+  state.reader.editingBookmarkNotePage = numeric;
+  state.reader.bookmarkMenuOpen = true;
+  setReaderOverlayVisible(true);
+  updateReaderBookmarksUi();
+  requestAnimationFrame(() => {
+    const input = document.querySelector(`[data-bookmark-note-input="${numeric}"]`);
+    if (input) {
+      input.focus();
+      input.setSelectionRange(input.value.length, input.value.length);
+    }
+  });
+}
+
+function cancelReaderBookmarkNoteEditor() {
+  state.reader.editingBookmarkNotePage = null;
+  updateReaderBookmarksUi();
+}
+
+function saveReaderBookmarkNote(page, note) {
+  const key = readerBookmarkKey();
+  if (!key || !state.reader.item) return;
+  const numeric = Math.max(1, Math.min(Number(page) || 1, readerPageCount()));
+  const bookmarks = loadReaderBookmarks();
+  const record = normalizeReaderBookmarkRecord(bookmarks[key], state.reader.item);
+  const existing = record.pages.find(entry => Number(entry.page) === Number(numeric));
+  if (!existing) return;
+  existing.note = normalizeReaderBookmarkNote(note);
+  existing.updatedAt = new Date().toISOString();
+  record.updatedAt = existing.updatedAt;
+  record.itemId = state.reader.item.id || record.itemId || '';
+  record.title = state.reader.item.title || record.title || '';
+  bookmarks[key] = record;
+  saveReaderBookmarks(bookmarks);
+  state.reader.editingBookmarkNotePage = null;
+  updateReaderBookmarksUi();
+}
+
+function deleteReaderBookmarkNote(page) {
+  const key = readerBookmarkKey();
+  if (!key || !state.reader.item) return;
+  const numeric = Math.max(1, Math.min(Number(page) || 1, readerPageCount()));
+  const bookmarks = loadReaderBookmarks();
+  const record = normalizeReaderBookmarkRecord(bookmarks[key], state.reader.item);
+  const existing = record.pages.find(entry => Number(entry.page) === Number(numeric));
+  if (!existing) return;
+  existing.note = '';
+  existing.updatedAt = new Date().toISOString();
+  record.updatedAt = existing.updatedAt;
+  record.itemId = state.reader.item.id || record.itemId || '';
+  record.title = state.reader.item.title || record.title || '';
+  bookmarks[key] = record;
+  saveReaderBookmarks(bookmarks);
+  state.reader.editingBookmarkNotePage = null;
+  updateReaderBookmarksUi();
 }
 
 function updateReaderBookmarksUi() {
@@ -18073,9 +19043,16 @@ function updateReaderBookmarksUi() {
   list.innerHTML = pages.map(entry => {
     const page = Math.max(1, Math.min(Number(entry.page) || 1, readerPageCount()));
     const active = Number(page) === Number(sliderPage);
+    const editing = Number(state.reader.editingBookmarkNotePage) === Number(page);
     const saved = entry.savedAt ? new Date(entry.savedAt) : null;
     const savedLabel = saved && !Number.isNaN(saved.getTime()) ? saved.toLocaleDateString([], { month: 'short', day: 'numeric' }) : '';
-    return `<button class="reader-bookmark-item${active ? ' active' : ''}" type="button" data-bookmark-page="${page}"><strong>Page ${page}</strong><span>${escapeHtml(readerBookmarkPageDescription(page))}</span>${savedLabel ? `<em>${escapeHtml(savedLabel)}</em>` : ''}</button>`;
+    const note = normalizeReaderBookmarkNote(entry.note);
+    const notePreview = note ? `<div class="reader-bookmark-note-preview">${escapeHtml(note)}</div>` : `<div class="reader-bookmark-note-preview empty">No note yet</div>`;
+    const deleteNoteButton = note ? `<button type="button" class="reader-bookmark-note-delete" data-bookmark-note-delete="${page}">Delete note</button>` : '';
+    const editor = editing
+      ? `<div class="reader-bookmark-note-editor" data-bookmark-note-editor="${page}"><textarea data-bookmark-note-input="${page}" maxlength="1000" placeholder="Add a note for Page ${page}">${escapeHtml(note)}</textarea><div class="reader-bookmark-note-actions">${deleteNoteButton}<span class="reader-bookmark-note-action-spacer"></span><button type="button" class="reader-bookmark-note-save" data-bookmark-note-save="${page}">Save note</button><button type="button" class="reader-bookmark-note-cancel" data-bookmark-note-cancel="${page}">Cancel</button></div></div>`
+      : '';
+    return `<div class="reader-bookmark-row${active ? ' active' : ''}${editing ? ' editing' : ''}"><button class="reader-bookmark-item" type="button" data-bookmark-page="${page}"><span class="reader-bookmark-main"><strong>Page ${page}</strong><span>${escapeHtml(readerBookmarkPageDescription(page))}</span>${notePreview}</span>${savedLabel ? `<em>${escapeHtml(savedLabel)}</em>` : ''}</button><button class="reader-bookmark-note-button${note ? ' has-note' : ''}" type="button" data-bookmark-note-page="${page}" aria-label="${note ? 'Edit' : 'Add'} note for Page ${page}" title="${note ? 'Edit note' : 'Add note'}">${note ? 'Note' : '+ Note'}</button>${editor}</div>`;
   }).join('');
 }
 
@@ -21220,7 +22197,7 @@ function activateSettingsTab(tab = 'account') {
   if (active === 'tasks') loadTaskSettings(false);
   if (active === 'statistics') renderStatistics();
   if (active === 'info') { trimSystemUpdateHistory(); loadSystemInfo(false); loadSystemPerformance(); checkStableUpdates(false); }
-  if (active === 'events') loadSystemEvents(false);
+  if (active === 'events') { loadServerSettings(false); loadSystemEvents(false); }
   if (active === 'reading-profiles') renderReadingProfileSettings();
   if (active === 'opds') { renderOpdsSettings(); syncOpdsSettingsFromServer(false); }
   if (active === 'devices' || active === 'insights-devices') { renderDeviceHistory(); sendDeviceHeartbeat({ refresh: true }); loadDeviceHistory(false); }
@@ -21304,7 +22281,8 @@ if ($('search')) $('search').addEventListener('input', () => {
 if ($('sort')) $('sort').addEventListener('change', applyFilters);
 if ($('coverSizeSlider')) $('coverSizeSlider').addEventListener('input', e => setLibraryCoverScale(e.currentTarget.value));
 if ($('categoryStructureSelect')) $('categoryStructureSelect').addEventListener('change', e => { saveCategoryStructure(e.currentTarget.value); state.categoryFilter = ''; state.customFilter = null; state.filter = 'All Content'; state.viewMode = 'all'; setDefaultSortForCurrentLibraryView(); updateNavActive(); applyFilters(); });
-document.querySelectorAll('.nav').forEach(btn => btn.addEventListener('click', () => {
+document.querySelectorAll('.nav').forEach(btn => btn.addEventListener('click', e => {
+  if (btn.dataset.customNavId || btn.dataset.collectionNavId) return;
   showLibraryScreen();
   state.viewMode = btn.dataset.view || 'all';
   state.filter = btn.dataset.filter || 'All Content';
@@ -21317,6 +22295,23 @@ document.querySelectorAll('.nav').forEach(btn => btn.addEventListener('click', (
   scrollMainToTop();
   applyFilters();
 }));
+
+document.addEventListener('click', e => {
+  const trigger = e.target.closest?.('[data-open-collection]');
+  if (!trigger) return;
+  const id = trigger.dataset.openCollection || '';
+  if (!id) return;
+  e.preventDefault();
+  e.stopPropagation();
+  openUserCollection(id);
+});
+document.addEventListener('keydown', e => {
+  if (e.key !== 'Enter' && e.key !== ' ') return;
+  const trigger = e.target.closest?.('.user-collection-card[data-open-collection]');
+  if (!trigger) return;
+  e.preventDefault();
+  openUserCollection(trigger.dataset.openCollection || '');
+});
 document.querySelectorAll('.chip').forEach(btn => btn.addEventListener('click', () => {
   showLibraryScreen();
   state.filter = btn.dataset.kind;
@@ -21468,10 +22463,57 @@ if ($('readerMagnifierLongClick')) $('readerMagnifierLongClick').addEventListene
 if ($('readerBookmarkPage')) $('readerBookmarkPage').addEventListener('click', e => { e.preventDefault(); bookmarkCurrentReaderPage(); setReaderOverlayVisible(true); });
 if ($('readerBookmarksToggle')) $('readerBookmarksToggle').addEventListener('click', e => { e.preventDefault(); e.stopPropagation(); setReaderOverlayVisible(true); toggleReaderBookmarkMenu(); });
 if ($('readerBookmarksList')) $('readerBookmarksList').addEventListener('click', e => {
+  const noteButton = e.target.closest?.('[data-bookmark-note-page]');
+  if (noteButton) {
+    e.preventDefault();
+    e.stopPropagation();
+    setReaderBookmarkNoteEditor(noteButton.dataset.bookmarkNotePage);
+    return;
+  }
+
+  const saveButton = e.target.closest?.('[data-bookmark-note-save]');
+  if (saveButton) {
+    e.preventDefault();
+    e.stopPropagation();
+    const page = saveButton.dataset.bookmarkNoteSave;
+    const input = document.querySelector(`[data-bookmark-note-input="${page}"]`);
+    saveReaderBookmarkNote(page, input?.value || '');
+    return;
+  }
+
+  const deleteButton = e.target.closest?.('[data-bookmark-note-delete]');
+  if (deleteButton) {
+    e.preventDefault();
+    e.stopPropagation();
+    deleteReaderBookmarkNote(deleteButton.dataset.bookmarkNoteDelete);
+    return;
+  }
+
+  const cancelButton = e.target.closest?.('[data-bookmark-note-cancel]');
+  if (cancelButton) {
+    e.preventDefault();
+    e.stopPropagation();
+    cancelReaderBookmarkNoteEditor();
+    return;
+  }
+
   const button = e.target.closest?.('[data-bookmark-page]');
   if (!button) return;
   e.preventDefault();
   jumpReaderToBookmarkedPage(button.dataset.bookmarkPage);
+});
+if ($('readerBookmarksList')) $('readerBookmarksList').addEventListener('keydown', e => {
+  if (!e.target?.matches?.('[data-bookmark-note-input]')) return;
+  e.stopPropagation();
+  if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') {
+    e.preventDefault();
+    const page = e.target.dataset.bookmarkNoteInput;
+    saveReaderBookmarkNote(page, e.target.value || '');
+  }
+  if (e.key === 'Escape') {
+    e.preventDefault();
+    cancelReaderBookmarkNoteEditor();
+  }
 });
 document.addEventListener('click', e => {
   if (!state.reader?.bookmarkMenuOpen) return;
@@ -21630,6 +22672,7 @@ if ($('detailReadingProfileManagePresets')) $('detailReadingProfileManagePresets
 if ($('taskMonitorBtn') && $('taskMonitorBtn').dataset.guidevaultTopbarBound !== '1') $('taskMonitorBtn').addEventListener('click', e => { e.preventDefault(); setTaskPanelVisible(!state.taskPanelVisible); pollTasks(false); });
 if ($('updateNotifyBtn')) $('updateNotifyBtn').addEventListener('click', e => { e.preventDefault(); showSettingsScreen('info'); setSystemInfoStatus('A stable container image update is available. Pull the new image from your Docker host when ready.', 'success'); });
 if ($('systemCheckUpdates')) $('systemCheckUpdates').addEventListener('click', async e => { e.preventDefault(); setSystemInfoStatus('Checking stable update feed...', 'info'); if ('Notification' in window && Notification.permission === 'default') { try { await Notification.requestPermission(); } catch {} } await checkStableUpdates(true); setSystemInfoStatus(state.updateCheck?.message || 'Update check complete.', state.updateCheck?.updateAvailable ? 'success' : ''); });
+if ($('systemUpdateHistoryToggle')) $('systemUpdateHistoryToggle').addEventListener('click', e => { e.preventDefault(); toggleSystemUpdateHistory(); });
 if ($('systemTrimMemory')) $('systemTrimMemory').addEventListener('click', e => { e.preventDefault(); trimGuidevaultMemory(); });
 document.addEventListener('click', e => {
   const clear = e.target.closest?.('#taskClearBtn');
@@ -21885,12 +22928,26 @@ if ($('opdsEnabledToggle')) $('opdsEnabledToggle').addEventListener('change', as
   try { await saveOpdsServerSettings({ enabled: state.opds.enabled }); setOpdsStatus(state.opds.enabled ? 'OPDS enabled.' : 'OPDS disabled.', 'success'); }
   catch (err) { console.error(err); setOpdsStatus('Unable to update OPDS enabled state on the backend.', 'error'); renderOpdsSettings(); }
 });
+if ($('collectionCreateButton')) $('collectionCreateButton').addEventListener('click', e => { e.preventDefault(); createCollection(); });
+if ($('collectionManageSelect')) $('collectionManageSelect').addEventListener('change', renderCollectionEditPanel);
+if ($('collectionsList')) $('collectionsList').addEventListener('click', handleCollectionListClick);
+if ($('collectionEditPanel')) $('collectionEditPanel').addEventListener('click', handleCollectionEditClick);
+if ($('detailAddCollectionBtn')) $('detailAddCollectionBtn').addEventListener('click', e => { e.preventDefault(); addSelectedDetailItemToCollection(); });
 if ($('customSideNavAdd')) $('customSideNavAdd').addEventListener('click', e => { e.preventDefault(); addCustomSideNavItem(); });
 if ($('customSideNavReset')) $('customSideNavReset').addEventListener('click', e => { e.preventDefault(); resetCustomSideNavItems(); });
 if ($('customSideNavList')) $('customSideNavList').addEventListener('click', handleCustomSideNavListAction);
 if ($('customSideNavItems')) $('customSideNavItems').addEventListener('click', e => {
+  const collectionBtn = e.target.closest?.('[data-collection-nav-id]');
+  if (collectionBtn) {
+    e.preventDefault();
+    e.stopPropagation();
+    openUserCollection(collectionBtn.dataset.collectionNavId || '');
+    return;
+  }
   const btn = e.target.closest?.('[data-custom-nav-id]');
   if (!btn) return;
+  e.preventDefault();
+  e.stopPropagation();
   applyCustomSideNavItem(btn.dataset.customNavId || '');
 });
 if ($('serverSaveSettings')) $('serverSaveSettings').addEventListener('click', e => { e.preventDefault(); saveServerSettings('general'); });
@@ -22965,6 +24022,23 @@ if ($('homeAssistantCopyCommandToken')) $('homeAssistantCopyCommandToken').addEv
 if ($('homeAssistantRegenerateCommandToken')) $('homeAssistantRegenerateCommandToken').addEventListener('click', e => { e.preventDefault(); regenerateHomeAssistantCommandToken(); });
 if ($('serverResetDefaults')) $('serverResetDefaults').addEventListener('click', e => { e.preventDefault(); resetServerDefaults(); });
 if ($('serverCreateBackup')) $('serverCreateBackup').addEventListener('click', e => { e.preventDefault(); createServerBackup(); });
+if ($('serverRefreshBackups')) $('serverRefreshBackups').addEventListener('click', e => { e.preventDefault(); loadServerBackups(true); });
+if ($('serverPreviewSelectedBackup')) $('serverPreviewSelectedBackup').addEventListener('click', e => { e.preventDefault(); previewSelectedServerBackup(); });
+if ($('serverPreviewUploadedBackup')) $('serverPreviewUploadedBackup').addEventListener('click', e => { e.preventDefault(); previewUploadedServerBackup(); });
+if ($('serverRestoreBackup')) $('serverRestoreBackup').addEventListener('click', e => { e.preventDefault(); restorePreviewedServerBackup(); });
+const serverBackupList = $('serverBackupList');
+if (serverBackupList) serverBackupList.addEventListener('click', e => {
+  const btn = e.target.closest?.('[data-backup-select]');
+  if (!btn) return;
+  e.preventDefault();
+  state.serverBackupSelected = btn.dataset.backupSelect || '';
+  state.serverBackupPreviewed = null;
+  state.serverBackupRestoreMode = 'selected';
+  if ($('serverRestoreBackup')) $('serverRestoreBackup').disabled = true;
+  renderServerBackups(state.serverBackups || []);
+  previewSelectedServerBackup();
+});
+
 if ($('mediaSaveSettings')) $('mediaSaveSettings').addEventListener('click', e => { e.preventDefault(); saveServerSettings('media'); });
 if ($('emailSaveSettings')) $('emailSaveSettings').addEventListener('click', e => { e.preventDefault(); saveEmailSettings(); });
 if ($('emailTestButton')) $('emailTestButton').addEventListener('click', e => { e.preventDefault(); testEmailSettings(); });
@@ -22975,15 +24049,18 @@ if ($('emailTemplateUploadButton')) $('emailTemplateUploadButton').addEventListe
 if ($('emailTemplateFile')) $('emailTemplateFile').addEventListener('change', e => uploadEmailTemplateFile(e.currentTarget.files?.[0]));
 if ($('emailHistoryRefresh')) $('emailHistoryRefresh').addEventListener('click', e => { e.preventDefault(); loadEmailHistory(true); });
 if ($('systemEventsRefresh')) $('systemEventsRefresh').addEventListener('click', e => { e.preventDefault(); loadSystemEvents(true); });
+if ($('eventsSaveLoggingLevel')) $('eventsSaveLoggingLevel').addEventListener('click', e => { e.preventDefault(); saveServerSettings('events'); });
 if ($('usersRefresh')) $('usersRefresh').addEventListener('click', e => { e.preventDefault(); scheduleUsersSettingsLoad(true, 0); });
 if ($('usersInviteButton')) $('usersInviteButton').addEventListener('click', e => { e.preventDefault(); inviteUser(); });
 if ($('tasksSaveSettings')) $('tasksSaveSettings').addEventListener('click', e => { e.preventDefault(); saveTaskSettings(); });
+if ($('tasksRefreshSchedule')) $('tasksRefreshSchedule').addEventListener('click', e => { e.preventDefault(); loadTaskScheduleStatus(true); });
+bindTaskScheduleControls();
 if ($('taskRunRescan')) $('taskRunRescan').addEventListener('click', async e => { e.preventDefault(); setTasksSettingsStatus('Rescan queued.', 'info'); await rescanLibrary(); });
 if ($('taskRunEnrich')) $('taskRunEnrich').addEventListener('click', async e => { e.preventDefault(); setTasksSettingsStatus('Fast metadata enrichment queued.', 'info'); await enrichLibraryMetadata(); });
 if ($('taskRunComicInfo')) $('taskRunComicInfo').addEventListener('click', async e => { e.preventDefault(); setTasksSettingsStatus('Legacy ComicInfo import queued.', 'info'); await importLegacyComicInfoMetadata(); });
 if ($('taskRunCleanup')) $('taskRunCleanup').addEventListener('click', async e => { e.preventDefault(); setTasksSettingsStatus('Cleanup queued.', 'info'); await cleanupLibrary(); });
-if ($('taskRunBackup')) $('taskRunBackup').addEventListener('click', e => { e.preventDefault(); createServerBackup(); });
-if ($('taskRunTrim')) $('taskRunTrim').addEventListener('click', e => { e.preventDefault(); trimGuidevaultMemory(); setTasksSettingsStatus('Reading cache clear requested.', 'info'); });
+if ($('taskRunBackup')) $('taskRunBackup').addEventListener('click', e => { e.preventDefault(); runScheduledTaskNow('guidevaultBackup'); });
+if ($('taskRunTrim')) $('taskRunTrim').addEventListener('click', e => { e.preventDefault(); runScheduledTaskNow('cacheCleanup'); });
 
 if ($('metadataManagerSearch')) $('metadataManagerSearch').addEventListener('input', e => metadataManagerUpdateFilter('search', e.currentTarget.value));
 if ($('metadataManagerKind')) $('metadataManagerKind').addEventListener('change', e => { metadataManagerSetSelectedKinds(e.currentTarget.value ? [e.currentTarget.value] : METADATA_MANAGER_KIND_FILTERS); metadataManagerUpdateFilter('kindFilters', state.metadataManager.kindFilters); });
@@ -23116,6 +24193,4 @@ loadServerSettings(false).then(() => {
   startHomeAssistantCommandPolling();
   scheduleHomeAssistantStatusPublish('client_connected', 'Guidevault browser client connected.');
 }).catch(() => startHomeAssistantCommandPolling());
-
-
 

@@ -18,7 +18,7 @@ using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Configuration;
 
 var builder = WebApplication.CreateBuilder(args);
-const string GuidevaultVersion = "1.1.1";
+const string GuidevaultVersion = "1.1.2";
 var app = builder.Build();
 var metadataJsonOptions = new JsonSerializerOptions(JsonSerializerDefaults.Web) { PropertyNameCaseInsensitive = true };
 var options = app.Configuration.GetSection("Guidevault").Get<GuidevaultOptions>() ?? new GuidevaultOptions();
@@ -88,6 +88,44 @@ var fileConversionJobs = new FileConversionJobStore();
 var cache = new LibraryCache(loadedSettings.Libraries, metadataStore, fileIdentityStore, indexCachePath, taskMonitor);
 var updateChecker = new StableUpdateChecker(options.Updates, GuidevaultVersion);
 var categoryCoverPrewarmGate = new SemaphoreSlim(1, 1);
+var scheduledTaskRunner = new GuidevaultScheduledTaskRunner(
+    taskSettingsStore,
+    taskMonitor,
+    app.Logger,
+    new GuidevaultScheduledTaskActions(
+        LibraryScan: async (taskId, cancellationToken) =>
+        {
+            taskMonitor.Update(taskId, "Starting scheduled library scan...", 2);
+            var items = await cache.RescanAsync(taskId, "scan");
+            return $"Scheduled library scan complete: {items.Count} item(s) indexed.";
+        },
+        MetadataCheck: async (taskId, cancellationToken) =>
+        {
+            taskMonitor.Update(taskId, "Starting scheduled metadata check...", 2);
+            var items = await cache.RescanAsync(taskId, "metadata");
+            return $"Scheduled metadata check complete: {items.Count} item(s) reconciled.";
+        },
+        LibraryUpkeep: async (taskId, cancellationToken) =>
+        {
+            taskMonitor.Update(taskId, "Starting scheduled library upkeep...", 2);
+            var items = await cache.RescanAsync(taskId, "scan");
+            return $"Scheduled library upkeep complete: {items.Count} item(s) indexed.";
+        },
+        CacheCleanup: (taskId, cancellationToken) =>
+        {
+            taskMonitor.Update(taskId, "Clearing archive and cover caches...", 45);
+            ArchiveReader.ClearMemoryCaches();
+            GC.Collect(GC.MaxGeneration, GCCollectionMode.Aggressive, blocking: true, compacting: true);
+            GC.WaitForPendingFinalizers();
+            GC.Collect(GC.MaxGeneration, GCCollectionMode.Aggressive, blocking: true, compacting: true);
+            return Task.FromResult("Scheduled cache cleanup complete.");
+        },
+        GuidevaultBackup: (taskId, cancellationToken) =>
+        {
+            taskMonitor.Update(taskId, "Creating scheduled GuideVault backup...", 35);
+            var backup = serverSettingsStore.CreateLibraryBackup(GuidevaultBackupSourceFiles());
+            return Task.FromResult($"Scheduled backup created: {backup.FileName} ({backup.SizeBytes:n0} bytes).");
+        }));
 var homeAssistantConnector = new GuidevaultHomeAssistantConnector(serverSettingsStore, app.Logger, GetReaderBackgroundCatalog);
 
 
@@ -353,6 +391,14 @@ void RecordSystemEvent(string category, string title, string message = "", strin
     }
 }
 
+
+string[] GuidevaultBackupSourceFiles() => Directory.EnumerateFiles(Path.Combine(dataRoot, "config"), "*.json", SearchOption.TopDirectoryOnly)
+    .Concat(new[] { indexCachePath })
+    .Concat(Directory.Exists(userReaderBackgroundsPath) ? Directory.EnumerateFiles(userReaderBackgroundsPath, "*.*", SearchOption.TopDirectoryOnly) : Enumerable.Empty<string>())
+    .Where(File.Exists)
+    .Distinct(StringComparer.OrdinalIgnoreCase)
+    .ToArray();
+
 RecordSystemEvent("System", "Guidevault started", $"Guidevault {GuidevaultVersion} server initialized.", "server");
 // Do not create configured user library folders here. Guidevault scans existing folders in place.
 // Creating missing folders can hide typo/path mistakes and make libraries appear empty.
@@ -363,7 +409,7 @@ app.MapGet("/favicon.ico", () => Results.Redirect("/assets/favicon.ico", permane
 app.MapGet("/api/health", () => Results.Ok(new
 {
     app = "Guidevault",
-    version = GuidevaultVersion,
+    version = "1.1.2",
     contentRoot,
     dataRoot,
     libraryPaths = cache.LibraryPaths,
@@ -468,7 +514,7 @@ app.MapGet("/api/integrations/launchbox/status", () =>
     return Results.Ok(new
     {
         enabled = true,
-        version = GuidevaultVersion,
+        version = "1.1.2",
         configured = snapshot.Games.Count > 0,
         connectedSinceBoot = connection.ConnectedSinceBoot,
         connectedSinceBootAt = connection.ConnectedSinceBootAt,
@@ -979,24 +1025,71 @@ app.MapPost("/api/server/backup", () =>
 {
     try
     {
-        var backup = serverSettingsStore.CreateLibraryBackup(new[]
-        {
-            configPath,
-            metadataPath,
-            opdsSettingsPath,
-            deviceHistoryPath,
-            systemInfoPath,
-            emailSettingsPath,
-            emailHistoryPath,
-            usersSettingsPath,
-            taskSettingsPath,
-            indexCachePath
-        });
+        var backup = serverSettingsStore.CreateLibraryBackup(GuidevaultBackupSourceFiles());
+        RecordSystemEvent("System", "GuideVault backup created", $"Backup package {backup.FileName} was created.", "backup");
         return Results.Ok(backup);
     }
     catch (Exception ex)
     {
         return Results.BadRequest(new { error = $"Backup failed: {ex.Message}" });
+    }
+});
+
+app.MapGet("/api/server/backups", () => Results.Ok(serverSettingsStore.ListLibraryBackups()));
+
+app.MapGet("/api/server/backups/{fileName}/preview", (string fileName) =>
+{
+    try
+    {
+        var preview = serverSettingsStore.PreviewLibraryBackup(fileName);
+        return Results.Ok(preview);
+    }
+    catch (Exception ex)
+    {
+        return Results.BadRequest(new { error = $"Preview failed: {ex.Message}" });
+    }
+});
+
+app.MapPost("/api/server/backups/preview-upload", async (HttpRequest request) =>
+{
+    try
+    {
+        var form = await request.ReadFormAsync();
+        var file = form.Files.GetFile("backup");
+        if (file is null || file.Length == 0) return Results.BadRequest(new { error = "Choose a GuideVault backup ZIP first." });
+        await using var stream = file.OpenReadStream();
+        var preview = GuidevaultServerSettingsStore.PreviewLibraryBackupStream(stream, file.FileName, file.Length);
+        return Results.Ok(preview);
+    }
+    catch (Exception ex)
+    {
+        return Results.BadRequest(new { error = $"Preview failed: {ex.Message}" });
+    }
+});
+
+app.MapPost("/api/server/backups/restore", async (HttpRequest request) =>
+{
+    try
+    {
+        var form = await request.ReadFormAsync();
+        var fileName = form["fileName"].ToString();
+        var uploaded = form.Files.GetFile("backup");
+        GuidevaultRestoreResult result;
+        if (uploaded is not null && uploaded.Length > 0)
+        {
+            await using var stream = uploaded.OpenReadStream();
+            result = serverSettingsStore.RestoreLibraryBackupStream(stream, GuidevaultBackupSourceFiles());
+        }
+        else
+        {
+            result = serverSettingsStore.RestoreLibraryBackup(fileName, GuidevaultBackupSourceFiles());
+        }
+        RecordSystemEvent("System", "GuideVault backup restored", $"Restored {result.RestoredEntries} entr{(result.RestoredEntries == 1 ? "y" : "ies")} from backup.", "backup");
+        return Results.Ok(result);
+    }
+    catch (Exception ex)
+    {
+        return Results.BadRequest(new { error = $"Restore failed: {ex.Message}" });
     }
 });
 
@@ -1129,11 +1222,19 @@ app.MapPost("/api/users/invite", (HttpRequest request, GuidevaultUserInviteReque
 });
 
 app.MapGet("/api/tasks/settings", () => Results.Ok(taskSettingsStore.GetSettings()));
+app.MapGet("/api/tasks/schedule", () => Results.Ok(scheduledTaskRunner.GetSnapshot()));
 
 app.MapPut("/api/tasks/settings", (GuidevaultTaskScheduleSettings payload) =>
 {
     var saved = taskSettingsStore.Update(payload ?? new GuidevaultTaskScheduleSettings());
+    scheduledTaskRunner.RefreshSchedules();
     return Results.Ok(saved);
+});
+
+app.MapPost("/api/tasks/schedule/run/{key}", (string key) =>
+{
+    var result = scheduledTaskRunner.RunNow(key);
+    return result.Success ? Results.Ok(result) : Results.BadRequest(result);
 });
 
 app.MapGet("/api/customize/settings", () => Results.Ok(customizeSettingsStore.GetSettings()));
@@ -3105,6 +3206,9 @@ app.MapGet("/opds/items/{id}/cover", async (HttpRequest request, string id) =>
 });
 
 app.MapFallbackToFile("index.html");
+
+app.Lifetime.ApplicationStarted.Register(() => scheduledTaskRunner.Start());
+app.Lifetime.ApplicationStopping.Register(scheduledTaskRunner.Dispose);
 app.Run();
 
 
@@ -5320,29 +5424,160 @@ public sealed class GuidevaultServerSettingsStore
             using (var stream = File.Open(fullPath, FileMode.CreateNew, FileAccess.Write, FileShare.None))
             using (var zip = new ZipArchive(stream, ZipArchiveMode.Create))
             {
+                var files = sourceFiles.Where(File.Exists).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
                 var manifest = JsonSerializer.Serialize(new
                 {
-                    app = "Guidevault",
+                    app = "GuideVault",
+                    version = "1.1.2",
                     createdAt = DateTimeOffset.UtcNow,
-                    note = "Library configuration and index backup. Source media files are not copied."
+                    sourceFileCount = files.Count,
+                    includes = new[] { "config", "metadata", "bookmarks", "reader preferences", "LaunchBox matches", "task schedules", "library index", "uploaded reader backgrounds" },
+                    note = "GuideVault app data backup. Source manuals, guides, magazines, and generated caches are not copied."
                 }, JsonOptions);
                 var manifestEntry = zip.CreateEntry("manifest.json", CompressionLevel.Optimal);
                 using (var writer = new StreamWriter(manifestEntry.Open(), Encoding.UTF8)) writer.Write(manifest);
 
-                foreach (var file in sourceFiles.Where(File.Exists).Distinct(StringComparer.OrdinalIgnoreCase))
+                foreach (var file in files)
                 {
-                    var name = Path.GetFileName(file);
-                    var folder = Path.GetFileName(Path.GetDirectoryName(file) ?? string.Empty);
-                    var entryName = string.Equals(name, "library-index.json", StringComparison.OrdinalIgnoreCase)
-                        ? "cache/library-index.json"
-                        : $"config/{name}";
-                    if (string.Equals(folder, "cache", StringComparison.OrdinalIgnoreCase)) entryName = $"cache/{name}";
+                    var entryName = BuildBackupEntryName(file);
+                    if (string.IsNullOrWhiteSpace(entryName)) continue;
                     zip.CreateEntryFromFile(file, entryName, CompressionLevel.Optimal);
                 }
             }
             var info = new FileInfo(fullPath);
             return new GuidevaultBackupResult(fileName, info.FullName, info.Length, DateTimeOffset.UtcNow, _settings.BackupDirectory);
         }
+    }
+
+    public IReadOnlyList<GuidevaultBackupFileInfo> ListLibraryBackups()
+    {
+        lock (_gate)
+        {
+            var backupDir = ResolveSettingPath(_contentRoot, _settings.BackupDirectory);
+            if (!Directory.Exists(backupDir)) return Array.Empty<GuidevaultBackupFileInfo>();
+            return Directory.EnumerateFiles(backupDir, "*.zip", SearchOption.TopDirectoryOnly)
+                .Select(file => new FileInfo(file))
+                .OrderByDescending(info => info.LastWriteTimeUtc)
+                .Take(50)
+                .Select(info => new GuidevaultBackupFileInfo(info.Name, info.Length, new DateTimeOffset(info.LastWriteTimeUtc, TimeSpan.Zero), _settings.BackupDirectory))
+                .ToList();
+        }
+    }
+
+    public GuidevaultBackupPreview PreviewLibraryBackup(string fileName)
+    {
+        var path = ResolveBackupFilePath(fileName);
+        using var stream = File.OpenRead(path);
+        return PreviewLibraryBackupStream(stream, Path.GetFileName(path), new FileInfo(path).Length);
+    }
+
+    public static GuidevaultBackupPreview PreviewLibraryBackupStream(Stream stream, string fileName, long sizeBytes)
+    {
+        using var zip = new ZipArchive(stream, ZipArchiveMode.Read, leaveOpen: false);
+        var entries = zip.Entries
+            .Where(e => !string.IsNullOrWhiteSpace(e.Name))
+            .Select(e => e.FullName.Replace('\\', '/'))
+            .Where(IsRestorableBackupEntry)
+            .ToList();
+        var manifest = ReadManifest(zip);
+        return new GuidevaultBackupPreview(
+            fileName,
+            sizeBytes,
+            manifest,
+            entries.Count(e => e.StartsWith("config/", StringComparison.OrdinalIgnoreCase)),
+            entries.Count(e => e.StartsWith("cache/", StringComparison.OrdinalIgnoreCase)),
+            entries.Count(e => e.StartsWith("reader/backgrounds/", StringComparison.OrdinalIgnoreCase)),
+            entries);
+    }
+
+    public GuidevaultRestoreResult RestoreLibraryBackup(string fileName, IEnumerable<string> safetySourceFiles)
+    {
+        var path = ResolveBackupFilePath(fileName);
+        using var stream = File.OpenRead(path);
+        return RestoreLibraryBackupStream(stream, safetySourceFiles);
+    }
+
+    public GuidevaultRestoreResult RestoreLibraryBackupStream(Stream stream, IEnumerable<string> safetySourceFiles)
+    {
+        lock (_gate)
+        {
+            var safetyBackup = CreateLibraryBackup(safetySourceFiles);
+            var restored = 0;
+            using var zip = new ZipArchive(stream, ZipArchiveMode.Read, leaveOpen: false);
+            foreach (var entry in zip.Entries.Where(e => !string.IsNullOrWhiteSpace(e.Name)))
+            {
+                var entryName = entry.FullName.Replace('\\', '/');
+                if (!IsRestorableBackupEntry(entryName)) continue;
+                var destination = ResolveRestoreDestination(entryName);
+                if (string.IsNullOrWhiteSpace(destination)) continue;
+                Directory.CreateDirectory(Path.GetDirectoryName(destination)!);
+                entry.ExtractToFile(destination, overwrite: true);
+                restored++;
+            }
+            _settings = Normalize(Load());
+            return new GuidevaultRestoreResult(restored, safetyBackup.FileName, DateTimeOffset.UtcNow);
+        }
+    }
+
+    private string ResolveBackupFilePath(string fileName)
+    {
+        var safeName = Path.GetFileName(fileName ?? string.Empty);
+        if (string.IsNullOrWhiteSpace(safeName)) throw new InvalidOperationException("Backup file name is required.");
+        var backupDir = ResolveSettingPath(_contentRoot, _settings.BackupDirectory);
+        var fullPath = Path.GetFullPath(Path.Combine(backupDir, safeName));
+        if (!fullPath.StartsWith(Path.GetFullPath(backupDir), StringComparison.OrdinalIgnoreCase) || !File.Exists(fullPath))
+            throw new FileNotFoundException("Backup file was not found.", safeName);
+        return fullPath;
+    }
+
+    private string ResolveRestoreDestination(string entryName)
+    {
+        var safe = entryName.Replace('\\', '/').TrimStart('/');
+        var configDir = Path.GetDirectoryName(_path) ?? Path.Combine(_contentRoot, "data", "config");
+        var dataRoot = Directory.GetParent(configDir)?.FullName ?? Path.Combine(_contentRoot, "data");
+        if (safe.StartsWith("config/", StringComparison.OrdinalIgnoreCase))
+            return Path.Combine(dataRoot, "config", Path.GetFileName(safe));
+        if (string.Equals(safe, "cache/library-index.json", StringComparison.OrdinalIgnoreCase))
+            return Path.Combine(dataRoot, "cache", "library-index.json");
+        if (safe.StartsWith("reader/backgrounds/", StringComparison.OrdinalIgnoreCase))
+            return Path.Combine(dataRoot, "reader", "backgrounds", Path.GetFileName(safe));
+        return string.Empty;
+    }
+
+    private static string BuildBackupEntryName(string file)
+    {
+        var normalized = file.Replace('\\', '/');
+        var name = Path.GetFileName(file);
+        if (string.Equals(name, "library-index.json", StringComparison.OrdinalIgnoreCase)) return "cache/library-index.json";
+        if (normalized.Contains("/reader/backgrounds/", StringComparison.OrdinalIgnoreCase)) return $"reader/backgrounds/{name}";
+        if (normalized.Contains("/config/", StringComparison.OrdinalIgnoreCase)) return $"config/{name}";
+        return $"config/{name}";
+    }
+
+    private static bool IsRestorableBackupEntry(string entryName)
+    {
+        var safe = entryName.Replace('\\', '/').TrimStart('/');
+        if (safe.Contains("..", StringComparison.Ordinal)) return false;
+        if (safe.StartsWith("config/", StringComparison.OrdinalIgnoreCase) && safe.EndsWith(".json", StringComparison.OrdinalIgnoreCase)) return true;
+        if (string.Equals(safe, "cache/library-index.json", StringComparison.OrdinalIgnoreCase)) return true;
+        if (safe.StartsWith("reader/backgrounds/", StringComparison.OrdinalIgnoreCase))
+        {
+            var ext = Path.GetExtension(safe);
+            return new[] { ".png", ".jpg", ".jpeg", ".webp", ".gif", ".bmp" }.Contains(ext, StringComparer.OrdinalIgnoreCase);
+        }
+        return false;
+    }
+
+    private static string ReadManifest(ZipArchive zip)
+    {
+        try
+        {
+            var entry = zip.GetEntry("manifest.json");
+            if (entry is null) return string.Empty;
+            using var reader = new StreamReader(entry.Open(), Encoding.UTF8);
+            return reader.ReadToEnd();
+        }
+        catch { return string.Empty; }
     }
 
     private GuidevaultServerSettings Load()
@@ -5477,6 +5712,9 @@ public sealed class GuidevaultServerSettings
 }
 
 public sealed record GuidevaultBackupResult(string FileName, string Path, long SizeBytes, DateTimeOffset CreatedAt, string BackupDirectory);
+public sealed record GuidevaultBackupFileInfo(string FileName, long SizeBytes, DateTimeOffset CreatedAt, string BackupDirectory);
+public sealed record GuidevaultBackupPreview(string FileName, long SizeBytes, string Manifest, int ConfigEntries, int CacheEntries, int UploadedBackgrounds, IReadOnlyList<string> Entries);
+public sealed record GuidevaultRestoreResult(int RestoredEntries, string SafetyBackupFileName, DateTimeOffset RestoredAt);
 
 
 
@@ -9717,6 +9955,7 @@ public sealed class GuidevaultUserInviteRequest
 
 public sealed record GuidevaultUserInviteResult(GuidevaultUserRecord User);
 
+
 public sealed class GuidevaultTaskSettingsStore
 {
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web) { WriteIndented = true };
@@ -9762,28 +10001,412 @@ public sealed class GuidevaultTaskSettingsStore
     private static GuidevaultTaskScheduleSettings Normalize(GuidevaultTaskScheduleSettings value)
     {
         value ??= new GuidevaultTaskScheduleSettings();
-        value.LibraryScan = NormalizeSchedule(value.LibraryScan, "Daily");
-        value.GuidevaultBackup = NormalizeSchedule(value.GuidevaultBackup, "Daily");
-        value.Cleanup = NormalizeSchedule(value.Cleanup, "Daily");
-        value.ReadingListSync = NormalizeSchedule(value.ReadingListSync, "Custom (0 4 * * *)");
+        value.LibraryScan = GuidevaultSchedulePreset.NormalizeSchedule(value.LibraryScan, "daily-2am");
+        value.MetadataCheck = GuidevaultSchedulePreset.NormalizeSchedule(value.MetadataCheck, "daily-3am");
+        value.LibraryUpkeep = GuidevaultSchedulePreset.NormalizeSchedule(value.LibraryUpkeep, string.IsNullOrWhiteSpace(value.Cleanup) ? "weekly-sunday-3am" : value.Cleanup);
+        value.CacheCleanup = GuidevaultSchedulePreset.NormalizeSchedule(value.CacheCleanup, "hourly");
+        value.GuidevaultBackup = GuidevaultSchedulePreset.NormalizeSchedule(value.GuidevaultBackup, "weekly-sunday-4am");
+        value.Cleanup = value.LibraryUpkeep;
+        value.ReadingListSync = GuidevaultSchedulePreset.NormalizeSchedule(value.ReadingListSync, "disabled");
         return value;
     }
     private static GuidevaultTaskScheduleSettings Clone(GuidevaultTaskScheduleSettings value) => new()
     {
         LibraryScan = value.LibraryScan,
+        MetadataCheck = value.MetadataCheck,
+        LibraryUpkeep = value.LibraryUpkeep,
+        CacheCleanup = value.CacheCleanup,
         GuidevaultBackup = value.GuidevaultBackup,
         Cleanup = value.Cleanup,
         ReadingListSync = value.ReadingListSync
     };
-    private static string NormalizeSchedule(string? value, string fallback) => string.IsNullOrWhiteSpace(value) ? fallback : value.Trim();
 }
 
 public sealed class GuidevaultTaskScheduleSettings
 {
-    public string LibraryScan { get; set; } = "Daily";
-    public string GuidevaultBackup { get; set; } = "Daily";
-    public string Cleanup { get; set; } = "Daily";
-    public string ReadingListSync { get; set; } = "Custom (0 4 * * *)";
+    public string LibraryScan { get; set; } = "daily-2am";
+    public string MetadataCheck { get; set; } = "daily-3am";
+    public string LibraryUpkeep { get; set; } = "weekly-sunday-3am";
+    public string CacheCleanup { get; set; } = "hourly";
+    public string GuidevaultBackup { get; set; } = "weekly-sunday-4am";
+
+    // Legacy schedule fields retained for older settings files and frontend callers.
+    public string Cleanup { get; set; } = "weekly-sunday-3am";
+    public string ReadingListSync { get; set; } = "disabled";
+}
+
+public sealed record GuidevaultScheduledTaskActions(
+    Func<string, CancellationToken, Task<string>> LibraryScan,
+    Func<string, CancellationToken, Task<string>> MetadataCheck,
+    Func<string, CancellationToken, Task<string>> LibraryUpkeep,
+    Func<string, CancellationToken, Task<string>> CacheCleanup,
+    Func<string, CancellationToken, Task<string>> GuidevaultBackup);
+
+public sealed record GuidevaultScheduledTaskRunResult(bool Success, string Key, string Message, string? TaskId = null);
+
+public sealed record GuidevaultScheduledTaskSnapshot(DateTimeOffset CapturedAt, GuidevaultScheduledTaskEntry[] Entries);
+
+public sealed record GuidevaultScheduledTaskEntry(
+    string Key,
+    string Title,
+    string Description,
+    string Kind,
+    string Schedule,
+    string Label,
+    string Cron,
+    bool Enabled,
+    bool Running,
+    DateTimeOffset? NextRunAt,
+    DateTimeOffset? LastRunAt,
+    string LastStatus,
+    string LastMessage);
+
+public sealed record GuidevaultTaskDefinition(
+    string Key,
+    string Title,
+    string Description,
+    string Kind,
+    string Schedule,
+    Func<string, CancellationToken, Task<string>> RunAsync);
+
+public sealed class GuidevaultScheduledTaskRunner : IDisposable
+{
+    private readonly GuidevaultTaskSettingsStore _settingsStore;
+    private readonly TaskMonitor _taskMonitor;
+    private readonly ILogger _logger;
+    private readonly GuidevaultScheduledTaskActions _actions;
+    private readonly object _gate = new();
+    private readonly Dictionary<string, GuidevaultScheduledTaskRuntimeState> _states = new(StringComparer.OrdinalIgnoreCase);
+    private Timer? _timer;
+    private int _tickRunning;
+    private bool _started;
+
+    public GuidevaultScheduledTaskRunner(GuidevaultTaskSettingsStore settingsStore, TaskMonitor taskMonitor, ILogger logger, GuidevaultScheduledTaskActions actions)
+    {
+        _settingsStore = settingsStore;
+        _taskMonitor = taskMonitor;
+        _logger = logger;
+        _actions = actions;
+    }
+
+    public void Start()
+    {
+        lock (_gate)
+        {
+            if (_started) return;
+            _started = true;
+            RefreshSchedules(DateTimeOffset.UtcNow);
+            _timer = new Timer(_ => _ = TickAsync(), null, TimeSpan.FromSeconds(20), TimeSpan.FromMinutes(1));
+        }
+    }
+
+    public void RefreshSchedules() => RefreshSchedules(DateTimeOffset.UtcNow);
+
+    public GuidevaultScheduledTaskSnapshot GetSnapshot()
+    {
+        var now = DateTimeOffset.UtcNow;
+        var definitions = BuildDefinitions(_settingsStore.GetSettings());
+        lock (_gate)
+        {
+            RefreshSchedulesLocked(definitions, now);
+            return new GuidevaultScheduledTaskSnapshot(now, definitions.Select(ToEntryLocked).ToArray());
+        }
+    }
+
+    public GuidevaultScheduledTaskRunResult RunNow(string key)
+    {
+        var definition = BuildDefinitions(_settingsStore.GetSettings()).FirstOrDefault(d => d.Key.Equals(key ?? string.Empty, StringComparison.OrdinalIgnoreCase));
+        if (definition is null) return new(false, key ?? string.Empty, "Unknown scheduled task.");
+        // Manual runs are allowed even when the recurring schedule is disabled.
+        string taskId;
+        lock (_gate)
+        {
+            var state = GetStateLocked(definition.Key);
+            if (state.Running) return new(false, definition.Key, "That scheduled task is already running.", state.TaskId);
+            var task = _taskMonitor.Start(definition.Kind, definition.Title, $"Manual {definition.Title.ToLowerInvariant()} queued.");
+            state.Running = true;
+            state.TaskId = task.Id;
+            state.LastRunAt = DateTimeOffset.UtcNow;
+            state.LastStatus = "running";
+            state.LastMessage = "Manual run queued.";
+            taskId = task.Id;
+        }
+        _ = Task.Run(() => RunDefinitionAsync(definition, taskId, "manual", CancellationToken.None));
+        return new(true, definition.Key, $"{definition.Title} queued.", taskId);
+    }
+
+    private async Task TickAsync()
+    {
+        if (Interlocked.Exchange(ref _tickRunning, 1) == 1) return;
+        try
+        {
+            var now = DateTimeOffset.UtcNow;
+            List<(GuidevaultTaskDefinition Definition, string TaskId)> due = new();
+            var definitions = BuildDefinitions(_settingsStore.GetSettings());
+            lock (_gate)
+            {
+                RefreshSchedulesLocked(definitions, now);
+                foreach (var definition in definitions)
+                {
+                    var schedule = GuidevaultSchedulePreset.Resolve(definition.Schedule);
+                    if (!schedule.Enabled) continue;
+                    var state = GetStateLocked(definition.Key);
+                    if (state.Running || state.NextRunAt is null || state.NextRunAt > now) continue;
+                    var task = _taskMonitor.Start(definition.Kind, definition.Title, $"Scheduled {definition.Title.ToLowerInvariant()} queued.");
+                    state.Running = true;
+                    state.TaskId = task.Id;
+                    state.LastRunAt = now;
+                    state.LastStatus = "running";
+                    state.LastMessage = "Scheduled run queued.";
+                    state.NextRunAt = GuidevaultSchedulePreset.NextRun(schedule, now.AddMinutes(1));
+                    due.Add((definition, task.Id));
+                }
+            }
+
+            foreach (var item in due)
+                _ = Task.Run(() => RunDefinitionAsync(item.Definition, item.TaskId, "scheduled", CancellationToken.None));
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "GuideVault scheduled task tick failed.");
+        }
+        finally
+        {
+            Interlocked.Exchange(ref _tickRunning, 0);
+        }
+    }
+
+    private async Task RunDefinitionAsync(GuidevaultTaskDefinition definition, string taskId, string trigger, CancellationToken cancellationToken)
+    {
+        try
+        {
+            _taskMonitor.Update(taskId, $"Running {trigger} {definition.Title.ToLowerInvariant()}...", 8);
+            var message = await definition.RunAsync(taskId, cancellationToken);
+            _taskMonitor.Complete(taskId, message, 100);
+            lock (_gate)
+            {
+                var state = GetStateLocked(definition.Key);
+                state.Running = false;
+                state.TaskId = string.Empty;
+                state.LastStatus = "completed";
+                state.LastMessage = message;
+                state.LastRunAt = DateTimeOffset.UtcNow;
+                state.NextRunAt = GuidevaultSchedulePreset.NextRun(GuidevaultSchedulePreset.Resolve(definition.Schedule), DateTimeOffset.UtcNow);
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "GuideVault scheduled task {TaskKey} failed.", definition.Key);
+            var message = $"{definition.Title} failed: {ex.Message}";
+            _taskMonitor.Fail(taskId, message);
+            lock (_gate)
+            {
+                var state = GetStateLocked(definition.Key);
+                state.Running = false;
+                state.TaskId = string.Empty;
+                state.LastStatus = "failed";
+                state.LastMessage = message;
+                state.LastRunAt = DateTimeOffset.UtcNow;
+                state.NextRunAt = GuidevaultSchedulePreset.NextRun(GuidevaultSchedulePreset.Resolve(definition.Schedule), DateTimeOffset.UtcNow);
+            }
+        }
+    }
+
+    private GuidevaultScheduledTaskEntry ToEntryLocked(GuidevaultTaskDefinition definition)
+    {
+        var schedule = GuidevaultSchedulePreset.Resolve(definition.Schedule);
+        var state = GetStateLocked(definition.Key);
+        return new GuidevaultScheduledTaskEntry(
+            definition.Key,
+            definition.Title,
+            definition.Description,
+            definition.Kind,
+            definition.Schedule,
+            schedule.Label,
+            schedule.Cron,
+            schedule.Enabled,
+            state.Running,
+            state.NextRunAt,
+            state.LastRunAt,
+            state.LastStatus,
+            state.LastMessage);
+    }
+
+    private void RefreshSchedules(DateTimeOffset now)
+    {
+        var definitions = BuildDefinitions(_settingsStore.GetSettings());
+        lock (_gate) RefreshSchedulesLocked(definitions, now);
+    }
+
+    private void RefreshSchedulesLocked(IReadOnlyList<GuidevaultTaskDefinition> definitions, DateTimeOffset now)
+    {
+        foreach (var definition in definitions)
+        {
+            var schedule = GuidevaultSchedulePreset.Resolve(definition.Schedule);
+            var state = GetStateLocked(definition.Key);
+            if (!schedule.Enabled)
+            {
+                state.NextRunAt = null;
+                continue;
+            }
+            if (state.NextRunAt is null || state.NextRunAt <= now.AddMinutes(-1))
+                state.NextRunAt = GuidevaultSchedulePreset.NextRun(schedule, now);
+        }
+    }
+
+    private GuidevaultScheduledTaskRuntimeState GetStateLocked(string key)
+    {
+        if (!_states.TryGetValue(key, out var state))
+        {
+            state = new GuidevaultScheduledTaskRuntimeState();
+            _states[key] = state;
+        }
+        return state;
+    }
+
+    private GuidevaultTaskDefinition[] BuildDefinitions(GuidevaultTaskScheduleSettings settings) => new[]
+    {
+        new GuidevaultTaskDefinition("libraryScan", "Library scan", "Finds changed files and refreshes the active library index.", "library-scan", settings.LibraryScan, _actions.LibraryScan),
+        new GuidevaultTaskDefinition("metadataCheck", "Metadata check", "Runs the fast GuideVault JSON metadata reconciliation pass.", "library-enrichment", settings.MetadataCheck, _actions.MetadataCheck),
+        new GuidevaultTaskDefinition("libraryUpkeep", "Library upkeep", "Runs safe cleanup/reconciliation for stale library entries.", "library-cleanup", settings.LibraryUpkeep, _actions.LibraryUpkeep),
+        new GuidevaultTaskDefinition("cacheCleanup", "Cache cleanup", "Clears in-memory archive and cover caches and asks .NET to compact memory.", "cache-cleanup", settings.CacheCleanup, _actions.CacheCleanup),
+        new GuidevaultTaskDefinition("guidevaultBackup", "GuideVault backup", "Backs up configuration, indexes, and local GuideVault server data.", "server-backup", settings.GuidevaultBackup, _actions.GuidevaultBackup)
+    };
+
+    public void Dispose() => _timer?.Dispose();
+}
+
+public sealed class GuidevaultScheduledTaskRuntimeState
+{
+    public bool Running { get; set; }
+    public string TaskId { get; set; } = string.Empty;
+    public DateTimeOffset? NextRunAt { get; set; }
+    public DateTimeOffset? LastRunAt { get; set; }
+    public string LastStatus { get; set; } = "not run";
+    public string LastMessage { get; set; } = "Not run yet.";
+}
+
+public sealed record GuidevaultScheduleInfo(bool Enabled, string Label, string Cron, int[] Minutes, int[] Hours, int[] DaysOfMonth, int[] Months, int[] DaysOfWeek);
+
+public static class GuidevaultSchedulePreset
+{
+    public static string NormalizeSchedule(string? value, string fallback)
+    {
+        var raw = string.IsNullOrWhiteSpace(value) ? fallback : value.Trim();
+        return Resolve(raw).Label;
+    }
+
+    public static GuidevaultScheduleInfo Resolve(string? value)
+    {
+        var raw = (value ?? string.Empty).Trim();
+        if (string.IsNullOrWhiteSpace(raw)) raw = "daily-2am";
+        var key = raw.ToLowerInvariant();
+        key = key.Replace(" ", "-").Replace("_", "-");
+
+        if (key is "disabled" or "off" or "none") return Disabled(raw);
+        if (key is "hourly" or "every-hour" or "every-1-hour") return FromCron("Hourly", "0 * * * *");
+        if (key is "every-6-hours" or "every-six-hours") return FromCron("Every 6 hours", "0 */6 * * *");
+        if (key is "daily" or "daily-2am" or "daily-at-2:00-am" or "daily-at-2am") return FromCron("Daily at 2:00 AM", "0 2 * * *");
+        if (key is "daily-3am" or "daily-at-3:00-am" or "daily-at-3am") return FromCron("Daily at 3:00 AM", "0 3 * * *");
+        if (key is "daily-4am" or "daily-at-4:00-am" or "daily-at-4am") return FromCron("Daily at 4:00 AM", "0 4 * * *");
+        if (key is "weekly" or "weekly-sunday-3am" or "weekly-on-sunday-at-3:00-am") return FromCron("Weekly on Sunday at 3:00 AM", "0 3 * * 0");
+        if (key is "weekly-sunday-4am" or "weekly-on-sunday-at-4:00-am") return FromCron("Weekly on Sunday at 4:00 AM", "0 4 * * 0");
+        if (key is "monthly" or "monthly-1st-4am" or "monthly-on-the-1st-at-4:00-am") return FromCron("Monthly on the 1st at 4:00 AM", "0 4 1 * *");
+
+        var custom = ExtractCron(raw);
+        if (!string.IsNullOrWhiteSpace(custom))
+        {
+            try { return FromCron($"Custom ({custom})", custom); }
+            catch { return Disabled($"Disabled - invalid schedule ({raw})"); }
+        }
+
+        return Disabled($"Disabled - invalid schedule ({raw})");
+    }
+
+    public static DateTimeOffset? NextRun(GuidevaultScheduleInfo schedule, DateTimeOffset from)
+    {
+        if (!schedule.Enabled) return null;
+        var cursor = new DateTimeOffset(from.Year, from.Month, from.Day, from.Hour, from.Minute, 0, from.Offset).AddMinutes(1);
+        for (var i = 0; i < 370 * 24 * 60; i++)
+        {
+            if (Matches(schedule, cursor)) return cursor;
+            cursor = cursor.AddMinutes(1);
+        }
+        return null;
+    }
+
+    private static bool Matches(GuidevaultScheduleInfo schedule, DateTimeOffset value)
+    {
+        var dow = (int)value.DayOfWeek;
+        return schedule.Minutes.Contains(value.Minute)
+            && schedule.Hours.Contains(value.Hour)
+            && schedule.DaysOfMonth.Contains(value.Day)
+            && schedule.Months.Contains(value.Month)
+            && schedule.DaysOfWeek.Contains(dow);
+    }
+
+    private static GuidevaultScheduleInfo FromCron(string label, string cron)
+    {
+        var parts = cron.Split(' ', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        if (parts.Length != 5) throw new InvalidOperationException("Cron schedules must have five fields.");
+        return new GuidevaultScheduleInfo(
+            true,
+            label,
+            cron,
+            ParseCronField(parts[0], 0, 59),
+            ParseCronField(parts[1], 0, 23),
+            ParseCronField(parts[2], 1, 31),
+            ParseCronField(parts[3], 1, 12),
+            ParseCronField(parts[4], 0, 6));
+    }
+
+    private static GuidevaultScheduleInfo Disabled(string label) => new(false, label.StartsWith("Disabled", StringComparison.OrdinalIgnoreCase) ? label : "Disabled", string.Empty, Array.Empty<int>(), Array.Empty<int>(), Array.Empty<int>(), Array.Empty<int>(), Array.Empty<int>());
+
+    private static string ExtractCron(string raw)
+    {
+        var match = Regex.Match(raw, @"\((?<cron>[^\)]+)\)");
+        if (match.Success) return match.Groups["cron"].Value.Trim();
+        return raw.Split(' ', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).Length == 5 ? raw.Trim() : string.Empty;
+    }
+
+    private static int[] ParseCronField(string field, int min, int max)
+    {
+        field = field.Trim();
+        if (field == "*") return Enumerable.Range(min, max - min + 1).ToArray();
+        if (field.StartsWith("*/", StringComparison.Ordinal))
+        {
+            var every = int.Parse(field[2..]);
+            if (every <= 0) throw new InvalidOperationException("Cron step must be greater than zero.");
+            return Enumerable.Range(min, max - min + 1).Where(v => (v - min) % every == 0).ToArray();
+        }
+
+        var values = new SortedSet<int>();
+        foreach (var segment in field.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+        {
+            if (segment.Contains('-', StringComparison.Ordinal))
+            {
+                var range = segment.Split('-', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+                if (range.Length != 2) throw new InvalidOperationException("Invalid cron range.");
+                var start = int.Parse(range[0]);
+                var end = int.Parse(range[1]);
+                if (start > end) throw new InvalidOperationException("Invalid cron range.");
+                for (var v = start; v <= end; v++) AddCronValue(values, v, min, max);
+            }
+            else
+            {
+                AddCronValue(values, int.Parse(segment), min, max);
+            }
+        }
+        if (values.Count == 0) throw new InvalidOperationException("Cron field did not contain any values.");
+        return values.ToArray();
+    }
+
+    private static void AddCronValue(SortedSet<int> values, int value, int min, int max)
+    {
+        if (value == 7 && min == 0 && max == 6) value = 0;
+        if (value < min || value > max) throw new InvalidOperationException("Cron field value is out of range.");
+        values.Add(value);
+    }
 }
 
 public sealed record OpdsAuthResult(bool Success, string Secret, OpdsAuthKey? Key, IResult? Response);
@@ -9845,12 +10468,31 @@ public sealed class GuidevaultCustomizeSettingsStore
     private static GuidevaultCustomizeSettings Normalize(GuidevaultCustomizeSettings? value)
     {
         value ??= new GuidevaultCustomizeSettings();
-        var activeTab = string.Equals(value.ActiveTab, "side-nav", StringComparison.OrdinalIgnoreCase) ? "side-nav" : "home";
+        var requestedTab = (value.ActiveTab ?? "home").Trim().ToLowerInvariant();
+        var activeTab = requestedTab is "side-nav" or "collections" ? requestedTab : "home";
         var shelves = (value.HomeShelves ?? new List<string>())
             .Select(v => (v ?? string.Empty).Trim())
             .Where(v => !string.IsNullOrWhiteSpace(v))
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .ToList();
+        var collections = (value.Collections ?? new List<GuidevaultUserCollection>())
+            .Select((collection, index) => NormalizeCollection(collection, index))
+            .Where(collection => !string.IsNullOrWhiteSpace(collection.Name))
+            .GroupBy(collection => collection.Id, StringComparer.OrdinalIgnoreCase)
+            .Select(group => group.First())
+            .ToList();
+
+        var validShelves = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+        {
+            "recently-added", "recently-viewed", "manuals", "strategy-guides", "magazines", "unsorted-strategy-guides", "multi-platform-guides", "largest-files"
+        };
+        foreach (var collection in collections.Where(collection => string.Equals(collection.HomeDisplay, "shelf", StringComparison.OrdinalIgnoreCase))) validShelves.Add($"collection:{collection.Id}");
+        shelves = shelves.Where(validShelves.Contains).ToList();
+        foreach (var collection in collections.Where(collection => string.Equals(collection.HomeDisplay, "shelf", StringComparison.OrdinalIgnoreCase)))
+        {
+            var shelfId = $"collection:{collection.Id}";
+            if (!shelves.Contains(shelfId, StringComparer.OrdinalIgnoreCase)) shelves.Add(shelfId);
+        }
         if (shelves.Count == 0) shelves.Add("recently-added");
 
         var items = (value.SideNav?.CustomItems ?? new List<GuidevaultCustomSideNavItem>())
@@ -9864,7 +10506,39 @@ public sealed class GuidevaultCustomizeSettingsStore
         {
             ActiveTab = activeTab,
             HomeShelves = shelves,
+            Collections = collections,
             SideNav = new GuidevaultCustomizeSideNavSettings { CustomItems = items }
+        };
+    }
+
+    private static GuidevaultUserCollection NormalizeCollection(GuidevaultUserCollection? collection, int index)
+    {
+        collection ??= new GuidevaultUserCollection();
+        var id = (collection.Id ?? collection.CollectionId ?? string.Empty).Trim();
+        if (string.IsNullOrWhiteSpace(id)) id = $"collection-{Guid.NewGuid():N}";
+        var name = (collection.Name ?? collection.Title ?? $"Collection {index + 1}").Trim();
+        var itemIds = (collection.ItemIds?.Count > 0 ? collection.ItemIds : collection.Items ?? new List<string>())
+            .Select(v => (v ?? string.Empty).Trim())
+            .Where(v => !string.IsNullOrWhiteSpace(v))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+        var requestedHomeDisplay = (collection.HomeDisplay ?? string.Empty).Trim().ToLowerInvariant();
+        var homeDisplay = requestedHomeDisplay is "shelf" or "card" or "hidden"
+            ? requestedHomeDisplay
+            : collection.ShowOnHome ? "shelf" : "hidden";
+        return new GuidevaultUserCollection
+        {
+            Id = id,
+            CollectionId = id,
+            Name = name,
+            Title = name,
+            Description = (collection.Description ?? string.Empty).Trim(),
+            HomeDisplay = homeDisplay,
+            ShowOnHome = homeDisplay != "hidden",
+            ShowInSidebar = collection.ShowInSidebar,
+            CoverItemId = (collection.CoverItemId ?? string.Empty).Trim(),
+            ItemIds = itemIds,
+            Items = itemIds.ToList()
         };
     }
 
@@ -9899,6 +10573,20 @@ public sealed class GuidevaultCustomizeSettingsStore
     {
         ActiveTab = value.ActiveTab,
         HomeShelves = value.HomeShelves?.ToList() ?? new List<string>(),
+        Collections = value.Collections?.Select(collection => new GuidevaultUserCollection
+        {
+            Id = collection.Id,
+            CollectionId = collection.CollectionId,
+            Name = collection.Name,
+            Title = collection.Title,
+            Description = collection.Description,
+            HomeDisplay = collection.HomeDisplay,
+            ShowOnHome = collection.ShowOnHome,
+            ShowInSidebar = collection.ShowInSidebar,
+            CoverItemId = collection.CoverItemId,
+            ItemIds = collection.ItemIds?.ToList() ?? new List<string>(),
+            Items = collection.Items?.ToList() ?? new List<string>()
+        }).ToList() ?? new List<GuidevaultUserCollection>(),
         SideNav = new GuidevaultCustomizeSideNavSettings
         {
             CustomItems = value.SideNav?.CustomItems?.Select(item => new GuidevaultCustomSideNavItem
@@ -9922,7 +10610,23 @@ public sealed class GuidevaultCustomizeSettings
 {
     public string ActiveTab { get; set; } = "home";
     public List<string> HomeShelves { get; set; } = new() { "recently-added" };
+    public List<GuidevaultUserCollection> Collections { get; set; } = new();
     public GuidevaultCustomizeSideNavSettings SideNav { get; set; } = new();
+}
+
+public sealed class GuidevaultUserCollection
+{
+    public string Id { get; set; } = string.Empty;
+    public string? CollectionId { get; set; }
+    public string Name { get; set; } = string.Empty;
+    public string? Title { get; set; }
+    public string Description { get; set; } = string.Empty;
+    public string HomeDisplay { get; set; } = "shelf";
+    public bool ShowOnHome { get; set; } = true;
+    public bool ShowInSidebar { get; set; }
+    public string CoverItemId { get; set; } = string.Empty;
+    public List<string> ItemIds { get; set; } = new();
+    public List<string>? Items { get; set; }
 }
 
 public sealed class GuidevaultCustomizeSideNavSettings
@@ -17816,7 +18520,5 @@ static class GuidevaultLibraryIoGate
 
 static class GuidevaultBuildInfo
 {
-    public const string Version = "0.9.224";
+    public const string Version = "1.1.2";
 }
-
-
