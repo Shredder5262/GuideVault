@@ -11498,27 +11498,6 @@ function handleCollectionEditClick(e) {
   if (btn.dataset.collectionItemAction === 'up') moveCollectionItem(collectionId, itemId, -1);
   if (btn.dataset.collectionItemAction === 'down') moveCollectionItem(collectionId, itemId, 1);
 }
-function renderDetailCollectionControls(item) {
-  const select = $('detailCollectionSelect');
-  const button = $('detailAddCollectionBtn');
-  if (!select || !button) return;
-  const collections = (state.customize || loadCustomizeSettings()).collections || [];
-  select.innerHTML = collections.length ? collections.map(collection => `<option value="${escapeForAttribute(collection.id)}">${escapeHtml(collection.name)}</option>`).join('') : '<option value="">No collections yet</option>';
-  button.disabled = !collections.length;
-  const status = $('detailCollectionStatus');
-  if (status) status.textContent = collections.length ? '' : 'Create collections from Customize first.';
-}
-function addSelectedDetailItemToCollection() {
-  if (!state.selected) return;
-  const itemId = String(state.selected.id || state.selected.Id || '').trim();
-  const collectionId = $('detailCollectionSelect')?.value || '';
-  const collection = collectionById(collectionId);
-  const status = $('detailCollectionStatus');
-  if (!collectionId || !itemId) return;
-  const already = (collection?.itemIds || []).includes(itemId);
-  addItemToCollection(collectionId, itemId);
-  if (status) status.textContent = already ? 'Already in this collection.' : 'Added to collection.';
-}
 function renderCustomizeSettings() {
   const settings = state.customize || loadCustomizeSettings();
   const select = $('customizeShelfSelect');
@@ -18256,7 +18235,6 @@ function renderDetails(item) {
   $('editTags').value = (item.tags || []).join(', ');
   $('notesText').value = item.notes || '';
   renderDetailReadingProfilePanel(item);
-  renderDetailCollectionControls(item);
   updateMetadataExportButtonLabel(item.kind || '');
   ensureOpenLibraryMetadataUi();
   ensureIgdbMetadataUi();
@@ -22932,7 +22910,6 @@ if ($('collectionCreateButton')) $('collectionCreateButton').addEventListener('c
 if ($('collectionManageSelect')) $('collectionManageSelect').addEventListener('change', renderCollectionEditPanel);
 if ($('collectionsList')) $('collectionsList').addEventListener('click', handleCollectionListClick);
 if ($('collectionEditPanel')) $('collectionEditPanel').addEventListener('click', handleCollectionEditClick);
-if ($('detailAddCollectionBtn')) $('detailAddCollectionBtn').addEventListener('click', e => { e.preventDefault(); addSelectedDetailItemToCollection(); });
 if ($('customSideNavAdd')) $('customSideNavAdd').addEventListener('click', e => { e.preventDefault(); addCustomSideNavItem(); });
 if ($('customSideNavReset')) $('customSideNavReset').addEventListener('click', e => { e.preventDefault(); resetCustomSideNavItems(); });
 if ($('customSideNavList')) $('customSideNavList').addEventListener('click', handleCustomSideNavListAction);
