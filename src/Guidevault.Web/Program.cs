@@ -602,6 +602,19 @@ app.MapGet("/api/integrations/launchbox/item/{guideVaultItemId}/links", (string 
     return Results.Ok(details);
 });
 
+app.MapDelete("/api/integrations/launchbox/item/{guideVaultItemId}/links/{launchBoxGameId}", (string guideVaultItemId, string launchBoxGameId, string? matchType) =>
+{
+    var result = launchBoxIntegrationStore.RejectMatch(new GuidevaultLaunchBoxMatchDecisionRequest
+    {
+        LaunchBoxGameId = launchBoxGameId,
+        GuideVaultItemId = guideVaultItemId,
+        MatchType = matchType ?? string.Empty
+    }, cache.GetItemsSnapshot());
+
+    RecordSystemEvent("Integration", "LaunchBox link removed", result.Message, "launchbox", result.ItemId, result.ItemTitle);
+    return result.Success ? Results.Ok(result) : Results.BadRequest(result);
+});
+
 app.MapGet("/api/integrations/launchbox/relationships", (string? matchType, string? q) =>
 {
     var snapshot = launchBoxIntegrationStore.GetSnapshot();
@@ -8694,6 +8707,14 @@ public static class GuidevaultLaunchBoxMatcher
                     ItemId = group.Key,
                     ItemTitle = itemTitle,
                     ItemKind = itemKind,
+                    DisplayTitle = LaunchBoxDisplayTitle(item, itemTitle),
+                    GuideTitle = LaunchBoxGuideTitle(item, itemTitle),
+                    MagazineTitle = LaunchBoxMagazineTitle(item, itemTitle),
+                    Issue = item?.IssueNumber ?? string.Empty,
+                    IssueNumber = item?.IssueNumber ?? string.Empty,
+                    Volume = item?.Volume ?? string.Empty,
+                    VolumeNumber = item?.Volume ?? string.Empty,
+                    CoverDate = LaunchBoxCoverDate(item),
                     TotalConnections = connections.Count,
                     Connections = connections
                 };
@@ -8757,6 +8778,8 @@ public static class GuidevaultLaunchBoxMatcher
                 gamesById.TryGetValue(m.LaunchBoxGameId ?? string.Empty, out var game);
                 return new GuidevaultLaunchBoxItemConnection
                 {
+                    MatchId = m.Id ?? string.Empty,
+                    GuideVaultItemId = cleanItemId,
                     LaunchBoxGameId = m.LaunchBoxGameId ?? string.Empty,
                     LaunchBoxGameTitle = game?.Title ?? m.LaunchBoxGameTitle ?? string.Empty,
                     LaunchBoxPlatform = game?.Platform ?? m.LaunchBoxPlatform ?? string.Empty,
@@ -8806,6 +8829,14 @@ public static class GuidevaultLaunchBoxMatcher
                     LaunchBoxGameId = m.LaunchBoxGameId,
                     GuideVaultItemId = m.GuideVaultItemId,
                     GuideVaultItemTitle = item?.Title ?? m.GuideVaultItemTitle,
+                    DisplayTitle = LaunchBoxDisplayTitle(item, item?.Title ?? m.GuideVaultItemTitle),
+                    GuideTitle = LaunchBoxGuideTitle(item, item?.Title ?? m.GuideVaultItemTitle),
+                    MagazineTitle = LaunchBoxMagazineTitle(item, item?.Title ?? m.GuideVaultItemTitle),
+                    Issue = item?.IssueNumber ?? string.Empty,
+                    IssueNumber = item?.IssueNumber ?? string.Empty,
+                    Volume = item?.Volume ?? string.Empty,
+                    VolumeNumber = item?.Volume ?? string.Empty,
+                    CoverDate = LaunchBoxCoverDate(item),
                     MatchType = m.MatchType,
                     MatchStatus = m.MatchStatus,
                     PreviousMatchStatus = m.PreviousMatchStatus,
@@ -9036,6 +9067,14 @@ public static class GuidevaultLaunchBoxMatcher
         LaunchBoxGameId = game.Id,
         GuideVaultItemId = candidate.Item.Id,
         GuideVaultItemTitle = candidate.Item.Title,
+        DisplayTitle = LaunchBoxDisplayTitle(candidate.Item, candidate.Item.Title),
+        GuideTitle = LaunchBoxGuideTitle(candidate.Item, candidate.Item.Title),
+        MagazineTitle = LaunchBoxMagazineTitle(candidate.Item, candidate.Item.Title),
+        Issue = candidate.Item.IssueNumber ?? string.Empty,
+        IssueNumber = candidate.Item.IssueNumber ?? string.Empty,
+        Volume = candidate.Item.Volume ?? string.Empty,
+        VolumeNumber = candidate.Item.Volume ?? string.Empty,
+        CoverDate = LaunchBoxCoverDate(candidate.Item),
         MatchType = matchType,
         MatchStatus = candidate.Score >= 75 ? "Candidate" : "Weak Candidate",
         ConfidenceScore = Math.Round(candidate.Score, 2),
@@ -9174,6 +9213,54 @@ public static class GuidevaultLaunchBoxMatcher
         var union = a.Union(b, StringComparer.OrdinalIgnoreCase).Count();
         return union == 0 ? 0 : intersection / (double)union;
     }
+
+    private static string LaunchBoxDisplayTitle(LibraryItem? item, string? fallback = null)
+    {
+        if (item is null) return Clean(fallback);
+        if (KindEquals(item, "Magazine"))
+        {
+            var magazineTitle = LaunchBoxMagazineTitle(item, fallback);
+            var issueCaption = LaunchBoxIssueVolumeCaption(item);
+            if (!string.IsNullOrWhiteSpace(magazineTitle) && !string.IsNullOrWhiteSpace(issueCaption)) return $"{magazineTitle} - {issueCaption}";
+            return !string.IsNullOrWhiteSpace(magazineTitle) ? magazineTitle : Clean(fallback);
+        }
+        if (KindEquals(item, "Strategy Guide")) return LaunchBoxGuideTitle(item, fallback);
+        return FirstText(item.ManualTitle, item.Title, fallback);
+    }
+
+    private static string LaunchBoxGuideTitle(LibraryItem? item, string? fallback = null)
+    {
+        if (item is null) return Clean(fallback);
+        return FirstText(item.Title, item.ManualTitle, item.GameTitle, fallback);
+    }
+
+    private static string LaunchBoxMagazineTitle(LibraryItem? item, string? fallback = null)
+    {
+        if (item is null) return Clean(fallback);
+        return FirstText(item.MagazineTitle, item.Series, fallback, item.Title);
+    }
+
+    private static string LaunchBoxCoverDate(LibraryItem? item) => item is null ? string.Empty : FirstText(item.CoverDate, item.PublicationDate, item.Year);
+
+    private static string LaunchBoxIssueVolumeCaption(LibraryItem? item)
+    {
+        if (item is null) return string.Empty;
+        var parts = new List<string>();
+        var volume = Clean(item.Volume);
+        var issue = Clean(item.IssueNumber);
+        if (!string.IsNullOrWhiteSpace(volume)) parts.Add(HasPrefix(volume, "vol", "volume") ? volume : $"Vol. {volume}");
+        if (!string.IsNullOrWhiteSpace(issue)) parts.Add(HasPrefix(issue, "issue", "#", "no") ? issue : $"Issue #{issue}");
+        return string.Join(" • ", parts);
+    }
+
+    private static bool HasPrefix(string value, params string[] prefixes)
+    {
+        var clean = Clean(value).ToLowerInvariant();
+        return prefixes.Any(prefix => clean.StartsWith(prefix.ToLowerInvariant(), StringComparison.OrdinalIgnoreCase));
+    }
+
+    private static string FirstText(params string?[] values) =>
+        values.FirstOrDefault(value => !string.IsNullOrWhiteSpace(value))?.Trim() ?? string.Empty;
 
     private static bool KindEquals(LibraryItem item, string kind) => string.Equals(item.Kind ?? string.Empty, kind ?? string.Empty, StringComparison.OrdinalIgnoreCase);
     private static double Percent(int numerator, int denominator) => denominator <= 0 ? 0 : Math.Round(numerator * 100.0 / denominator, 2);
@@ -9614,6 +9701,14 @@ public sealed class GuidevaultLaunchBoxDocumentRelationship
     public string ItemId { get; set; } = string.Empty;
     public string ItemTitle { get; set; } = string.Empty;
     public string ItemKind { get; set; } = string.Empty;
+    public string DisplayTitle { get; set; } = string.Empty;
+    public string GuideTitle { get; set; } = string.Empty;
+    public string MagazineTitle { get; set; } = string.Empty;
+    public string Issue { get; set; } = string.Empty;
+    public string IssueNumber { get; set; } = string.Empty;
+    public string Volume { get; set; } = string.Empty;
+    public string VolumeNumber { get; set; } = string.Empty;
+    public string CoverDate { get; set; } = string.Empty;
     public int TotalConnections { get; set; }
     public List<GuidevaultLaunchBoxDocumentRelationshipConnection> Connections { get; set; } = new();
 }
@@ -9649,6 +9744,8 @@ public sealed class GuidevaultLaunchBoxItemConnections
 
 public sealed class GuidevaultLaunchBoxItemConnection
 {
+    public string MatchId { get; set; } = string.Empty;
+    public string GuideVaultItemId { get; set; } = string.Empty;
     public string LaunchBoxGameId { get; set; } = string.Empty;
     public string LaunchBoxGameTitle { get; set; } = string.Empty;
     public string LaunchBoxPlatform { get; set; } = string.Empty;
@@ -9678,6 +9775,14 @@ public sealed class GuidevaultLaunchBoxMatchView
     public string LaunchBoxGameId { get; set; } = string.Empty;
     public string GuideVaultItemId { get; set; } = string.Empty;
     public string GuideVaultItemTitle { get; set; } = string.Empty;
+    public string DisplayTitle { get; set; } = string.Empty;
+    public string GuideTitle { get; set; } = string.Empty;
+    public string MagazineTitle { get; set; } = string.Empty;
+    public string Issue { get; set; } = string.Empty;
+    public string IssueNumber { get; set; } = string.Empty;
+    public string Volume { get; set; } = string.Empty;
+    public string VolumeNumber { get; set; } = string.Empty;
+    public string CoverDate { get; set; } = string.Empty;
     public string MatchType { get; set; } = string.Empty;
     public string MatchStatus { get; set; } = string.Empty;
     public string PreviousMatchStatus { get; set; } = string.Empty;

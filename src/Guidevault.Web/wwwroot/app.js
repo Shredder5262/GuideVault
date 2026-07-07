@@ -18075,6 +18075,8 @@ function renderDetailLaunchBoxLinks(item = {}, payload = null, loading = false) 
     const score = Math.round(Number(connection.confidenceScore || 0));
     const reason = connection.matchReason ? ` · ${connection.matchReason}` : '';
     const details = [platform, connection.launchBoxReleaseYear, connection.launchBoxDeveloper || connection.launchBoxPublisher].filter(Boolean).join(' · ');
+    const gameId = connection.launchBoxGameId || '';
+    const itemId = item.id || payload?.itemId || connection.guideVaultItemId || '';
     return `<article class="detail-launchbox-link-row ${escapeForAttribute(String(type).toLowerCase().replace(/[^a-z0-9]+/g, '-'))}">
       <div class="detail-launchbox-link-main">
         <strong>${escapeHtml(title)}</strong>
@@ -18083,6 +18085,9 @@ function renderDetailLaunchBoxLinks(item = {}, payload = null, loading = false) 
       <div class="detail-launchbox-link-meta">
         <b>${escapeHtml(type)}</b>
         <span>${escapeHtml(status)} · ${score}%${escapeHtml(reason)}</span>
+      </div>
+      <div class="detail-launchbox-link-actions">
+        <button type="button" class="ghost mini danger" data-detail-launchbox-remove-link="1" data-guidevault-item-id="${escapeForAttribute(itemId)}" data-launchbox-game-id="${escapeForAttribute(gameId)}" data-match-type="${escapeForAttribute(type)}" data-launchbox-game-title="${escapeForAttribute(title)}">Remove</button>
       </div>
     </article>`;
   }).join('');
@@ -18105,6 +18110,48 @@ async function loadDetailLaunchBoxLinks(item = {}) {
     const summary = $('detailLaunchBoxLinksSummary');
     if (summary) summary.textContent = detailLaunchBoxIntroText(state.selected);
     if (host) host.innerHTML = `<div class="detail-launchbox-links-empty error">Unable to load LaunchBox connections. ${escapeHtml(error?.message || '')}</div>`;
+  }
+}
+
+async function removeDetailLaunchBoxLink(button) {
+  if (!button || !state.selected) return;
+  const itemId = button.dataset.guidevaultItemId || state.selected.id || '';
+  const gameId = button.dataset.launchboxGameId || '';
+  const matchType = button.dataset.matchType || state.selected.kind || '';
+  const gameTitle = button.dataset.launchboxGameTitle || 'this LaunchBox game';
+  if (!itemId || !gameId) return;
+
+  const confirmed = await showAppConfirm({
+    title: 'Remove LaunchBox link?',
+    message: `Remove the ${matchType || 'LaunchBox'} link between "${displayTitle(state.selected)}" and "${gameTitle}"? This marks the match as rejected so automatic rematch does not immediately add it back.`,
+    okText: 'Remove Link',
+    danger: true
+  });
+  if (!confirmed) return;
+
+  button.disabled = true;
+  button.textContent = 'Removing...';
+  try {
+    const params = new URLSearchParams();
+    if (matchType) params.set('matchType', matchType);
+    const suffix = params.toString() ? `?${params.toString()}` : '';
+    const res = await fetch(`/api/integrations/launchbox/item/${encodeURIComponent(itemId)}/links/${encodeURIComponent(gameId)}${suffix}`, { method: 'DELETE', cache: 'no-store' });
+    if (!res.ok) {
+      let message = 'Unable to remove LaunchBox link.';
+      try {
+        const payload = await res.json();
+        message = payload?.message || payload?.error || message;
+      } catch {
+        message = await res.text() || message;
+      }
+      throw new Error(message);
+    }
+    await loadDetailLaunchBoxLinks(state.selected);
+  } catch (error) {
+    console.error('Remove LaunchBox link failed', error);
+    button.disabled = false;
+    button.textContent = 'Remove';
+    alert(`Unable to remove LaunchBox link: ${error?.message || error}`);
   }
 }
 
@@ -22825,6 +22872,12 @@ document.addEventListener('click', e => {
 });
 if ($('saveNotesBtn')) $('saveNotesBtn').addEventListener('click', async e => { e.preventDefault(); await saveSelectedMetadata({ notes: $('notesText').value }, { tab: 'notes', button: e.currentTarget }); });
 if ($('refreshDetailLaunchBoxLinks')) $('refreshDetailLaunchBoxLinks').addEventListener('click', e => { e.preventDefault(); if (state.selected) loadDetailLaunchBoxLinks(state.selected); });
+if ($('detailLaunchBoxLinks')) $('detailLaunchBoxLinks').addEventListener('click', e => {
+  const remove = e.target.closest?.('[data-detail-launchbox-remove-link]');
+  if (!remove) return;
+  e.preventDefault();
+  removeDetailLaunchBoxLink(remove);
+});
 if (document.querySelector('.brand-wordmark')) document.querySelector('.brand-wordmark').addEventListener('click', e => { e.preventDefault(); navigateGuidevaultHome(); });
 document.querySelector('.brand-wordmark')?.addEventListener('keydown', e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); navigateGuidevaultHome(); } });
 document.querySelector('.brand-wordmark')?.addEventListener('click', e => { e.preventDefault(); navigateGuidevaultHome(); });
