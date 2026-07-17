@@ -31,7 +31,7 @@ builder.Services.AddResponseCompression(responseCompression =>
         "image/svg+xml"
     });
 });
-const string GuidevaultVersion = "1.2.7";
+const string GuidevaultVersion = "1.2.9";
 var app = builder.Build();
 var metadataJsonOptions = new JsonSerializerOptions(JsonSerializerDefaults.Web) { PropertyNameCaseInsensitive = true };
 var options = app.Configuration.GetSection("Guidevault").Get<GuidevaultOptions>() ?? new GuidevaultOptions();
@@ -2090,6 +2090,68 @@ app.MapPost("/api/dossiers/{id}/refresh-library", (HttpRequest request, string i
     var dossier = gameDossierStore.RefreshLibraryMatches(id, cache.GetItemsSnapshot());
     if (dossier is null) return Results.NotFound(new { error = "Game dossier not found." });
     RecordSystemEvent("Dossier", "Dossier collection refreshed", $"Refreshed linked GuideVault documents for {dossier.GameTitle}.", "api");
+    return Results.Ok(new { dossier, dossiers = gameDossierStore.GetAll() });
+});
+
+app.MapPost("/api/dossiers/{id}/refresh-igdb", async (HttpRequest request, string id) =>
+{
+    var currentUser = CurrentGuidevaultUser(request);
+    if (currentUser is null) return Results.Unauthorized();
+    var existing = gameDossierStore.GetAll().FirstOrDefault(candidate => string.Equals(candidate.Id, id, StringComparison.OrdinalIgnoreCase));
+    if (existing is null) return Results.NotFound(new { error = "Game dossier not found." });
+    try
+    {
+        var settings = serverSettingsStore.GetSnapshot();
+        var game = await IgdbGameMetadataClient.ResolveByIdAsync(existing.IgdbId, settings.IgdbClientId, settings.IgdbClientSecret);
+        var dossier = gameDossierStore.CreateOrUpdate(game, existing.LibraryItemIds.FirstOrDefault(), currentUser.UserId, cache.GetItemsSnapshot());
+        RecordSystemEvent("Dossier", "IGDB dossier refreshed", $"Refreshed IGDB metadata and linked GuideVault documents for {dossier.GameTitle}.", "igdb");
+        return Results.Ok(new { dossier, dossiers = gameDossierStore.GetAll() });
+    }
+    catch (Exception ex)
+    {
+        return Results.BadRequest(new { error = $"IGDB dossier refresh failed: {ex.Message}" });
+    }
+});
+
+app.MapPatch("/api/dossiers/{id}", (HttpRequest request, string id, [FromBody] JsonElement payload) =>
+{
+    if (CurrentGuidevaultUser(request) is null) return Results.Unauthorized();
+    var primaryPlatform = payload.ValueKind == JsonValueKind.Object && payload.TryGetProperty("primaryPlatform", out var platformValue) && platformValue.ValueKind == JsonValueKind.String
+        ? platformValue.GetString() ?? string.Empty
+        : string.Empty;
+    if (string.IsNullOrWhiteSpace(primaryPlatform)) return Results.BadRequest(new { error = "Choose a valid primary platform." });
+    var dossier = gameDossierStore.SetPrimaryPlatform(id, primaryPlatform);
+    if (dossier is null) return Results.NotFound(new { error = "Dossier or platform not found." });
+    RecordSystemEvent("Dossier", "Primary platform changed", $"Set {dossier.PrimaryPlatform} as the primary platform for {dossier.GameTitle}.", "api");
+    return Results.Ok(new { dossier, dossiers = gameDossierStore.GetAll() });
+});
+
+app.MapDelete("/api/dossiers/{id}/library-items", (HttpRequest request, string id, string? itemId) =>
+{
+    if (CurrentGuidevaultUser(request) is null) return Results.Unauthorized();
+    if (string.IsNullOrWhiteSpace(itemId)) return Results.BadRequest(new { error = "A linked library item ID is required." });
+    var dossier = gameDossierStore.RemoveLibraryItem(id, itemId);
+    if (dossier is null) return Results.NotFound(new { error = "Dossier or linked library item not found." });
+    RecordSystemEvent("Dossier", "Document unlinked", $"Removed a GuideVault document link from {dossier.GameTitle}.", "api");
+    return Results.Ok(new { dossier, dossiers = gameDossierStore.GetAll() });
+});
+
+app.MapDelete("/api/dossiers/{id}/related-games", (HttpRequest request, string id, string? gameKey) =>
+{
+    if (CurrentGuidevaultUser(request) is null) return Results.Unauthorized();
+    if (string.IsNullOrWhiteSpace(gameKey)) return Results.BadRequest(new { error = "A related game key is required." });
+    var dossier = gameDossierStore.RemoveRelatedGame(id, gameKey);
+    if (dossier is null) return Results.NotFound(new { error = "Dossier or related game not found." });
+    RecordSystemEvent("Dossier", "Related game removed", $"Removed an IGDB related-game reference from {dossier.GameTitle}.", "api");
+    return Results.Ok(new { dossier, dossiers = gameDossierStore.GetAll() });
+});
+
+app.MapPost("/api/dossiers/{id}/reset-library-exclusions", (HttpRequest request, string id) =>
+{
+    if (CurrentGuidevaultUser(request) is null) return Results.Unauthorized();
+    var dossier = gameDossierStore.ResetLibraryExclusions(id, cache.GetItemsSnapshot());
+    if (dossier is null) return Results.NotFound(new { error = "Game dossier not found." });
+    RecordSystemEvent("Dossier", "Document exclusions reset", $"Restored automatic document matching for {dossier.GameTitle}.", "api");
     return Results.Ok(new { dossier, dossiers = gameDossierStore.GetAll() });
 });
 
@@ -7048,6 +7110,7 @@ public sealed class GuidevaultGameDossier
     public string GameReleaseYear { get; set; } = string.Empty;
     public string GameFranchise { get; set; } = string.Empty;
     public string CoverPreviewUrl { get; set; } = string.Empty;
+    public string PrimaryCoverUrl { get; set; } = string.Empty;
     public string SourceUrl { get; set; } = string.Empty;
     public string[] Developers { get; set; } = Array.Empty<string>();
     public string[] Publishers { get; set; } = Array.Empty<string>();
@@ -7056,6 +7119,8 @@ public sealed class GuidevaultGameDossier
     public string[] GameModes { get; set; } = Array.Empty<string>();
     public string[] PlayerPerspectives { get; set; } = Array.Empty<string>();
     public string[] Platforms { get; set; } = Array.Empty<string>();
+    public IgdbPlatformMetadata[] PlatformDetails { get; set; } = Array.Empty<IgdbPlatformMetadata>();
+    public string PrimaryPlatform { get; set; } = string.Empty;
     public string[] Keywords { get; set; } = Array.Empty<string>();
     public string[] AlternativeNames { get; set; } = Array.Empty<string>();
     public string[] CollectionNames { get; set; } = Array.Empty<string>();
@@ -7066,9 +7131,12 @@ public sealed class GuidevaultGameDossier
     public int? Hypes { get; set; }
     public string[] Screenshots { get; set; } = Array.Empty<string>();
     public string[] Artworks { get; set; } = Array.Empty<string>();
+    public IgdbLocalizedCoverMetadata[] LocalizedCovers { get; set; } = Array.Empty<IgdbLocalizedCoverMetadata>();
     public IgdbVideoMetadata[] Videos { get; set; } = Array.Empty<IgdbVideoMetadata>();
     public IgdbWebsiteMetadata[] Websites { get; set; } = Array.Empty<IgdbWebsiteMetadata>();
     public string[] LibraryItemIds { get; set; } = Array.Empty<string>();
+    public string[] ExcludedLibraryItemIds { get; set; } = Array.Empty<string>();
+    public string[] ExcludedRelatedGameKeys { get; set; } = Array.Empty<string>();
     public GuidevaultDossierCollection[] Collections { get; set; } = Array.Empty<GuidevaultDossierCollection>();
     public string CreatedByUserId { get; set; } = string.Empty;
     public DateTimeOffset CreatedAt { get; set; } = DateTimeOffset.UtcNow;
@@ -7121,7 +7189,14 @@ public sealed class GuidevaultGameDossierStore
             var id = $"igdb-{game.Id}";
             var existing = _data.Dossiers.FirstOrDefault(dossier => string.Equals(dossier.Id, id, StringComparison.OrdinalIgnoreCase));
             var now = DateTimeOffset.UtcNow;
-            var linkedItemIds = MatchLibraryItemIds(game, selectedItemId, libraryItems);
+            var excludedItemIds = CleanArray(existing?.ExcludedLibraryItemIds);
+            var explicitlySelected = Clean(selectedItemId);
+            if (!string.IsNullOrWhiteSpace(explicitlySelected))
+                excludedItemIds = excludedItemIds.Where(itemId => !string.Equals(itemId, explicitlySelected, StringComparison.OrdinalIgnoreCase)).ToArray();
+            var excludedSet = excludedItemIds.ToHashSet(StringComparer.OrdinalIgnoreCase);
+            var linkedItemIds = MatchLibraryItemIds(game, selectedItemId, libraryItems)
+                .Where(itemId => !excludedSet.Contains(itemId))
+                .ToArray();
             var dossier = existing ?? new GuidevaultGameDossier
             {
                 Id = id,
@@ -7137,6 +7212,13 @@ public sealed class GuidevaultGameDossierStore
             dossier.GameReleaseYear = Clean(game.GameReleaseYear);
             dossier.GameFranchise = Clean(game.GameFranchise);
             dossier.CoverPreviewUrl = Clean(game.CoverPreviewUrl);
+            dossier.LocalizedCovers = (game.LocalizedCovers ?? Array.Empty<IgdbLocalizedCoverMetadata>())
+                .Where(cover => !string.IsNullOrWhiteSpace(cover.CoverPreviewUrl))
+                .GroupBy(cover => cover.CoverPreviewUrl, StringComparer.OrdinalIgnoreCase)
+                .Select(group => group.First())
+                .Take(24)
+                .ToArray();
+            dossier.PrimaryCoverUrl = dossier.LocalizedCovers.FirstOrDefault()?.CoverPreviewUrl ?? dossier.CoverPreviewUrl;
             dossier.SourceUrl = Clean(game.SourceUrl);
             dossier.Developers = CleanArray(game.Developers);
             dossier.Publishers = CleanArray(game.Publishers);
@@ -7145,6 +7227,19 @@ public sealed class GuidevaultGameDossierStore
             dossier.GameModes = CleanArray(game.GameModes);
             dossier.PlayerPerspectives = CleanArray(game.PlayerPerspectives);
             dossier.Platforms = CleanArray(game.AssociatedPlatforms);
+            dossier.PlatformDetails = (game.PlatformDetails ?? Array.Empty<IgdbPlatformMetadata>())
+                .Where(platform => !string.IsNullOrWhiteSpace(platform.Name))
+                .GroupBy(platform => platform.Name, StringComparer.OrdinalIgnoreCase)
+                .Select(group => group.FirstOrDefault(platform => !string.IsNullOrWhiteSpace(platform.LogoUrl)) ?? group.First())
+                .ToArray();
+            if (dossier.PlatformDetails.Length == 0)
+                dossier.PlatformDetails = dossier.Platforms.Select(platform => new IgdbPlatformMetadata(platform, string.Empty)).ToArray();
+            var retainedPrimaryPlatform = Clean(existing?.PrimaryPlatform);
+            var suggestedPrimaryPlatform = Clean(game.PreferredPlatform);
+            dossier.PrimaryPlatform = dossier.Platforms.FirstOrDefault(platform => string.Equals(platform, retainedPrimaryPlatform, StringComparison.OrdinalIgnoreCase))
+                ?? dossier.Platforms.FirstOrDefault(platform => string.Equals(platform, suggestedPrimaryPlatform, StringComparison.OrdinalIgnoreCase))
+                ?? dossier.Platforms.FirstOrDefault()
+                ?? string.Empty;
             dossier.Keywords = CleanArray(game.Keywords).Take(40).ToArray();
             dossier.AlternativeNames = CleanArray(game.AlternativeNames).Take(30).ToArray();
             dossier.CollectionNames = CleanArray(game.CollectionNames);
@@ -7158,7 +7253,9 @@ public sealed class GuidevaultGameDossierStore
             dossier.Videos = (game.Videos ?? Array.Empty<IgdbVideoMetadata>()).Take(12).ToArray();
             dossier.Websites = (game.Websites ?? Array.Empty<IgdbWebsiteMetadata>()).Take(20).ToArray();
             dossier.LibraryItemIds = linkedItemIds;
-            dossier.Collections = BuildCollections(game, linkedItemIds);
+            dossier.ExcludedLibraryItemIds = excludedItemIds;
+            dossier.ExcludedRelatedGameKeys = CleanArray(existing?.ExcludedRelatedGameKeys);
+            dossier.Collections = FilterRelatedGameExclusions(BuildCollections(game, linkedItemIds), dossier.ExcludedRelatedGameKeys);
             dossier.UpdatedAt = now;
             if (existing is null) _data.Dossiers.Add(dossier);
             Save();
@@ -7172,11 +7269,83 @@ public sealed class GuidevaultGameDossierStore
         {
             var dossier = _data.Dossiers.FirstOrDefault(candidate => string.Equals(candidate.Id, id, StringComparison.OrdinalIgnoreCase));
             if (dossier is null) return null;
+            var excluded = CleanArray(dossier.ExcludedLibraryItemIds).ToHashSet(StringComparer.OrdinalIgnoreCase);
+            dossier.LibraryItemIds = MatchLibraryItemIds(dossier, libraryItems)
+                .Where(itemId => !excluded.Contains(itemId))
+                .ToArray();
+            var libraryCollection = BuildLibraryCollection(dossier.LibraryItemIds);
+            dossier.Collections = new[] { libraryCollection }
+                .Concat((dossier.Collections ?? Array.Empty<GuidevaultDossierCollection>()).Where(collection => !string.Equals(collection.Kind, "library", StringComparison.OrdinalIgnoreCase)))
+                .ToArray();
+            dossier.UpdatedAt = DateTimeOffset.UtcNow;
+            Save();
+            return Clone(dossier);
+        }
+    }
+
+    public GuidevaultGameDossier? RemoveLibraryItem(string id, string itemId)
+    {
+        lock (_gate)
+        {
+            var dossier = _data.Dossiers.FirstOrDefault(candidate => string.Equals(candidate.Id, id, StringComparison.OrdinalIgnoreCase));
+            var cleanItemId = Clean(itemId);
+            if (dossier is null || string.IsNullOrWhiteSpace(cleanItemId)) return null;
+            dossier.LibraryItemIds = CleanArray(dossier.LibraryItemIds)
+                .Where(candidate => !string.Equals(candidate, cleanItemId, StringComparison.OrdinalIgnoreCase))
+                .ToArray();
+            dossier.ExcludedLibraryItemIds = CleanArray(dossier.ExcludedLibraryItemIds.Append(cleanItemId));
+            var libraryCollection = BuildLibraryCollection(dossier.LibraryItemIds);
+            dossier.Collections = new[] { libraryCollection }
+                .Concat((dossier.Collections ?? Array.Empty<GuidevaultDossierCollection>()).Where(collection => !string.Equals(collection.Kind, "library", StringComparison.OrdinalIgnoreCase)))
+                .ToArray();
+            dossier.UpdatedAt = DateTimeOffset.UtcNow;
+            Save();
+            return Clone(dossier);
+        }
+    }
+
+    public GuidevaultGameDossier? ResetLibraryExclusions(string id, IReadOnlyList<LibraryItem> libraryItems)
+    {
+        lock (_gate)
+        {
+            var dossier = _data.Dossiers.FirstOrDefault(candidate => string.Equals(candidate.Id, id, StringComparison.OrdinalIgnoreCase));
+            if (dossier is null) return null;
+            dossier.ExcludedLibraryItemIds = Array.Empty<string>();
             dossier.LibraryItemIds = MatchLibraryItemIds(dossier, libraryItems);
             var libraryCollection = BuildLibraryCollection(dossier.LibraryItemIds);
             dossier.Collections = new[] { libraryCollection }
                 .Concat((dossier.Collections ?? Array.Empty<GuidevaultDossierCollection>()).Where(collection => !string.Equals(collection.Kind, "library", StringComparison.OrdinalIgnoreCase)))
                 .ToArray();
+            dossier.UpdatedAt = DateTimeOffset.UtcNow;
+            Save();
+            return Clone(dossier);
+        }
+    }
+
+    public GuidevaultGameDossier? SetPrimaryPlatform(string id, string platform)
+    {
+        lock (_gate)
+        {
+            var dossier = _data.Dossiers.FirstOrDefault(candidate => string.Equals(candidate.Id, id, StringComparison.OrdinalIgnoreCase));
+            if (dossier is null) return null;
+            var selected = dossier.Platforms.FirstOrDefault(candidate => string.Equals(candidate, Clean(platform), StringComparison.OrdinalIgnoreCase));
+            if (string.IsNullOrWhiteSpace(selected)) return null;
+            dossier.PrimaryPlatform = selected;
+            dossier.UpdatedAt = DateTimeOffset.UtcNow;
+            Save();
+            return Clone(dossier);
+        }
+    }
+
+    public GuidevaultGameDossier? RemoveRelatedGame(string id, string gameKey)
+    {
+        lock (_gate)
+        {
+            var dossier = _data.Dossiers.FirstOrDefault(candidate => string.Equals(candidate.Id, id, StringComparison.OrdinalIgnoreCase));
+            var cleanKey = Clean(gameKey);
+            if (dossier is null || string.IsNullOrWhiteSpace(cleanKey)) return null;
+            dossier.ExcludedRelatedGameKeys = CleanArray(dossier.ExcludedRelatedGameKeys.Append(cleanKey));
+            dossier.Collections = FilterRelatedGameExclusions(dossier.Collections, dossier.ExcludedRelatedGameKeys);
             dossier.UpdatedAt = DateTimeOffset.UtcNow;
             Save();
             return Clone(dossier);
@@ -7223,14 +7392,22 @@ public sealed class GuidevaultGameDossierStore
         dossier.GameModes ??= Array.Empty<string>();
         dossier.PlayerPerspectives ??= Array.Empty<string>();
         dossier.Platforms ??= Array.Empty<string>();
+        dossier.PlatformDetails ??= Array.Empty<IgdbPlatformMetadata>();
+        dossier.PrimaryPlatform = dossier.Platforms.FirstOrDefault(platform => string.Equals(platform, dossier.PrimaryPlatform, StringComparison.OrdinalIgnoreCase))
+            ?? dossier.Platforms.FirstOrDefault()
+            ?? string.Empty;
         dossier.Keywords ??= Array.Empty<string>();
         dossier.AlternativeNames ??= Array.Empty<string>();
         dossier.CollectionNames ??= Array.Empty<string>();
         dossier.Screenshots ??= Array.Empty<string>();
         dossier.Artworks ??= Array.Empty<string>();
+        dossier.LocalizedCovers ??= Array.Empty<IgdbLocalizedCoverMetadata>();
+        dossier.PrimaryCoverUrl = FirstNonEmpty(dossier.PrimaryCoverUrl, dossier.LocalizedCovers.FirstOrDefault()?.CoverPreviewUrl, dossier.CoverPreviewUrl);
         dossier.Videos ??= Array.Empty<IgdbVideoMetadata>();
         dossier.Websites ??= Array.Empty<IgdbWebsiteMetadata>();
         dossier.LibraryItemIds ??= Array.Empty<string>();
+        dossier.ExcludedLibraryItemIds ??= Array.Empty<string>();
+        dossier.ExcludedRelatedGameKeys ??= Array.Empty<string>();
         dossier.Collections ??= Array.Empty<GuidevaultDossierCollection>();
         foreach (var collection in dossier.Collections)
         {
@@ -7286,6 +7463,21 @@ public sealed class GuidevaultGameDossierStore
         target.Add(new GuidevaultDossierCollection { Id = id, Name = name, Kind = kind, Description = description, Games = clean });
     }
 
+    private static GuidevaultDossierCollection[] FilterRelatedGameExclusions(IEnumerable<GuidevaultDossierCollection>? collections, IEnumerable<string>? excludedKeys)
+    {
+        var excluded = CleanArray(excludedKeys).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var clean = (collections ?? Array.Empty<GuidevaultDossierCollection>()).ToArray();
+        if (excluded.Count == 0) return clean;
+        foreach (var collection in clean.Where(collection => !string.Equals(collection.Kind, "library", StringComparison.OrdinalIgnoreCase)))
+            collection.Games = (collection.Games ?? Array.Empty<IgdbRelatedGameMetadata>())
+                .Where(game => !excluded.Contains(RelatedGameKey(game)))
+                .ToArray();
+        return clean;
+    }
+
+    private static string RelatedGameKey(IgdbRelatedGameMetadata game)
+        => game.Id > 0 ? $"id:{game.Id}" : $"name:{NormalizeMatchText(game.Name)}";
+
     private static IgdbRelatedGameMetadata[] DistinctGames(IEnumerable<IgdbRelatedGameMetadata> games)
         => games
             .Where(game => game is not null && (game.Id > 0 || !string.IsNullOrWhiteSpace(game.Name)))
@@ -7296,9 +7488,8 @@ public sealed class GuidevaultGameDossierStore
 
     private static string[] MatchLibraryItemIds(IgdbGameMetadataResult game, string? selectedItemId, IReadOnlyList<LibraryItem> items)
     {
-        var keys = CleanArray(new[] { game.GameTitle, game.Name, game.GameFranchise }
+        var keys = CleanArray(new[] { game.GameTitle, game.Name }
             .Concat(game.AlternativeNames ?? Array.Empty<string>())
-            .Concat(game.CollectionNames ?? Array.Empty<string>())
             .ToArray())
             .Select(NormalizeMatchText)
             .Where(key => key.Length >= 3)
@@ -7309,9 +7500,8 @@ public sealed class GuidevaultGameDossierStore
 
     private static string[] MatchLibraryItemIds(GuidevaultGameDossier dossier, IReadOnlyList<LibraryItem> items)
     {
-        var keys = CleanArray(new[] { dossier.GameTitle, dossier.GameFranchise }
+        var keys = CleanArray(new[] { dossier.GameTitle }
             .Concat(dossier.AlternativeNames ?? Array.Empty<string>())
-            .Concat(dossier.CollectionNames ?? Array.Empty<string>())
             .ToArray())
             .Select(NormalizeMatchText)
             .Where(key => key.Length >= 3)
@@ -18952,6 +19142,10 @@ public sealed record IgdbVideoMetadata(string Name, string VideoId, string Url);
 
 public sealed record IgdbWebsiteMetadata(string Category, string Url);
 
+public sealed record IgdbLocalizedCoverMetadata(string Name, string Region, string RegionIdentifier, string CoverPreviewUrl);
+
+public sealed record IgdbPlatformMetadata(string Name, string LogoUrl);
+
 public sealed record IgdbGameMetadataResult(
     int Id,
     string Name,
@@ -18993,14 +19187,16 @@ public sealed record IgdbGameMetadataResult(
     string[]? Screenshots = null,
     string[]? Artworks = null,
     IgdbVideoMetadata[]? Videos = null,
-    IgdbWebsiteMetadata[]? Websites = null);
+    IgdbWebsiteMetadata[]? Websites = null,
+    IgdbLocalizedCoverMetadata[]? LocalizedCovers = null,
+    IgdbPlatformMetadata[]? PlatformDetails = null);
 
 public sealed record IgdbCredentialStatus(bool Ok, string Message, string ClientIdPreview, DateTimeOffset ExpiresAt);
 
 static class IgdbGameMetadataClient
 {
     private const string SearchFields = "id,name,summary,first_release_date,genres.name,themes.name,game_modes.name,platforms.name,involved_companies.developer,involved_companies.publisher,involved_companies.company.name,franchise.name,franchises.name,collection.name,collections.name,cover.image_id,total_rating,total_rating_count,url,slug";
-    private const string DossierFields = SearchFields + ",storyline,alternative_names.name,player_perspectives.name,keywords.name,rating,rating_count,hypes,artworks.image_id,screenshots.image_id,videos.name,videos.video_id,websites.category,websites.url,release_dates.date,release_dates.human,release_dates.platform.name,similar_games.id,similar_games.name,similar_games.first_release_date,similar_games.cover.image_id,similar_games.url,similar_games.slug,expansions.id,expansions.name,expansions.first_release_date,expansions.cover.image_id,expansions.url,expansions.slug,dlcs.id,dlcs.name,dlcs.first_release_date,dlcs.cover.image_id,dlcs.url,dlcs.slug,standalone_expansions.id,standalone_expansions.name,standalone_expansions.first_release_date,standalone_expansions.cover.image_id,standalone_expansions.url,standalone_expansions.slug,remakes.id,remakes.name,remakes.first_release_date,remakes.cover.image_id,remakes.url,remakes.slug,remasters.id,remasters.name,remasters.first_release_date,remasters.cover.image_id,remasters.url,remasters.slug,ports.id,ports.name,ports.first_release_date,ports.cover.image_id,ports.url,ports.slug,bundles.id,bundles.name,bundles.first_release_date,bundles.cover.image_id,bundles.url,bundles.slug,parent_game.id,parent_game.name,parent_game.first_release_date,parent_game.cover.image_id,parent_game.url,parent_game.slug";
+    private const string DossierFields = SearchFields + ",storyline,alternative_names.name,player_perspectives.name,keywords.name,rating,rating_count,hypes,artworks.image_id,screenshots.image_id,videos.name,videos.video_id,websites.category,websites.type.type,websites.url,game_localizations.name,game_localizations.region.name,game_localizations.region.identifier,game_localizations.cover.image_id,platforms.platform_logo.image_id,release_dates.date,release_dates.human,release_dates.platform.name,similar_games.id,similar_games.name,similar_games.first_release_date,similar_games.cover.image_id,similar_games.url,similar_games.slug,expansions.id,expansions.name,expansions.first_release_date,expansions.cover.image_id,expansions.url,expansions.slug,dlcs.id,dlcs.name,dlcs.first_release_date,dlcs.cover.image_id,dlcs.url,dlcs.slug,standalone_expansions.id,standalone_expansions.name,standalone_expansions.first_release_date,standalone_expansions.cover.image_id,standalone_expansions.url,standalone_expansions.slug,remakes.id,remakes.name,remakes.first_release_date,remakes.cover.image_id,remakes.url,remakes.slug,remasters.id,remasters.name,remasters.first_release_date,remasters.cover.image_id,remasters.url,remasters.slug,ports.id,ports.name,ports.first_release_date,ports.cover.image_id,ports.url,ports.slug,bundles.id,bundles.name,bundles.first_release_date,bundles.cover.image_id,bundles.url,bundles.slug,parent_game.id,parent_game.name,parent_game.first_release_date,parent_game.cover.image_id,parent_game.url,parent_game.slug";
     private static readonly HttpClient Http = CreateHttpClient();
     private static readonly SemaphoreSlim TokenGate = new(1, 1);
     private static string _accessToken = string.Empty;
@@ -19051,20 +19247,26 @@ static class IgdbGameMetadataClient
     {
         var fallback = FromPayload(payload);
         if (fallback.Id <= 0) return fallback;
+        return await ResolveByIdAsync(fallback.Id, clientId, clientSecret, fallback);
+    }
+
+    public static async Task<IgdbGameMetadataResult> ResolveByIdAsync(int gameId, string? clientId, string? clientSecret, IgdbGameMetadataResult? fallback = null)
+    {
+        if (gameId <= 0) throw new InvalidOperationException("A valid IGDB game ID is required.");
         var id = CleanCredential(clientId);
         var secret = CleanCredential(clientSecret);
         EnsureConfigured(id, secret);
         var token = await GetAccessTokenAsync(id, secret);
-        var body = $"fields {DossierFields}; where id = {fallback.Id}; limit 1;";
+        var body = $"fields {DossierFields}; where id = {gameId}; limit 1;";
         var json = await PostIgdbAsync("games", body, id, token);
         using var doc = JsonDocument.Parse(json);
         if (doc.RootElement.ValueKind == JsonValueKind.Array)
         {
             var item = doc.RootElement.EnumerateArray().FirstOrDefault();
             if (item.ValueKind == JsonValueKind.Object)
-                return FromGameJson(item, fallback.Name, string.Empty, string.Empty);
+                return FromGameJson(item, fallback?.Name ?? string.Empty, string.Empty, string.Empty);
         }
-        return fallback;
+        return fallback ?? throw new InvalidOperationException($"IGDB game {gameId} was not found.");
     }
 
     private static async Task<List<IgdbGameMetadataResult>> QueryGamesAsync(string query, string? platform, string? year, int limit, string clientId, string clientSecret, bool excludeVersions)
@@ -19163,7 +19365,10 @@ static class IgdbGameMetadataClient
         var perspectives = ObjectNameArray(item, "player_perspectives").ToArray();
         var keywords = ObjectNameArray(item, "keywords").Take(40).ToArray();
         var alternativeNames = ObjectNameArray(item, "alternative_names").Take(30).ToArray();
-        var platforms = NormalizePlatformNames(ObjectNameArray(item, "platforms")).ToArray();
+        var platformDetails = PlatformMetadataArray(item);
+        var platforms = platformDetails.Length > 0
+            ? platformDetails.Select(platform => platform.Name).ToArray()
+            : NormalizePlatformNames(ObjectNameArray(item, "platforms")).ToArray();
         var collectionNames = new[] { ObjectName(item, "collection") }
             .Concat(ObjectNameArray(item, "collections"))
             .Concat(ObjectNameArray(item, "franchises"))
@@ -19220,7 +19425,9 @@ static class IgdbGameMetadataClient
             Screenshots: ImageUrls(item, "screenshots", "t_screenshot_big"),
             Artworks: ImageUrls(item, "artworks", "t_720p"),
             Videos: VideoArray(item),
-            Websites: WebsiteArray(item));
+            Websites: WebsiteArray(item),
+            LocalizedCovers: LocalizedCoverArray(item),
+            PlatformDetails: platformDetails);
     }
 
     public static IgdbGameMetadataResult ParsePayload(JsonElement payload) => FromPayload(payload);
@@ -19268,7 +19475,9 @@ static class IgdbGameMetadataClient
             Screenshots: StringArrayValues(payload, "screenshots").ToArray(),
             Artworks: StringArrayValues(payload, "artworks").ToArray(),
             Videos: VideoPayloadArray(payload),
-            Websites: WebsitePayloadArray(payload));
+            Websites: WebsitePayloadArray(payload),
+            LocalizedCovers: LocalizedCoverPayloadArray(payload),
+            PlatformDetails: PlatformMetadataPayloadArray(payload));
     }
 
     private static IEnumerable<string> CompanyNames(JsonElement json, bool developer = false, bool publisher = false)
@@ -19396,6 +19605,106 @@ static class IgdbGameMetadataClient
             .ToArray();
     }
 
+    private static IgdbLocalizedCoverMetadata[] LocalizedCoverArray(JsonElement json)
+    {
+        if (!json.TryGetProperty("game_localizations", out var value) || value.ValueKind != JsonValueKind.Array)
+            return Array.Empty<IgdbLocalizedCoverMetadata>();
+        return value.EnumerateArray()
+            .Where(item => item.ValueKind == JsonValueKind.Object)
+            .Select(item =>
+            {
+                var regionName = string.Empty;
+                var regionIdentifier = string.Empty;
+                if (item.TryGetProperty("region", out var region) && region.ValueKind == JsonValueKind.Object)
+                {
+                    regionName = GetString(region, "name") ?? string.Empty;
+                    regionIdentifier = GetString(region, "identifier") ?? string.Empty;
+                }
+                var imageId = item.TryGetProperty("cover", out var cover) && cover.ValueKind == JsonValueKind.Object
+                    ? GetString(cover, "image_id") ?? string.Empty
+                    : string.Empty;
+                return new IgdbLocalizedCoverMetadata(
+                    GetString(item, "name") ?? string.Empty,
+                    regionName,
+                    regionIdentifier,
+                    IgdbImageUrl(imageId, "t_cover_big"));
+            })
+            .Where(cover => !string.IsNullOrWhiteSpace(cover.CoverPreviewUrl))
+            .GroupBy(cover => cover.CoverPreviewUrl, StringComparer.OrdinalIgnoreCase)
+            .Select(group => group.First())
+            .OrderBy(LocalizedCoverPriority)
+            .ThenBy(cover => cover.Region, StringComparer.OrdinalIgnoreCase)
+            .Take(24)
+            .ToArray();
+    }
+
+    private static int LocalizedCoverPriority(IgdbLocalizedCoverMetadata cover)
+    {
+        var region = $"{cover.Region} {cover.RegionIdentifier}".ToLowerInvariant();
+        if (region.Contains("north america") || region.Contains("united states") || region.Contains("usa") || Regex.IsMatch(region, @"\bus\b")) return 0;
+        if (region.Contains("worldwide") || region.Contains("world")) return 1;
+        if (region.Contains("europe") || region.Contains("united kingdom") || region.Contains("uk")) return 2;
+        if (region.Contains("canada")) return 3;
+        return 10;
+    }
+
+    private static IgdbLocalizedCoverMetadata[] LocalizedCoverPayloadArray(JsonElement json)
+    {
+        if (!json.TryGetProperty("localizedCovers", out var value) || value.ValueKind != JsonValueKind.Array)
+            return Array.Empty<IgdbLocalizedCoverMetadata>();
+        return value.EnumerateArray()
+            .Where(item => item.ValueKind == JsonValueKind.Object)
+            .Select(item => new IgdbLocalizedCoverMetadata(
+                GetString(item, "name") ?? string.Empty,
+                GetString(item, "region") ?? string.Empty,
+                GetString(item, "regionIdentifier") ?? string.Empty,
+                GetString(item, "coverPreviewUrl") ?? string.Empty))
+            .Where(cover => Uri.TryCreate(cover.CoverPreviewUrl, UriKind.Absolute, out _))
+            .OrderBy(LocalizedCoverPriority)
+            .Take(24)
+            .ToArray();
+    }
+
+    private static IgdbPlatformMetadata[] PlatformMetadataArray(JsonElement json)
+    {
+        if (!json.TryGetProperty("platforms", out var value) || value.ValueKind != JsonValueKind.Array)
+            return Array.Empty<IgdbPlatformMetadata>();
+        return value.EnumerateArray()
+            .Where(item => item.ValueKind == JsonValueKind.Object)
+            .Select(item =>
+            {
+                var name = NormalizeGuidevaultPlatformName(GetString(item, "name") ?? string.Empty);
+                var imageId = item.TryGetProperty("platform_logo", out var logo) && logo.ValueKind == JsonValueKind.Object
+                    ? GetString(logo, "image_id") ?? string.Empty
+                    : string.Empty;
+                return new IgdbPlatformMetadata(name, IgdbImageUrl(imageId, "t_logo_med"));
+            })
+            .Where(platform => !string.IsNullOrWhiteSpace(platform.Name) && !IsMultiPlatformName(platform.Name))
+            .GroupBy(platform => platform.Name, StringComparer.OrdinalIgnoreCase)
+            .Select(group => group.FirstOrDefault(platform => !string.IsNullOrWhiteSpace(platform.LogoUrl)) ?? group.First())
+            .ToArray();
+    }
+
+    private static IgdbPlatformMetadata[] PlatformMetadataPayloadArray(JsonElement json)
+    {
+        if (!json.TryGetProperty("platformDetails", out var value) || value.ValueKind != JsonValueKind.Array)
+            return Array.Empty<IgdbPlatformMetadata>();
+        return value.EnumerateArray()
+            .Where(item => item.ValueKind == JsonValueKind.Object)
+            .Select(item => new IgdbPlatformMetadata(
+                NormalizeGuidevaultPlatformName(GetString(item, "name") ?? string.Empty),
+                GetString(item, "logoUrl") ?? string.Empty))
+            .Where(platform => !string.IsNullOrWhiteSpace(platform.Name))
+            .GroupBy(platform => platform.Name, StringComparer.OrdinalIgnoreCase)
+            .Select(group => group.First())
+            .ToArray();
+    }
+
+    private static string IgdbImageUrl(string? imageId, string size)
+        => string.IsNullOrWhiteSpace(imageId)
+            ? string.Empty
+            : $"https://images.igdb.com/igdb/image/upload/{size}/{Uri.EscapeDataString(imageId)}.jpg";
+
     private static IgdbVideoMetadata[] VideoArray(JsonElement json)
     {
         if (!json.TryGetProperty("videos", out var value) || value.ValueKind != JsonValueKind.Array) return Array.Empty<IgdbVideoMetadata>();
@@ -19416,7 +19725,11 @@ static class IgdbGameMetadataClient
         if (!json.TryGetProperty("websites", out var value) || value.ValueKind != JsonValueKind.Array) return Array.Empty<IgdbWebsiteMetadata>();
         return value.EnumerateArray()
             .Where(item => item.ValueKind == JsonValueKind.Object)
-            .Select(item => new IgdbWebsiteMetadata(GetString(item, "category") ?? "Website", GetString(item, "url") ?? string.Empty))
+            .Select(item =>
+            {
+                var url = GetString(item, "url") ?? string.Empty;
+                return new IgdbWebsiteMetadata(WebsiteLabel(item, url), url);
+            })
             .Where(site => Uri.TryCreate(site.Url, UriKind.Absolute, out _))
             .Take(20)
             .ToArray();
@@ -19438,10 +19751,68 @@ static class IgdbGameMetadataClient
         if (!json.TryGetProperty("websites", out var value) || value.ValueKind != JsonValueKind.Array) return Array.Empty<IgdbWebsiteMetadata>();
         return value.EnumerateArray()
             .Where(item => item.ValueKind == JsonValueKind.Object)
-            .Select(item => new IgdbWebsiteMetadata(GetString(item, "category") ?? "Website", GetString(item, "url") ?? string.Empty))
+            .Select(item =>
+            {
+                var url = GetString(item, "url") ?? string.Empty;
+                var supplied = GetString(item, "category") ?? string.Empty;
+                return new IgdbWebsiteMetadata(WebsiteLabel(supplied, url), url);
+            })
             .Where(site => Uri.TryCreate(site.Url, UriKind.Absolute, out _))
             .Take(20)
             .ToArray();
+    }
+
+    private static string WebsiteLabel(JsonElement item, string url)
+    {
+        var typeName = string.Empty;
+        if (item.TryGetProperty("type", out var type))
+        {
+            typeName = type.ValueKind == JsonValueKind.Object
+                ? GetString(type, "type") ?? string.Empty
+                : type.ValueKind == JsonValueKind.String ? type.GetString() ?? string.Empty : string.Empty;
+        }
+        var categoryValue = GetInt(item, "category");
+        var legacyName = GetString(item, "category") ?? string.Empty;
+        var category = !string.IsNullOrWhiteSpace(typeName)
+            ? typeName
+            : categoryValue switch
+            {
+                1 => "Official Site",
+                2 or 3 => "Wiki",
+                4 => "Facebook",
+                5 => "Twitter",
+                6 => "Twitch",
+                8 => "Instagram",
+                9 => "YouTube",
+                13 => "Steam",
+                14 => "Reddit",
+                15 => "Itch.io",
+                16 => "Epic Games",
+                17 => "GOG",
+                18 => "Discord",
+                19 => "Bluesky",
+                _ => legacyName
+            };
+        return WebsiteLabel(category, url);
+    }
+
+    private static string WebsiteLabel(string? supplied, string url)
+    {
+        var label = (supplied ?? string.Empty).Trim();
+        var lowerUrl = (url ?? string.Empty).ToLowerInvariant();
+        if (lowerUrl.Contains("wikipedia.org") || lowerUrl.Contains("fandom.com") || lowerUrl.Contains("wikia.com")
+            || label.Contains("wiki", StringComparison.OrdinalIgnoreCase)) return "Wiki";
+        if (lowerUrl.Contains("nintendo") && (lowerUrl.Contains("support") || lowerUrl.Contains("help"))) return "Nintendo Support";
+        if (label.Equals("official", StringComparison.OrdinalIgnoreCase)) return "Official Site";
+        if (!string.IsNullOrWhiteSpace(label) && !label.Equals("website", StringComparison.OrdinalIgnoreCase))
+            return string.Join(' ', label.Replace('_', ' ').Split(' ', StringSplitOptions.RemoveEmptyEntries).Select(word => char.ToUpperInvariant(word[0]) + word[1..].ToLowerInvariant()));
+        if (Uri.TryCreate(url, UriKind.Absolute, out var parsed))
+        {
+            var host = parsed.Host.Replace("www.", string.Empty, StringComparison.OrdinalIgnoreCase);
+            var first = host.Split('.').FirstOrDefault() ?? string.Empty;
+            if (!string.IsNullOrWhiteSpace(first)) return char.ToUpperInvariant(first[0]) + first[1..].ToLowerInvariant();
+        }
+        return "Website";
     }
 
     private static string ReleaseYear(JsonElement json)
@@ -20260,5 +20631,5 @@ static class GuidevaultLibraryIoGate
 
 static class GuidevaultBuildInfo
 {
-    public const string Version = "1.2.7";
+    public const string Version = "1.2.9";
 }

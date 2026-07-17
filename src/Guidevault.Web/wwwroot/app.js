@@ -56,7 +56,7 @@ const state = {
   deviceHeartbeatTimer: null,
   openLibrary: { results: [], selectedResult: null, resolvedResult: null, step: 'search' },
   igdb: { results: [], selectedResult: null, resolvedResult: null, step: 'search', dossierIntent: false },
-  dossiers: { items: [], selected: null, loaded: false, loading: false, returnContext: { view: 'dossiers' }, picker: { query: '', kind: '', selectedId: '' } },
+  dossiers: { items: [], selected: null, loaded: false, loading: false, manageMode: false, returnContext: { view: 'dossiers' }, picker: { query: '', kind: '', selectedId: '' } },
   esrb: { results: [], selectedResult: null, resolvedResult: null, step: 'search' }
 };
 const $ = id => document.getElementById(id);
@@ -114,7 +114,7 @@ const GUIDEVAULT_LIBRARY_CHUNK_YIELD_MS = 30;
 const GUIDEVAULT_STARTUP_STATUS_HIDE_MS = 2400;
 const GUIDEVAULT_LIBRARY_SEARCH_DEBOUNCE_MS = 180;
 const GUIDEVAULT_SORT_COLLATOR = new Intl.Collator(undefined, { numeric: true, sensitivity: 'base' });
-const GUIDEVAULT_APP_VERSION = '1.2.7';
+const GUIDEVAULT_APP_VERSION = '1.2.9';
 const GUIDEVAULT_FILENAME_SCHEMA_KEY = 'guidevault.filenameRename.schema.v1';
 const GUIDEVAULT_FILE_ORGANIZATION_TEMPLATE_PRESETS_KEY = 'guidevault.fileOrganization.templatePresets.v2';
 const GUIDEVAULT_FILE_ORGANIZATION_TEMPLATE_PRESETS_LEGACY_KEY = 'guidevault.fileOrganization.templatePresets.v1';
@@ -14670,7 +14670,7 @@ async function importIgdbMetadata(mode = 'selected') {
 }
 
 function normalizeGameDossier(value = {}) {
-  const arrays = ['developers','publishers','genres','themes','gameModes','playerPerspectives','platforms','keywords','alternativeNames','collectionNames','screenshots','artworks','videos','websites','libraryItemIds','collections'];
+  const arrays = ['developers','publishers','genres','themes','gameModes','playerPerspectives','platforms','platformDetails','keywords','alternativeNames','collectionNames','screenshots','artworks','localizedCovers','videos','websites','libraryItemIds','excludedLibraryItemIds','excludedRelatedGameKeys','collections'];
   const dossier = { ...value };
   arrays.forEach(key => { dossier[key] = Array.isArray(dossier[key]) ? dossier[key] : []; });
   dossier.collections = dossier.collections.map(collection => ({
@@ -14825,27 +14825,26 @@ function dossierLinkedDocuments(dossier = {}) {
   return (state.items || []).filter(item => ids.has(String(itemIdOf(item) || '').toLowerCase()));
 }
 
-function dossierDocumentRowMarkup(item = {}) {
+function dossierDocumentRowMarkup(item = {}, overflow = false) {
   const id = itemIdOf(item);
   const platform = preferredPlatformOf(item) || categoryOf(item) || '';
   const secondary = item.kind === 'Magazine'
     ? [item.magazineTitle || item.series, item.issueNumber ? `Issue ${item.issueNumber}` : '', item.coverDate || item.year].filter(Boolean).join(' · ')
     : [item.publisher || item.gamePublisher, platform].filter(Boolean).join(' · ');
   const detail = [platform, itemPageCountLabel(item)].filter(value => value && value !== '\u2014').join(' · ');
-  return `<div class="dossier-dashboard-document-row">
+  return `<div class="dossier-dashboard-document-row ${overflow ? 'dossier-document-overflow' : ''}">
     <div class="dossier-dashboard-document-cover">${coverUrl(item, { width: 120 }) ? `<img src="${escapeForAttribute(coverUrl(item, { width: 120 }))}" alt="" loading="lazy" />` : '<span>GV</span>'}</div>
     <div class="dossier-dashboard-document-copy"><strong>${escapeHtml(displayTitle(item))}</strong><span>${escapeHtml(secondary || item.kind || 'GuideVault document')}</span><small>${escapeHtml(detail)}</small></div>
-    <button type="button" class="ghost tiny" data-dossier-item-id="${escapeForAttribute(id)}">Open</button>
+    <div class="dossier-dashboard-document-actions"><button type="button" class="ghost tiny" data-dossier-item-id="${escapeForAttribute(id)}">Open</button><button type="button" class="danger tiny" data-dossier-unlink-item="${escapeForAttribute(id)}" title="Remove this document from the dossier">Remove</button></div>
   </div>`;
 }
 
 function dossierDocumentCardMarkup(kind = '', title = '', icon = '', documents = []) {
   const matching = documents.filter(item => item.kind === kind);
-  const preview = matching.slice(0, 3);
   return `<section class="dossier-dashboard-card dossier-document-card" data-dossier-document-kind="${escapeForAttribute(kind)}">
     <header><div><span>${icon}</span><h2>${escapeHtml(title)} <em>(${matching.length})</em></h2></div></header>
-    <div class="dossier-dashboard-list">${preview.length ? preview.map(dossierDocumentRowMarkup).join('') : `<p class="dossier-dashboard-empty">No linked ${escapeHtml(title.toLowerCase())} yet.</p>`}</div>
-    ${matching.length > preview.length ? `<footer>${matching.length - preview.length} more linked document${matching.length - preview.length === 1 ? '' : 's'}</footer>` : ''}
+    <div class="dossier-dashboard-list">${matching.length ? matching.map((item, index) => dossierDocumentRowMarkup(item, index >= 3)).join('') : `<p class="dossier-dashboard-empty">No linked ${escapeHtml(title.toLowerCase())} yet.</p>`}</div>
+    ${matching.length > 3 ? `<footer><button type="button" class="dossier-document-toggle" data-dossier-toggle-documents aria-expanded="false"><span>View all ${matching.length}</span><em>${matching.length - 3} more</em></button></footer>` : ''}
   </section>`;
 }
 
@@ -14859,21 +14858,72 @@ function dossierRelatedGames(dossier = {}) {
   });
 }
 
+function dossierRelatedGameKey(game = {}) {
+  return Number(game.id || 0) > 0
+    ? `id:${Number(game.id)}`
+    : `name:${String(game.name || '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim()}`;
+}
+
 function dossierDashboardRelatedRowMarkup(game = {}) {
   const url = dossierSafeUrl(game.sourceUrl);
-  const inner = `<div class="dossier-dashboard-related-cover">${game.coverPreviewUrl ? `<img src="${escapeForAttribute(game.coverPreviewUrl)}" alt="" loading="lazy" />` : '<span>IGDB</span>'}</div><div><strong>${escapeHtml(game.name || 'Related Game')}</strong><span>${escapeHtml([game.relation, game.gameReleaseYear].filter(Boolean).join(' · ') || 'Related title')}</span></div><i>\u203A</i>`;
-  return url ? `<a class="dossier-dashboard-related-row" href="${escapeForAttribute(url)}" target="_blank" rel="noreferrer">${inner}</a>` : `<div class="dossier-dashboard-related-row">${inner}</div>`;
+  const key = dossierRelatedGameKey(game);
+  const cover = `<div class="dossier-dashboard-related-cover">${game.coverPreviewUrl ? `<img src="${escapeForAttribute(game.coverPreviewUrl)}" alt="" loading="lazy" />` : '<span>IGDB</span>'}</div>`;
+  const copy = `<div>${url ? `<a href="${escapeForAttribute(url)}" target="_blank" rel="noreferrer"><strong>${escapeHtml(game.name || 'Related Game')}</strong></a>` : `<strong>${escapeHtml(game.name || 'Related Game')}</strong>`}<span>${escapeHtml([game.relation, game.gameReleaseYear].filter(Boolean).join(' · ') || 'Related title')}</span></div>`;
+  return `<div class="dossier-dashboard-related-row">${url ? `<a class="dossier-dashboard-related-cover-link" href="${escapeForAttribute(url)}" target="_blank" rel="noreferrer">${cover}</a>` : cover}${copy}<button type="button" class="danger tiny" data-dossier-remove-related-game="${escapeForAttribute(key)}" title="Remove this related-game reference">Remove</button></div>`;
+}
+
+function dossierWebsiteLabel(site = {}) {
+  const url = String(site.url || '').toLowerCase();
+  const category = String(site.category || '').trim();
+  if (/wikipedia\.org|fandom\.com|wikia\.com/.test(url) || /wiki/i.test(category) || category === '2' || category === '3') return 'Wiki';
+  if (/nintendo/.test(url) && /support|help/.test(url)) return 'Nintendo Support';
+  if (category && !/^website$/i.test(category)) return category.replaceAll('_', ' ').replace(/\b\w/g, char => char.toUpperCase());
+  try {
+    const host = new URL(site.url).hostname.replace(/^www\./i, '').split('.')[0];
+    return host ? host[0].toUpperCase() + host.slice(1) : 'Website';
+  } catch { return 'Website'; }
+}
+
+function dossierPlatformRows(dossier = {}) {
+  const details = Array.isArray(dossier.platformDetails) ? dossier.platformDetails : [];
+  const detailMap = new Map(details.map(platform => [String(platform.name || '').toLowerCase(), platform]));
+  return (dossier.platforms || []).map(name => {
+    const detail = detailMap.get(String(name || '').toLowerCase()) || {};
+    return { name, logoUrl: dossierSafeUrl(detail.logoUrl) || platformIconUrl(name) || '' };
+  });
+}
+
+function dossierPlatformRowMarkup(platform = {}, primaryPlatform = '') {
+  const isPrimary = String(platform.name || '').toLowerCase() === String(primaryPlatform || '').toLowerCase();
+  const rawLogo = String(platform.logoUrl || '').trim();
+  const logo = dossierSafeUrl(rawLogo) || (rawLogo.startsWith('/') ? rawLogo : '');
+  return `<div class="dossier-dashboard-platform-row ${isPrimary ? 'is-primary' : ''}">
+    <span class="dossier-dashboard-platform-logo">${logo ? `<img src="${escapeForAttribute(logo)}" alt="" loading="lazy" />` : escapeHtml(platformInitials(platform.name))}</span>
+    <strong>${escapeHtml(platform.name)}</strong>
+    <div class="dossier-dashboard-platform-actions">${isPrimary ? '<em class="primary">Primary</em>' : `<em>Variant</em><button type="button" class="ghost tiny" data-dossier-primary-platform="${escapeForAttribute(platform.name)}">Set primary</button>`}</div>
+  </div>`;
+}
+
+function dossierLocalizedCoverMarkup(cover = {}) {
+  const url = dossierSafeUrl(cover.coverPreviewUrl);
+  if (!url) return '';
+  const label = cover.region || cover.regionIdentifier || cover.name || 'Localized cover';
+  return `<a class="dossier-localized-cover" href="${escapeForAttribute(url)}" target="_blank" rel="noreferrer"><img src="${escapeForAttribute(url)}" alt="${escapeForAttribute(label)} cover" loading="lazy" /><span>${escapeHtml(label)}</span></a>`;
 }
 
 function dossierDetailHtml(dossier = {}) {
   const sourceUrl = dossierSafeUrl(dossier.sourceUrl);
-  const media = [...(dossier.artworks || []), ...(dossier.screenshots || [])].slice(0, 12);
   const sites = (dossier.websites || []).filter(site => dossierSafeUrl(site.url));
   const videos = (dossier.videos || []).filter(video => dossierSafeUrl(video.url));
   const documents = dossierLinkedDocuments(dossier);
   const relatedGames = dossierRelatedGames(dossier);
-  const heroArtwork = (dossier.artworks || [])[0] || (dossier.screenshots || [])[0] || dossier.coverPreviewUrl || '';
-  const heroUsesCover = heroArtwork && heroArtwork === dossier.coverPreviewUrl;
+  const localizedCovers = (dossier.localizedCovers || []).filter(cover => dossierSafeUrl(cover.coverPreviewUrl)).slice(0, 12);
+  const screenshots = (dossier.screenshots || []).filter(dossierSafeUrl).slice(0, 12);
+  const primaryCover = dossierSafeUrl(dossier.primaryCoverUrl) || localizedCovers[0]?.coverPreviewUrl || dossierSafeUrl(dossier.coverPreviewUrl);
+  const heroArtwork = dossierSafeUrl((dossier.artworks || [])[0]);
+  const platforms = dossierPlatformRows(dossier);
+  const primaryPlatform = (dossier.platforms || []).find(platform => String(platform).toLowerCase() === String(dossier.primaryPlatform || '').toLowerCase()) || dossier.platforms?.[0] || '';
+  const excludedDocumentCount = (dossier.excludedLibraryItemIds || []).length;
   const primaryPublisher = (dossier.publishers || [])[0] || '';
   const primaryGenre = (dossier.genres || [])[0] || '';
   const primaryDeveloper = (dossier.developers || [])[0] || '';
@@ -14896,7 +14946,7 @@ function dossierDetailHtml(dossier = {}) {
     <div class="dossier-dashboard-breadcrumb"><span>Games</span><i>\u203A</i><strong>${escapeHtml(dossier.gameTitle || 'Game Dossier')}</strong></div>
     <header class="dossier-dashboard-hero ${heroArtwork ? 'has-artwork' : ''}">
       ${heroArtwork ? `<div class="dossier-dashboard-hero-backdrop" aria-hidden="true"><img src="${escapeForAttribute(heroArtwork)}" alt="" /></div>` : ''}
-      <div class="dossier-dashboard-hero-art ${heroUsesCover ? 'is-cover' : ''}">${heroArtwork ? `<img src="${escapeForAttribute(heroArtwork)}" alt="${escapeForAttribute(dossier.gameTitle || '')} artwork" />` : '<span>GV</span>'}</div>
+      <div class="dossier-dashboard-hero-art is-cover">${primaryCover ? `<img src="${escapeForAttribute(primaryCover)}" alt="${escapeForAttribute(dossier.gameTitle || '')} cover" />` : '<span>GV</span>'}</div>
       <div class="dossier-dashboard-hero-main">
         <span class="dossier-page-kicker">GAME DOSSIER</span>
         <h1 id="dossierPageTitle">${escapeHtml(dossier.gameTitle || 'Game Dossier')}</h1>
@@ -14910,7 +14960,7 @@ function dossierDetailHtml(dossier = {}) {
           ${[['Developer', primaryDeveloper], ['Publisher', primaryPublisher], ['Franchise', dossier.gameFranchise], ['Series', series], ['First Release', dossier.firstReleaseDate || dossier.gameReleaseYear]].filter(([, value]) => value).map(([label, value]) => `<div><span>${escapeHtml(label)}</span><strong>${escapeHtml(value)}</strong></div>`).join('')}
         </div>
         <p class="dossier-page-summary">${escapeHtml(dossier.summary || 'No IGDB summary was returned for this game.')}</p>
-        <div class="dossier-dashboard-actions">${sourceUrl ? `<a class="primary dossier-source-link" href="${escapeForAttribute(sourceUrl)}" target="_blank" rel="noreferrer">View on IGDB \u2197</a>` : ''}${sites.slice(0, 2).map(site => `<a class="ghost" href="${escapeForAttribute(site.url)}" target="_blank" rel="noreferrer">${escapeHtml(site.category || 'Website')} \u2197</a>`).join('')}</div>
+        <div class="dossier-dashboard-actions">${sourceUrl ? `<a class="primary dossier-source-link" href="${escapeForAttribute(sourceUrl)}" target="_blank" rel="noreferrer">View on IGDB \u2197</a>` : ''}${sites.slice(0, 3).map(site => `<a class="ghost" href="${escapeForAttribute(site.url)}" target="_blank" rel="noreferrer">${escapeHtml(dossierWebsiteLabel(site))} \u2197</a>`).join('')}${excludedDocumentCount ? `<button type="button" class="ghost" data-dossier-reset-exclusions>Restore ${excludedDocumentCount} removed link${excludedDocumentCount === 1 ? '' : 's'}</button>` : ''}</div>
       </div>
       <aside class="dossier-dashboard-identifiers">
         <h2>Game Identifiers</h2>
@@ -14921,13 +14971,14 @@ function dossierDetailHtml(dossier = {}) {
       ${dossierDocumentCardMarkup('Manual', 'Manuals', '\u25A3', documents)}
       ${dossierDocumentCardMarkup('Strategy Guide', 'Strategy Guides', '\u25A4', documents)}
       ${dossierDocumentCardMarkup('Magazine', 'Magazine Appearances', '\u25A5', documents)}
-      <section class="dossier-dashboard-card"><header><div><span>\u25A7</span><h2>Platforms <em>(${(dossier.platforms || []).length})</em></h2></div></header><div class="dossier-dashboard-list">${(dossier.platforms || []).map((platform, index) => `<div class="dossier-dashboard-platform-row"><span>${escapeHtml(platform.slice(0, 2).toUpperCase())}</span><strong>${escapeHtml(platform)}</strong><em class="${index === 0 ? 'primary' : ''}">${index === 0 ? 'Primary' : 'Variant'}</em></div>`).join('') || '<p class="dossier-dashboard-empty">No platform data returned.</p>'}</div></section>
+      <section class="dossier-dashboard-card"><header><div><span>\u25A7</span><h2>Platforms <em>(${platforms.length})</em></h2></div></header><div class="dossier-dashboard-list">${platforms.map(platform => dossierPlatformRowMarkup(platform, primaryPlatform)).join('') || '<p class="dossier-dashboard-empty">No platform data returned.</p>'}</div></section>
       <section class="dossier-dashboard-card"><header><div><span>\u25C8</span><h2>Related Games <em>(${relatedGames.length})</em></h2></div></header><div class="dossier-dashboard-list">${relatedGames.slice(0, 5).map(dossierDashboardRelatedRowMarkup).join('') || '<p class="dossier-dashboard-empty">No related games returned.</p>'}</div></section>
       <section class="dossier-dashboard-card dossier-quick-facts-card"><header><div><span>\u25C9</span><h2>Quick Facts</h2></div></header><dl>${quickFacts.map(([label, value]) => `<dt>${escapeHtml(label)}</dt><dd>${escapeHtml(value)}</dd>`).join('')}</dl></section>
       ${dossier.storyline ? `<section class="dossier-dashboard-card dossier-dashboard-wide dossier-story-card"><header><div><span>\u25CE</span><h2>Storyline</h2></div></header><p>${escapeHtml(dossier.storyline)}</p></section>` : ''}
       ${(dossier.alternativeNames || []).length || (dossier.keywords || []).length ? `<section class="dossier-dashboard-card ${dossier.storyline ? '' : 'dossier-dashboard-wide'}"><header><div><span>\u25C7</span><h2>Aliases & Keywords</h2></div></header>${(dossier.alternativeNames || []).length ? `<p class="dossier-dashboard-aliases">${escapeHtml((dossier.alternativeNames || []).join(' · '))}</p>` : ''}<div class="dossier-chipline">${dossierFactChips((dossier.keywords || []).slice(0, 24))}</div></section>` : ''}
       <section class="dossier-dashboard-card dossier-dashboard-full dossier-activity-card"><header><div><span>\u25F7</span><h2>Recent Activity</h2></div></header><div class="dossier-dashboard-activity-list"><div><i>\u25A3</i><span><strong>Dossier created</strong><small>${escapeHtml(formatProfileDate(dossier.createdAt))}</small></span></div><div><i>\u21BB</i><span><strong>IGDB metadata refreshed</strong><small>${escapeHtml(formatProfileDate(dossier.updatedAt))}</small></span></div><div><i>\u25C9</i><span><strong>${documents.length} GuideVault document${documents.length === 1 ? '' : 's'} linked</strong><small>Library collections synchronized</small></span></div>${videos.length ? `<div><i>\u25B6</i><span><strong>${videos.length} video resource${videos.length === 1 ? '' : 's'}</strong><small>Available from IGDB</small></span></div>` : ''}</div></section>
-      ${media.length ? `<section class="dossier-dashboard-card dossier-dashboard-full dossier-media-section"><header><div><span>\u25A8</span><h2>Artwork & Screenshots <em>(${media.length})</em></h2></div></header><div class="dossier-media-grid">${media.map(url => `<a href="${escapeForAttribute(url)}" target="_blank" rel="noreferrer"><img src="${escapeForAttribute(url)}" alt="" loading="lazy" /></a>`).join('')}</div></section>` : ''}
+      ${screenshots.length ? `<section class="dossier-dashboard-card dossier-dashboard-full dossier-media-section"><header><div><span>\u25A8</span><h2>Screenshots <em>(${screenshots.length})</em></h2></div></header><div class="dossier-media-grid">${screenshots.map(url => `<a href="${escapeForAttribute(url)}" target="_blank" rel="noreferrer"><img src="${escapeForAttribute(url)}" alt="" loading="lazy" /></a>`).join('')}</div></section>` : ''}
+      ${localizedCovers.length ? `<section class="dossier-dashboard-card dossier-dashboard-full dossier-media-section dossier-localized-covers-section"><header><div><span>\u25A3</span><h2>Localized Covers <em>(${localizedCovers.length})</em></h2></div></header><div class="dossier-localized-cover-grid">${localizedCovers.map(dossierLocalizedCoverMarkup).join('')}</div></section>` : ''}
     </div>
   </article>`;
 }
@@ -14947,6 +14998,22 @@ function renderGameDossierPage(dossier = state.dossiers?.selected || {}) {
     $('dossierPageRefresh').classList.toggle('hidden', !currentUserIsAdmin());
     $('dossierPageRefresh').dataset.dossierId = dossier.id || '';
   }
+  const canManageDossier = currentUserIsAdmin();
+  if ($('dossierPageManage')) $('dossierPageManage').classList.toggle('hidden', !canManageDossier);
+  setDossierManageMode(canManageDossier && state.dossiers?.manageMode === true);
+}
+
+function setDossierManageMode(enabled = false) {
+  state.dossiers.manageMode = enabled === true;
+  document.querySelector('#dossierDetailPageContent .dossier-page-record')?.classList.toggle('is-managing', state.dossiers.manageMode);
+  const button = $('dossierPageManage');
+  if (!button) return;
+  button.setAttribute('aria-pressed', state.dossiers.manageMode ? 'true' : 'false');
+  button.classList.toggle('primary', state.dossiers.manageMode);
+  button.textContent = state.dossiers.manageMode ? 'Done Managing' : 'Manage Links';
+  button.title = state.dossiers.manageMode
+    ? 'Hide document removal and primary-platform controls'
+    : 'Show document removal and primary-platform controls';
 }
 
 function openGameDossier(id = '', options = {}) {
@@ -15073,9 +15140,9 @@ function renderDossierSettings() {
   if (!host) return;
   const isAdmin = currentUserIsAdmin();
   host.innerHTML = gameDossiers().length ? gameDossiers().map(dossier => `<article class="settings-card dossier-settings-row" data-dossier-id="${escapeForAttribute(dossier.id)}">
-    <div class="dossier-settings-cover">${dossier.coverPreviewUrl ? `<img src="${escapeForAttribute(dossier.coverPreviewUrl)}" alt="" loading="lazy" />` : '<span>GV</span>'}</div>
+    <div class="dossier-settings-cover">${dossier.primaryCoverUrl || dossier.coverPreviewUrl ? `<img src="${escapeForAttribute(dossier.primaryCoverUrl || dossier.coverPreviewUrl)}" alt="" loading="lazy" />` : '<span>GV</span>'}</div>
     <div><div class="settings-card-kicker">IGDB ${escapeHtml(dossier.igdbId)}</div><h3>${escapeHtml(dossier.gameTitle || 'Game Dossier')}</h3><p class="sub">${dossier.libraryItemIds.length} linked document${dossier.libraryItemIds.length === 1 ? '' : 's'} · ${dossier.collections.length} collection${dossier.collections.length === 1 ? '' : 's'} · Updated ${escapeHtml(formatProfileDate(dossier.updatedAt))}</p></div>
-    <div class="settings-actions inline-actions"><button class="ghost" type="button" data-dossier-action="open">Open</button>${isAdmin ? '<button class="ghost" type="button" data-dossier-action="refresh">Refresh Matches</button><button class="danger" type="button" data-dossier-action="delete">Delete</button>' : ''}</div>
+    <div class="settings-actions inline-actions"><button class="ghost" type="button" data-dossier-action="open">Open</button>${isAdmin ? '<button class="ghost" type="button" data-dossier-action="refresh">Refresh IGDB + Matches</button><button class="danger" type="button" data-dossier-action="delete">Delete</button>' : ''}</div>
   </article>`).join('') : '<article class="settings-card dossier-settings-empty"><h3>No dossiers yet</h3><p class="sub">Select Choose a Manual or Guide above to start the searchable creation wizard.</p></article>';
 }
 
@@ -15108,9 +15175,9 @@ async function createOrUpdateIgdbDossier() {
 }
 
 async function refreshGameDossier(id = '') {
-  setDossiersStatus('Refreshing linked GuideVault documents...', 'info');
+  setDossiersStatus('Refreshing IGDB media, platforms, and linked GuideVault documents...', 'info');
   try {
-    const res = await fetch(`/api/dossiers/${encodeURIComponent(id)}/refresh-library`, { method: 'POST' });
+    const res = await fetch(`/api/dossiers/${encodeURIComponent(id)}/refresh-igdb`, { method: 'POST' });
     const data = await res.json().catch(() => ({}));
     if (!res.ok) throw new Error(data?.error || `Refresh failed. HTTP ${res.status}`);
     state.dossiers.items = (Array.isArray(data?.dossiers) ? data.dossiers : []).map(normalizeGameDossier);
@@ -15121,8 +15188,84 @@ async function refreshGameDossier(id = '') {
       renderGameDossierPage(refreshed);
     }
     if (state.viewMode === 'dossiers') applyFilters();
-    setDossiersStatus('Dossier document matches refreshed.', 'success');
-  } catch (err) { setDossiersStatus(err?.message || 'Unable to refresh dossier matches.', 'error'); }
+    setDossiersStatus('Dossier IGDB media, platforms, and document matches refreshed.', 'success');
+  } catch (err) { setDossiersStatus(err?.message || 'Unable to refresh the dossier.', 'error'); }
+}
+
+function applyDossierMutationResponse(data = {}, id = '') {
+  state.dossiers.items = (Array.isArray(data?.dossiers) ? data.dossiers : []).map(normalizeGameDossier);
+  state.dossiers.loaded = true;
+  renderDossierSidebar();
+  renderDossierSettings();
+  const refreshed = gameDossierById(id);
+  if (refreshed && document.body.classList.contains('dossier-page-mode')) {
+    state.dossiers.selected = refreshed;
+    renderGameDossierPage(refreshed);
+  }
+  if (state.viewMode === 'dossiers') applyFilters();
+  return refreshed;
+}
+
+async function setDossierPrimaryPlatform(id = '', platform = '') {
+  if (!id || !platform) return;
+  try {
+    const res = await fetch(`/api/dossiers/${encodeURIComponent(id)}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ primaryPlatform: platform })
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data?.error || `Platform update failed. HTTP ${res.status}`);
+    applyDossierMutationResponse(data, id);
+    setDossiersStatus(`${platform} is now the primary platform.`, 'success');
+  } catch (err) { setDossiersStatus(err?.message || 'Unable to update the primary platform.', 'error'); }
+}
+
+async function unlinkDossierLibraryItem(id = '', itemId = '') {
+  const dossier = gameDossierById(id);
+  const item = (state.items || []).find(candidate => String(itemIdOf(candidate)) === String(itemId));
+  if (!dossier || !itemId) return;
+  const label = item ? displayTitle(item) : 'this document';
+  const confirmed = typeof showAppConfirm === 'function'
+    ? await showAppConfirm({ title: 'Remove dossier link?', message: `Remove “${label}” from the ${dossier.gameTitle} dossier? The library file will not be deleted, and automatic refreshes will keep this link excluded.`, okText: 'Remove link', cancelText: 'Cancel', danger: true })
+    : window.confirm(`Remove “${label}” from this dossier?`);
+  if (!confirmed) return;
+  try {
+    const res = await fetch(`/api/dossiers/${encodeURIComponent(id)}/library-items?itemId=${encodeURIComponent(itemId)}`, { method: 'DELETE' });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data?.error || `Remove link failed. HTTP ${res.status}`);
+    applyDossierMutationResponse(data, id);
+    setDossiersStatus('Document link removed. The library item was not deleted.', 'success');
+  } catch (err) { setDossiersStatus(err?.message || 'Unable to remove the dossier link.', 'error'); }
+}
+
+async function resetDossierLibraryExclusions(id = '') {
+  if (!id) return;
+  try {
+    const res = await fetch(`/api/dossiers/${encodeURIComponent(id)}/reset-library-exclusions`, { method: 'POST' });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data?.error || `Restore links failed. HTTP ${res.status}`);
+    applyDossierMutationResponse(data, id);
+    setDossiersStatus('Removed document links were restored and automatic matching was rerun.', 'success');
+  } catch (err) { setDossiersStatus(err?.message || 'Unable to restore document links.', 'error'); }
+}
+
+async function removeDossierRelatedGame(id = '', gameKey = '') {
+  const dossier = gameDossierById(id);
+  const relatedGame = dossierRelatedGames(dossier).find(game => dossierRelatedGameKey(game) === gameKey);
+  if (!dossier || !gameKey) return;
+  const label = relatedGame?.name || 'this related game';
+  const confirmed = typeof showAppConfirm === 'function'
+    ? await showAppConfirm({ title: 'Remove related game?', message: `Remove “${label}” from the ${dossier.gameTitle} dossier? IGDB refreshes will keep this reference excluded.`, okText: 'Remove reference', cancelText: 'Cancel', danger: true })
+    : window.confirm(`Remove “${label}” from this dossier?`);
+  if (!confirmed) return;
+  try {
+    const res = await fetch(`/api/dossiers/${encodeURIComponent(id)}/related-games?gameKey=${encodeURIComponent(gameKey)}`, { method: 'DELETE' });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data?.error || `Remove related game failed. HTTP ${res.status}`);
+    applyDossierMutationResponse(data, id);
+    setDossiersStatus('Related-game reference removed.', 'success');
+  } catch (err) { setDossiersStatus(err?.message || 'Unable to remove the related-game reference.', 'error'); }
 }
 
 async function deleteGameDossier(id = '') {
@@ -23574,6 +23717,10 @@ document.addEventListener('click', e => {
 });
 if ($('dossiersRefresh')) $('dossiersRefresh').addEventListener('click', e => { e.preventDefault(); loadGameDossiers(true); });
 if ($('dossierPageBack')) $('dossierPageBack').addEventListener('click', e => { e.preventDefault(); closeGameDossier(); });
+if ($('dossierPageManage')) $('dossierPageManage').addEventListener('click', e => {
+  e.preventDefault();
+  setDossierManageMode(!(state.dossiers?.manageMode === true));
+});
 if ($('dossierPageRefresh')) $('dossierPageRefresh').addEventListener('click', e => {
   e.preventDefault();
   const id = e.currentTarget.dataset.dossierId || state.dossiers?.selected?.id || '';
@@ -23600,9 +23747,44 @@ if ($('dossierItemPickerResults')) $('dossierItemPickerResults').addEventListene
   state.dossiers.picker.selectedId = result.dataset.dossierPickerItemId || '';
   renderDossierItemPickerResults();
 });
-document.addEventListener('click', e => {
+document.addEventListener('click', async e => {
   const close = e.target.closest?.('#dossierDialogClose');
   if (close) { e.preventDefault(); closeGameDossier(); return; }
+  const documentToggle = e.target.closest?.('[data-dossier-toggle-documents]');
+  if (documentToggle) {
+    e.preventDefault();
+    const card = documentToggle.closest('.dossier-document-card');
+    const expanded = !card?.classList.contains('is-expanded');
+    card?.classList.toggle('is-expanded', expanded);
+    documentToggle.setAttribute('aria-expanded', expanded ? 'true' : 'false');
+    const label = documentToggle.querySelector('span');
+    if (label) label.textContent = expanded ? 'Show fewer' : `View all ${card?.querySelectorAll('.dossier-dashboard-document-row').length || ''}`;
+    return;
+  }
+  const unlinkItem = e.target.closest?.('[data-dossier-unlink-item]');
+  if (unlinkItem) {
+    e.preventDefault();
+    await unlinkDossierLibraryItem(state.dossiers?.selected?.id || '', unlinkItem.dataset.dossierUnlinkItem || '');
+    return;
+  }
+  const removeRelatedGame = e.target.closest?.('[data-dossier-remove-related-game]');
+  if (removeRelatedGame) {
+    e.preventDefault();
+    await removeDossierRelatedGame(state.dossiers?.selected?.id || '', removeRelatedGame.dataset.dossierRemoveRelatedGame || '');
+    return;
+  }
+  const primaryPlatform = e.target.closest?.('[data-dossier-primary-platform]');
+  if (primaryPlatform) {
+    e.preventDefault();
+    await setDossierPrimaryPlatform(state.dossiers?.selected?.id || '', primaryPlatform.dataset.dossierPrimaryPlatform || '');
+    return;
+  }
+  const resetExclusions = e.target.closest?.('[data-dossier-reset-exclusions]');
+  if (resetExclusions) {
+    e.preventDefault();
+    await resetDossierLibraryExclusions(state.dossiers?.selected?.id || '');
+    return;
+  }
   const libraryItem = e.target.closest?.('[data-dossier-item-id]');
   if (libraryItem) {
     e.preventDefault();

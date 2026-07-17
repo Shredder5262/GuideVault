@@ -6,7 +6,7 @@
   <title>Guidevault</title>
   <link rel="icon" type="image/x-icon" href="/assets/favicon.ico?v=0.9.228" />
   <link rel="shortcut icon" type="image/x-icon" href="/assets/favicon.ico?v=0.9.228" />
-  <link rel="stylesheet" href="/styles.css?v=1.2.7" />
+  <link rel="stylesheet" href="/styles.css?v=1.2.9" />
 </head>
 <body class="right-collapsed auth-locked">
   <section id="loginView" class="login-view" aria-labelledby="loginTitle">
@@ -393,11 +393,14 @@
         <div class="dossier-page-shell">
           <div class="dossier-page-toolbar">
             <button id="dossierPageBack" class="ghost" type="button">&#x2190; Dossiers</button>
-            <div>
+            <div class="dossier-page-toolbar-title">
               <span>GUIDEVAULT GAME DOSSIER</span>
               <strong id="dossierPageToolbarTitle">Game Dossier</strong>
             </div>
-            <button id="dossierPageRefresh" class="ghost hidden" type="button">Refresh Library Links</button>
+            <div class="dossier-page-toolbar-actions">
+              <button id="dossierPageManage" class="ghost hidden" type="button" aria-pressed="false">Manage Links</button>
+              <button id="dossierPageRefresh" class="ghost hidden" type="button">Refresh IGDB + Matches</button>
+            </div>
           </div>
           <div id="dossierDetailPageContent" class="dossier-page-content"></div>
         </div>
@@ -2169,6 +2172,47 @@
             <div id="systemUpdateHistoryList" class="system-update-list">
               <details class="system-update-entry" open>
                 <summary>
+                  <span>GuideVault 1.2.9 - Dossier Manage Mode</span>
+                </summary>
+                <div class="system-update-body">
+                  <h3><b>1</b> Cleaner Dossier Viewing</h3>
+                  <ul>
+                    <li>Hides document-removal, related-game removal, and Set primary controls during normal dossier viewing.</li>
+                    <li>Adds a Manage Links toggle beside Refresh IGDB + Matches to reveal editing controls only when needed.</li>
+                  </ul>
+                  <h3><b>2</b> Clear Editing State</h3>
+                  <ul>
+                    <li>Changes the active toggle to Done Managing and visually highlights it while management controls are visible.</li>
+                    <li>Restricts the management toggle to administrators while keeping document Open actions available.</li>
+                  </ul>
+                </div>
+              </details>
+              <details class="system-update-entry">
+                <summary>
+                  <span>GuideVault 1.2.8 - Dossier Media + Link Management</span>
+                </summary>
+                <div class="system-update-body">
+                  <h3><b>1</b> Localized Cover + Artwork Presentation</h3>
+                  <ul>
+                    <li>Uses the main localized game cover as the primary box image and a separate IGDB artwork image as the faded dossier-header backdrop when available.</li>
+                    <li>Separates localized covers from screenshots and removes artwork duplicates from the lower media sections.</li>
+                  </ul>
+                  <h3><b>2</b> Curated Linked Content</h3>
+                  <ul>
+                    <li>Adds expandable, scrollable document groups so every linked manual, strategy guide, and magazine appearance can be reviewed.</li>
+                    <li>Adds removal controls for incorrect document and related-game references, with exclusions preserved during later refreshes.</li>
+                    <li>Tightens automatic document matching to game titles and aliases instead of broad franchise or collection names.</li>
+                  </ul>
+                  <h3><b>3</b> Platform + Website Refinements</h3>
+                  <ul>
+                    <li>Fetches IGDB platform logos and lets an administrator choose the dossier’s primary platform.</li>
+                    <li>Labels Wikipedia and Nintendo support links clearly instead of showing repeated generic Website buttons.</li>
+                    <li>Refreshes IGDB media, platform details, and GuideVault matches together from the dossier controls.</li>
+                  </ul>
+                </div>
+              </details>
+              <details class="system-update-entry">
+                <summary>
                   <span>GuideVault 1.2.7 - Empty Shortcut Cleanup</span>
                 </summary>
                 <div class="system-update-body">
@@ -3597,6 +3641,6 @@
   </dialog>
 
 
-  <script src="/app.js?v=1.2.7"></script>
+  <script src="/app.js?v=1.2.9"></script>
 </body>
 </html>

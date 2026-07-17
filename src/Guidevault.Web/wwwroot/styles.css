@@ -21523,7 +21523,8 @@ body.dossier-page-mode .main{min-width:0;overflow:hidden!important;}
 .dossier-detail-view{height:calc(100vh - 66px);min-height:0;padding:16px 20px 20px;overflow:hidden;background:radial-gradient(circle at 20% 0,rgba(41,113,191,.14),transparent 34%),linear-gradient(180deg,rgba(8,17,29,.92),rgba(5,11,20,.98));}
 .dossier-page-shell{height:100%;min-height:0;display:flex;flex-direction:column;max-width:1560px;margin:0 auto;}
 .dossier-page-toolbar{flex:0 0 auto;display:grid;grid-template-columns:auto minmax(0,1fr) auto;align-items:center;gap:16px;margin-bottom:14px;padding:0 2px;}
-.dossier-page-toolbar>div{min-width:0;display:flex;align-items:baseline;gap:10px;}
+.dossier-page-toolbar-title{min-width:0;display:flex;align-items:baseline;gap:10px;}
+.dossier-page-toolbar-actions{display:flex;align-items:center;justify-content:flex-end;gap:8px;}
 .dossier-page-toolbar span{color:#66b6ff;font-size:10px;font-weight:900;letter-spacing:.14em;white-space:nowrap;}
 .dossier-page-toolbar strong{min-width:0;color:#dcecff;font-size:14px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
 .dossier-page-content{flex:1 1 auto;min-height:0;overflow-y:auto;overflow-x:hidden;padding:0 4px 28px 0;scrollbar-width:thin;scrollbar-color:#38516b #0b1520;}
@@ -21570,7 +21571,7 @@ body.dossier-page-mode .main{min-width:0;overflow:hidden!important;}
   .dossier-detail-view{height:auto;min-height:calc(100vh - 66px);padding:12px;overflow:auto;}
   .dossier-page-shell,.dossier-page-content{height:auto;overflow:visible;}
   .dossier-page-toolbar{grid-template-columns:1fr auto;}
-  .dossier-page-toolbar>div{display:none;}
+  .dossier-page-toolbar-title{display:none;}
   .dossier-page-hero{grid-template-columns:1fr;padding:18px;}
   .dossier-page-cover{width:170px;height:232px;}
   .dossier-page-hero h1{font-size:36px;}
@@ -21720,6 +21721,9 @@ body.dossier-page-mode .main{min-width:0;overflow:hidden!important;}
 .dossier-dashboard-related-row strong{font-size:14px;}
 .dossier-dashboard-related-row span{margin-top:4px;font-size:11px;}
 .dossier-dashboard-related-row i{font-size:21px;}
+.dossier-dashboard-related-row a{min-width:0;color:inherit;text-decoration:none;}
+.dossier-dashboard-related-cover-link{display:block;}
+.dossier-dashboard-related-row .danger{min-height:32px;padding:6px 9px;font-size:10px;white-space:nowrap;}
 .dossier-quick-facts-card dl{grid-template-columns:minmax(105px,.8fr) minmax(0,1.2fr);gap:7px 14px;padding:16px;}
 .dossier-quick-facts-card dt,.dossier-quick-facts-card dd{font-size:13px;line-height:1.35;}
 .dossier-story-card>p,.dossier-dashboard-aliases{padding:17px;font-size:14px;line-height:1.7;}
@@ -21730,6 +21734,47 @@ body.dossier-page-mode .main{min-width:0;overflow:hidden!important;}
 .dossier-dashboard-activity-list i{width:40px;height:40px;font-size:15px;}
 .dossier-dashboard-activity-list strong{font-size:13px;}
 .dossier-dashboard-activity-list small{margin-top:4px;font-size:11px;}
+
+/* GuideVault 1.2.8 - dossier media and management refinement */
+.dossier-dashboard-hero{grid-template-columns:minmax(210px,260px) minmax(0,1fr) minmax(220px,280px);min-height:370px;}
+.dossier-dashboard-hero-art{height:330px;background:rgba(4,12,22,.82);}
+.dossier-dashboard-hero-art.is-cover img{object-fit:contain;padding:7px;background:linear-gradient(145deg,rgba(16,39,63,.76),rgba(4,12,22,.92));}
+.dossier-dashboard-hero-backdrop img{opacity:.34;filter:blur(15px) saturate(.92) brightness(.62);}
+.dossier-dashboard-document-actions{display:flex;align-items:center;gap:6px;}
+.dossier-dashboard-document-actions .danger{padding:8px 10px;font-size:11px;}
+.dossier-document-overflow{display:none;}
+.dossier-document-card.is-expanded .dossier-document-overflow{display:grid;}
+.dossier-document-card.is-expanded .dossier-dashboard-list{max-height:520px;overflow-y:auto;scrollbar-width:thin;scrollbar-color:#41688f rgba(5,16,28,.7);}
+.dossier-document-card>footer{padding:0;}
+.dossier-document-toggle{width:100%;min-height:40px;display:flex;align-items:center;justify-content:center;gap:10px;border:0;background:rgba(16,43,70,.45);color:#72bcff;font:inherit;font-size:12px;font-weight:800;cursor:pointer;}
+.dossier-document-toggle:hover{background:rgba(25,62,99,.64);color:#a6d7ff;}
+.dossier-document-toggle em{color:#829bb3;font-size:11px;font-style:normal;font-weight:650;}
+.dossier-dashboard-platform-logo{overflow:hidden;padding:3px;}
+.dossier-dashboard-platform-logo img{width:100%;height:100%;display:block;object-fit:contain;}
+.dossier-dashboard-platform-actions{display:flex;align-items:center;justify-content:flex-end;gap:7px;}
+.dossier-dashboard-platform-actions .ghost{min-height:30px;padding:5px 8px;font-size:10px;white-space:nowrap;}
+.dossier-dashboard-platform-row.is-primary{background:linear-gradient(90deg,rgba(26,126,79,.10),transparent 72%);}
+.dossier-localized-cover-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(135px,1fr));gap:12px;padding:13px;}
+.dossier-localized-cover{min-width:0;display:flex;flex-direction:column;gap:7px;color:#a9c5df;text-decoration:none;}
+.dossier-localized-cover img{width:100%;aspect-ratio:3/4;display:block;object-fit:contain;border:1px solid rgba(126,183,239,.20);border-radius:8px;background:#071421;transition:transform .18s ease,border-color .18s ease;}
+.dossier-localized-cover:hover img{transform:translateY(-2px);border-color:rgba(91,169,246,.62);}
+.dossier-localized-cover span{font-size:12px;font-weight:750;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;text-align:center;}
+/* GuideVault 1.2.9 - opt-in dossier management controls */
+.dossier-page-record:not(.is-managing) [data-dossier-unlink-item],
+.dossier-page-record:not(.is-managing) [data-dossier-remove-related-game],
+.dossier-page-record:not(.is-managing) [data-dossier-primary-platform]{display:none!important;}
+.dossier-page-toolbar-actions #dossierPageManage[aria-pressed="true"]{border-color:rgba(89,168,247,.72);background:linear-gradient(145deg,#2e86df,#1765bd);color:#fff;box-shadow:0 8px 20px rgba(20,104,191,.24);}
+@media(max-width:1320px){
+  .dossier-dashboard-hero{grid-template-columns:230px minmax(0,1fr);}
+  .dossier-dashboard-hero-art{height:320px;}
+}
+@media(max-width:760px){
+  .dossier-dashboard-hero-art{width:min(250px,100%);height:340px;justify-self:center;}
+  .dossier-dashboard-document-row{grid-template-columns:54px minmax(0,1fr);}
+  .dossier-dashboard-document-actions{grid-column:1/-1;justify-content:flex-end;}
+  .dossier-dashboard-platform-row{grid-template-columns:40px minmax(0,1fr);padding:8px 0;}
+  .dossier-dashboard-platform-actions{grid-column:1/-1;justify-content:flex-end;padding-bottom:5px;}
+}
 
 .dossier-item-picker-dialog{width:min(1080px,calc(100vw - 36px));max-height:calc(100vh - 36px);padding:0;border:1px solid rgba(94,166,242,.34);border-radius:18px;background:#091727;color:#eaf3fc;box-shadow:0 34px 100px rgba(0,0,0,.68);overflow:hidden;}
 .dossier-item-picker-dialog::backdrop{background:rgba(2,8,15,.84);backdrop-filter:blur(8px);}
