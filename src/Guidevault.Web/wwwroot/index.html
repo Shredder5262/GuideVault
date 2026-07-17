@@ -6,14 +6,14 @@
   <title>Guidevault</title>
   <link rel="icon" type="image/x-icon" href="/assets/favicon.ico?v=0.9.228" />
   <link rel="shortcut icon" type="image/x-icon" href="/assets/favicon.ico?v=0.9.228" />
-  <link rel="stylesheet" href="/styles.css?v=1.1.2" />
+  <link rel="stylesheet" href="/styles.css?v=1.2.7" />
 </head>
 <body class="right-collapsed auth-locked">
   <section id="loginView" class="login-view" aria-labelledby="loginTitle">
     <div class="login-card">
       <div class="login-brand">
         <img class="login-wordmark" src="/assets/guidevault-wordmark.png" alt="Guidevault" />
-        <p id="loginSubtitle" class="sub hidden">Create the local login profile for this Guidevault browser.</p>
+        <p id="loginSubtitle" class="sub hidden">Create the secure server login that protects Guidevault.</p>
       </div>
       <form id="loginForm" class="login-form" autocomplete="on">
         <h1 id="loginTitle" class="hidden">Create Guidevault Login</h1>
@@ -45,6 +45,7 @@
         <button class="nav" data-view="magazine-series" data-filter="Magazine" title="Magazines"><span class="nav-icon homebar-icon"><img src="/assets/icons/homebar/magazines.png" data-fallback-src="/assets/icons/homebar/magainzes.png" alt="" loading="eager" draggable="false" onerror="if(this.dataset.fallbackUsed!=='1'&&this.dataset.fallbackSrc){this.dataset.fallbackUsed='1';this.src=this.dataset.fallbackSrc}else{this.classList.add('homebar-icon-missing')}" /></span><span class="nav-label">Magazines</span><em id="countMags">0</em></button>
         <button class="nav" data-view="favorites" data-filter="Favorites" title="Favorites"><span class="nav-icon">&#x2605;</span><span class="nav-label">Favorites</span><em id="countFavs">0</em></button>
         <button id="collectionsNav" class="nav" data-view="collections" data-filter="All Content" title="Collections"><span class="nav-icon">&#x2637;</span><span class="nav-label">Collections</span><em id="countCollections">0</em></button>
+        <button id="dossiersNav" class="nav hidden" data-view="dossiers" data-filter="All Content" title="Game Dossiers"><span class="nav-icon">&#x1F5C3;</span><span class="nav-label">Dossiers</span><em id="countDossiers">0</em></button>
         <div id="customSideNavItems" class="custom-side-nav-items" aria-label="Custom side navigation"></div>
       </nav>
       <nav id="settingsSideNav" class="settings-side-nav hidden" aria-label="Settings navigation">
@@ -55,6 +56,7 @@
           <button id="settingsPreferencesNav" class="settings-subnav" data-settings-tab="preferences" type="button">Preferences</button>
           <button id="settingsKeybindsNav" class="settings-subnav" data-settings-tab="keybinds" type="button">Key Binds</button>
           <button id="settingsReadingProfilesNav" class="settings-subnav" data-settings-tab="reading-profiles" type="button">Reading Profiles</button>
+          <button id="settingsDossiersNav" class="settings-subnav" data-settings-tab="dossiers" type="button">Game Dossiers</button>
           <button id="settingsCustomizeNav" class="settings-subnav" data-settings-tab="customize" type="button">Customize</button>
           <button id="settingsDevicesNav" class="settings-subnav" data-settings-tab="devices" type="button">Devices</button>
         </div>
@@ -311,7 +313,7 @@
                   <button id="lockAllMetadataFieldsBtn" class="metadata-lock-all-button" type="button" title="Lock all visible metadata fields">Lock All</button>
                   <button id="unlockAllMetadataFieldsBtn" class="metadata-unlock-all-button" type="button" title="Unlock all visible metadata fields">Unlock All</button>
                   <button id="openLibrarySearchBtn" class="metadata-lookup-button" type="button" title="Search Open Library metadata">Open Library</button>
-                  <button id="igdbSearchBtn" class="metadata-lookup-button" type="button" title="Search IGDB game metadata">IGDB</button>
+                  <button id="igdbSearchBtn" class="metadata-lookup-button" type="button" title="Find a game on IGDB and import game metadata">IGDB</button>
                   <button id="esrbSearchBtn" class="metadata-lookup-button" type="button" title="Search ESRB rating">ESRB</button>
                 </div>
               </section>
@@ -383,6 +385,21 @@
               </section>
             </div>
           </div>
+        </div>
+      </section>
+
+
+      <section id="dossierDetailView" class="dossier-detail-view hidden" aria-labelledby="dossierPageTitle">
+        <div class="dossier-page-shell">
+          <div class="dossier-page-toolbar">
+            <button id="dossierPageBack" class="ghost" type="button">&#x2190; Dossiers</button>
+            <div>
+              <span>GUIDEVAULT GAME DOSSIER</span>
+              <strong id="dossierPageToolbarTitle">Game Dossier</strong>
+            </div>
+            <button id="dossierPageRefresh" class="ghost hidden" type="button">Refresh Library Links</button>
+          </div>
+          <div id="dossierDetailPageContent" class="dossier-page-content"></div>
         </div>
       </section>
 
@@ -469,7 +486,7 @@
                 <div class="account-form-grid">
                   <label for="accountUsername">Username<input id="accountUsername" type="text" autocomplete="username" disabled /></label>
                   <label for="accountEmail">Email<input id="accountEmail" type="email" autocomplete="email" disabled /></label>
-                  <label for="accountPassword">Password<input id="accountPassword" type="password" autocomplete="new-password" disabled /></label>
+                  <label for="accountPassword">New Password <span class="field-help">Leave blank to keep the current password.</span><input id="accountPassword" type="password" autocomplete="new-password" minlength="8" disabled /></label>
                 </div>
                 <div class="settings-actions account-actions">
                   <button id="accountSaveLogin" class="primary hidden" type="button">Save Login</button>
@@ -479,10 +496,27 @@
                 <p id="accountStatus" class="sub account-status" aria-live="polite"></p>
               </article>
               <article class="settings-card">
-                <h3>Local App Mode</h3>
-                <p>Guidevault stores this login profile in local browser storage for now. It is intended as a local gate before the library UI loads, not a cloud account system yet.</p>
+                <h3>Server Account</h3>
+                <p>Your GuideVault identity, role, library access, and permissions are validated by the server. Personal browser data is isolated by account on shared devices.</p>
               </article>
             </div>
+          </section>
+          <section id="settingsDossiersPanel" class="settings-section-panel hidden dossier-settings-panel">
+            <div class="settings-title-row">
+              <div>
+                <div class="settings-page-kicker">ACCOUNT</div>
+                <h1>Game Dossiers</h1>
+                <p class="sub">Game-centric records created from IGDB. Each dossier groups matched GuideVault documents, series data, related games, expansions, and editions.</p>
+              </div>
+              <button id="dossiersRefresh" class="ghost" type="button">Refresh</button>
+            </div>
+            <article class="settings-card dossier-settings-help">
+              <h3>Create a Game Dossier</h3>
+              <p class="sub">Start the guided workflow, search your GuideVault library for a manual or strategy guide, match it to the correct IGDB game, and save the dossier.</p>
+              <button id="dossiersChooseItem" class="primary" type="button">Choose a Manual or Guide</button>
+            </article>
+            <div id="dossierSettingsList" class="dossier-settings-list"></div>
+            <p id="dossiersStatus" class="sub account-status" aria-live="polite"></p>
           </section>
           <section id="settingsPreferencesPanel" class="settings-section-panel hidden">
             <div class="settings-title-row">
@@ -729,7 +763,6 @@
                       <option value="card">Compact collection card</option>
                       <option value="hidden">Hide from Home</option>
                     </select></label>
-                    <label class="collection-checkbox-label"><input id="collectionShowInSidebarInput" type="checkbox" /> Show in sidebar</label>
                   </div>
                   <div class="settings-actions inline-actions">
                     <button id="collectionCreateButton" class="primary" type="button">&#xFF0B; Create Collection</button>
@@ -821,7 +854,7 @@
                     <span class="side-nav-card-icon">&#x25A3;</span>
                     <div>
                       <h3>Pinned Items</h3>
-                      <p class="sub">These appear under the default Library shortcuts in the left sidebar.</p>
+                      <p class="sub">Matching shortcuts appear under the default Library shortcuts. Zero-result shortcuts stay editable here but are hidden from the sidebar.</p>
                     </div>
                   </div>
                   <div id="customSideNavList" class="custom-side-nav-list"></div>
@@ -1665,7 +1698,7 @@
                   <span class="integration-source-icon integration-source-icon-image"><img src="assets/integrations/igdb.png" alt="" /></span>
                   <div>
                     <h2>IGDB</h2>
-                    <p class="sub">Game metadata lookup using Twitch Developer app credentials.</p>
+                    <p class="sub">Expanded game metadata lookup and Game Dossier creation using Twitch Developer app credentials.</p>
                     <p class="field-help metadata-source-note">Guidevault uses server-to-server client credentials; the OAuth redirect URL is not used.</p>
                   </div>
                 </div>
@@ -1895,7 +1928,7 @@
                 </div>
                 <div class="users-permission-grid refined-permission-grid">
                   <section><div class="permission-section-title"><h3>Library Access</h3><span>Choose which libraries appear for this user.</span></div><div id="inviteLibrariesList" class="checkbox-list refined-checkbox-list"></div></section>
-                  <section><div class="permission-section-title"><h3>Permissions</h3><span>Keep this intentionally limited until real auth roles are wired in.</span></div><div id="invitePermissionsList" class="checkbox-list refined-checkbox-list"></div></section>
+                  <section><div class="permission-section-title"><h3>Permissions</h3><span>These permissions are enforced by the Guidevault server for every request.</span></div><div id="invitePermissionsList" class="checkbox-list refined-checkbox-list"></div></section>
                 </div>
                 <label class="inline-check" for="inviteIncludeUnknowns"><input id="inviteIncludeUnknowns" type="checkbox" /> Include Unknown Age Ratings</label>
                 <div class="settings-actions inline-actions"><button id="usersInviteButton" class="primary" type="button">Invite User</button></div>
@@ -2085,6 +2118,7 @@
               <span>Supported Files:</span><strong id="systemSupportedFiles">CBZ, CBR, PDF</strong>
               <span>OPDS:</span><strong>/opds</strong>
               <span>Configuration:</span><strong>data/config</strong>
+              <span>Game Dossiers:</span><strong>data/config/game.dossiers.json</strong>
               <span>Cache:</span><strong>data/cache</strong>
             </div>
 
@@ -2133,6 +2167,149 @@
               <button id="systemUpdateHistoryToggle" class="ghost tiny system-update-history-toggle" type="button" hidden>Show full history</button>
             </div>
             <div id="systemUpdateHistoryList" class="system-update-list">
+              <details class="system-update-entry" open>
+                <summary>
+                  <span>GuideVault 1.2.7 - Empty Shortcut Cleanup</span>
+                </summary>
+                <div class="system-update-body">
+                  <h3><b>1</b> Custom Shortcut Visibility</h3>
+                  <ul>
+                    <li>Correctly identifies entries such as “silent hill” as saved custom sidebar shortcuts rather than Collections.</li>
+                    <li>Hides custom shortcuts with zero matching library items so empty rows no longer remain beneath the primary navigation.</li>
+                  </ul>
+                  <h3><b>2</b> Settings Access Preserved</h3>
+                  <ul>
+                    <li>Keeps hidden shortcuts in Settings → Account → Customize → Side Nav so they can be adjusted or removed.</li>
+                  </ul>
+                </div>
+              </details>
+              <details class="system-update-entry">
+                <summary>
+                  <span>GuideVault 1.2.6 - Empty Collection Cleanup</span>
+                </summary>
+                <div class="system-update-body">
+                  <h3><b>1</b> Content-aware Collections</h3>
+                  <ul>
+                    <li>Hides collection entries that no longer contain any items currently available in the library.</li>
+                    <li>Applies the same cleanup to the Collections page, Home collection shelves, and the Collections count.</li>
+                  </ul>
+                  <h3><b>2</b> Safe Collection Management</h3>
+                  <ul>
+                    <li>Keeps empty collection definitions available in Settings so they can still be populated or deleted.</li>
+                    <li>Adds a defensive rule that prevents legacy per-collection sidebar buttons from reappearing.</li>
+                  </ul>
+                </div>
+              </details>
+              <details class="system-update-entry">
+                <summary>
+                  <span>GuideVault 1.2.5 - Cleaner Collections Navigation</span>
+                </summary>
+                <div class="system-update-body">
+                  <h3><b>1</b> Simplified Sidebar</h3>
+                  <ul>
+                    <li>Keeps one main Collections navigation entry and removes the secondary list of individual collections beneath it.</li>
+                    <li>Removes the extra collection divider and the obsolete Show in sidebar setting for a cleaner, more focused navigation panel.</li>
+                  </ul>
+                  <h3><b>2</b> Collection Access Preserved</h3>
+                  <ul>
+                    <li>Leaves the full Collections page, collection management, Home placement options, and custom sidebar shortcuts unchanged.</li>
+                  </ul>
+                </div>
+              </details>
+              <details class="system-update-entry">
+                <summary>
+                  <span>GuideVault 1.2.4 - Dossier Readability + Creation Wizard</span>
+                </summary>
+                <div class="system-update-body">
+                  <h3><b>1</b> Larger Dashboard Typography</h3>
+                  <ul>
+                    <li>Increases supporting Dossier text from the previous compact 9–11px sizing into a more readable 12–15px desktop range while leaving the game title unchanged.</li>
+                    <li>Enlarges metadata pills, field labels and values, identifiers, card headings, document rows, related games, platforms, Quick Facts, actions, and activity text.</li>
+                  </ul>
+                  <h3><b>2</b> Spacing Balance</h3>
+                  <ul>
+                    <li>Expands row heights, thumbnail sizes, button padding, and card spacing so the larger type remains comfortable instead of cramped.</li>
+                  </ul>
+                  <h3><b>3</b> Settings-based Creation Wizard</h3>
+                  <ul>
+                    <li>Removes the Game Dossier tab and quick action from individual item details.</li>
+                    <li>Turns Account → Game Dossiers → Choose a Manual or Guide into a three-step popup wizard with searchable library selection, IGDB matching, and explicit dossier creation.</li>
+                    <li>Keeps the item Metadata → IGDB workflow focused on metadata imports rather than dossier creation.</li>
+                  </ul>
+                </div>
+              </details>
+              <details class="system-update-entry">
+                <summary>
+                  <span>GuideVault 1.2.3 - Game Dashboard Dossiers</span>
+                </summary>
+                <div class="system-update-body">
+                  <h3><b>1</b> Dashboard Layout</h3>
+                  <ul>
+                    <li>Reworks the Dossier page into a dense game dashboard with a breadcrumb, game hero, metadata pills, identifiers, and compact information cards.</li>
+                    <li>Separates linked Manuals, Strategy Guides, and Magazine Appearances and adds dedicated Platforms, Related Games, Quick Facts, Storyline, activity, and media sections.</li>
+                  </ul>
+                  <h3><b>2</b> Artwork Backdrop</h3>
+                  <ul>
+                    <li>Uses the best available IGDB artwork or screenshot as a faded, blurred backdrop behind the top game container.</li>
+                    <li>Falls back to the game cover when no additional artwork is available while keeping the foreground artwork crisp and readable.</li>
+                  </ul>
+                </div>
+              </details>
+              <details class="system-update-entry">
+                <summary>
+                  <span>GuideVault 1.2.2 - Full-page Game Dossiers</span>
+                </summary>
+                <div class="system-update-body">
+                  <h3><b>1</b> Main-panel Dossier View</h3>
+                  <ul>
+                    <li>Opens Game Dossiers as a dedicated page in the main GuideVault panel instead of a modal window.</li>
+                    <li>Preserves the library sidebar and returns to the originating item, Dossier list, or Account section with a single Back action.</li>
+                  </ul>
+                  <h3><b>2</b> Refined Game Layout</h3>
+                  <ul>
+                    <li>Presents the game cover, title, release data, developer, publisher, rating, platforms, summary, and document count in a polished hero layout.</li>
+                    <li>Organizes storyline, classifications, credits, aliases, keywords, media, external links, and generated collections into readable page sections.</li>
+                  </ul>
+                </div>
+              </details>
+              <details class="system-update-entry">
+                <summary>
+                  <span>GuideVault 1.2.1 - Visible Dossier Workflow</span>
+                </summary>
+                <div class="system-update-body">
+                  <h3><b>1</b> Direct Dossier Access</h3>
+                  <ul>
+                    <li>Adds a Game Dossier tab and quick action directly to every manual and strategy-guide detail screen.</li>
+                    <li>Opens a saved dossier immediately after creation so the result and generated collections are visible.</li>
+                  </ul>
+                  <h3><b>2</b> Manual Support</h3>
+                  <ul>
+                    <li>Makes the IGDB dossier workflow available to manuals as well as strategy guides, matching the on-screen instructions.</li>
+                    <li>Clarifies each IGDB step with dossier-specific labels and actions.</li>
+                  </ul>
+                </div>
+              </details>
+              <details class="system-update-entry">
+                <summary>
+                  <span>GuideVault 1.2.0 - Game Dossiers + Expanded IGDB</span>
+                </summary>
+                <div class="system-update-body">
+                  <h3><b>1</b> Game Dossiers</h3>
+                  <ul>
+                    <li>Adds persistent Game Dossiers under Account and a Dossiers sidebar destination that appears after the first accessible dossier is created.</li>
+                    <li>Builds dossier collections for matched GuideVault documents, series/franchise relationships, related games, expansions and DLC, and editions/remakes/ports.</li>
+                  </ul>
+                  <h3><b>2</b> IGDB Enrichment</h3>
+                  <ul>
+                    <li>Pulls summaries, storylines, themes, game modes, perspectives, aliases, keywords, ratings, screenshots, artwork, videos, websites, and related-game families.</li>
+                    <li>Adds Create / Update Dossier to the IGDB comparison workflow while preserving the existing selective metadata import.</li>
+                  </ul>
+                  <h3><b>3</b> Multi-user Access</h3>
+                  <ul>
+                    <li>Includes the completed multi-user credentials, one-use invitations, persistent sessions, server-enforced permissions, and library/rating filtering.</li>
+                  </ul>
+                </div>
+              </details>
               <details class="system-update-entry">
                 <summary>
                   <span>GuideVault 1.1.2 - Stable Update Task Notifications</span>
@@ -3347,6 +3524,29 @@
     </main>
 
 
+  <dialog id="dossierItemPickerDialog" class="dossier-item-picker-dialog">
+    <div class="dossier-item-picker-card">
+      <header class="dossier-item-picker-head">
+        <div>
+          <span>GAME DOSSIER WIZARD · STEP 1 OF 3</span>
+          <h2>Choose a Manual or Strategy Guide</h2>
+          <p>Search the accessible GuideVault library and select the document that belongs to the game dossier.</p>
+        </div>
+        <button id="dossierItemPickerClose" class="ghost" type="button">Close</button>
+      </header>
+      <div class="dossier-item-picker-search-row">
+        <label>Search your library<input id="dossierItemPickerSearch" type="search" placeholder="Search title, game, platform, publisher, or tag..." autocomplete="off" /></label>
+        <label>Document type<select id="dossierItemPickerKind"><option value="">Manuals and Strategy Guides</option><option value="Manual">Manuals only</option><option value="Strategy Guide">Strategy Guides only</option></select></label>
+      </div>
+      <div id="dossierItemPickerResults" class="dossier-item-picker-results"></div>
+      <footer class="dossier-item-picker-footer">
+        <p id="dossierItemPickerStatus" class="sub" aria-live="polite">Select one document to continue.</p>
+        <div><button id="dossierItemPickerCancel" class="ghost" type="button">Cancel</button><button id="dossierItemPickerContinue" class="primary" type="button" disabled>Continue to IGDB</button></div>
+      </footer>
+    </div>
+  </dialog>
+
+
   <div id="appConfirmModal" class="app-modal hidden" role="dialog" aria-modal="true" aria-labelledby="appConfirmTitle">
     <div class="app-modal-card confirm-modal-card">
       <h2 id="appConfirmTitle">Confirm action</h2>
@@ -3397,6 +3597,6 @@
   </dialog>
 
 
-  <script src="/app.js?v=1.1.2"></script>
+  <script src="/app.js?v=1.2.7"></script>
 </body>
 </html>

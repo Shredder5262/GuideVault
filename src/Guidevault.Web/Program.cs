@@ -15,10 +15,23 @@ using SixLabors.ImageSharp;
 using SixLabors.ImageSharp.Formats.Jpeg;
 using SixLabors.ImageSharp.Processing;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.ResponseCompression;
 using Microsoft.Extensions.Configuration;
 
 var builder = WebApplication.CreateBuilder(args);
-const string GuidevaultVersion = "1.1.2";
+builder.Services.AddResponseCompression(responseCompression =>
+{
+    responseCompression.EnableForHttps = true;
+    responseCompression.Providers.Add<BrotliCompressionProvider>();
+    responseCompression.Providers.Add<GzipCompressionProvider>();
+    responseCompression.MimeTypes = ResponseCompressionDefaults.MimeTypes.Concat(new[]
+    {
+        "application/javascript",
+        "application/json",
+        "image/svg+xml"
+    });
+});
+const string GuidevaultVersion = "1.2.7";
 var app = builder.Build();
 var metadataJsonOptions = new JsonSerializerOptions(JsonSerializerDefaults.Web) { PropertyNameCaseInsensitive = true };
 var options = app.Configuration.GetSection("Guidevault").Get<GuidevaultOptions>() ?? new GuidevaultOptions();
@@ -34,10 +47,12 @@ var serverSettingsPath = Path.Combine(dataRoot, "config", "server.settings.json"
 var emailSettingsPath = Path.Combine(dataRoot, "config", "email.settings.json");
 var emailHistoryPath = Path.Combine(dataRoot, "config", "email.history.json");
 var usersSettingsPath = Path.Combine(dataRoot, "config", "users.settings.json");
+var authenticationSettingsPath = Path.Combine(dataRoot, "config", "authentication.settings.json");
 var itemReviewsPath = Path.Combine(dataRoot, "config", "item.reviews.json");
 var taskSettingsPath = Path.Combine(dataRoot, "config", "task.settings.json");
 var customizeSettingsPath = Path.Combine(dataRoot, "config", "customize.settings.json");
 var readerPreferencesPath = Path.Combine(dataRoot, "config", "reader.preferences.json");
+var gameDossiersPath = Path.Combine(dataRoot, "config", "game.dossiers.json");
 var deviceHistoryPath = Path.Combine(dataRoot, "config", "device.history.json");
 var systemInfoPath = Path.Combine(dataRoot, "config", "system.info.json");
 var systemEventsPath = Path.Combine(dataRoot, "config", "system.events.json");
@@ -69,10 +84,12 @@ var serverSettingsStore = new GuidevaultServerSettingsStore(serverSettingsPath, 
 var emailSettingsStore = new GuidevaultEmailSettingsStore(emailSettingsPath);
 var emailHistoryStore = new GuidevaultEmailHistoryStore(emailHistoryPath);
 var usersStore = new GuidevaultUsersStore(usersSettingsPath);
+var authenticationStore = new GuidevaultAuthenticationStore(authenticationSettingsPath, usersStore);
 var itemReviewStore = new GuidevaultItemReviewStore(itemReviewsPath);
 var taskSettingsStore = new GuidevaultTaskSettingsStore(taskSettingsPath);
 var customizeSettingsStore = new GuidevaultCustomizeSettingsStore(customizeSettingsPath);
 var readerPreferencesStore = new GuidevaultReaderPreferencesStore(readerPreferencesPath);
+var gameDossierStore = new GuidevaultGameDossierStore(gameDossiersPath);
 var deviceStore = new DeviceHistoryStore(deviceHistoryPath);
 var systemInfoStore = new SystemInfoStore(systemInfoPath, GuidevaultVersion);
 var systemEventStore = new GuidevaultSystemEventStore(systemEventsPath);
@@ -115,10 +132,7 @@ var scheduledTaskRunner = new GuidevaultScheduledTaskRunner(
         {
             taskMonitor.Update(taskId, "Clearing archive and cover caches...", 45);
             ArchiveReader.ClearMemoryCaches();
-            GC.Collect(GC.MaxGeneration, GCCollectionMode.Aggressive, blocking: true, compacting: true);
-            GC.WaitForPendingFinalizers();
-            GC.Collect(GC.MaxGeneration, GCCollectionMode.Aggressive, blocking: true, compacting: true);
-            return Task.FromResult("Scheduled cache cleanup complete.");
+            return Task.FromResult("Scheduled cache cleanup complete. The runtime will reclaim released memory without a blocking forced collection.");
         },
         GuidevaultBackup: (taskId, cancellationToken) =>
         {
@@ -403,16 +417,179 @@ RecordSystemEvent("System", "Guidevault started", $"Guidevault {GuidevaultVersio
 // Do not create configured user library folders here. Guidevault scans existing folders in place.
 // Creating missing folders can hide typo/path mistakes and make libraries appear empty.
 app.UseDefaultFiles();
-app.UseStaticFiles();
+app.UseResponseCompression();
+app.UseStaticFiles(new StaticFileOptions
+{
+    OnPrepareResponse = context =>
+    {
+        var requestPath = context.Context.Request.Path.Value ?? string.Empty;
+        if (requestPath.StartsWith("/assets/", StringComparison.OrdinalIgnoreCase))
+        {
+            context.Context.Response.Headers.CacheControl = "public, max-age=604800";
+        }
+        else if (requestPath.EndsWith(".js", StringComparison.OrdinalIgnoreCase)
+            || requestPath.EndsWith(".css", StringComparison.OrdinalIgnoreCase))
+        {
+            // Script and stylesheet names are not content-hashed, so keep their
+            // cache lifetime short enough that deployments are picked up quickly.
+            context.Context.Response.Headers.CacheControl = "public, max-age=3600, must-revalidate";
+        }
+    }
+});
+
+const string GuidevaultAuthCookieName = "guidevault_session";
+const string GuidevaultUserContextKey = "guidevault.authenticated-user";
+void SetGuidevaultAuthCookie(HttpResponse response, HttpRequest request, string token)
+{
+    response.Cookies.Append(GuidevaultAuthCookieName, token, new CookieOptions
+    {
+        HttpOnly = true,
+        Secure = request.IsHttps,
+        SameSite = SameSiteMode.Strict,
+        IsEssential = true,
+        Path = "/",
+        MaxAge = TimeSpan.FromDays(7)
+    });
+}
+
+bool IsGuidevaultPublicApiRequest(HttpRequest request)
+{
+    var path = request.Path.Value ?? string.Empty;
+    if (!path.StartsWith("/api/", StringComparison.OrdinalIgnoreCase)) return true;
+    if (path.Equals("/api/health", StringComparison.OrdinalIgnoreCase)
+        || path.Equals("/api/auth/status", StringComparison.OrdinalIgnoreCase)
+        || path.Equals("/api/auth/setup", StringComparison.OrdinalIgnoreCase)
+        || path.Equals("/api/auth/login", StringComparison.OrdinalIgnoreCase)
+        || path.Equals("/api/auth/logout", StringComparison.OrdinalIgnoreCase)
+        || path.Equals("/api/auth/invite", StringComparison.OrdinalIgnoreCase)
+        || path.Equals("/api/auth/invite/accept", StringComparison.OrdinalIgnoreCase)) return true;
+
+    // These are existing connector ingress endpoints. Their payload/token
+    // protocols remain backward compatible while browser and administrative
+    // APIs are protected by the server session below.
+    if (HttpMethods.IsPost(request.Method)
+        && (path.Equals("/api/integrations/launchbox/sync", StringComparison.OrdinalIgnoreCase)
+            || path.Equals("/api/integrations/launchbox/open", StringComparison.OrdinalIgnoreCase)
+            || path.Equals("/api/integrations/launchbox/browser-login-link", StringComparison.OrdinalIgnoreCase)
+            || path.Equals("/api/home-assistant/command", StringComparison.OrdinalIgnoreCase))) return true;
+
+    return false;
+}
+
+app.Use(async (context, next) =>
+{
+    if (IsGuidevaultPublicApiRequest(context.Request))
+    {
+        await next();
+        return;
+    }
+
+    var sessionToken = context.Request.Cookies[GuidevaultAuthCookieName];
+    if (!authenticationStore.TryValidateSession(sessionToken, out var authenticatedUser) || authenticatedUser is null)
+    {
+        context.Response.StatusCode = StatusCodes.Status401Unauthorized;
+        context.Response.ContentType = "application/json";
+        await context.Response.WriteAsJsonAsync(new { error = "Authentication required." });
+        return;
+    }
+
+    context.Items[GuidevaultUserContextKey] = authenticatedUser;
+    if (!GuidevaultAuthorization.IsAllowed(authenticatedUser, context.Request, out var denialMessage))
+    {
+        context.Response.StatusCode = StatusCodes.Status403Forbidden;
+        context.Response.ContentType = "application/json";
+        await context.Response.WriteAsJsonAsync(new { error = denialMessage });
+        return;
+    }
+
+    if (GuidevaultAuthorization.TryGetItemId(context.Request.Path, out var requestedItemId))
+    {
+        var requestedItem = cache.TryGetCachedItem(requestedItemId);
+        if (requestedItem is not null && !GuidevaultUserAccess.CanAccess(authenticatedUser, requestedItem))
+        {
+            // Return 404 so restricted users cannot probe item identifiers.
+            context.Response.StatusCode = StatusCodes.Status404NotFound;
+            return;
+        }
+    }
+
+    await next();
+});
+
+GuidevaultAuthenticatedUser? CurrentGuidevaultUser(HttpRequest request)
+    => request.HttpContext.Items.TryGetValue(GuidevaultUserContextKey, out var value) ? value as GuidevaultAuthenticatedUser : null;
+
+IReadOnlyList<LibraryItem> VisibleLibraryItems(HttpRequest request, IReadOnlyList<LibraryItem> source)
+    => GuidevaultUserAccess.Filter(CurrentGuidevaultUser(request), source);
+
+IReadOnlyList<GuidevaultGameDossier> VisibleGameDossiers(HttpRequest request)
+    => GuidevaultGameDossierAccess.Filter(
+        CurrentGuidevaultUser(request),
+        gameDossierStore.GetAll(),
+        VisibleLibraryItems(request, cache.GetItemsSnapshot()));
+
+app.MapGet("/api/auth/status", (HttpRequest request) =>
+{
+    var authenticated = authenticationStore.TryValidateSession(request.Cookies[GuidevaultAuthCookieName], out var user);
+    return Results.Ok(new
+    {
+        configured = authenticationStore.IsConfigured,
+        authenticated,
+        user = authenticated ? user : null
+    });
+});
+
+app.MapPost("/api/auth/setup", (HttpRequest request, HttpResponse response, GuidevaultAuthenticationSetupRequest payload) =>
+{
+    var result = authenticationStore.Setup(payload);
+    if (!result.Success) return Results.BadRequest(new { error = result.Message });
+    SetGuidevaultAuthCookie(response, request, result.SessionToken);
+    return Results.Ok(new { authenticated = true, user = result.User });
+});
+
+app.MapPost("/api/auth/login", (HttpRequest request, HttpResponse response, GuidevaultAuthenticationLoginRequest payload) =>
+{
+    var result = authenticationStore.Login(payload);
+    if (!result.Success) return Results.Json(new { error = result.Message }, statusCode: StatusCodes.Status401Unauthorized);
+    SetGuidevaultAuthCookie(response, request, result.SessionToken);
+    return Results.Ok(new { authenticated = true, user = result.User });
+});
+
+app.MapPost("/api/auth/logout", (HttpRequest request, HttpResponse response) =>
+{
+    authenticationStore.Logout(request.Cookies[GuidevaultAuthCookieName]);
+    response.Cookies.Delete(GuidevaultAuthCookieName, new CookieOptions { Path = "/" });
+    return Results.Ok(new { authenticated = false });
+});
+
+app.MapPut("/api/auth/profile", (HttpRequest request, GuidevaultAuthenticationProfileUpdate payload) =>
+{
+    var result = authenticationStore.UpdateProfile(request.Cookies[GuidevaultAuthCookieName], payload);
+    return result.Success ? Results.Ok(new { user = result.User }) : Results.BadRequest(new { error = result.Message });
+});
+
+app.MapGet("/api/auth/invite", (string? token) =>
+{
+    var invitation = authenticationStore.GetInvitation(token);
+    return invitation.Success
+        ? Results.Ok(new { invitation.UserId, invitation.Username, invitation.DisplayName, invitation.Email, invitation.ExpiresAt })
+        : Results.NotFound(new { error = invitation.Message });
+});
+
+app.MapPost("/api/auth/invite/accept", (HttpRequest request, HttpResponse response, GuidevaultInvitationAcceptRequest payload) =>
+{
+    var result = authenticationStore.AcceptInvitation(payload);
+    if (!result.Success) return Results.BadRequest(new { error = result.Message });
+    SetGuidevaultAuthCookie(response, request, result.SessionToken);
+    return Results.Ok(new { authenticated = true, user = result.User });
+});
 app.MapGet("/favicon.ico", () => Results.Redirect("/assets/favicon.ico", permanent: false));
 
 app.MapGet("/api/health", () => Results.Ok(new
 {
     app = "Guidevault",
-    version = "1.1.2",
-    contentRoot,
-    dataRoot,
-    libraryPaths = cache.LibraryPaths,
+    version = GuidevaultVersion,
+    status = "healthy",
     dockerReady = true
 }));
 
@@ -469,15 +646,12 @@ app.MapGet("/api/system/performance", () =>
 app.MapPost("/api/system/performance/trim", () =>
 {
     ArchiveReader.ClearMemoryCaches();
-    GC.Collect(GC.MaxGeneration, GCCollectionMode.Aggressive, blocking: true, compacting: true);
-    GC.WaitForPendingFinalizers();
-    GC.Collect(GC.MaxGeneration, GCCollectionMode.Aggressive, blocking: true, compacting: true);
-    return Results.Ok(new { trimmed = true, capturedAt = DateTimeOffset.UtcNow });
+    return Results.Ok(new { trimmed = true, capturedAt = DateTimeOffset.UtcNow, message = "Guidevault memory caches were cleared. The runtime will reclaim memory without a blocking forced collection." });
 });
 
 app.MapGet("/api/system/update-check", async (bool force = false) => Results.Ok(await updateChecker.CheckAsync(force)));
 
-app.MapGet("/api/server/settings", () => Results.Ok(serverSettingsStore.GetSnapshot()));
+app.MapGet("/api/server/settings", () => Results.Ok(serverSettingsStore.GetClientSnapshot()));
 
 app.MapPut("/api/server/settings", (GuidevaultServerSettings payload) =>
 {
@@ -488,9 +662,9 @@ app.MapPut("/api/server/settings", (GuidevaultServerSettings payload) =>
 
 app.MapGet("/api/reader/preferences", () => Results.Ok(readerPreferencesStore.GetSnapshot()));
 
-app.MapGet("/api/reader/preferences/resolve/{id}", async (string id) =>
+app.MapGet("/api/reader/preferences/resolve/{id}", async (HttpRequest request, string id) =>
 {
-    var item = (await cache.GetItemsAsync()).FirstOrDefault(i => string.Equals(i.Id, id, StringComparison.OrdinalIgnoreCase));
+    var item = VisibleLibraryItems(request, await cache.GetItemsAsync()).FirstOrDefault(i => string.Equals(i.Id, id, StringComparison.OrdinalIgnoreCase));
     if (item is null) return Results.NotFound(new { error = "Item not found." });
     return Results.Ok(GuidevaultReadingProfileResolver.Resolve(item, readerPreferencesStore.GetSnapshot()));
 });
@@ -514,7 +688,7 @@ app.MapGet("/api/integrations/launchbox/status", () =>
     return Results.Ok(new
     {
         enabled = true,
-        version = "1.1.2",
+        version = GuidevaultVersion,
         configured = snapshot.Games.Count > 0,
         connectedSinceBoot = connection.ConnectedSinceBoot,
         connectedSinceBootAt = connection.ConnectedSinceBootAt,
@@ -717,9 +891,17 @@ app.MapGet("/api/integrations/launchbox/manual-match/items", (string? q, string?
     });
 });
 
-app.MapGet("/api/integrations/launchbox/open/pending", (long? after) =>
+app.MapGet("/api/integrations/launchbox/open/pending", (HttpRequest request, long? after) =>
 {
-    return Results.Ok(launchBoxOpenSignalStore.GetLatestAfter(after.GetValueOrDefault()));
+    var signal = launchBoxOpenSignalStore.GetLatestAfter(after.GetValueOrDefault());
+    var currentUser = CurrentGuidevaultUser(request);
+    if (signal is null || currentUser is null) return Results.Ok((GuidevaultLaunchBoxOpenSignal?)null);
+    if (!currentUser.IsAdmin)
+    {
+        var item = cache.TryGetCachedItem(signal.ItemId);
+        if (item is null || !GuidevaultUserAccess.CanAccess(currentUser, item)) return Results.Ok((GuidevaultLaunchBoxOpenSignal?)null);
+    }
+    return Results.Ok(signal);
 });
 
 app.MapPost("/api/integrations/launchbox/open", (HttpRequest request, GuidevaultLaunchBoxOpenRequest payload) =>
@@ -752,13 +934,17 @@ app.MapPost("/api/integrations/launchbox/open", (HttpRequest request, Guidevault
 
 app.MapPost("/api/integrations/launchbox/browser-login-link", (HttpRequest request, GuidevaultLaunchBoxBrowserLoginLinkRequest payload) =>
 {
-    var result = launchBoxBrowserLoginStore.CreateLink(payload, PublicBaseUrl(request));
+    var identity = string.IsNullOrWhiteSpace(payload?.Username) ? payload?.Email : payload.Username;
+    if (!authenticationStore.ValidateCredentials(identity, payload?.Password, out var authenticatedUser) || authenticatedUser is null)
+        return Results.Json(new { success = false, message = "The configured Guidevault username/email or password is incorrect." }, statusCode: StatusCodes.Status401Unauthorized);
+
+    var result = launchBoxBrowserLoginStore.CreateLink(payload, PublicBaseUrl(request), authenticatedUser);
     if (!result.Success) return Results.BadRequest(result);
     launchBoxIntegrationStore.MarkConnectedSinceBoot();
     return Results.Ok(result);
 });
 
-app.MapGet("/launchbox/browser-login", (string? token) =>
+app.MapGet("/launchbox/browser-login", (HttpRequest request, HttpResponse response, string? token) =>
 {
     var record = launchBoxBrowserLoginStore.Consume(token);
     if (record is null)
@@ -772,11 +958,15 @@ app.MapGet("/launchbox/browser-login", (string? token) =>
 """, "text/html");
     }
 
+    var authenticationSession = authenticationStore.CreateSessionForUser(record.UserId);
+    if (!string.IsNullOrWhiteSpace(authenticationSession))
+        SetGuidevaultAuthCookie(response, request, authenticationSession);
+
     var profileJson = JsonSerializer.Serialize(new
     {
         username = record.Username,
         email = record.Email,
-        password = record.Password,
+        password = string.Empty,
         avatarDataUrl = string.Empty,
         createdAt = record.CreatedAt.ToString("O"),
         updatedAt = DateTimeOffset.UtcNow.ToString("O")
@@ -1181,7 +1371,15 @@ app.MapPost("/api/users/invite", (HttpRequest request, GuidevaultUserInviteReque
     if (payload is null || string.IsNullOrWhiteSpace(payload.Email))
         return Results.BadRequest(new { error = "Email is required." });
 
+    var existingUser = usersStore.FindByIdentity(payload.Email);
+    if (existingUser is not null && string.Equals(existingUser.Status, "Active", StringComparison.OrdinalIgnoreCase))
+        return Results.Conflict(new { error = "That user already has an active Guidevault account." });
+
     var result = usersStore.Invite(payload);
+    var invitation = authenticationStore.CreateInvitation(result.User.Id);
+    if (!invitation.Success)
+        return Results.BadRequest(new { error = invitation.Message });
+
     var email = emailSettingsStore.GetSettings();
     var sent = false;
     var emailMessage = string.Empty;
@@ -1190,7 +1388,7 @@ app.MapPost("/api/users/invite", (HttpRequest request, GuidevaultUserInviteReque
     {
         try
         {
-            var inviteUrl = BuildAbsoluteUrl(request, "/");
+            var inviteUrl = BuildAbsoluteUrl(request, $"/?invite={Uri.EscapeDataString(invitation.Token)}");
             emailSettingsStore.SendInvite(email, result.User, inviteUrl);
             sent = true;
             emailHistoryStore.Record(new GuidevaultEmailHistoryRecord
@@ -1231,7 +1429,8 @@ app.MapPost("/api/users/invite", (HttpRequest request, GuidevaultUserInviteReque
         });
     }
 
-    return Results.Ok(new { result.User, users = usersStore.GetUsers(), emailSent = sent, emailMessage });
+    var activationUrl = BuildAbsoluteUrl(request, $"/?invite={Uri.EscapeDataString(invitation.Token)}");
+    return Results.Ok(new { result.User, users = usersStore.GetUsers(), emailSent = sent, emailMessage, inviteUrl = activationUrl, expiresAt = invitation.ExpiresAt });
 });
 
 app.MapGet("/api/tasks/settings", () => Results.Ok(taskSettingsStore.GetSettings()));
@@ -1300,12 +1499,12 @@ app.MapPost("/api/devices/clients/clear-stale", (int days) =>
     return Results.Ok(deviceStore.ClearStaleClientDevices(thresholdDays));
 });
 
-app.MapGet("/api/library", () => Results.Ok(cache.GetItemsSnapshot()));
+app.MapGet("/api/library", (HttpRequest request) => Results.Ok(VisibleLibraryItems(request, cache.GetItemsSnapshot())));
 
-app.MapPost("/api/library/prewarm-covers", (string? kind, int? limit) =>
+app.MapPost("/api/library/prewarm-covers", (HttpRequest request, string? kind, int? limit) =>
 {
     var requestedLimit = Math.Clamp(limit ?? 220, 20, 420);
-    var itemsToWarm = BuildCategoryPreviewCoverItems(cache.GetItemsSnapshot(), kind, requestedLimit);
+    var itemsToWarm = BuildCategoryPreviewCoverItems(VisibleLibraryItems(request, cache.GetItemsSnapshot()), kind, requestedLimit);
     if (itemsToWarm.Count == 0) return Results.Ok(new { queued = false, count = 0 });
 
     _ = Task.Run(async () =>
@@ -1330,7 +1529,7 @@ app.MapPost("/api/library/prewarm-covers", (string? kind, int? limit) =>
     return Results.Ok(new { queued = true, count = itemsToWarm.Count });
 });
 
-app.MapGet("/api/startup/status", () =>
+app.MapGet("/api/startup/status", (HttpRequest request) =>
 {
     var runningTasks = taskMonitor.RecentTasks()
         .Where(t => string.Equals(t.Status, "running", StringComparison.OrdinalIgnoreCase) || string.Equals(t.Status, "queued", StringComparison.OrdinalIgnoreCase))
@@ -1345,7 +1544,8 @@ app.MapGet("/api/startup/status", () =>
             t.UpdatedAt
         })
         .ToArray();
-    var cachedCount = cache.CachedItemCount;
+    var visibleItems = VisibleLibraryItems(request, cache.GetItemsSnapshot());
+    var cachedCount = visibleItems.Count;
     var status = runningTasks.Length > 0 ? "warming" : cachedCount > 0 ? "ready" : "empty";
     var message = runningTasks.FirstOrDefault()?.Message
         ?? (cachedCount > 0
@@ -1357,8 +1557,8 @@ app.MapGet("/api/startup/status", () =>
         status,
         message,
         itemCount = cachedCount,
-        libraryCount = cache.Libraries.Count,
-        libraryPathCount = cache.LibraryPaths.Count,
+        libraryCount = visibleItems.Select(item => item.LibraryName).Where(name => !string.IsNullOrWhiteSpace(name)).Distinct(StringComparer.OrdinalIgnoreCase).Count(),
+        libraryPathCount = CurrentGuidevaultUser(request)?.IsAdmin == true ? cache.LibraryPaths.Count : 0,
         runningTasks,
         generatedAt = DateTimeOffset.UtcNow
     });
@@ -1367,17 +1567,20 @@ app.MapGet("/api/startup/status", () =>
 // Fast web bootstrap endpoint: returns a small, shelf-oriented subset so the browser can
 // paint the first view without downloading the entire library index. OPDS intentionally
 // continues to use the full cache path below so its feed structure is unchanged.
-app.MapGet("/api/library/initial", (int? limit) => Results.Ok(BuildLibraryInitialPayload(cache.GetItemsSnapshot(), limit)));
+app.MapGet("/api/library/initial", (HttpRequest request, int? limit) => Results.Ok(BuildLibraryInitialPayload(VisibleLibraryItems(request, cache.GetItemsSnapshot()), limit)));
 
 // Chunked endpoint used by the web UI background loader. This avoids sending and
 // parsing the entire library index as one large JSON response during login.
-app.MapGet("/api/library/chunk", (int? offset, int? limit) =>
+app.MapGet("/api/library/chunk", (HttpRequest request, int? offset, int? limit) =>
 {
-    var source = cache.GetItemsSnapshot();
+    var source = VisibleLibraryItems(request, cache.GetItemsSnapshot());
     var safeOffset = Math.Max(0, offset ?? 0);
     var safeLimit = Math.Clamp(limit ?? 220, 60, 500);
     var total = source.Count;
-    var items = source.Skip(safeOffset).Take(safeLimit).ToArray();
+    var itemCount = Math.Min(safeLimit, Math.Max(0, total - safeOffset));
+    var items = new LibraryItem[itemCount];
+    for (var index = 0; index < itemCount; index++)
+        items[index] = source[safeOffset + index];
     var nextOffset = safeOffset + items.Length;
     return Results.Ok(new
     {
@@ -1394,9 +1597,9 @@ app.MapGet("/api/library/chunk", (int? offset, int? limit) =>
 
 // Lightweight paged endpoint for browser-facing library views. The legacy /api/library
 // endpoint remains full-index for compatibility and internal consumers.
-app.MapGet("/api/library/page", (int? page, int? pageSize, string? kind, string? q, string? sort) =>
+app.MapGet("/api/library/page", (HttpRequest request, int? page, int? pageSize, string? kind, string? q, string? sort) =>
 {
-    var source = cache.GetItemsSnapshot();
+    var source = VisibleLibraryItems(request, cache.GetItemsSnapshot());
     var filtered = FilterLibraryItems(source, kind, q);
     var ordered = SortLibraryItems(filtered, sort);
     var safePageSize = Math.Clamp(pageSize ?? 100, 12, 250);
@@ -1717,9 +1920,9 @@ app.MapPost("/api/settings/libraries", (JsonElement payload) =>
     });
 });
 
-app.MapGet("/api/items/{id}", async (string id) =>
+app.MapGet("/api/items/{id}", async (HttpRequest request, string id) =>
 {
-    var item = (await cache.GetItemsAsync()).FirstOrDefault(i => i.Id == id);
+    var item = VisibleLibraryItems(request, await cache.GetItemsAsync()).FirstOrDefault(i => i.Id == id);
     return item is null ? Results.NotFound() : Results.Ok(item);
 });
 
@@ -1735,7 +1938,7 @@ app.MapGet("/api/items/{id}/reviews", (string id) =>
     });
 });
 
-app.MapPut("/api/items/{id}/reviews", (string id, GuidevaultReviewRequest payload) =>
+app.MapPut("/api/items/{id}/reviews", (HttpRequest request, string id, GuidevaultReviewRequest payload) =>
 {
     if (string.IsNullOrWhiteSpace(id))
         return Results.BadRequest(new { error = "Item id is required." });
@@ -1743,6 +1946,10 @@ app.MapPut("/api/items/{id}/reviews", (string id, GuidevaultReviewRequest payloa
     if (payload is null)
         return Results.BadRequest(new { error = "Review payload is required." });
 
+    var currentUser = CurrentGuidevaultUser(request);
+    if (currentUser is null) return Results.Unauthorized();
+    payload.User = currentUser.UserId;
+    payload.UserDisplayName = currentUser.DisplayName;
     var saved = itemReviewStore.Upsert(id, payload);
     return Results.Ok(new
     {
@@ -1751,12 +1958,14 @@ app.MapPut("/api/items/{id}/reviews", (string id, GuidevaultReviewRequest payloa
     });
 });
 
-app.MapDelete("/api/reviews/{reviewId}", (string reviewId, string? user) =>
+app.MapDelete("/api/reviews/{reviewId}", (HttpRequest request, string reviewId) =>
 {
     if (string.IsNullOrWhiteSpace(reviewId))
         return Results.BadRequest(new { error = "Review id is required." });
 
-    var deleted = itemReviewStore.Delete(reviewId, user);
+    var currentUser = CurrentGuidevaultUser(request);
+    if (currentUser is null) return Results.Unauthorized();
+    var deleted = itemReviewStore.Delete(reviewId, currentUser.IsAdmin ? null : currentUser.UserId);
     return Results.Ok(new { deleted });
 });
 
@@ -1841,6 +2050,55 @@ app.MapPost("/api/igdb/resolve", async (JsonElement payload) =>
     {
         return Results.BadRequest(new { error = $"IGDB game metadata lookup failed: {ex.Message}" });
     }
+});
+
+app.MapGet("/api/dossiers", (HttpRequest request) => Results.Ok(new
+{
+    dossiers = VisibleGameDossiers(request)
+}));
+
+app.MapGet("/api/dossiers/{id}", (HttpRequest request, string id) =>
+{
+    var dossier = VisibleGameDossiers(request)
+        .FirstOrDefault(candidate => string.Equals(candidate.Id, id, StringComparison.OrdinalIgnoreCase));
+    return dossier is null ? Results.NotFound(new { error = "Game dossier not found." }) : Results.Ok(dossier);
+});
+
+app.MapPost("/api/dossiers", (HttpRequest request, [FromBody] JsonElement payload) =>
+{
+    if (payload.ValueKind != JsonValueKind.Object
+        || !payload.TryGetProperty("game", out var gamePayload)
+        || gamePayload.ValueKind != JsonValueKind.Object)
+        return Results.BadRequest(new { error = "A resolved IGDB game is required to create a dossier." });
+
+    var currentUser = CurrentGuidevaultUser(request);
+    if (currentUser is null) return Results.Unauthorized();
+    var itemId = payload.TryGetProperty("itemId", out var itemIdValue) && itemIdValue.ValueKind == JsonValueKind.String
+        ? itemIdValue.GetString() ?? string.Empty
+        : string.Empty;
+    var game = IgdbGameMetadataClient.ParsePayload(gamePayload);
+    if (game.Id <= 0 || string.IsNullOrWhiteSpace(game.GameTitle))
+        return Results.BadRequest(new { error = "Resolve a valid IGDB game before creating its dossier." });
+
+    var dossier = gameDossierStore.CreateOrUpdate(game, itemId, currentUser.UserId, cache.GetItemsSnapshot());
+    RecordSystemEvent("Dossier", "Game dossier saved", $"Saved the {dossier.GameTitle} game dossier with {dossier.LibraryItemIds.Length} linked library item(s).", "igdb");
+    return Results.Ok(new { dossier, dossiers = gameDossierStore.GetAll() });
+});
+
+app.MapPost("/api/dossiers/{id}/refresh-library", (HttpRequest request, string id) =>
+{
+    var dossier = gameDossierStore.RefreshLibraryMatches(id, cache.GetItemsSnapshot());
+    if (dossier is null) return Results.NotFound(new { error = "Game dossier not found." });
+    RecordSystemEvent("Dossier", "Dossier collection refreshed", $"Refreshed linked GuideVault documents for {dossier.GameTitle}.", "api");
+    return Results.Ok(new { dossier, dossiers = gameDossierStore.GetAll() });
+});
+
+app.MapDelete("/api/dossiers/{id}", (string id) =>
+{
+    var deleted = gameDossierStore.Delete(id);
+    if (!deleted) return Results.NotFound(new { error = "Game dossier not found." });
+    RecordSystemEvent("Dossier", "Game dossier deleted", $"Deleted dossier {id}.", "api");
+    return Results.Ok(new { deleted = true, dossiers = gameDossierStore.GetAll() });
 });
 
 
@@ -2108,7 +2366,6 @@ app.MapPost("/api/items/metadata/native-export/bulk", async (JsonElement payload
                 }
 
                 var updated = metadataStore.ApplyOverride(cached);
-                cache.ReplaceCachedItem(updated, persist: false);
                 updatedItems.Add(updated);
 
                 var exportDocument = GuidevaultNativeMetadata.BuildExport(updated, new ItemMetadataUpdate(), launchBoxData: launchBoxSnapshot);
@@ -2984,9 +3241,9 @@ app.MapDelete("/api/items/{id}/archive-page", async (string id, [FromBody] JsonE
     }
 });
 
-app.MapGet("/api/items/{id}/file", async (string id) =>
+app.MapGet("/api/items/{id}/file", async (HttpRequest request, string id) =>
 {
-    var item = (await cache.GetItemsAsync()).FirstOrDefault(i => i.Id == id);
+    var item = VisibleLibraryItems(request, await cache.GetItemsAsync()).FirstOrDefault(i => i.Id == id);
     if (item is null) return Results.NotFound();
     RecordSystemEvent("Reader", "File opened", $"Opened source file for {item.Title}.", "api", item.Id, item.Title);
     return Results.File(item.Path, contentType: item.ContentType, enableRangeProcessing: true);
@@ -4877,7 +5134,7 @@ public sealed class DeviceHistoryStore
     private void Save()
     {
         Directory.CreateDirectory(Path.GetDirectoryName(_path)!);
-        File.WriteAllText(_path, JsonSerializer.Serialize(_data, JsonOptions));
+        GuidevaultAtomicFile.WriteAllText(_path, JsonSerializer.Serialize(_data, JsonOptions));
     }
 
     private static string? Clean(string? value)
@@ -5088,7 +5345,7 @@ public sealed class SystemInfoStore
     private void Save()
     {
         Directory.CreateDirectory(Path.GetDirectoryName(_path)!);
-        File.WriteAllText(_path, JsonSerializer.Serialize(_record, JsonOptions));
+        GuidevaultAtomicFile.WriteAllText(_path, JsonSerializer.Serialize(_record, JsonOptions));
     }
 
     private static string GenerateInstallId()
@@ -5395,6 +5652,7 @@ public sealed record StableUpdateResult
 
 public sealed class GuidevaultServerSettingsStore
 {
+    public const string SecretMask = "********";
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web) { WriteIndented = true };
     private readonly object _gate = new();
     private readonly string _path;
@@ -5412,6 +5670,11 @@ public sealed class GuidevaultServerSettingsStore
 
     public GuidevaultServerSettings GetSnapshot()
     {
+        lock (_gate) return CloneForInternalUse(_settings);
+    }
+
+    public GuidevaultServerSettings GetClientSnapshot()
+    {
         lock (_gate) return CloneForClient(_settings);
     }
 
@@ -5419,6 +5682,11 @@ public sealed class GuidevaultServerSettingsStore
     {
         lock (_gate)
         {
+            payload ??= new GuidevaultServerSettings();
+            if (string.Equals(payload.IgdbClientSecret, SecretMask, StringComparison.Ordinal))
+                payload.IgdbClientSecret = _settings.IgdbClientSecret;
+            if (string.Equals(payload.HomeAssistantLongLivedAccessToken, SecretMask, StringComparison.Ordinal))
+                payload.HomeAssistantLongLivedAccessToken = _settings.HomeAssistantLongLivedAccessToken;
             _settings = Normalize(payload);
             Save();
             return CloneForClient(_settings);
@@ -5441,10 +5709,10 @@ public sealed class GuidevaultServerSettingsStore
                 var manifest = JsonSerializer.Serialize(new
                 {
                     app = "GuideVault",
-                    version = "1.1.2",
+                    version = GuidevaultBuildInfo.Version,
                     createdAt = DateTimeOffset.UtcNow,
                     sourceFileCount = files.Count,
-                    includes = new[] { "config", "metadata", "bookmarks", "reader preferences", "LaunchBox matches", "task schedules", "library index", "uploaded reader backgrounds" },
+                    includes = new[] { "config", "metadata", "bookmarks", "reader preferences", "game dossiers", "LaunchBox matches", "task schedules", "library index", "uploaded reader backgrounds" },
                     note = "GuideVault app data backup. Source manuals, guides, magazines, and generated caches are not copied."
                 }, JsonOptions);
                 var manifestEntry = zip.CreateEntry("manifest.json", CompressionLevel.Optimal);
@@ -5607,7 +5875,7 @@ public sealed class GuidevaultServerSettingsStore
     private void Save()
     {
         Directory.CreateDirectory(Path.GetDirectoryName(_path)!);
-        File.WriteAllText(_path, JsonSerializer.Serialize(_settings, JsonOptions));
+        GuidevaultAtomicFile.WriteAllText(_path, JsonSerializer.Serialize(_settings, JsonOptions));
     }
 
     private GuidevaultServerSettings Normalize(GuidevaultServerSettings value)
@@ -5634,6 +5902,27 @@ public sealed class GuidevaultServerSettingsStore
     }
 
     private static GuidevaultServerSettings CloneForClient(GuidevaultServerSettings value) => new()
+    {
+        HostName = value.HostName,
+        BaseUrl = value.BaseUrl,
+        IpAddresses = value.IpAddresses,
+        Port = value.Port,
+        LoggingLevel = value.LoggingLevel,
+        BackupDirectory = value.BackupDirectory,
+        BookmarksDirectory = value.BookmarksDirectory,
+        IgdbClientId = value.IgdbClientId,
+        IgdbClientSecret = string.IsNullOrWhiteSpace(value.IgdbClientSecret) ? string.Empty : SecretMask,
+        HomeAssistantEnabled = value.HomeAssistantEnabled,
+        HomeAssistantUrl = value.HomeAssistantUrl,
+        HomeAssistantLongLivedAccessToken = string.IsNullOrWhiteSpace(value.HomeAssistantLongLivedAccessToken) ? string.Empty : SecretMask,
+        HomeAssistantEntityPrefix = value.HomeAssistantEntityPrefix,
+        HomeAssistantPushStateEnabled = value.HomeAssistantPushStateEnabled,
+        HomeAssistantPushEventsEnabled = value.HomeAssistantPushEventsEnabled,
+        HomeAssistantCommandEnabled = value.HomeAssistantCommandEnabled,
+        HomeAssistantCommandToken = value.HomeAssistantCommandToken
+    };
+
+    private static GuidevaultServerSettings CloneForInternalUse(GuidevaultServerSettings value) => new()
     {
         HostName = value.HostName,
         BaseUrl = value.BaseUrl,
@@ -6738,7 +7027,355 @@ public sealed class GuidevaultReaderPreferencesStore
     private void Save()
     {
         var json = JsonSerializer.Serialize(_preferences, JsonOptions);
-        File.WriteAllText(_path, json);
+        GuidevaultAtomicFile.WriteAllText(_path, json);
+    }
+}
+
+public sealed class GuidevaultGameDossierData
+{
+    public int SchemaVersion { get; set; } = 1;
+    public List<GuidevaultGameDossier> Dossiers { get; set; } = new();
+}
+
+public sealed class GuidevaultGameDossier
+{
+    public string Id { get; set; } = string.Empty;
+    public int IgdbId { get; set; }
+    public string GameTitle { get; set; } = string.Empty;
+    public string Summary { get; set; } = string.Empty;
+    public string Storyline { get; set; } = string.Empty;
+    public string FirstReleaseDate { get; set; } = string.Empty;
+    public string GameReleaseYear { get; set; } = string.Empty;
+    public string GameFranchise { get; set; } = string.Empty;
+    public string CoverPreviewUrl { get; set; } = string.Empty;
+    public string SourceUrl { get; set; } = string.Empty;
+    public string[] Developers { get; set; } = Array.Empty<string>();
+    public string[] Publishers { get; set; } = Array.Empty<string>();
+    public string[] Genres { get; set; } = Array.Empty<string>();
+    public string[] Themes { get; set; } = Array.Empty<string>();
+    public string[] GameModes { get; set; } = Array.Empty<string>();
+    public string[] PlayerPerspectives { get; set; } = Array.Empty<string>();
+    public string[] Platforms { get; set; } = Array.Empty<string>();
+    public string[] Keywords { get; set; } = Array.Empty<string>();
+    public string[] AlternativeNames { get; set; } = Array.Empty<string>();
+    public string[] CollectionNames { get; set; } = Array.Empty<string>();
+    public double? Rating { get; set; }
+    public int? RatingCount { get; set; }
+    public double? TotalRating { get; set; }
+    public int? TotalRatingCount { get; set; }
+    public int? Hypes { get; set; }
+    public string[] Screenshots { get; set; } = Array.Empty<string>();
+    public string[] Artworks { get; set; } = Array.Empty<string>();
+    public IgdbVideoMetadata[] Videos { get; set; } = Array.Empty<IgdbVideoMetadata>();
+    public IgdbWebsiteMetadata[] Websites { get; set; } = Array.Empty<IgdbWebsiteMetadata>();
+    public string[] LibraryItemIds { get; set; } = Array.Empty<string>();
+    public GuidevaultDossierCollection[] Collections { get; set; } = Array.Empty<GuidevaultDossierCollection>();
+    public string CreatedByUserId { get; set; } = string.Empty;
+    public DateTimeOffset CreatedAt { get; set; } = DateTimeOffset.UtcNow;
+    public DateTimeOffset UpdatedAt { get; set; } = DateTimeOffset.UtcNow;
+}
+
+public sealed class GuidevaultDossierCollection
+{
+    public string Id { get; set; } = string.Empty;
+    public string Name { get; set; } = string.Empty;
+    public string Kind { get; set; } = string.Empty;
+    public string Description { get; set; } = string.Empty;
+    public string[] ItemIds { get; set; } = Array.Empty<string>();
+    public string[] Values { get; set; } = Array.Empty<string>();
+    public IgdbRelatedGameMetadata[] Games { get; set; } = Array.Empty<IgdbRelatedGameMetadata>();
+}
+
+public sealed class GuidevaultGameDossierStore
+{
+    private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web)
+    {
+        PropertyNameCaseInsensitive = true,
+        WriteIndented = true
+    };
+    private readonly object _gate = new();
+    private readonly string _path;
+    private GuidevaultGameDossierData _data;
+
+    public GuidevaultGameDossierStore(string path)
+    {
+        _path = path;
+        Directory.CreateDirectory(Path.GetDirectoryName(_path)!);
+        _data = Load();
+    }
+
+    public IReadOnlyList<GuidevaultGameDossier> GetAll()
+    {
+        lock (_gate)
+            return _data.Dossiers
+                .OrderByDescending(dossier => dossier.UpdatedAt)
+                .ThenBy(dossier => dossier.GameTitle, StringComparer.OrdinalIgnoreCase)
+                .Select(Clone)
+                .ToArray();
+    }
+
+    public GuidevaultGameDossier CreateOrUpdate(IgdbGameMetadataResult game, string? selectedItemId, string createdByUserId, IReadOnlyList<LibraryItem> libraryItems)
+    {
+        lock (_gate)
+        {
+            var id = $"igdb-{game.Id}";
+            var existing = _data.Dossiers.FirstOrDefault(dossier => string.Equals(dossier.Id, id, StringComparison.OrdinalIgnoreCase));
+            var now = DateTimeOffset.UtcNow;
+            var linkedItemIds = MatchLibraryItemIds(game, selectedItemId, libraryItems);
+            var dossier = existing ?? new GuidevaultGameDossier
+            {
+                Id = id,
+                IgdbId = game.Id,
+                CreatedAt = now,
+                CreatedByUserId = createdByUserId
+            };
+            dossier.IgdbId = game.Id;
+            dossier.GameTitle = FirstNonEmpty(game.GameTitle, game.Name, $"IGDB Game {game.Id}");
+            dossier.Summary = Clean(game.Summary);
+            dossier.Storyline = Clean(game.Storyline);
+            dossier.FirstReleaseDate = Clean(game.FirstReleaseDate);
+            dossier.GameReleaseYear = Clean(game.GameReleaseYear);
+            dossier.GameFranchise = Clean(game.GameFranchise);
+            dossier.CoverPreviewUrl = Clean(game.CoverPreviewUrl);
+            dossier.SourceUrl = Clean(game.SourceUrl);
+            dossier.Developers = CleanArray(game.Developers);
+            dossier.Publishers = CleanArray(game.Publishers);
+            dossier.Genres = CleanArray(game.Genres);
+            dossier.Themes = CleanArray(game.Themes);
+            dossier.GameModes = CleanArray(game.GameModes);
+            dossier.PlayerPerspectives = CleanArray(game.PlayerPerspectives);
+            dossier.Platforms = CleanArray(game.AssociatedPlatforms);
+            dossier.Keywords = CleanArray(game.Keywords).Take(40).ToArray();
+            dossier.AlternativeNames = CleanArray(game.AlternativeNames).Take(30).ToArray();
+            dossier.CollectionNames = CleanArray(game.CollectionNames);
+            dossier.Rating = game.Rating;
+            dossier.RatingCount = game.RatingCount;
+            dossier.TotalRating = game.TotalRating;
+            dossier.TotalRatingCount = game.TotalRatingCount;
+            dossier.Hypes = game.Hypes;
+            dossier.Screenshots = CleanArray(game.Screenshots).Take(24).ToArray();
+            dossier.Artworks = CleanArray(game.Artworks).Take(24).ToArray();
+            dossier.Videos = (game.Videos ?? Array.Empty<IgdbVideoMetadata>()).Take(12).ToArray();
+            dossier.Websites = (game.Websites ?? Array.Empty<IgdbWebsiteMetadata>()).Take(20).ToArray();
+            dossier.LibraryItemIds = linkedItemIds;
+            dossier.Collections = BuildCollections(game, linkedItemIds);
+            dossier.UpdatedAt = now;
+            if (existing is null) _data.Dossiers.Add(dossier);
+            Save();
+            return Clone(dossier);
+        }
+    }
+
+    public GuidevaultGameDossier? RefreshLibraryMatches(string id, IReadOnlyList<LibraryItem> libraryItems)
+    {
+        lock (_gate)
+        {
+            var dossier = _data.Dossiers.FirstOrDefault(candidate => string.Equals(candidate.Id, id, StringComparison.OrdinalIgnoreCase));
+            if (dossier is null) return null;
+            dossier.LibraryItemIds = MatchLibraryItemIds(dossier, libraryItems);
+            var libraryCollection = BuildLibraryCollection(dossier.LibraryItemIds);
+            dossier.Collections = new[] { libraryCollection }
+                .Concat((dossier.Collections ?? Array.Empty<GuidevaultDossierCollection>()).Where(collection => !string.Equals(collection.Kind, "library", StringComparison.OrdinalIgnoreCase)))
+                .ToArray();
+            dossier.UpdatedAt = DateTimeOffset.UtcNow;
+            Save();
+            return Clone(dossier);
+        }
+    }
+
+    public bool Delete(string id)
+    {
+        lock (_gate)
+        {
+            var removed = _data.Dossiers.RemoveAll(dossier => string.Equals(dossier.Id, id, StringComparison.OrdinalIgnoreCase)) > 0;
+            if (removed) Save();
+            return removed;
+        }
+    }
+
+    private GuidevaultGameDossierData Load()
+    {
+        try
+        {
+            if (!File.Exists(_path)) return new GuidevaultGameDossierData();
+            var loaded = JsonSerializer.Deserialize<GuidevaultGameDossierData>(File.ReadAllText(_path), JsonOptions) ?? new GuidevaultGameDossierData();
+            loaded.Dossiers ??= new List<GuidevaultGameDossier>();
+            foreach (var dossier in loaded.Dossiers) Normalize(dossier);
+            return loaded;
+        }
+        catch
+        {
+            return new GuidevaultGameDossierData();
+        }
+    }
+
+    private void Save() => GuidevaultAtomicFile.WriteAllText(_path, JsonSerializer.Serialize(_data, JsonOptions));
+
+    private static GuidevaultGameDossier Clone(GuidevaultGameDossier dossier)
+        => JsonSerializer.Deserialize<GuidevaultGameDossier>(JsonSerializer.Serialize(dossier, JsonOptions), JsonOptions) ?? new GuidevaultGameDossier();
+
+    private static void Normalize(GuidevaultGameDossier dossier)
+    {
+        dossier.Developers ??= Array.Empty<string>();
+        dossier.Publishers ??= Array.Empty<string>();
+        dossier.Genres ??= Array.Empty<string>();
+        dossier.Themes ??= Array.Empty<string>();
+        dossier.GameModes ??= Array.Empty<string>();
+        dossier.PlayerPerspectives ??= Array.Empty<string>();
+        dossier.Platforms ??= Array.Empty<string>();
+        dossier.Keywords ??= Array.Empty<string>();
+        dossier.AlternativeNames ??= Array.Empty<string>();
+        dossier.CollectionNames ??= Array.Empty<string>();
+        dossier.Screenshots ??= Array.Empty<string>();
+        dossier.Artworks ??= Array.Empty<string>();
+        dossier.Videos ??= Array.Empty<IgdbVideoMetadata>();
+        dossier.Websites ??= Array.Empty<IgdbWebsiteMetadata>();
+        dossier.LibraryItemIds ??= Array.Empty<string>();
+        dossier.Collections ??= Array.Empty<GuidevaultDossierCollection>();
+        foreach (var collection in dossier.Collections)
+        {
+            collection.ItemIds ??= Array.Empty<string>();
+            collection.Values ??= Array.Empty<string>();
+            collection.Games ??= Array.Empty<IgdbRelatedGameMetadata>();
+        }
+    }
+
+    private static GuidevaultDossierCollection[] BuildCollections(IgdbGameMetadataResult game, string[] libraryItemIds)
+    {
+        var collections = new List<GuidevaultDossierCollection> { BuildLibraryCollection(libraryItemIds) };
+        var seriesValues = CleanArray(new[] { game.GameFranchise }.Concat(game.CollectionNames ?? Array.Empty<string>()).ToArray());
+        var familyGames = DistinctGames(new[] { game.ParentGame }.Where(value => value is not null).Select(value => value!));
+        if (seriesValues.Length > 0 || familyGames.Length > 0)
+        {
+            collections.Add(new GuidevaultDossierCollection
+            {
+                Id = "series",
+                Name = "Series & Franchise",
+                Kind = "series",
+                Description = "IGDB series, franchise, and parent-game relationships.",
+                Values = seriesValues,
+                Games = familyGames
+            });
+        }
+        AddGameCollection(collections, "related", "Related Games", "related", "Similar games returned by IGDB.", game.SimilarGames);
+        AddGameCollection(collections, "expansions", "Expansions & DLC", "expansion", "Expansion, DLC, and standalone expansion entries.",
+            (game.Expansions ?? Array.Empty<IgdbRelatedGameMetadata>())
+                .Concat(game.Dlcs ?? Array.Empty<IgdbRelatedGameMetadata>())
+                .Concat(game.StandaloneExpansions ?? Array.Empty<IgdbRelatedGameMetadata>()));
+        AddGameCollection(collections, "editions", "Editions, Remakes & Ports", "edition", "Remakes, remasters, ports, and bundles related to this game.",
+            (game.Remakes ?? Array.Empty<IgdbRelatedGameMetadata>())
+                .Concat(game.Remasters ?? Array.Empty<IgdbRelatedGameMetadata>())
+                .Concat(game.Ports ?? Array.Empty<IgdbRelatedGameMetadata>())
+                .Concat(game.Bundles ?? Array.Empty<IgdbRelatedGameMetadata>()));
+        return collections.ToArray();
+    }
+
+    private static GuidevaultDossierCollection BuildLibraryCollection(string[] libraryItemIds) => new()
+    {
+        Id = "guidevault-documents",
+        Name = "GuideVault Documents",
+        Kind = "library",
+        Description = "Manuals, strategy guides, and magazine entries matched to this game.",
+        ItemIds = CleanArray(libraryItemIds)
+    };
+
+    private static void AddGameCollection(List<GuidevaultDossierCollection> target, string id, string name, string kind, string description, IEnumerable<IgdbRelatedGameMetadata>? games)
+    {
+        var clean = DistinctGames(games ?? Array.Empty<IgdbRelatedGameMetadata>());
+        if (clean.Length == 0) return;
+        target.Add(new GuidevaultDossierCollection { Id = id, Name = name, Kind = kind, Description = description, Games = clean });
+    }
+
+    private static IgdbRelatedGameMetadata[] DistinctGames(IEnumerable<IgdbRelatedGameMetadata> games)
+        => games
+            .Where(game => game is not null && (game.Id > 0 || !string.IsNullOrWhiteSpace(game.Name)))
+            .GroupBy(game => game.Id > 0 ? game.Id.ToString() : game.Name, StringComparer.OrdinalIgnoreCase)
+            .Select(group => group.First())
+            .Take(60)
+            .ToArray();
+
+    private static string[] MatchLibraryItemIds(IgdbGameMetadataResult game, string? selectedItemId, IReadOnlyList<LibraryItem> items)
+    {
+        var keys = CleanArray(new[] { game.GameTitle, game.Name, game.GameFranchise }
+            .Concat(game.AlternativeNames ?? Array.Empty<string>())
+            .Concat(game.CollectionNames ?? Array.Empty<string>())
+            .ToArray())
+            .Select(NormalizeMatchText)
+            .Where(key => key.Length >= 3)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+        return MatchLibraryItemIds(keys, selectedItemId, items);
+    }
+
+    private static string[] MatchLibraryItemIds(GuidevaultGameDossier dossier, IReadOnlyList<LibraryItem> items)
+    {
+        var keys = CleanArray(new[] { dossier.GameTitle, dossier.GameFranchise }
+            .Concat(dossier.AlternativeNames ?? Array.Empty<string>())
+            .Concat(dossier.CollectionNames ?? Array.Empty<string>())
+            .ToArray())
+            .Select(NormalizeMatchText)
+            .Where(key => key.Length >= 3)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+        return MatchLibraryItemIds(keys, dossier.LibraryItemIds.FirstOrDefault(), items);
+    }
+
+    private static string[] MatchLibraryItemIds(string[] keys, string? selectedItemId, IReadOnlyList<LibraryItem> items)
+    {
+        var selected = Clean(selectedItemId);
+        return items.Where(item =>
+            string.Equals(item.Id, selected, StringComparison.OrdinalIgnoreCase)
+            || ItemMatchValues(item).Any(value => keys.Any(key => MatchKey(value, key))))
+            .Select(item => item.Id)
+            .Where(id => !string.IsNullOrWhiteSpace(id))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .Take(500)
+            .ToArray();
+    }
+
+    private static IEnumerable<string> ItemMatchValues(LibraryItem item)
+    {
+        var values = new[]
+        {
+            item.GameTitle, item.PlatformMatchTitle, item.Franchise, item.Series, item.Title,
+            item.ManualTitle, item.CoverSubject, item.LaunchBoxGameTitle
+        }
+        .Concat(item.CoveredGames ?? Array.Empty<string>())
+        .Concat(item.FeaturedGames ?? Array.Empty<string>());
+        return values.Select(NormalizeMatchText).Where(value => value.Length >= 3).Distinct(StringComparer.OrdinalIgnoreCase);
+    }
+
+    private static bool MatchKey(string value, string key)
+        => value.Equals(key, StringComparison.OrdinalIgnoreCase)
+            || (key.Length >= 5 && value.Contains(key, StringComparison.OrdinalIgnoreCase))
+            || (value.Length >= 5 && key.Contains(value, StringComparison.OrdinalIgnoreCase));
+
+    private static string NormalizeMatchText(string? value)
+        => Regex.Replace((value ?? string.Empty).ToLowerInvariant(), "[^a-z0-9]+", " ").Trim();
+
+    private static string[] CleanArray(IEnumerable<string>? values)
+        => (values ?? Array.Empty<string>()).Select(Clean).Where(value => !string.IsNullOrWhiteSpace(value)).Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
+
+    private static string Clean(string? value) => (value ?? string.Empty).Trim();
+    private static string FirstNonEmpty(params string?[] values) => values.FirstOrDefault(value => !string.IsNullOrWhiteSpace(value))?.Trim() ?? string.Empty;
+}
+
+public static class GuidevaultGameDossierAccess
+{
+    public static IReadOnlyList<GuidevaultGameDossier> Filter(GuidevaultAuthenticatedUser? user, IReadOnlyList<GuidevaultGameDossier> dossiers, IReadOnlyList<LibraryItem> visibleItems)
+    {
+        if (user is null) return Array.Empty<GuidevaultGameDossier>();
+        if (user.IsAdmin) return dossiers;
+        var visibleIds = visibleItems.Select(item => item.Id).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var result = new List<GuidevaultGameDossier>();
+        foreach (var dossier in dossiers)
+        {
+            dossier.LibraryItemIds = dossier.LibraryItemIds.Where(visibleIds.Contains).ToArray();
+            foreach (var collection in dossier.Collections.Where(collection => string.Equals(collection.Kind, "library", StringComparison.OrdinalIgnoreCase)))
+                collection.ItemIds = collection.ItemIds.Where(visibleIds.Contains).ToArray();
+            if (dossier.LibraryItemIds.Length > 0) result.Add(dossier);
+        }
+        return result;
     }
 }
 
@@ -6898,7 +7535,7 @@ public sealed class GuidevaultEmailSettingsStore
         return new GuidevaultEmailSettings();
     }
 
-    private void Save() => File.WriteAllText(_path, JsonSerializer.Serialize(_settings, JsonOptions));
+    private void Save() => GuidevaultAtomicFile.WriteAllText(_path, JsonSerializer.Serialize(_settings, JsonOptions));
 
     private static GuidevaultEmailSettings Normalize(GuidevaultEmailSettings value, GuidevaultEmailSettings? existing)
     {
@@ -7051,7 +7688,7 @@ public sealed class GuidevaultEmailHistoryStore
         return new List<GuidevaultEmailHistoryRecord>();
     }
 
-    private void Save() => File.WriteAllText(_path, JsonSerializer.Serialize(_records, JsonOptions));
+    private void Save() => GuidevaultAtomicFile.WriteAllText(_path, JsonSerializer.Serialize(_records, JsonOptions));
     private static GuidevaultEmailHistoryRecord Clone(GuidevaultEmailHistoryRecord record) => new()
     {
         Id = record.Id,
@@ -7129,7 +7766,7 @@ public sealed class GuidevaultSystemEventStore
         return new List<GuidevaultSystemEventRecord>();
     }
 
-    private void Save() => File.WriteAllText(_path, JsonSerializer.Serialize(_records, JsonOptions));
+    private void Save() => GuidevaultAtomicFile.WriteAllText(_path, JsonSerializer.Serialize(_records, JsonOptions));
     private static GuidevaultSystemEventRecord Clone(GuidevaultSystemEventRecord record) => new()
     {
         Id = record.Id,
@@ -7804,7 +8441,7 @@ public sealed class GuidevaultLaunchBoxIntegrationStore
 
     private static string CleanPlatformKey(string? value) => (value ?? string.Empty).Trim();
 
-    private void Save() => File.WriteAllText(_path, JsonSerializer.Serialize(_data, JsonOptions));
+    private void Save() => GuidevaultAtomicFile.WriteAllText(_path, JsonSerializer.Serialize(_data, JsonOptions));
 
     private static GuidevaultLaunchBoxSyncJobStatus CloneJob(GuidevaultLaunchBoxSyncJobStatus job) => new()
     {
@@ -9511,10 +10148,10 @@ public sealed class GuidevaultLaunchBoxBrowserLoginLinkResult
 internal sealed class GuidevaultLaunchBoxBrowserLoginRecord
 {
     public string Token { get; set; } = string.Empty;
+    public string UserId { get; set; } = string.Empty;
     public string TargetUrl { get; set; } = string.Empty;
     public string Username { get; set; } = string.Empty;
     public string Email { get; set; } = string.Empty;
-    public string Password { get; set; } = string.Empty;
     public DateTimeOffset CreatedAt { get; set; } = DateTimeOffset.UtcNow;
     public DateTimeOffset ExpiresAt { get; set; } = DateTimeOffset.UtcNow.AddMinutes(3);
 }
@@ -9524,28 +10161,27 @@ internal sealed class GuidevaultLaunchBoxBrowserLoginStore
     private readonly object syncRoot = new();
     private readonly Dictionary<string, GuidevaultLaunchBoxBrowserLoginRecord> records = new(StringComparer.OrdinalIgnoreCase);
 
-    public GuidevaultLaunchBoxBrowserLoginLinkResult CreateLink(GuidevaultLaunchBoxBrowserLoginLinkRequest? payload, string baseUrl)
+    public GuidevaultLaunchBoxBrowserLoginLinkResult CreateLink(
+        GuidevaultLaunchBoxBrowserLoginLinkRequest? payload,
+        string baseUrl,
+        GuidevaultAuthenticatedUser authenticatedUser)
     {
-        var username = (payload?.Username ?? string.Empty).Trim();
-        var email = (payload?.Email ?? string.Empty).Trim();
-        var password = payload?.Password ?? string.Empty;
+        var username = authenticatedUser.Username.Trim();
+        var email = authenticatedUser.Email.Trim();
         var target = (payload?.TargetUrl ?? string.Empty).Trim();
-        if ((string.IsNullOrWhiteSpace(username) && string.IsNullOrWhiteSpace(email)) || string.IsNullOrWhiteSpace(password))
-            return new GuidevaultLaunchBoxBrowserLoginLinkResult { Success = false, Message = "Username/email and password are required for the LaunchBox browser login bridge." };
-
-        if (string.IsNullOrWhiteSpace(username)) username = email;
-        if (string.IsNullOrWhiteSpace(email)) email = username.Contains('@') ? username : $"{username}@guidevault.local";
-        if (string.IsNullOrWhiteSpace(target)) target = "/";
+        if (string.IsNullOrWhiteSpace(target)
+            || !target.StartsWith("/", StringComparison.Ordinal)
+            || target.StartsWith("//", StringComparison.Ordinal)) target = "/";
 
         var now = DateTimeOffset.UtcNow;
         var token = Convert.ToHexString(RandomNumberGenerator.GetBytes(32)).ToLowerInvariant();
         var record = new GuidevaultLaunchBoxBrowserLoginRecord
         {
             Token = token,
+            UserId = authenticatedUser.UserId,
             TargetUrl = target,
             Username = username,
             Email = email,
-            Password = password,
             CreatedAt = now,
             ExpiresAt = now.AddMinutes(3)
         };
@@ -9887,7 +10523,7 @@ public sealed class GuidevaultItemReviewStore
         return new GuidevaultItemReviewSettings();
     }
 
-    private void Save() => File.WriteAllText(_path, JsonSerializer.Serialize(_settings, JsonOptions));
+    private void Save() => GuidevaultAtomicFile.WriteAllText(_path, JsonSerializer.Serialize(_settings, JsonOptions));
     private static string Clean(string? value, string fallback = "") => string.IsNullOrWhiteSpace(value) ? fallback : value.Trim();
     private static string Limit(string value, int max) => value.Length <= max ? value : value[..max];
     private static string NormalizeVisibility(string? value) => string.Equals(value, "public", StringComparison.OrdinalIgnoreCase) ? "public" : "private";
@@ -9943,6 +10579,495 @@ public sealed class GuidevaultReviewRequest
     public string? Visibility { get; set; }
 }
 
+public sealed class GuidevaultAuthenticationStore
+{
+    private const int PasswordIterations = 210_000;
+    private static readonly TimeSpan SessionLifetime = TimeSpan.FromDays(7);
+    private static readonly TimeSpan InvitationLifetime = TimeSpan.FromDays(7);
+    private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web) { WriteIndented = true, PropertyNameCaseInsensitive = true };
+    private readonly object _gate = new();
+    private readonly string _path;
+    private readonly GuidevaultUsersStore _usersStore;
+    private GuidevaultAuthenticationData _data;
+
+    public GuidevaultAuthenticationStore(string path, GuidevaultUsersStore usersStore)
+    {
+        _path = path;
+        _usersStore = usersStore;
+        Directory.CreateDirectory(Path.GetDirectoryName(_path)!);
+        _data = Load();
+        MigrateLegacyCredentials();
+        PruneExpiredLocked();
+        Save();
+    }
+
+    public bool IsConfigured
+    {
+        get { lock (_gate) return _data.Credentials.Any(IsUsableCredential); }
+    }
+
+    public GuidevaultAuthenticationResult Setup(GuidevaultAuthenticationSetupRequest payload)
+    {
+        lock (_gate)
+        {
+            if (_data.Credentials.Any(IsUsableCredential))
+                return GuidevaultAuthenticationResult.Failed("Guidevault authentication is already configured.");
+
+            var username = Clean(payload?.Username);
+            var email = Clean(payload?.Email);
+            var password = payload?.Password ?? string.Empty;
+            var validation = ValidateProfile(username, email, password, passwordRequired: true);
+            if (!string.IsNullOrWhiteSpace(validation)) return GuidevaultAuthenticationResult.Failed(validation);
+
+            var administrator = _usersStore.EnsurePrimaryAdministrator(username, email);
+            _data.Credentials.Add(CreateCredential(administrator.Id, password));
+            Save();
+            return CreateSuccessfulSession(administrator);
+        }
+    }
+
+    public GuidevaultAuthenticationResult Login(GuidevaultAuthenticationLoginRequest payload)
+    {
+        lock (_gate)
+        {
+            var user = _usersStore.FindByIdentity(payload?.Identity);
+            var credential = user is null ? null : CredentialForUser(user.Id);
+            if (user is null
+                || !string.Equals(user.Status, "Active", StringComparison.OrdinalIgnoreCase)
+                || credential is null
+                || !VerifyPassword(payload?.Password ?? string.Empty, credential))
+                return GuidevaultAuthenticationResult.Failed("The username, email address, or password is incorrect.");
+
+            return CreateSuccessfulSession(user);
+        }
+    }
+
+    public bool ValidateCredentials(string? identity, string? password, out GuidevaultAuthenticatedUser? user)
+    {
+        lock (_gate)
+        {
+            user = null;
+            var record = _usersStore.FindByIdentity(identity);
+            var credential = record is null ? null : CredentialForUser(record.Id);
+            if (record is null
+                || !string.Equals(record.Status, "Active", StringComparison.OrdinalIgnoreCase)
+                || credential is null
+                || !VerifyPassword(password ?? string.Empty, credential)) return false;
+            user = ToUser(record);
+            return true;
+        }
+    }
+
+    public GuidevaultAuthenticationResult UpdateProfile(string? sessionToken, GuidevaultAuthenticationProfileUpdate payload)
+    {
+        lock (_gate)
+        {
+            if (!TryFindSessionLocked(sessionToken, out var session) || session is null)
+                return GuidevaultAuthenticationResult.Failed("Authentication is required.");
+
+            var current = _usersStore.GetById(session.UserId);
+            if (current is null) return GuidevaultAuthenticationResult.Failed("The authenticated user no longer exists.");
+            var username = Clean(payload?.Username);
+            var email = Clean(payload?.Email);
+            var newPassword = payload?.NewPassword ?? string.Empty;
+            var validation = ValidateProfile(username, email, newPassword, passwordRequired: false);
+            if (!string.IsNullOrWhiteSpace(validation)) return GuidevaultAuthenticationResult.Failed(validation);
+
+            var updated = _usersStore.UpdateAuthenticatedProfile(current.Id, username, email, out var updateError);
+            if (updated is null) return GuidevaultAuthenticationResult.Failed(updateError);
+
+            if (!string.IsNullOrWhiteSpace(newPassword))
+            {
+                var credential = CredentialForUser(current.Id);
+                if (credential is null)
+                {
+                    credential = CreateCredential(current.Id, newPassword);
+                    _data.Credentials.Add(credential);
+                }
+                else
+                {
+                    SetPassword(credential, newPassword);
+                }
+                // Password changes revoke every other browser session for this user.
+                _data.Sessions.RemoveAll(existing => string.Equals(existing.UserId, current.Id, StringComparison.OrdinalIgnoreCase)
+                    && !string.Equals(existing.TokenHash, session.TokenHash, StringComparison.Ordinal));
+            }
+
+            Save();
+            return new GuidevaultAuthenticationResult(true, string.Empty, string.Empty, ToUser(updated));
+        }
+    }
+
+    public bool TryValidateSession(string? token, out GuidevaultAuthenticatedUser? user)
+    {
+        lock (_gate)
+        {
+            user = null;
+            var pruned = PruneExpiredLocked();
+            if (!TryFindSessionLocked(token, out var session) || session is null)
+            {
+                if (pruned) Save();
+                return false;
+            }
+
+            var record = _usersStore.GetById(session.UserId);
+            if (record is null || !string.Equals(record.Status, "Active", StringComparison.OrdinalIgnoreCase))
+            {
+                _data.Sessions.Remove(session);
+                Save();
+                return false;
+            }
+
+            if (pruned) Save();
+            user = ToUser(record);
+            return true;
+        }
+    }
+
+    public void Logout(string? token)
+    {
+        if (string.IsNullOrWhiteSpace(token)) return;
+        lock (_gate)
+        {
+            var tokenHash = HashToken(token);
+            if (_data.Sessions.RemoveAll(session => string.Equals(session.TokenHash, tokenHash, StringComparison.Ordinal)) > 0) Save();
+        }
+    }
+
+    public string? CreateSessionForUser(string? userId)
+    {
+        lock (_gate)
+        {
+            var user = _usersStore.GetById(userId);
+            if (user is null || CredentialForUser(user.Id) is null || !string.Equals(user.Status, "Active", StringComparison.OrdinalIgnoreCase)) return null;
+            return CreateSuccessfulSession(user).SessionToken;
+        }
+    }
+
+    public GuidevaultInvitationCreateResult CreateInvitation(string? userId)
+    {
+        lock (_gate)
+        {
+            var user = _usersStore.GetById(userId);
+            if (user is null) return GuidevaultInvitationCreateResult.Failed("The invited user could not be found.");
+            if (string.Equals(user.Status, "Active", StringComparison.OrdinalIgnoreCase) || CredentialForUser(user.Id) is not null)
+                return GuidevaultInvitationCreateResult.Failed("That user already has an active Guidevault account.");
+
+            var token = CreateToken();
+            var now = DateTimeOffset.UtcNow;
+            _data.Invitations.RemoveAll(invitation => string.Equals(invitation.UserId, user.Id, StringComparison.OrdinalIgnoreCase));
+            _data.Invitations.Add(new GuidevaultAuthenticationInvitation
+            {
+                UserId = user.Id,
+                TokenHash = HashToken(token),
+                CreatedAt = now,
+                ExpiresAt = now.Add(InvitationLifetime)
+            });
+            Save();
+            return new GuidevaultInvitationCreateResult(true, string.Empty, token, now.Add(InvitationLifetime));
+        }
+    }
+
+    public GuidevaultInvitationLookupResult GetInvitation(string? token)
+    {
+        lock (_gate)
+        {
+            var pruned = PruneExpiredLocked();
+            var invitation = FindInvitationLocked(token);
+            var user = invitation is null ? null : _usersStore.GetById(invitation.UserId);
+            if (pruned) Save();
+            if (invitation is null || user is null || string.Equals(user.Status, "Active", StringComparison.OrdinalIgnoreCase))
+                return GuidevaultInvitationLookupResult.Failed("That invitation is invalid, expired, or has already been used.");
+            return new GuidevaultInvitationLookupResult(true, string.Empty, user.Id, SuggestedUsername(user), user.DisplayName, user.Email, invitation.ExpiresAt);
+        }
+    }
+
+    public GuidevaultAuthenticationResult AcceptInvitation(GuidevaultInvitationAcceptRequest payload)
+    {
+        lock (_gate)
+        {
+            PruneExpiredLocked();
+            var invitation = FindInvitationLocked(payload?.Token);
+            var user = invitation is null ? null : _usersStore.GetById(invitation.UserId);
+            if (invitation is null || user is null || CredentialForUser(user.Id) is not null)
+                return GuidevaultAuthenticationResult.Failed("That invitation is invalid, expired, or has already been used.");
+
+            var username = Clean(payload?.Username);
+            var password = payload?.Password ?? string.Empty;
+            var validation = ValidateProfile(username, user.Email, password, passwordRequired: true);
+            if (!string.IsNullOrWhiteSpace(validation)) return GuidevaultAuthenticationResult.Failed(validation);
+
+            var activated = _usersStore.ActivateUser(user.Id, username, out var activationError);
+            if (activated is null) return GuidevaultAuthenticationResult.Failed(activationError);
+            _data.Credentials.Add(CreateCredential(activated.Id, password));
+            _data.Invitations.Remove(invitation);
+            Save();
+            return CreateSuccessfulSession(activated);
+        }
+    }
+
+    private GuidevaultAuthenticationResult CreateSuccessfulSession(GuidevaultUserRecord user)
+    {
+        var token = CreateToken();
+        var now = DateTimeOffset.UtcNow;
+        PruneExpiredLocked();
+        var existingSessions = _data.Sessions
+            .Where(session => string.Equals(session.UserId, user.Id, StringComparison.OrdinalIgnoreCase))
+            .OrderBy(session => session.CreatedAt)
+            .ToArray();
+        foreach (var oldSession in existingSessions.Take(Math.Max(0, existingSessions.Length - 19))) _data.Sessions.Remove(oldSession);
+        _data.Sessions.Add(new GuidevaultAuthenticationSession
+        {
+            UserId = user.Id,
+            TokenHash = HashToken(token),
+            CreatedAt = now,
+            ExpiresAt = now.Add(SessionLifetime)
+        });
+        Save();
+        return new GuidevaultAuthenticationResult(true, string.Empty, token, ToUser(user));
+    }
+
+    private bool TryFindSessionLocked(string? token, out GuidevaultAuthenticationSession? session)
+    {
+        session = null;
+        if (string.IsNullOrWhiteSpace(token)) return false;
+        var tokenHash = HashToken(token);
+        session = _data.Sessions.FirstOrDefault(candidate => string.Equals(candidate.TokenHash, tokenHash, StringComparison.Ordinal));
+        return session is not null && session.ExpiresAt > DateTimeOffset.UtcNow;
+    }
+
+    private GuidevaultAuthenticationInvitation? FindInvitationLocked(string? token)
+    {
+        if (string.IsNullOrWhiteSpace(token)) return null;
+        var tokenHash = HashToken(token);
+        return _data.Invitations.FirstOrDefault(candidate => string.Equals(candidate.TokenHash, tokenHash, StringComparison.Ordinal)
+            && candidate.ExpiresAt > DateTimeOffset.UtcNow);
+    }
+
+    private GuidevaultAuthenticationCredential? CredentialForUser(string? userId)
+        => _data.Credentials.FirstOrDefault(credential => string.Equals(credential.UserId, userId, StringComparison.OrdinalIgnoreCase) && IsUsableCredential(credential));
+
+    private GuidevaultAuthenticationData Load()
+    {
+        try
+        {
+            if (!File.Exists(_path)) return new GuidevaultAuthenticationData();
+            var json = File.ReadAllText(_path);
+            using var document = JsonDocument.Parse(json);
+            if (document.RootElement.ValueKind == JsonValueKind.Object && document.RootElement.TryGetProperty("credentials", out _))
+                return JsonSerializer.Deserialize<GuidevaultAuthenticationData>(json, JsonOptions) ?? new GuidevaultAuthenticationData();
+
+            var legacy = JsonSerializer.Deserialize<GuidevaultAuthenticationCredential>(json, JsonOptions);
+            return legacy is null
+                ? new GuidevaultAuthenticationData()
+                : new GuidevaultAuthenticationData { Credentials = new List<GuidevaultAuthenticationCredential> { legacy } };
+        }
+        catch
+        {
+            return new GuidevaultAuthenticationData();
+        }
+    }
+
+    private void MigrateLegacyCredentials()
+    {
+        _data.Credentials ??= new List<GuidevaultAuthenticationCredential>();
+        _data.Sessions ??= new List<GuidevaultAuthenticationSession>();
+        _data.Invitations ??= new List<GuidevaultAuthenticationInvitation>();
+        foreach (var credential in _data.Credentials.Where(credential => string.IsNullOrWhiteSpace(credential.UserId)).ToArray())
+        {
+            var user = _usersStore.EnsurePrimaryAdministrator(Clean(credential.Username), Clean(credential.Email));
+            credential.UserId = user.Id;
+        }
+        _data.SchemaVersion = 2;
+    }
+
+    private bool PruneExpiredLocked()
+    {
+        var now = DateTimeOffset.UtcNow;
+        var removedSessions = _data.Sessions.RemoveAll(session => session.ExpiresAt <= now);
+        var removedInvitations = _data.Invitations.RemoveAll(invitation => invitation.ExpiresAt <= now);
+        return removedSessions + removedInvitations > 0;
+    }
+
+    private void Save() => GuidevaultAtomicFile.WriteAllText(_path, JsonSerializer.Serialize(_data, JsonOptions));
+
+    private static GuidevaultAuthenticationCredential CreateCredential(string userId, string password)
+    {
+        var credential = new GuidevaultAuthenticationCredential { UserId = userId, CreatedAt = DateTimeOffset.UtcNow };
+        SetPassword(credential, password);
+        return credential;
+    }
+
+    private static void SetPassword(GuidevaultAuthenticationCredential credential, string password)
+    {
+        var salt = RandomNumberGenerator.GetBytes(24);
+        credential.Salt = Convert.ToBase64String(salt);
+        credential.PasswordHash = Convert.ToBase64String(HashPassword(password, salt, PasswordIterations));
+        credential.Iterations = PasswordIterations;
+        credential.UpdatedAt = DateTimeOffset.UtcNow;
+    }
+
+    private static bool IsUsableCredential(GuidevaultAuthenticationCredential credential)
+        => !string.IsNullOrWhiteSpace(credential.UserId) && !string.IsNullOrWhiteSpace(credential.PasswordHash) && !string.IsNullOrWhiteSpace(credential.Salt);
+
+    private static bool VerifyPassword(string password, GuidevaultAuthenticationCredential credential)
+    {
+        try
+        {
+            var salt = Convert.FromBase64String(credential.Salt);
+            var expected = Convert.FromBase64String(credential.PasswordHash);
+            var actual = HashPassword(password ?? string.Empty, salt, Math.Max(100_000, credential.Iterations));
+            return CryptographicOperations.FixedTimeEquals(actual, expected);
+        }
+        catch { return false; }
+    }
+
+    private static byte[] HashPassword(string password, byte[] salt, int iterations)
+        => Rfc2898DeriveBytes.Pbkdf2(password ?? string.Empty, salt, iterations, HashAlgorithmName.SHA256, 32);
+
+    private static string HashToken(string token)
+        => Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(token ?? string.Empty))).ToLowerInvariant();
+
+    private static string CreateToken() => Convert.ToHexString(RandomNumberGenerator.GetBytes(32)).ToLowerInvariant();
+
+    private static string ValidateProfile(string username, string email, string password, bool passwordRequired)
+    {
+        if (string.IsNullOrWhiteSpace(username)) return "Username is required.";
+        if (username.Length > 100) return "Username must be 100 characters or fewer.";
+        if (string.IsNullOrWhiteSpace(email) || !email.Contains('@') || email.StartsWith('@') || email.EndsWith('@')) return "Enter a valid email address.";
+        if ((passwordRequired || !string.IsNullOrWhiteSpace(password)) && password.Length < 8) return "Password must contain at least 8 characters.";
+        return string.Empty;
+    }
+
+    private static string SuggestedUsername(GuidevaultUserRecord user)
+        => FirstNonEmpty(user.Username, user.DisplayName, user.Email.Split('@')[0]);
+
+    private static GuidevaultAuthenticatedUser ToUser(GuidevaultUserRecord user)
+        => new(
+            user.Id,
+            FirstNonEmpty(user.Username, user.DisplayName, user.Email),
+            FirstNonEmpty(user.DisplayName, user.Username, user.Email),
+            user.Email,
+            user.Role,
+            user.Permissions ?? Array.Empty<string>(),
+            user.Libraries ?? Array.Empty<string>(),
+            user.AgeRatingRestriction,
+            user.IncludeUnknowns,
+            user.CreatedAt,
+            user.UpdatedAt ?? user.CreatedAt);
+
+    private static string FirstNonEmpty(params string?[] values)
+        => values.FirstOrDefault(value => !string.IsNullOrWhiteSpace(value))?.Trim() ?? string.Empty;
+
+    private static string Clean(string? value) => (value ?? string.Empty).Trim();
+}
+
+public sealed class GuidevaultAuthenticationData
+{
+    public int SchemaVersion { get; set; } = 2;
+    public List<GuidevaultAuthenticationCredential> Credentials { get; set; } = new();
+    public List<GuidevaultAuthenticationSession> Sessions { get; set; } = new();
+    public List<GuidevaultAuthenticationInvitation> Invitations { get; set; } = new();
+}
+
+public sealed class GuidevaultAuthenticationCredential
+{
+    public string UserId { get; set; } = string.Empty;
+    // Username and Email are retained only to migrate the previous single-user file shape.
+    public string Username { get; set; } = string.Empty;
+    public string Email { get; set; } = string.Empty;
+    public string Salt { get; set; } = string.Empty;
+    public string PasswordHash { get; set; } = string.Empty;
+    public int Iterations { get; set; } = 210_000;
+    public DateTimeOffset CreatedAt { get; set; } = DateTimeOffset.UtcNow;
+    public DateTimeOffset UpdatedAt { get; set; } = DateTimeOffset.UtcNow;
+}
+
+public sealed class GuidevaultAuthenticationSession
+{
+    public string UserId { get; set; } = string.Empty;
+    public string TokenHash { get; set; } = string.Empty;
+    public DateTimeOffset CreatedAt { get; set; } = DateTimeOffset.UtcNow;
+    public DateTimeOffset ExpiresAt { get; set; } = DateTimeOffset.UtcNow.AddDays(7);
+}
+
+public sealed class GuidevaultAuthenticationInvitation
+{
+    public string UserId { get; set; } = string.Empty;
+    public string TokenHash { get; set; } = string.Empty;
+    public DateTimeOffset CreatedAt { get; set; } = DateTimeOffset.UtcNow;
+    public DateTimeOffset ExpiresAt { get; set; } = DateTimeOffset.UtcNow.AddDays(7);
+}
+
+public sealed class GuidevaultAuthenticationSetupRequest
+{
+    public string? Username { get; set; }
+    public string? Email { get; set; }
+    public string? Password { get; set; }
+}
+
+public sealed class GuidevaultAuthenticationLoginRequest
+{
+    public string? Identity { get; set; }
+    public string? Password { get; set; }
+}
+
+public sealed class GuidevaultAuthenticationProfileUpdate
+{
+    public string? Username { get; set; }
+    public string? Email { get; set; }
+    public string? NewPassword { get; set; }
+}
+
+public sealed class GuidevaultInvitationAcceptRequest
+{
+    public string? Token { get; set; }
+    public string? Username { get; set; }
+    public string? Password { get; set; }
+}
+
+public sealed record GuidevaultAuthenticatedUser(
+    string UserId,
+    string Username,
+    string DisplayName,
+    string Email,
+    string Role,
+    string[] Permissions,
+    string[] Libraries,
+    string AgeRatingRestriction,
+    bool IncludeUnknowns,
+    DateTimeOffset CreatedAt,
+    DateTimeOffset UpdatedAt)
+{
+    public bool IsAdmin => string.Equals(Role, "Admin", StringComparison.OrdinalIgnoreCase)
+        || Permissions.Any(permission => string.Equals(permission, "Admin", StringComparison.OrdinalIgnoreCase));
+
+    public bool HasPermission(string permission) => IsAdmin
+        || Permissions.Any(candidate => string.Equals(candidate, permission, StringComparison.OrdinalIgnoreCase));
+}
+
+public sealed record GuidevaultAuthenticationResult(bool Success, string Message, string SessionToken, GuidevaultAuthenticatedUser? User)
+{
+    public static GuidevaultAuthenticationResult Failed(string message) => new(false, message, string.Empty, null);
+}
+
+public sealed record GuidevaultInvitationCreateResult(bool Success, string Message, string Token, DateTimeOffset? ExpiresAt)
+{
+    public static GuidevaultInvitationCreateResult Failed(string message) => new(false, message, string.Empty, null);
+}
+
+public sealed record GuidevaultInvitationLookupResult(
+    bool Success,
+    string Message,
+    string UserId,
+    string Username,
+    string DisplayName,
+    string Email,
+    DateTimeOffset? ExpiresAt)
+{
+    public static GuidevaultInvitationLookupResult Failed(string message) => new(false, message, string.Empty, string.Empty, string.Empty, string.Empty, null);
+}
+
 public sealed class GuidevaultUsersStore
 {
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web) { WriteIndented = true };
@@ -9965,6 +11090,87 @@ public sealed class GuidevaultUsersStore
         lock (_gate) return _settings.Users.OrderBy(u => u.Email, StringComparer.OrdinalIgnoreCase).Select(Clone).ToArray();
     }
 
+    public GuidevaultUserRecord? GetById(string? userId)
+    {
+        if (string.IsNullOrWhiteSpace(userId)) return null;
+        lock (_gate) return _settings.Users.Where(user => string.Equals(user.Id, userId.Trim(), StringComparison.OrdinalIgnoreCase)).Select(Clone).FirstOrDefault();
+    }
+
+    public GuidevaultUserRecord? FindByIdentity(string? identity)
+    {
+        var clean = (identity ?? string.Empty).Trim();
+        if (string.IsNullOrWhiteSpace(clean)) return null;
+        lock (_gate)
+        {
+            return _settings.Users
+                .Where(user => string.Equals(user.Username, clean, StringComparison.OrdinalIgnoreCase)
+                    || string.Equals(user.Email, clean, StringComparison.OrdinalIgnoreCase))
+                .Select(Clone)
+                .FirstOrDefault();
+        }
+    }
+
+    public GuidevaultUserRecord EnsurePrimaryAdministrator(string username, string email)
+    {
+        lock (_gate)
+        {
+            var now = DateTimeOffset.UtcNow;
+            var user = _settings.Users.FirstOrDefault(candidate => string.Equals(candidate.Email, email, StringComparison.OrdinalIgnoreCase))
+                ?? _settings.Users.FirstOrDefault(candidate => string.Equals(candidate.Username, username, StringComparison.OrdinalIgnoreCase));
+            if (user is null)
+            {
+                user = new GuidevaultUserRecord { Id = NewUserId(), CreatedAt = now };
+                _settings.Users.Add(user);
+            }
+            user.Username = username;
+            user.Email = email;
+            user.DisplayName = string.IsNullOrWhiteSpace(user.DisplayName) ? username : user.DisplayName;
+            user.Role = "Admin";
+            user.Libraries = Array.Empty<string>();
+            user.Permissions = DefaultPermissions.ToArray();
+            user.AgeRatingRestriction = "No Restriction";
+            user.IncludeUnknowns = true;
+            user.Status = "Active";
+            user.UpdatedAt = now;
+            Save();
+            return Clone(user);
+        }
+    }
+
+    public GuidevaultUserRecord? ActivateUser(string userId, string username, out string error)
+    {
+        lock (_gate)
+        {
+            error = string.Empty;
+            var user = _settings.Users.FirstOrDefault(candidate => string.Equals(candidate.Id, userId, StringComparison.OrdinalIgnoreCase));
+            if (user is null) { error = "The invited user could not be found."; return null; }
+            if (IdentityUsedByAnother(user.Id, username, user.Email)) { error = "That username or email address is already in use."; return null; }
+            user.Username = username.Trim();
+            user.DisplayName = string.IsNullOrWhiteSpace(user.DisplayName) ? user.Username : user.DisplayName;
+            user.Status = "Active";
+            user.UpdatedAt = DateTimeOffset.UtcNow;
+            Save();
+            return Clone(user);
+        }
+    }
+
+    public GuidevaultUserRecord? UpdateAuthenticatedProfile(string userId, string username, string email, out string error)
+    {
+        lock (_gate)
+        {
+            error = string.Empty;
+            var user = _settings.Users.FirstOrDefault(candidate => string.Equals(candidate.Id, userId, StringComparison.OrdinalIgnoreCase));
+            if (user is null) { error = "The user could not be found."; return null; }
+            if (IdentityUsedByAnother(user.Id, username, email)) { error = "That username or email address is already in use."; return null; }
+            user.Username = username.Trim();
+            user.Email = email.Trim();
+            if (string.IsNullOrWhiteSpace(user.DisplayName)) user.DisplayName = user.Username;
+            user.UpdatedAt = DateTimeOffset.UtcNow;
+            Save();
+            return Clone(user);
+        }
+    }
+
     public GuidevaultUserInviteResult Invite(GuidevaultUserInviteRequest payload)
     {
         lock (_gate)
@@ -9974,7 +11180,7 @@ public sealed class GuidevaultUsersStore
             var now = DateTimeOffset.UtcNow;
             if (user is null)
             {
-                user = new GuidevaultUserRecord { Id = Guid.NewGuid().ToString("N")[..12], CreatedAt = now };
+                user = new GuidevaultUserRecord { Id = NewUserId(), CreatedAt = now };
                 _settings.Users.Add(user);
             }
             user.Email = email;
@@ -9992,6 +11198,13 @@ public sealed class GuidevaultUsersStore
         }
     }
 
+    private bool IdentityUsedByAnother(string userId, string username, string email)
+        => _settings.Users.Any(candidate => !string.Equals(candidate.Id, userId, StringComparison.OrdinalIgnoreCase)
+            && (string.Equals(candidate.Username, username, StringComparison.OrdinalIgnoreCase)
+                || string.Equals(candidate.Username, email, StringComparison.OrdinalIgnoreCase)
+                || string.Equals(candidate.Email, username, StringComparison.OrdinalIgnoreCase)
+                || string.Equals(candidate.Email, email, StringComparison.OrdinalIgnoreCase)));
+
     private GuidevaultUsersSettings Load()
     {
         try
@@ -10003,20 +11216,28 @@ public sealed class GuidevaultUsersStore
         return new GuidevaultUsersSettings();
     }
 
-    private void Save() => File.WriteAllText(_path, JsonSerializer.Serialize(_settings, JsonOptions));
+    private void Save() => GuidevaultAtomicFile.WriteAllText(_path, JsonSerializer.Serialize(_settings, JsonOptions));
+
     private static string[] NormalizePermissions(IEnumerable<string>? values)
     {
-        var selected = (values ?? Array.Empty<string>()).Where(x => !string.IsNullOrWhiteSpace(x)).Select(x => x.Trim()).Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
-        return selected.Length > 0 ? selected : ["Login", "Bookmark", "Read Only"];
+        var selected = (values ?? Array.Empty<string>()).Where(x => !string.IsNullOrWhiteSpace(x)).Select(x => x.Trim()).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+        if (selected.Count == 0) selected.AddRange(["Login", "Bookmark", "Read Only"]);
+        if (!selected.Contains("Login", StringComparer.OrdinalIgnoreCase)) selected.Add("Login");
+        if (!selected.Contains("Change Password", StringComparer.OrdinalIgnoreCase)) selected.Add("Change Password");
+        return selected.ToArray();
     }
+
+    private static string NewUserId() => Guid.NewGuid().ToString("N")[..12];
+
     private static GuidevaultUserRecord Clone(GuidevaultUserRecord user) => new()
     {
         Id = user.Id,
+        Username = user.Username,
         Email = user.Email,
         DisplayName = user.DisplayName,
         Role = user.Role,
-        Libraries = user.Libraries ?? Array.Empty<string>(),
-        Permissions = user.Permissions ?? Array.Empty<string>(),
+        Libraries = user.Libraries?.ToArray() ?? Array.Empty<string>(),
+        Permissions = user.Permissions?.ToArray() ?? Array.Empty<string>(),
         AgeRatingRestriction = user.AgeRatingRestriction,
         IncludeUnknowns = user.IncludeUnknowns,
         Status = user.Status,
@@ -10034,6 +11255,7 @@ public sealed class GuidevaultUsersSettings
 public sealed class GuidevaultUserRecord
 {
     public string Id { get; set; } = string.Empty;
+    public string Username { get; set; } = string.Empty;
     public string Email { get; set; } = string.Empty;
     public string DisplayName { get; set; } = string.Empty;
     public string Role { get; set; } = "Reader";
@@ -10059,6 +11281,127 @@ public sealed class GuidevaultUserInviteRequest
 }
 
 public sealed record GuidevaultUserInviteResult(GuidevaultUserRecord User);
+
+public static class GuidevaultAuthorization
+{
+    private static readonly string[] AdministrativeGetPrefixes =
+    [
+        "/api/users",
+        "/api/system",
+        "/api/server",
+        "/api/email",
+        "/api/settings",
+        "/api/integrations",
+        "/api/home-assistant",
+        "/api/opds",
+        "/api/igdb",
+        "/api/openlibrary",
+        "/api/esrb",
+        "/api/devices",
+        "/api/tasks/settings",
+        "/api/tasks/schedule",
+        "/api/library/debug"
+    ];
+
+    public static bool IsAllowed(GuidevaultAuthenticatedUser user, HttpRequest request, out string message)
+    {
+        message = string.Empty;
+        if (user.IsAdmin) return true;
+        if (!user.HasPermission("Login")) return Denied("This account does not have Login permission.", out message);
+
+        var path = request.Path.Value ?? string.Empty;
+        if (path.Equals("/api/auth/profile", StringComparison.OrdinalIgnoreCase))
+            return user.HasPermission("Change Password") || Denied("Change Password permission is required.", out message);
+
+        if (path.StartsWith("/api/items/", StringComparison.OrdinalIgnoreCase)
+            && path.EndsWith("/file", StringComparison.OrdinalIgnoreCase))
+            return user.HasPermission("Download") || Denied("Download permission is required.", out message);
+
+        if (HttpMethods.IsGet(request.Method) || HttpMethods.IsHead(request.Method))
+        {
+            if (path.Equals("/api/integrations/launchbox/open/pending", StringComparison.OrdinalIgnoreCase)
+                || path.Equals("/api/tasks", StringComparison.OrdinalIgnoreCase)) return true;
+            if (AdministrativeGetPrefixes.Any(prefix => path.StartsWith(prefix, StringComparison.OrdinalIgnoreCase)))
+                return Denied("Administrator access is required.", out message);
+            if (path.StartsWith("/api/library", StringComparison.OrdinalIgnoreCase)
+                || path.StartsWith("/api/startup", StringComparison.OrdinalIgnoreCase)
+                || path.StartsWith("/api/items/", StringComparison.OrdinalIgnoreCase)
+                || path.StartsWith("/api/reviews/", StringComparison.OrdinalIgnoreCase)
+                || path.StartsWith("/api/reader/", StringComparison.OrdinalIgnoreCase)
+                || path.StartsWith("/api/dossiers", StringComparison.OrdinalIgnoreCase))
+                return user.HasPermission("Read Only") || Denied("Read Only permission is required.", out message);
+            return true;
+        }
+
+        if (path.Equals("/api/devices/heartbeat", StringComparison.OrdinalIgnoreCase)
+            || path.Equals("/api/home-assistant/status", StringComparison.OrdinalIgnoreCase)) return true;
+        if (path.Equals("/api/library/prewarm-covers", StringComparison.OrdinalIgnoreCase))
+            return user.HasPermission("Read Only") || Denied("Read Only permission is required.", out message);
+
+        if ((path.StartsWith("/api/items/", StringComparison.OrdinalIgnoreCase) && path.EndsWith("/reviews", StringComparison.OrdinalIgnoreCase))
+            || path.StartsWith("/api/reviews/", StringComparison.OrdinalIgnoreCase))
+            return (user.HasPermission("Read Only") && user.HasPermission("Bookmark"))
+                || Denied("Read Only and Bookmark permissions are required.", out message);
+
+        return Denied("Administrator access is required for this operation.", out message);
+    }
+
+    public static bool TryGetItemId(PathString path, out string itemId)
+    {
+        itemId = string.Empty;
+        var segments = (path.Value ?? string.Empty).Split('/', StringSplitOptions.RemoveEmptyEntries);
+        if (segments.Length < 3
+            || !segments[0].Equals("api", StringComparison.OrdinalIgnoreCase)
+            || !segments[1].Equals("items", StringComparison.OrdinalIgnoreCase)
+            || segments[2].Equals("metadata", StringComparison.OrdinalIgnoreCase)
+            || segments[2].Equals("files", StringComparison.OrdinalIgnoreCase)) return false;
+        itemId = Uri.UnescapeDataString(segments[2]);
+        return !string.IsNullOrWhiteSpace(itemId);
+    }
+
+    private static bool Denied(string reason, out string message)
+    {
+        message = reason;
+        return false;
+    }
+}
+
+public static class GuidevaultUserAccess
+{
+    public static IReadOnlyList<LibraryItem> Filter(GuidevaultAuthenticatedUser? user, IReadOnlyList<LibraryItem> items)
+    {
+        if (user is null) return Array.Empty<LibraryItem>();
+        if (user.IsAdmin) return items;
+        return items.Where(item => CanAccess(user, item)).ToArray();
+    }
+
+    public static bool CanAccess(GuidevaultAuthenticatedUser user, LibraryItem item)
+    {
+        if (user.IsAdmin) return true;
+        var allowedLibraries = user.Libraries ?? Array.Empty<string>();
+        if (allowedLibraries.Length == 0
+            || !allowedLibraries.Any(library => string.Equals(library, item.LibraryName, StringComparison.OrdinalIgnoreCase))) return false;
+
+        var restriction = (user.AgeRatingRestriction ?? string.Empty).Trim();
+        if (string.IsNullOrWhiteSpace(restriction) || restriction.Equals("No Restriction", StringComparison.OrdinalIgnoreCase)) return true;
+        var itemLevel = RatingLevel(item.Rating);
+        if (itemLevel < 0) return user.IncludeUnknowns;
+        return itemLevel <= RatingLevel(restriction);
+    }
+
+    private static int RatingLevel(string? value)
+    {
+        var normalized = Regex.Replace(value ?? string.Empty, @"[^a-zA-Z0-9+]", string.Empty).ToLowerInvariant();
+        if (string.IsNullOrWhiteSpace(normalized) || normalized is "nr" or "rp" or "notrated" or "ratingpending" or "unknown") return -1;
+        if (normalized.StartsWith("ao") || normalized.Contains("adultsonly")) return 5;
+        if (normalized == "m" || normalized.StartsWith("mature")) return 4;
+        if (normalized == "t" || normalized.StartsWith("teen")) return 3;
+        if (normalized.StartsWith("e10") || normalized.Contains("everyone10")) return 2;
+        if (normalized is "e" or "ec" || normalized.StartsWith("everyone") || normalized.Contains("earlychildhood")) return 1;
+        if (normalized.Contains("norestriction")) return int.MaxValue;
+        return -1;
+    }
+}
 
 
 public sealed class GuidevaultTaskSettingsStore
@@ -10102,7 +11445,7 @@ public sealed class GuidevaultTaskSettingsStore
         return new GuidevaultTaskScheduleSettings();
     }
 
-    private void Save() => File.WriteAllText(_path, JsonSerializer.Serialize(_settings, JsonOptions));
+    private void Save() => GuidevaultAtomicFile.WriteAllText(_path, JsonSerializer.Serialize(_settings, JsonOptions));
     private static GuidevaultTaskScheduleSettings Normalize(GuidevaultTaskScheduleSettings value)
     {
         value ??= new GuidevaultTaskScheduleSettings();
@@ -10240,9 +11583,9 @@ public sealed class GuidevaultScheduledTaskRunner : IDisposable
         return new(true, definition.Key, $"{definition.Title} queued.", taskId);
     }
 
-    private async Task TickAsync()
+    private Task TickAsync()
     {
-        if (Interlocked.Exchange(ref _tickRunning, 1) == 1) return;
+        if (Interlocked.Exchange(ref _tickRunning, 1) == 1) return Task.CompletedTask;
         try
         {
             var now = DateTimeOffset.UtcNow;
@@ -10279,6 +11622,7 @@ public sealed class GuidevaultScheduledTaskRunner : IDisposable
         {
             Interlocked.Exchange(ref _tickRunning, 0);
         }
+        return Task.CompletedTask;
     }
 
     private async Task RunDefinitionAsync(GuidevaultTaskDefinition definition, string taskId, string trigger, CancellationToken cancellationToken)
@@ -10567,7 +11911,7 @@ public sealed class GuidevaultCustomizeSettingsStore
     private void Save()
     {
         Directory.CreateDirectory(Path.GetDirectoryName(_path)!);
-        File.WriteAllText(_path, JsonSerializer.Serialize(_settings, JsonOptions));
+        GuidevaultAtomicFile.WriteAllText(_path, JsonSerializer.Serialize(_settings, JsonOptions));
     }
 
     private static GuidevaultCustomizeSettings Normalize(GuidevaultCustomizeSettings? value)
@@ -10640,7 +11984,6 @@ public sealed class GuidevaultCustomizeSettingsStore
             Description = (collection.Description ?? string.Empty).Trim(),
             HomeDisplay = homeDisplay,
             ShowOnHome = homeDisplay != "hidden",
-            ShowInSidebar = collection.ShowInSidebar,
             CoverItemId = (collection.CoverItemId ?? string.Empty).Trim(),
             ItemIds = itemIds,
             Items = itemIds.ToList()
@@ -10687,7 +12030,6 @@ public sealed class GuidevaultCustomizeSettingsStore
             Description = collection.Description,
             HomeDisplay = collection.HomeDisplay,
             ShowOnHome = collection.ShowOnHome,
-            ShowInSidebar = collection.ShowInSidebar,
             CoverItemId = collection.CoverItemId,
             ItemIds = collection.ItemIds?.ToList() ?? new List<string>(),
             Items = collection.Items?.ToList() ?? new List<string>()
@@ -10728,7 +12070,6 @@ public sealed class GuidevaultUserCollection
     public string Description { get; set; } = string.Empty;
     public string HomeDisplay { get; set; } = "shelf";
     public bool ShowOnHome { get; set; } = true;
-    public bool ShowInSidebar { get; set; }
     public string CoverItemId { get; set; } = string.Empty;
     public List<string> ItemIds { get; set; } = new();
     public List<string>? Items { get; set; }
@@ -10916,7 +12257,7 @@ public sealed class OpdsSettingsStore
     private void Save()
     {
         Directory.CreateDirectory(Path.GetDirectoryName(_path)!);
-        File.WriteAllText(_path, JsonSerializer.Serialize(_settings, JsonOptions));
+        GuidevaultAtomicFile.WriteAllText(_path, JsonSerializer.Serialize(_settings, JsonOptions));
     }
 
     private static bool SecretEquals(string expected, string actual)
@@ -11217,7 +12558,7 @@ public static class LibrarySettingsStore
     public static void Save(string path, LibrarySettings settings)
     {
         Directory.CreateDirectory(Path.GetDirectoryName(path)!);
-        File.WriteAllText(path, JsonSerializer.Serialize(settings, JsonOptions));
+        GuidevaultAtomicFile.WriteAllText(path, JsonSerializer.Serialize(settings, JsonOptions));
     }
 }
 
@@ -11301,7 +12642,7 @@ public sealed class ItemCoverOverrideStore
         }
     }
 
-    private void Persist() => File.WriteAllText(_path, JsonSerializer.Serialize(_overrides, _jsonOptions));
+    private void Persist() => GuidevaultAtomicFile.WriteAllText(_path, JsonSerializer.Serialize(_overrides, _jsonOptions));
 }
 
 public sealed record LibraryItem(
@@ -11948,7 +13289,7 @@ public sealed class FileIdentityStore
         try
         {
             Directory.CreateDirectory(Path.GetDirectoryName(_path)!);
-            File.WriteAllText(_path, JsonSerializer.Serialize(_records, _jsonOptions));
+            GuidevaultAtomicFile.WriteAllText(_path, JsonSerializer.Serialize(_records, _jsonOptions));
         }
         catch
         {
@@ -12429,7 +13770,7 @@ public sealed class MetadataStore
         catch { return new(); }
     }
 
-    private void Persist() => File.WriteAllText(_path, JsonSerializer.Serialize(_overrides, _jsonOptions));
+    private void Persist() => GuidevaultAtomicFile.WriteAllText(_path, JsonSerializer.Serialize(_overrides, _jsonOptions));
     private static string First(string? candidate, string fallback) => string.IsNullOrWhiteSpace(candidate) ? fallback : candidate.Trim();
     private static string[] CleanDistinct(IEnumerable<string> values) => values.Where(v => !string.IsNullOrWhiteSpace(v)).Select(v => v.Trim()).Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
 
@@ -12658,6 +13999,7 @@ public sealed class TaskMonitor
 public sealed class LibraryCache
 {
     private IReadOnlyList<LibraryItem>? _items;
+    private IReadOnlyDictionary<string, LibraryItem> _itemsById = new Dictionary<string, LibraryItem>(StringComparer.OrdinalIgnoreCase);
     private readonly SemaphoreSlim _lock = new(1, 1);
     private List<LibraryDefinition> _libraries;
     private readonly MetadataStore _metadataStore;
@@ -12675,6 +14017,7 @@ public sealed class LibraryCache
         _cachePath = cachePath;
         _taskMonitor = taskMonitor;
         _items = LoadPersistedCache();
+        RebuildItemIndex();
     }
 
     public IReadOnlyList<LibraryDefinition> Libraries => _libraries;
@@ -12685,7 +14028,19 @@ public sealed class LibraryCache
     public LibraryItem? TryGetCachedItem(string id)
     {
         if (string.IsNullOrWhiteSpace(id)) return null;
-        return _items?.FirstOrDefault(i => string.Equals(i.Id, id, StringComparison.OrdinalIgnoreCase));
+        var index = Volatile.Read(ref _itemsById);
+        return index.TryGetValue(id.Trim(), out var item) ? item : null;
+    }
+
+    private void RebuildItemIndex()
+    {
+        var items = _items;
+        _itemsById = items is null
+            ? new Dictionary<string, LibraryItem>(StringComparer.OrdinalIgnoreCase)
+            : items
+                .Where(item => item is not null && !string.IsNullOrWhiteSpace(item.Id))
+                .GroupBy(item => item.Id, StringComparer.OrdinalIgnoreCase)
+                .ToDictionary(group => group.Key, group => group.First(), StringComparer.OrdinalIgnoreCase);
     }
 
     public void ReplaceCachedItem(LibraryItem updated, bool persist = true)
@@ -12696,6 +14051,7 @@ public sealed class LibraryCache
         if (index < 0) return;
         list[index] = updated;
         _items = list;
+        RebuildItemIndex();
         if (persist) SavePersistedCache(_items);
     }
 
@@ -12721,6 +14077,7 @@ public sealed class LibraryCache
 
         if (changed == 0) return 0;
         _items = list;
+        RebuildItemIndex();
         if (persist) SavePersistedCache(_items);
         return changed;
     }
@@ -12747,6 +14104,7 @@ public sealed class LibraryCache
 
         if (changed == 0) return 0;
         _items = list;
+        RebuildItemIndex();
         if (persist) SavePersistedCache(_items);
         return changed;
     }
@@ -12758,6 +14116,7 @@ public sealed class LibraryCache
             .Where(i => !string.Equals(i.Id, id, StringComparison.OrdinalIgnoreCase))
             .ToList();
         _items = list;
+        RebuildItemIndex();
         if (persist) SavePersistedCache(_items);
     }
 
@@ -12796,6 +14155,7 @@ public sealed class LibraryCache
                 .Where(ItemBelongsToConfiguredLibrary)
                 .Select(_metadataStore.ApplyOverride)
                 .ToList();
+            RebuildItemIndex();
             SavePersistedCache(_items);
         }
     }
@@ -12803,6 +14163,7 @@ public sealed class LibraryCache
     public void Invalidate()
     {
         _items = null;
+        RebuildItemIndex();
         ArchiveReader.ClearCache();
     }
 
@@ -12813,6 +14174,7 @@ public sealed class LibraryCache
         if (persisted is not null)
         {
             _items = persisted;
+            RebuildItemIndex();
             return _items;
         }
         return Array.Empty<LibraryItem>();
@@ -12827,6 +14189,7 @@ public sealed class LibraryCache
             if (_items is not null) return _items;
             using var libraryIoLease = await GuidevaultLibraryIoGate.BeginLibraryScanAsync();
             _items = await ScanAsync();
+            RebuildItemIndex();
             SavePersistedCache(_items);
             return _items;
         }
@@ -12853,6 +14216,7 @@ public sealed class LibraryCache
             // entry/cover memory caches are intentionally not blown away here because
             // repeated add/remove/cleanup operations can otherwise thrash network archives.
             _items = await ScanAsync(taskId, activity);
+            RebuildItemIndex();
             SavePersistedCache(_items);
             return _items;
         }
@@ -12871,41 +14235,20 @@ public sealed class LibraryCache
             var cached = JsonSerializer.Deserialize<List<LibraryItem>>(json, CacheJsonOptions);
             if (cached is null || cached.Count == 0) return null;
             var validRoots = new HashSet<string>(LibraryPaths.Select(p => Path.GetFullPath(p).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar)), StringComparer.OrdinalIgnoreCase);
-            var cacheInvalidated = false;
             var stillRelevant = cached
                 .Where(item =>
                 {
-                    if (string.IsNullOrWhiteSpace(item.Path))
-                    {
-                        cacheInvalidated = true;
-                        return false;
-                    }
+                    if (string.IsNullOrWhiteSpace(item.Path)) return false;
 
                     string itemPath;
                     try { itemPath = Path.GetFullPath(item.Path); }
-                    catch
-                    {
-                        cacheInvalidated = true;
-                        return false;
-                    }
+                    catch { return false; }
 
                     var belongsToConfiguredRoot = validRoots.Count == 0 || validRoots.Any(root =>
                         itemPath.Equals(root, StringComparison.OrdinalIgnoreCase)
                         || itemPath.StartsWith(root + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase)
                         || itemPath.StartsWith(root + Path.AltDirectorySeparatorChar, StringComparison.OrdinalIgnoreCase));
-                    if (!belongsToConfiguredRoot)
-                    {
-                        cacheInvalidated = true;
-                        return false;
-                    }
-
-                    if (!File.Exists(itemPath))
-                    {
-                        cacheInvalidated = true;
-                        return false;
-                    }
-
-                    return true;
+                    return belongsToConfiguredRoot;
                 })
                 .Select(_metadataStore.ApplyOverride)
                 .GroupBy(i => NormalizeFilePathKey(i.Path), StringComparer.OrdinalIgnoreCase)
@@ -12914,10 +14257,11 @@ public sealed class LibraryCache
                 .Select(g => g.First())
                 .ToList();
 
-            // If files were renamed/moved outside GuideVault, the persisted cache can
-            // point at old paths.  Do not keep serving those stale rows with missing
-            // covers; force a real scan so the renamed files are rediscovered.
-            return !cacheInvalidated && stillRelevant.Count > 0 ? stillRelevant : null;
+            // Startup must not synchronously stat every source file. That turns a cache
+            // read into a full network-share walk and one temporarily unavailable file
+            // used to discard the entire otherwise-valid cache. Normal scans reconcile
+            // stale/moved rows; individual file endpoints still verify source existence.
+            return stillRelevant.Count > 0 ? stillRelevant : null;
         }
         catch
         {
@@ -12930,7 +14274,7 @@ public sealed class LibraryCache
         try
         {
             Directory.CreateDirectory(Path.GetDirectoryName(_cachePath)!);
-            File.WriteAllText(_cachePath, JsonSerializer.Serialize(items, CacheJsonOptions));
+            GuidevaultAtomicFile.WriteAllText(_cachePath, JsonSerializer.Serialize(items, CacheJsonOptions));
         }
         catch
         {
@@ -15409,6 +16753,8 @@ public static class ArchiveReader
     public static readonly HashSet<string> SupportedExtensions = new(StringComparer.OrdinalIgnoreCase) { ".cbz", ".cbr", ".pdf" };
     private static readonly string[] ImageExtensions = [".jpg", ".jpeg", ".png", ".webp", ".gif", ".bmp"];
     private static readonly ConcurrentDictionary<string, string[]> EntryCache = new();
+    private static readonly ConcurrentQueue<string> EntryCacheOrder = new();
+    private const int MaxEntryCacheItems = 256;
     private static readonly ConcurrentDictionary<string, Lazy<Task<(byte[] Bytes, string ContentType)?>>> CoverCache = new(StringComparer.OrdinalIgnoreCase);
     private static readonly SemaphoreSlim CoverReadGate = new(3, 3);
     private static readonly SemaphoreSlim CoverThumbnailGate = new(2, 2);
@@ -15428,12 +16774,14 @@ public static class ArchiveReader
     public static void ClearCache()
     {
         EntryCache.Clear();
+        while (EntryCacheOrder.TryDequeue(out _)) { }
         CoverCache.Clear();
     }
 
     public static void ClearMemoryCaches()
     {
         EntryCache.Clear();
+        while (EntryCacheOrder.TryDequeue(out _)) { }
         CoverCache.Clear();
     }
 
@@ -16965,7 +18313,19 @@ public static class ArchiveReader
             // unavailable until Guidevault restarts. The cache key includes file size
             // and LastWriteTime so replacing/fixing an archive at the same path cannot
             // leave the reader using an old page manifest.
-            if (entries.Length > 0) EntryCache[cacheKey] = entries;
+            if (entries.Length > 0)
+            {
+                if (EntryCache.TryAdd(cacheKey, entries))
+                {
+                    EntryCacheOrder.Enqueue(cacheKey);
+                    while (EntryCache.Count > MaxEntryCacheItems && EntryCacheOrder.TryDequeue(out var staleKey))
+                        EntryCache.TryRemove(staleKey, out _);
+                }
+                else if (EntryCache.TryGetValue(cacheKey, out var existing))
+                {
+                    entries = existing;
+                }
+            }
             else EntryCache.TryRemove(cacheKey, out _);
             return entries;
         }
@@ -17580,6 +18940,18 @@ static class OpenLibraryMetadataClient
 }
 
 
+public sealed record IgdbRelatedGameMetadata(
+    int Id,
+    string Name,
+    string Relation,
+    string GameReleaseYear,
+    string CoverPreviewUrl,
+    string SourceUrl);
+
+public sealed record IgdbVideoMetadata(string Name, string VideoId, string Url);
+
+public sealed record IgdbWebsiteMetadata(string Category, string Url);
+
 public sealed record IgdbGameMetadataResult(
     int Id,
     string Name,
@@ -17594,12 +18966,41 @@ public sealed record IgdbGameMetadataResult(
     string CoverPreviewUrl,
     string SourceUrl,
     string MatchBy,
-    string Confidence);
+    string Confidence,
+    string Summary = "",
+    string Storyline = "",
+    string FirstReleaseDate = "",
+    string[]? AlternativeNames = null,
+    string[]? Themes = null,
+    string[]? GameModes = null,
+    string[]? PlayerPerspectives = null,
+    string[]? Keywords = null,
+    string[]? CollectionNames = null,
+    double? Rating = null,
+    int? RatingCount = null,
+    double? TotalRating = null,
+    int? TotalRatingCount = null,
+    int? Hypes = null,
+    IgdbRelatedGameMetadata[]? SimilarGames = null,
+    IgdbRelatedGameMetadata[]? Expansions = null,
+    IgdbRelatedGameMetadata[]? Dlcs = null,
+    IgdbRelatedGameMetadata[]? StandaloneExpansions = null,
+    IgdbRelatedGameMetadata[]? Remakes = null,
+    IgdbRelatedGameMetadata[]? Remasters = null,
+    IgdbRelatedGameMetadata[]? Ports = null,
+    IgdbRelatedGameMetadata[]? Bundles = null,
+    IgdbRelatedGameMetadata? ParentGame = null,
+    string[]? Screenshots = null,
+    string[]? Artworks = null,
+    IgdbVideoMetadata[]? Videos = null,
+    IgdbWebsiteMetadata[]? Websites = null);
 
 public sealed record IgdbCredentialStatus(bool Ok, string Message, string ClientIdPreview, DateTimeOffset ExpiresAt);
 
 static class IgdbGameMetadataClient
 {
+    private const string SearchFields = "id,name,summary,first_release_date,genres.name,themes.name,game_modes.name,platforms.name,involved_companies.developer,involved_companies.publisher,involved_companies.company.name,franchise.name,franchises.name,collection.name,collections.name,cover.image_id,total_rating,total_rating_count,url,slug";
+    private const string DossierFields = SearchFields + ",storyline,alternative_names.name,player_perspectives.name,keywords.name,rating,rating_count,hypes,artworks.image_id,screenshots.image_id,videos.name,videos.video_id,websites.category,websites.url,release_dates.date,release_dates.human,release_dates.platform.name,similar_games.id,similar_games.name,similar_games.first_release_date,similar_games.cover.image_id,similar_games.url,similar_games.slug,expansions.id,expansions.name,expansions.first_release_date,expansions.cover.image_id,expansions.url,expansions.slug,dlcs.id,dlcs.name,dlcs.first_release_date,dlcs.cover.image_id,dlcs.url,dlcs.slug,standalone_expansions.id,standalone_expansions.name,standalone_expansions.first_release_date,standalone_expansions.cover.image_id,standalone_expansions.url,standalone_expansions.slug,remakes.id,remakes.name,remakes.first_release_date,remakes.cover.image_id,remakes.url,remakes.slug,remasters.id,remasters.name,remasters.first_release_date,remasters.cover.image_id,remasters.url,remasters.slug,ports.id,ports.name,ports.first_release_date,ports.cover.image_id,ports.url,ports.slug,bundles.id,bundles.name,bundles.first_release_date,bundles.cover.image_id,bundles.url,bundles.slug,parent_game.id,parent_game.name,parent_game.first_release_date,parent_game.cover.image_id,parent_game.url,parent_game.slug";
     private static readonly HttpClient Http = CreateHttpClient();
     private static readonly SemaphoreSlim TokenGate = new(1, 1);
     private static string _accessToken = string.Empty;
@@ -17654,7 +19055,7 @@ static class IgdbGameMetadataClient
         var secret = CleanCredential(clientSecret);
         EnsureConfigured(id, secret);
         var token = await GetAccessTokenAsync(id, secret);
-        var body = $"fields id,name,first_release_date,genres.name,platforms.name,involved_companies.developer,involved_companies.publisher,involved_companies.company.name,franchise.name,franchises.name,collection.name,collections.name,cover.image_id,url,slug; where id = {fallback.Id}; limit 1;";
+        var body = $"fields {DossierFields}; where id = {fallback.Id}; limit 1;";
         var json = await PostIgdbAsync("games", body, id, token);
         using var doc = JsonDocument.Parse(json);
         if (doc.RootElement.ValueKind == JsonValueKind.Array)
@@ -17671,7 +19072,7 @@ static class IgdbGameMetadataClient
         var token = await GetAccessTokenAsync(clientId, clientSecret);
         var escaped = EscapeIgdbString(query);
         var where = excludeVersions ? " where version_parent = null;" : string.Empty;
-        var body = $"search \"{escaped}\"; fields id,name,first_release_date,genres.name,platforms.name,involved_companies.developer,involved_companies.publisher,involved_companies.company.name,franchise.name,franchises.name,collection.name,collections.name,cover.image_id,url,slug;{where} limit {limit};";
+        var body = $"search \"{escaped}\"; fields {SearchFields};{where} limit {limit};";
         var json = await PostIgdbAsync("games", body, clientId, token);
         using var doc = JsonDocument.Parse(json);
         var results = new List<IgdbGameMetadataResult>();
@@ -17757,7 +19158,18 @@ static class IgdbGameMetadataClient
         var developers = CompanyNames(item, developer: true).ToArray();
         var publishers = CompanyNames(item, publisher: true).ToArray();
         var genres = ObjectNameArray(item, "genres").ToArray();
+        var themes = ObjectNameArray(item, "themes").ToArray();
+        var gameModes = ObjectNameArray(item, "game_modes").ToArray();
+        var perspectives = ObjectNameArray(item, "player_perspectives").ToArray();
+        var keywords = ObjectNameArray(item, "keywords").Take(40).ToArray();
+        var alternativeNames = ObjectNameArray(item, "alternative_names").Take(30).ToArray();
         var platforms = NormalizePlatformNames(ObjectNameArray(item, "platforms")).ToArray();
+        var collectionNames = new[] { ObjectName(item, "collection") }
+            .Concat(ObjectNameArray(item, "collections"))
+            .Concat(ObjectNameArray(item, "franchises"))
+            .Where(value => !string.IsNullOrWhiteSpace(value))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToArray();
         var franchise = FirstNonEmpty(
             ObjectName(item, "franchise"),
             ObjectNameArray(item, "franchises").FirstOrDefault(),
@@ -17781,8 +19193,37 @@ static class IgdbGameMetadataClient
             CoverPreviewUrl: cover,
             SourceUrl: sourceUrl,
             MatchBy: "Game title",
-            Confidence: Confidence(query, name, platforms, platform, releaseYear, year));
+            Confidence: Confidence(query, name, platforms, platform, releaseYear, year),
+            Summary: GetString(item, "summary") ?? string.Empty,
+            Storyline: GetString(item, "storyline") ?? string.Empty,
+            FirstReleaseDate: ReleaseDate(item),
+            AlternativeNames: alternativeNames,
+            Themes: themes,
+            GameModes: gameModes,
+            PlayerPerspectives: perspectives,
+            Keywords: keywords,
+            CollectionNames: collectionNames,
+            Rating: GetDouble(item, "rating"),
+            RatingCount: GetInt(item, "rating_count"),
+            TotalRating: GetDouble(item, "total_rating"),
+            TotalRatingCount: GetInt(item, "total_rating_count"),
+            Hypes: GetInt(item, "hypes"),
+            SimilarGames: RelatedGameArray(item, "similar_games", "Similar Game"),
+            Expansions: RelatedGameArray(item, "expansions", "Expansion"),
+            Dlcs: RelatedGameArray(item, "dlcs", "DLC"),
+            StandaloneExpansions: RelatedGameArray(item, "standalone_expansions", "Standalone Expansion"),
+            Remakes: RelatedGameArray(item, "remakes", "Remake"),
+            Remasters: RelatedGameArray(item, "remasters", "Remaster"),
+            Ports: RelatedGameArray(item, "ports", "Port"),
+            Bundles: RelatedGameArray(item, "bundles", "Bundle"),
+            ParentGame: RelatedGameObject(item, "parent_game", "Parent Game"),
+            Screenshots: ImageUrls(item, "screenshots", "t_screenshot_big"),
+            Artworks: ImageUrls(item, "artworks", "t_720p"),
+            Videos: VideoArray(item),
+            Websites: WebsiteArray(item));
     }
+
+    public static IgdbGameMetadataResult ParsePayload(JsonElement payload) => FromPayload(payload);
 
     private static IgdbGameMetadataResult FromPayload(JsonElement payload)
     {
@@ -17800,7 +19241,34 @@ static class IgdbGameMetadataClient
             CoverPreviewUrl: GetString(payload, "coverPreviewUrl") ?? string.Empty,
             SourceUrl: GetString(payload, "sourceUrl") ?? string.Empty,
             MatchBy: GetString(payload, "matchBy") ?? "Game title",
-            Confidence: GetString(payload, "confidence") ?? "Low");
+            Confidence: GetString(payload, "confidence") ?? "Low",
+            Summary: GetString(payload, "summary") ?? string.Empty,
+            Storyline: GetString(payload, "storyline") ?? string.Empty,
+            FirstReleaseDate: GetString(payload, "firstReleaseDate") ?? string.Empty,
+            AlternativeNames: StringArrayValues(payload, "alternativeNames").ToArray(),
+            Themes: StringArrayValues(payload, "themes").ToArray(),
+            GameModes: StringArrayValues(payload, "gameModes").ToArray(),
+            PlayerPerspectives: StringArrayValues(payload, "playerPerspectives").ToArray(),
+            Keywords: StringArrayValues(payload, "keywords").ToArray(),
+            CollectionNames: StringArrayValues(payload, "collectionNames").ToArray(),
+            Rating: GetDouble(payload, "rating"),
+            RatingCount: GetInt(payload, "ratingCount"),
+            TotalRating: GetDouble(payload, "totalRating"),
+            TotalRatingCount: GetInt(payload, "totalRatingCount"),
+            Hypes: GetInt(payload, "hypes"),
+            SimilarGames: RelatedGamePayloadArray(payload, "similarGames", "Similar Game"),
+            Expansions: RelatedGamePayloadArray(payload, "expansions", "Expansion"),
+            Dlcs: RelatedGamePayloadArray(payload, "dlcs", "DLC"),
+            StandaloneExpansions: RelatedGamePayloadArray(payload, "standaloneExpansions", "Standalone Expansion"),
+            Remakes: RelatedGamePayloadArray(payload, "remakes", "Remake"),
+            Remasters: RelatedGamePayloadArray(payload, "remasters", "Remaster"),
+            Ports: RelatedGamePayloadArray(payload, "ports", "Port"),
+            Bundles: RelatedGamePayloadArray(payload, "bundles", "Bundle"),
+            ParentGame: RelatedGamePayloadObject(payload, "parentGame", "Parent Game"),
+            Screenshots: StringArrayValues(payload, "screenshots").ToArray(),
+            Artworks: StringArrayValues(payload, "artworks").ToArray(),
+            Videos: VideoPayloadArray(payload),
+            Websites: WebsitePayloadArray(payload));
     }
 
     private static IEnumerable<string> CompanyNames(JsonElement json, bool developer = false, bool publisher = false)
@@ -17853,11 +19321,142 @@ static class IgdbGameMetadataClient
         }
     }
 
+    private static IgdbRelatedGameMetadata[] RelatedGameArray(JsonElement json, string name, string relation)
+    {
+        if (!json.TryGetProperty(name, out var value) || value.ValueKind != JsonValueKind.Array)
+            return Array.Empty<IgdbRelatedGameMetadata>();
+        return value.EnumerateArray()
+            .Where(item => item.ValueKind == JsonValueKind.Object)
+            .Select(item => RelatedGameFromJson(item, relation))
+            .Where(item => item.Id > 0 || !string.IsNullOrWhiteSpace(item.Name))
+            .GroupBy(item => item.Id > 0 ? item.Id.ToString() : item.Name, StringComparer.OrdinalIgnoreCase)
+            .Select(group => group.First())
+            .Take(40)
+            .ToArray();
+    }
+
+    private static IgdbRelatedGameMetadata? RelatedGameObject(JsonElement json, string name, string relation)
+    {
+        if (!json.TryGetProperty(name, out var value) || value.ValueKind != JsonValueKind.Object) return null;
+        var related = RelatedGameFromJson(value, relation);
+        return related.Id > 0 || !string.IsNullOrWhiteSpace(related.Name) ? related : null;
+    }
+
+    private static IgdbRelatedGameMetadata RelatedGameFromJson(JsonElement item, string relation)
+    {
+        var id = GetInt(item, "id") ?? 0;
+        var slug = GetString(item, "slug") ?? string.Empty;
+        return new IgdbRelatedGameMetadata(
+            id,
+            GetString(item, "name") ?? string.Empty,
+            relation,
+            ReleaseYear(item),
+            CoverUrl(item),
+            GetString(item, "url") ?? (id > 0 && !string.IsNullOrWhiteSpace(slug) ? $"https://www.igdb.com/games/{slug}" : string.Empty));
+    }
+
+    private static IgdbRelatedGameMetadata[] RelatedGamePayloadArray(JsonElement json, string name, string relation)
+    {
+        if (!json.TryGetProperty(name, out var value) || value.ValueKind != JsonValueKind.Array)
+            return Array.Empty<IgdbRelatedGameMetadata>();
+        return value.EnumerateArray()
+            .Where(item => item.ValueKind == JsonValueKind.Object)
+            .Select(item => RelatedGameFromPayload(item, relation))
+            .Where(item => item.Id > 0 || !string.IsNullOrWhiteSpace(item.Name))
+            .Take(40)
+            .ToArray();
+    }
+
+    private static IgdbRelatedGameMetadata? RelatedGamePayloadObject(JsonElement json, string name, string relation)
+    {
+        if (!json.TryGetProperty(name, out var value) || value.ValueKind != JsonValueKind.Object) return null;
+        var related = RelatedGameFromPayload(value, relation);
+        return related.Id > 0 || !string.IsNullOrWhiteSpace(related.Name) ? related : null;
+    }
+
+    private static IgdbRelatedGameMetadata RelatedGameFromPayload(JsonElement item, string fallbackRelation)
+        => new(
+            GetInt(item, "id") ?? 0,
+            GetString(item, "name") ?? string.Empty,
+            FirstNonEmpty(GetString(item, "relation"), fallbackRelation),
+            GetString(item, "gameReleaseYear") ?? string.Empty,
+            GetString(item, "coverPreviewUrl") ?? string.Empty,
+            GetString(item, "sourceUrl") ?? string.Empty);
+
+    private static string[] ImageUrls(JsonElement json, string name, string size)
+    {
+        if (!json.TryGetProperty(name, out var value) || value.ValueKind != JsonValueKind.Array) return Array.Empty<string>();
+        return value.EnumerateArray()
+            .Where(item => item.ValueKind == JsonValueKind.Object)
+            .Select(item => GetString(item, "image_id") ?? string.Empty)
+            .Where(imageId => !string.IsNullOrWhiteSpace(imageId))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .Take(24)
+            .Select(imageId => $"https://images.igdb.com/igdb/image/upload/{size}/{Uri.EscapeDataString(imageId)}.jpg")
+            .ToArray();
+    }
+
+    private static IgdbVideoMetadata[] VideoArray(JsonElement json)
+    {
+        if (!json.TryGetProperty("videos", out var value) || value.ValueKind != JsonValueKind.Array) return Array.Empty<IgdbVideoMetadata>();
+        return value.EnumerateArray()
+            .Where(item => item.ValueKind == JsonValueKind.Object)
+            .Select(item =>
+            {
+                var videoId = GetString(item, "video_id") ?? string.Empty;
+                return new IgdbVideoMetadata(GetString(item, "name") ?? "Video", videoId, string.IsNullOrWhiteSpace(videoId) ? string.Empty : $"https://www.youtube.com/watch?v={Uri.EscapeDataString(videoId)}");
+            })
+            .Where(video => !string.IsNullOrWhiteSpace(video.VideoId))
+            .Take(12)
+            .ToArray();
+    }
+
+    private static IgdbWebsiteMetadata[] WebsiteArray(JsonElement json)
+    {
+        if (!json.TryGetProperty("websites", out var value) || value.ValueKind != JsonValueKind.Array) return Array.Empty<IgdbWebsiteMetadata>();
+        return value.EnumerateArray()
+            .Where(item => item.ValueKind == JsonValueKind.Object)
+            .Select(item => new IgdbWebsiteMetadata(GetString(item, "category") ?? "Website", GetString(item, "url") ?? string.Empty))
+            .Where(site => Uri.TryCreate(site.Url, UriKind.Absolute, out _))
+            .Take(20)
+            .ToArray();
+    }
+
+    private static IgdbVideoMetadata[] VideoPayloadArray(JsonElement json)
+    {
+        if (!json.TryGetProperty("videos", out var value) || value.ValueKind != JsonValueKind.Array) return Array.Empty<IgdbVideoMetadata>();
+        return value.EnumerateArray()
+            .Where(item => item.ValueKind == JsonValueKind.Object)
+            .Select(item => new IgdbVideoMetadata(GetString(item, "name") ?? "Video", GetString(item, "videoId") ?? string.Empty, GetString(item, "url") ?? string.Empty))
+            .Where(video => !string.IsNullOrWhiteSpace(video.VideoId) || !string.IsNullOrWhiteSpace(video.Url))
+            .Take(12)
+            .ToArray();
+    }
+
+    private static IgdbWebsiteMetadata[] WebsitePayloadArray(JsonElement json)
+    {
+        if (!json.TryGetProperty("websites", out var value) || value.ValueKind != JsonValueKind.Array) return Array.Empty<IgdbWebsiteMetadata>();
+        return value.EnumerateArray()
+            .Where(item => item.ValueKind == JsonValueKind.Object)
+            .Select(item => new IgdbWebsiteMetadata(GetString(item, "category") ?? "Website", GetString(item, "url") ?? string.Empty))
+            .Where(site => Uri.TryCreate(site.Url, UriKind.Absolute, out _))
+            .Take(20)
+            .ToArray();
+    }
+
     private static string ReleaseYear(JsonElement json)
     {
         var seconds = GetLong(json, "first_release_date");
         if (!seconds.HasValue || seconds.Value <= 0) return string.Empty;
         try { return DateTimeOffset.FromUnixTimeSeconds(seconds.Value).Year.ToString(); }
+        catch { return string.Empty; }
+    }
+
+    private static string ReleaseDate(JsonElement json)
+    {
+        var seconds = GetLong(json, "first_release_date");
+        if (!seconds.HasValue || seconds.Value <= 0) return string.Empty;
+        try { return DateTimeOffset.FromUnixTimeSeconds(seconds.Value).ToString("yyyy-MM-dd"); }
         catch { return string.Empty; }
     }
 
@@ -18052,6 +19651,14 @@ static class IgdbGameMetadataClient
         if (json.ValueKind != JsonValueKind.Object || !json.TryGetProperty(name, out var value)) return null;
         if (value.ValueKind == JsonValueKind.Number && value.TryGetInt32(out var parsed)) return parsed;
         if (value.ValueKind == JsonValueKind.String && int.TryParse(value.GetString(), out parsed)) return parsed;
+        return null;
+    }
+
+    private static double? GetDouble(JsonElement json, string name)
+    {
+        if (json.ValueKind != JsonValueKind.Object || !json.TryGetProperty(name, out var value)) return null;
+        if (value.ValueKind == JsonValueKind.Number && value.TryGetDouble(out var parsed)) return parsed;
+        if (value.ValueKind == JsonValueKind.String && double.TryParse(value.GetString(), out parsed)) return parsed;
         return null;
     }
 
@@ -18582,6 +20189,34 @@ static class EsrbRatingMetadataClient
     }
 }
 
+static class GuidevaultAtomicFile
+{
+    public static void WriteAllText(string path, string contents)
+    {
+        if (string.IsNullOrWhiteSpace(path)) throw new ArgumentException("A destination path is required.", nameof(path));
+        var fullPath = Path.GetFullPath(path);
+        var directory = Path.GetDirectoryName(fullPath) ?? Directory.GetCurrentDirectory();
+        Directory.CreateDirectory(directory);
+        var temporaryPath = Path.Combine(directory, $".{Path.GetFileName(fullPath)}.{Guid.NewGuid():N}.tmp");
+        try
+        {
+            File.WriteAllText(temporaryPath, contents ?? string.Empty, new UTF8Encoding(false));
+            File.Move(temporaryPath, fullPath, overwrite: true);
+        }
+        finally
+        {
+            try
+            {
+                if (File.Exists(temporaryPath)) File.Delete(temporaryPath);
+            }
+            catch
+            {
+                // A stale temporary file is safer than replacing a valid settings file with a partial write.
+            }
+        }
+    }
+}
+
 static class GuidevaultLibraryIoGate
 {
     private static readonly SemaphoreSlim Gate = new(1, 1);
@@ -18625,5 +20260,5 @@ static class GuidevaultLibraryIoGate
 
 static class GuidevaultBuildInfo
 {
-    public const string Version = "1.1.2";
+    public const string Version = "1.2.7";
 }

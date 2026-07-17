@@ -19,7 +19,7 @@ const state = {
   deferredFullLibraryItems: null,
   libraryBackgroundLoad: { running: false, loaded: 0, total: 0 },
   virtualGrid: null,
-  auth: { profile: null, authenticated: false, editing: false, appStarted: false, serverUsers: [], serverUsersLoaded: false, serverUsersLoadFailed: false },
+  auth: { profile: null, authenticated: false, editing: false, appStarted: false, serverUsers: [], serverUsersLoaded: false, serverUsersLoadFailed: false, serverAuth: null, pendingInvite: null, pendingInviteError: '', inviteToken: '' },
   readingProfiles: { presets: {}, defaultPresetId: 'default', groupAssignments: {}, entryAssignments: {} },
   opds: { connectionUrl: '', selectedKeyId: '', keys: [], editingUrl: false, revealUrl: false, creatingKey: false },
   devices: { emailDevices: [], clientDevices: [], generatedAt: null, addingEmail: false, editingEmailId: '', editingClientId: '', clientMenuId: '' },
@@ -55,7 +55,8 @@ const state = {
   settingsNavCollapsed: {},
   deviceHeartbeatTimer: null,
   openLibrary: { results: [], selectedResult: null, resolvedResult: null, step: 'search' },
-  igdb: { results: [], selectedResult: null, resolvedResult: null, step: 'search' },
+  igdb: { results: [], selectedResult: null, resolvedResult: null, step: 'search', dossierIntent: false },
+  dossiers: { items: [], selected: null, loaded: false, loading: false, returnContext: { view: 'dossiers' }, picker: { query: '', kind: '', selectedId: '' } },
   esrb: { results: [], selectedResult: null, resolvedResult: null, step: 'search' }
 };
 const $ = id => document.getElementById(id);
@@ -113,7 +114,7 @@ const GUIDEVAULT_LIBRARY_CHUNK_YIELD_MS = 30;
 const GUIDEVAULT_STARTUP_STATUS_HIDE_MS = 2400;
 const GUIDEVAULT_LIBRARY_SEARCH_DEBOUNCE_MS = 180;
 const GUIDEVAULT_SORT_COLLATOR = new Intl.Collator(undefined, { numeric: true, sensitivity: 'base' });
-const GUIDEVAULT_APP_VERSION = '1.1.2';
+const GUIDEVAULT_APP_VERSION = '1.2.7';
 const GUIDEVAULT_FILENAME_SCHEMA_KEY = 'guidevault.filenameRename.schema.v1';
 const GUIDEVAULT_FILE_ORGANIZATION_TEMPLATE_PRESETS_KEY = 'guidevault.fileOrganization.templatePresets.v2';
 const GUIDEVAULT_FILE_ORGANIZATION_TEMPLATE_PRESETS_LEGACY_KEY = 'guidevault.fileOrganization.templatePresets.v1';
@@ -728,13 +729,15 @@ function normalizeReadingProfiles(value = {}) {
 function persistReadingProfilesLocal(profiles = state.readingProfiles) {
   const normalized = normalizeReadingProfiles(profiles || {});
   state.readingProfiles = normalized;
-  try { localStorage.setItem(GUIDEVAULT_READING_PROFILES_KEY, JSON.stringify(normalized)); } catch {}
+  try { localStorage.setItem(guidevaultUserStorageKey(GUIDEVAULT_READING_PROFILES_KEY), JSON.stringify(normalized)); } catch {}
   return normalized;
 }
 
 function loadReadingProfiles() {
   try {
-    const raw = localStorage.getItem(GUIDEVAULT_READING_PROFILES_KEY);
+    const storageKey = guidevaultUserStorageKey(GUIDEVAULT_READING_PROFILES_KEY);
+    const raw = localStorage.getItem(storageKey)
+      || (currentUserIsAdmin() ? localStorage.getItem(GUIDEVAULT_READING_PROFILES_KEY) : '');
     const parsed = raw ? JSON.parse(raw) : {};
     const normalized = normalizeReadingProfiles(parsed);
     state.readingProfiles = normalized;
@@ -748,7 +751,7 @@ function loadReadingProfiles() {
 
 function saveReadingProfiles(profiles = state.readingProfiles) {
   const normalized = persistReadingProfilesLocal(profiles || {});
-  scheduleReadingProfilesServerSave(normalized);
+  if (currentUserIsAdmin()) scheduleReadingProfilesServerSave(normalized);
   return normalized;
 }
 
@@ -844,6 +847,7 @@ async function saveReadingProfilesToServer(profiles = state.readingProfiles) {
 }
 
 function scheduleReadingProfilesServerSave(profiles = state.readingProfiles) {
+  if (!currentUserIsAdmin()) return;
   if (guidevaultReadingProfilesSaveTimer) clearTimeout(guidevaultReadingProfilesSaveTimer);
   guidevaultReadingProfilesSaveTimer = window.setTimeout(async () => {
     guidevaultReadingProfilesSaveTimer = 0;
@@ -1652,7 +1656,11 @@ function favoriteItemKey(itemOrId) {
 }
 function loadFavorites() {
   try {
-    const raw = JSON.parse(localStorage.getItem(GUIDEVAULT_FAVORITES_KEY) || '{}') || {};
+    const storageKey = guidevaultUserStorageKey(GUIDEVAULT_FAVORITES_KEY);
+    const stored = localStorage.getItem(storageKey)
+      || (currentUserIsAdmin() ? localStorage.getItem(GUIDEVAULT_FAVORITES_KEY) : '')
+      || '{}';
+    const raw = JSON.parse(stored) || {};
     const map = {};
     Object.keys(raw).forEach(key => { if (raw[key]) map[String(key)] = true; });
     state.favorites = map;
@@ -1662,7 +1670,7 @@ function loadFavorites() {
   return state.favorites;
 }
 function saveFavorites() {
-  try { localStorage.setItem(GUIDEVAULT_FAVORITES_KEY, JSON.stringify(state.favorites || {})); } catch {}
+  try { localStorage.setItem(guidevaultUserStorageKey(GUIDEVAULT_FAVORITES_KEY), JSON.stringify(state.favorites || {})); } catch {}
 }
 function isFavoriteItem(itemOrId) {
   const key = favoriteItemKey(itemOrId);
@@ -1730,14 +1738,14 @@ function readStoredLoginProfile(key = GUIDEVAULT_LOGIN_PROFILE_KEY, requirePassw
   }
 }
 function readLoginProfile() {
-  return readStoredLoginProfile(GUIDEVAULT_LOGIN_PROFILE_KEY, true);
+  return readStoredLoginProfile(GUIDEVAULT_LOGIN_PROFILE_KEY, false);
 }
 function readLoginProfileBackup() {
   return readStoredLoginProfile(GUIDEVAULT_LOGIN_PROFILE_BACKUP_KEY, false);
 }
 function backupLoginProfile(profile = readLoginProfile()) {
   if (!profile) return;
-  try { localStorage.setItem(GUIDEVAULT_LOGIN_PROFILE_BACKUP_KEY, JSON.stringify(profile)); } catch {}
+  try { localStorage.setItem(GUIDEVAULT_LOGIN_PROFILE_BACKUP_KEY, JSON.stringify({ ...profile, password: '' })); } catch {}
 }
 function saveLoginProfile(profile) {
   const existing = readLoginProfile();
@@ -1753,6 +1761,7 @@ function saveLoginProfile(profile) {
     createdAt: existing?.createdAt || profile.createdAt || backup?.createdAt || new Date().toISOString(),
     updatedAt: new Date().toISOString()
   });
+  normalized.password = '';
   localStorage.setItem(GUIDEVAULT_LOGIN_PROFILE_KEY, JSON.stringify(normalized));
   backupLoginProfile(normalized);
   state.auth.profile = normalized;
@@ -1773,6 +1782,7 @@ function normalizeLoginIdentity(value = '') {
 function validateLoginProfile(profile) {
   if (!profile.username || !profile.email || !profile.password) return 'Username, email, and password are required.';
   if (!profile.email.includes('@') || profile.email.startsWith('@') || profile.email.endsWith('@')) return 'Enter a valid email address.';
+  if (profile.password.length < 8) return 'Password must contain at least 8 characters.';
   return '';
 }
 function validateExistingLoginCredentials(form) {
@@ -1799,6 +1809,56 @@ function setAccountStatus(message = '', tone = '') {
   el.dataset.tone = tone || '';
 }
 
+function authenticatedServerUser() {
+  return state.auth.serverAuth?.authenticated ? (state.auth.serverAuth.user || null) : null;
+}
+function currentUserIsAdmin() {
+  const user = authenticatedServerUser();
+  return !!user && (user.isAdmin === true
+    || String(user.role || '').toLowerCase() === 'admin'
+    || (Array.isArray(user.permissions) ? user.permissions : []).some(permission => String(permission || '').toLowerCase() === 'admin'));
+}
+function currentUserHasPermission(permission) {
+  if (currentUserIsAdmin()) return true;
+  const expected = String(permission || '').toLowerCase();
+  return (Array.isArray(authenticatedServerUser()?.permissions) ? authenticatedServerUser().permissions : [])
+    .some(candidate => String(candidate || '').toLowerCase() === expected);
+}
+function applyAuthenticatedUserAccess() {
+  const isAdmin = currentUserIsAdmin();
+  document.body.classList.toggle('guidevault-non-admin', !isAdmin);
+  ['file-management', 'server', 'info'].forEach(group => {
+    document.querySelectorAll(`[data-settings-group="${group}"], [data-settings-parent="${group}"]`).forEach(element => { element.hidden = !isAdmin; });
+  });
+  ['settingsCustomizeNav', 'settingsDevicesNav', 'settingsInsightDevicesNav'].forEach(id => {
+    if ($(id)) $(id).hidden = !isAdmin;
+  });
+  if ($('accountEditLogin')) $('accountEditLogin').hidden = !currentUserHasPermission('Change Password');
+}
+function guidevaultUserStorageKey(baseKey) {
+  const identity = String(authenticatedServerUser()?.userId || authenticatedServerUser()?.email || '').trim().toLowerCase();
+  if (!identity) return baseKey;
+  return `${baseKey}.${identity.replace(/[^a-z0-9_-]+/g, '_').slice(0, 100)}`;
+}
+function resetAuthenticatedUserRuntimeState() {
+  state.items = [];
+  state.filtered = [];
+  state.selected = null;
+  state.favorites = null;
+  state.libraryLoadedOnce = false;
+  state.libraryIsPartial = false;
+  state.librarySummary = null;
+  state.libraryFullLoadPromise = null;
+  state.deferredFullLibraryItems = null;
+  state.libraryBackgroundLoad = { running: false, loaded: 0, total: 0 };
+  state.auth.appStarted = false;
+  state.reader.item = null;
+  state.reader.pages = [];
+  state.reader.index = 0;
+  state.readingProfiles = null;
+  state.dossiers = { items: [], selected: null, loaded: false, loading: false };
+}
+
 function primaryServerLoginUser() {
   const users = Array.isArray(state.auth.serverUsers) ? state.auth.serverUsers : [];
   if (!users.length) return null;
@@ -1819,12 +1879,30 @@ function serverLoginEmailForIdentity(identity, user = primaryServerLoginUser()) 
   return value ? `${value}@guidevault.local` : '';
 }
 async function loadLoginBootstrapFromServer(force = false) {
-  if (state.auth.serverUsersLoaded && !force) return state.auth.serverUsers || [];
+  const inviteToken = new URLSearchParams(window.location.search).get('invite') || '';
+  if (state.auth.serverUsersLoaded && !force && state.auth.inviteToken === inviteToken) return state.auth.serverUsers || [];
   try {
-    const res = await fetch('/api/users', { cache: 'no-store' });
+    const res = await fetch('/api/auth/status', { cache: 'no-store', credentials: 'same-origin' });
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const data = await res.json();
-    state.auth.serverUsers = Array.isArray(data.users) ? data.users : [];
+    state.auth.serverAuth = data || { configured: false, authenticated: false, user: null };
+    state.auth.serverUsers = data?.user ? [{
+      email: data.user.email || '',
+      displayName: data.user.displayName || data.user.username || data.user.email || '',
+      username: data.user.username || '',
+      role: data.user.role || 'Reader',
+      permissions: Array.isArray(data.user.permissions) ? data.user.permissions : [],
+      libraries: Array.isArray(data.user.libraries) ? data.user.libraries : []
+    }] : [];
+    state.auth.pendingInvite = null;
+    state.auth.pendingInviteError = '';
+    state.auth.inviteToken = inviteToken;
+    if (inviteToken) {
+      const inviteResponse = await fetch(`/api/auth/invite?token=${encodeURIComponent(inviteToken)}`, { cache: 'no-store' });
+      const inviteData = await inviteResponse.json().catch(() => ({}));
+      if (!inviteResponse.ok) state.auth.pendingInviteError = inviteData?.error || 'That invitation is invalid or expired.';
+      else state.auth.pendingInvite = { ...inviteData, token: inviteToken };
+    }
     state.auth.serverUsersLoaded = true;
     state.auth.serverUsersLoadFailed = false;
     return state.auth.serverUsers;
@@ -1838,21 +1916,23 @@ async function loadLoginBootstrapFromServer(force = false) {
 }
 function updateLoginPageMode() {
   const profile = readLoginProfile();
-  const serverUsers = Array.isArray(state.auth.serverUsers) ? state.auth.serverUsers : [];
-  const hasServerUsers = serverUsers.length > 0;
-  const restoreLocalProfileMode = !profile && hasServerUsers;
-  const firstUse = !profile && !hasServerUsers;
+  const configured = !!state.auth.serverAuth?.configured;
+  const invitation = state.auth.pendingInvite;
+  const inviteMode = !!invitation;
+  const firstUse = !configured && !inviteMode;
   const title = $('loginTitle');
   const subtitle = $('loginSubtitle');
   const help = $('loginHelp');
   if (title) {
-    title.textContent = restoreLocalProfileMode || profile ? 'Sign In to GuideVault' : 'Create GuideVault Login';
+    title.textContent = inviteMode ? 'Activate Your GuideVault Account' : (configured ? 'Sign In to GuideVault' : 'Create Secure GuideVault Login');
     title.classList.toggle('hidden', false);
   }
   if (subtitle) {
-    const subtitleText = firstUse
-      ? 'Create the local login profile for this GuideVault browser.'
-      : (profile ? 'Sign in with this browser\'s local GuideVault profile.' : '');
+    const subtitleText = inviteMode
+      ? `Accept the invitation for ${invitation.email || 'your account'} and choose a password.`
+      : (firstUse
+        ? 'Create the server login that protects GuideVault on every browser and device.'
+        : 'Sign in to the GuideVault server.');
     subtitle.textContent = subtitleText;
     subtitle.classList.toggle('hidden', !subtitleText);
   }
@@ -1861,7 +1941,7 @@ function updateLoginPageMode() {
     help.classList.toggle('hidden', true);
   }
 
-  const identityMode = !firstUse;
+  const identityMode = !firstUse && !inviteMode;
   const identityLabel = $('loginIdentityLabel');
   const identityInput = $('loginIdentity');
   const usernameLabel = $('loginUsernameLabel');
@@ -1885,17 +1965,21 @@ function updateLoginPageMode() {
   if (usernameInput) {
     usernameInput.disabled = identityMode;
     usernameInput.required = !identityMode;
-    usernameInput.value = identityMode ? '' : (usernameInput.value || '');
+    usernameInput.value = identityMode ? '' : (invitation?.username || usernameInput.value || profile?.username || '');
   }
   if (emailInput) {
     emailInput.disabled = identityMode;
     emailInput.required = !identityMode;
-    emailInput.value = identityMode ? '' : (emailInput.value || '');
+    emailInput.readOnly = inviteMode;
+    emailInput.value = identityMode ? '' : (invitation?.email || emailInput.value || profile?.email || '');
   }
 
-  if ($('loginAction')) $('loginAction').textContent = firstUse ? 'Create Local Login' : 'Sign In';
-  if ($('loginPassword')) $('loginPassword').value = '';
-  setLoginStatus('');
+  if ($('loginAction')) $('loginAction').textContent = inviteMode ? 'Activate Account' : (firstUse ? 'Create Secure Login' : 'Sign In');
+  if ($('loginPassword')) {
+    $('loginPassword').value = '';
+    $('loginPassword').autocomplete = inviteMode || firstUse ? 'new-password' : 'current-password';
+  }
+  setLoginStatus(state.auth.pendingInviteError || '', state.auth.pendingInviteError ? 'error' : '');
 }
 function showLoginScreen(message = '') {
   state.auth.authenticated = false;
@@ -2648,21 +2732,40 @@ function showAuthenticatedApp() {
   state.auth.profile = readLoginProfile();
   state.auth.authenticated = true;
   document.body.classList.remove('auth-locked');
+  applyAuthenticatedUserAccess();
   if ($('loginView')) $('loginView').classList.add('hidden');
   if ($('app')) $('app').classList.remove('hidden');
   loadCustomizeSettings();
   renderCustomSideNavItems();
-  syncCustomizeSettingsFromServer(true);
+  if (currentUserIsAdmin()) {
+    syncReadingProfilesFromServer({ migrateLocal: true });
+    syncCustomizeSettingsFromServer(true);
+    syncOpdsSettingsFromServer(false);
+  } else {
+    loadReadingProfiles();
+  }
   renderAccountProfile();
   syncTopUserMenu();
   startDeviceHeartbeat();
   startLaunchBoxOpenSignalPolling();
+  loadReaderBackgrounds();
+  loadGameDossiers(false);
+  pollTasks(false);
+  if (currentUserIsAdmin()) {
+    startHomeAssistantCommandPolling();
+    loadServerSettings(false).then(() => {
+      startHomeAssistantCommandPolling();
+      scheduleHomeAssistantStatusPublish('client_connected', 'Guidevault browser client connected.');
+    }).catch(() => stopHomeAssistantCommandPolling());
+  } else {
+    stopHomeAssistantCommandPolling();
+  }
   resetGuidevaultLandingToHome({ render: false });
   if (!state.auth.appStarted) {
     state.auth.appStarted = true;
     renderCachedLibraryImmediately();
     loadLibrary();
-    startStableUpdatePolling();
+    if (currentUserIsAdmin()) startStableUpdatePolling();
   } else {
     applyFilters();
   }
@@ -2676,55 +2779,91 @@ function setAccountEditMode(editing, clearStatus = true) {
   if ($('accountEditLogin')) $('accountEditLogin').classList.toggle('hidden', editing);
   if ($('accountSaveLogin')) $('accountSaveLogin').classList.toggle('hidden', !editing);
   if ($('accountCancelEdit')) $('accountCancelEdit').classList.toggle('hidden', !editing);
-  if (clearStatus) setAccountStatus(editing ? 'Editing local login profile.' : '');
+  if (clearStatus) setAccountStatus(editing ? 'Editing the secure server login profile.' : '');
 }
-function handleLoginSubmit(e) {
+async function handleLoginSubmit(e) {
   e?.preventDefault?.();
-  const existing = readLoginProfile();
   const form = getProfileFormValues('login');
-  const serverUsers = Array.isArray(state.auth.serverUsers) ? state.auth.serverUsers : [];
-  if (!existing && serverUsers.length) {
-    const validation = validateExistingLoginCredentials(form);
+  const configured = !!state.auth.serverAuth?.configured;
+  const invitation = state.auth.pendingInvite;
+  if (invitation) {
+    const validation = validateLoginProfile({ ...form, email: invitation.email || form.email });
     if (validation) { setLoginStatus(validation, 'error'); return; }
-    const identity = form.identity || serverLoginIdentity();
-    const matchedServerUser = serverUsers.find(user => profileMatchesLoginIdentity({ username: user.displayName || '', email: user.email || '' }, identity)) || primaryServerLoginUser();
-    const email = serverLoginEmailForIdentity(identity, matchedServerUser);
-    const username = String(matchedServerUser?.displayName || identity || email || '').trim();
-    const backup = readLoginProfileBackup();
-    const backupMatches = backup && profileMatchesLoginIdentity(backup, identity);
-    saveLoginProfile({ username, email, password: form.password, avatarDataUrl: backupMatches ? backup.avatarDataUrl : '' });
-    setLoginStatus('Local browser login restored.', 'success');
-    showAuthenticatedApp();
-    return;
-  }
-
-  if (!existing) {
+  } else if (!configured) {
     const validation = validateLoginProfile(form);
     if (validation) { setLoginStatus(validation, 'error'); return; }
-    saveLoginProfile(form);
-    setLoginStatus('Local login created.', 'success');
-    showAuthenticatedApp();
-    return;
+  } else {
+    const validation = validateExistingLoginCredentials(form);
+    if (validation) { setLoginStatus(validation, 'error'); return; }
   }
 
-  const validation = validateExistingLoginCredentials(form);
-  if (validation) { setLoginStatus(validation, 'error'); return; }
-  const matches = profileMatchesLoginIdentity(existing, form.identity) && form.password === existing.password;
-  if (!matches) {
-    setLoginStatus('The username / email address or password does not match the saved local profile.', 'error');
-    return;
+  const endpoint = invitation ? '/api/auth/invite/accept' : (configured ? '/api/auth/login' : '/api/auth/setup');
+  const payload = invitation
+    ? { token: invitation.token, username: form.username, password: form.password }
+    : (configured
+      ? { identity: form.identity, password: form.password }
+      : { username: form.username, email: form.email, password: form.password });
+  try {
+    setLoginStatus(invitation ? 'Activating account...' : (configured ? 'Signing in...' : 'Creating secure server login...'), 'info');
+    const response = await fetch(endpoint, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      credentials: 'same-origin',
+      body: JSON.stringify(payload)
+    });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(data?.error || `Authentication failed. HTTP ${response.status}`);
+    const previous = readLoginProfile() || readLoginProfileBackup() || {};
+    const user = data?.user || {};
+    const previousMatches = profileMatchesLoginIdentity(previous, user.username || user.email || '');
+    resetAuthenticatedUserRuntimeState();
+    saveLoginProfile({
+      username: user.username || form.username || form.identity || '',
+      email: user.email || form.email || serverLoginEmailForIdentity(form.identity) || '',
+      avatarDataUrl: previousMatches ? (previous.avatarDataUrl || '') : '',
+      createdAt: user.createdAt || previous.createdAt || ''
+    });
+    state.auth.serverAuth = { configured: true, authenticated: true, user };
+    state.auth.pendingInvite = null;
+    state.auth.pendingInviteError = '';
+    state.auth.inviteToken = '';
+    if (invitation) {
+      try {
+        const cleanUrl = new URL(window.location.href);
+        cleanUrl.searchParams.delete('invite');
+        history.replaceState(null, '', `${cleanUrl.pathname}${cleanUrl.search}${cleanUrl.hash}`);
+      } catch {}
+    }
+    state.auth.serverUsersLoaded = false;
+    setLoginStatus(invitation ? 'Account activated and signed in.' : 'Signed in securely.', 'success');
+    showAuthenticatedApp();
+  } catch (err) {
+    setLoginStatus(err?.message || 'Unable to sign in.', 'error');
   }
-  state.auth.profile = existing;
-  showAuthenticatedApp();
 }
-function saveAccountLoginFromSettings() {
+async function saveAccountLoginFromSettings() {
   const form = getProfileFormValues('account');
-  const validation = validateLoginProfile(form);
-  if (validation) { setAccountStatus(validation, 'error'); return; }
-  saveLoginProfile(form);
-  renderAccountProfile();
-  syncTopUserMenu();
-  setAccountStatus('Login profile saved.', 'success');
+  if (!form.username || !form.email || !form.email.includes('@')) { setAccountStatus('Username and a valid email address are required.', 'error'); return; }
+  if (form.password && form.password.length < 8) { setAccountStatus('A new password must contain at least 8 characters.', 'error'); return; }
+  try {
+    const response = await fetch('/api/auth/profile', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      credentials: 'same-origin',
+      body: JSON.stringify({ username: form.username, email: form.email, newPassword: form.password || '' })
+    });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(data?.error || `Profile save failed. HTTP ${response.status}`);
+    const existing = readLoginProfile() || {};
+    saveLoginProfile({ ...existing, username: data?.user?.username || form.username, email: data?.user?.email || form.email });
+    state.auth.serverAuth = { configured: true, authenticated: true, user: data?.user || null };
+    renderAccountProfile();
+    syncTopUserMenu();
+    setAccountEditMode(false, false);
+    setAccountStatus('Server login profile saved.', 'success');
+  } catch (err) {
+    setAccountStatus(err?.message || 'Unable to save the login profile.', 'error');
+  }
 }
 
 function resizeProfilePicFile(file) {
@@ -3250,30 +3389,37 @@ function cancelAccountEdit() {
   renderAccountProfile();
   setAccountStatus('Edit canceled.', 'info');
 }
-function logoutGuidevault() {
+async function logoutGuidevault() {
   stopDeviceHeartbeat();
   stopLaunchBoxOpenSignalPolling();
+  stopHomeAssistantCommandPolling();
   stopStableUpdatePolling();
+  try { await fetch('/api/auth/logout', { method: 'POST', credentials: 'same-origin' }); } catch {}
+  resetAuthenticatedUserRuntimeState();
+  state.auth.serverAuth = { ...(state.auth.serverAuth || {}), configured: true, authenticated: false, user: null };
   showLibraryScreen();
   showLoginScreen('Signed out of Guidevault.');
 }
 async function initializeGuidevaultAuthAndApp() {
   loadReadingProfiles();
-  await syncReadingProfilesFromServer({ migrateLocal: true });
   loadColorscapeColorCache();
   loadGuidevaultPreferences();
   loadKeybinds();
   loadCustomizeSettings();
-  syncCustomizeSettingsFromServer(false);
   loadOpdsSettings();
-  syncOpdsSettingsFromServer(false);
   await loadLoginBootstrapFromServer();
   updateLoginPageMode();
   renderAccountProfile();
 
-  const profile = readLoginProfile();
-  if (profile) {
-    state.auth.profile = profile;
+  if (state.auth.serverAuth?.authenticated && !state.auth.pendingInvite) {
+    const existing = readLoginProfile() || readLoginProfileBackup() || {};
+    const user = state.auth.serverAuth.user || {};
+    saveLoginProfile({
+      ...existing,
+      username: user.username || existing.username || '',
+      email: user.email || existing.email || '',
+      createdAt: user.createdAt || existing.createdAt || ''
+    });
     showAuthenticatedApp();
     return;
   }
@@ -4618,7 +4764,7 @@ function setLastLaunchBoxOpenSignalId(signalId) {
   try { localStorage.setItem(GUIDEVAULT_LAUNCHBOX_OPEN_SIGNAL_KEY, String(id)); } catch {}
 }
 async function pollLaunchBoxOpenSignal() {
-  if (!state.auth.authenticated || state.launchBox.openPollInFlight) return;
+  if (!state.auth.authenticated || document.hidden || state.launchBox.openPollInFlight) return;
   state.launchBox.openPollInFlight = true;
   try {
     const after = getLastLaunchBoxOpenSignalId();
@@ -4823,6 +4969,8 @@ async function saveServerSettings(source = 'general') {
     if (!res.ok) throw new Error(`Save failed: ${res.status}`);
     state.serverSettings = normalizeServerSettings(await res.json());
     renderServerSettings();
+    if (state.serverSettings.homeAssistantEnabled && state.serverSettings.homeAssistantCommandEnabled) startHomeAssistantCommandPolling();
+    else stopHomeAssistantCommandPolling();
     const msg = source === 'media' ? 'Media settings saved.'
       : source === 'home-assistant' ? 'Home Assistant settings saved.'
       : source === 'integrations' ? 'Integrations saved.'
@@ -4973,13 +5121,25 @@ async function publishHomeAssistantReaderStatus(eventType = '', message = '') {
 }
 
 function startHomeAssistantCommandPolling() {
-  if (state.homeAssistant.pollTimer) window.clearInterval(state.homeAssistant.pollTimer);
+  const settings = normalizeServerSettings(state.serverSettings || defaultServerSettings());
+  if (!state.auth.authenticated || !settings.homeAssistantEnabled || !settings.homeAssistantCommandEnabled) {
+    stopHomeAssistantCommandPolling();
+    return;
+  }
+  if (state.homeAssistant.pollTimer) return;
   const poll = () => pollHomeAssistantCommands().catch(err => console.warn('Home Assistant command poll failed', err));
   state.homeAssistant.pollTimer = window.setInterval(poll, 1500);
   window.setTimeout(poll, 500);
 }
 
+function stopHomeAssistantCommandPolling() {
+  if (state.homeAssistant.pollTimer) window.clearInterval(state.homeAssistant.pollTimer);
+  state.homeAssistant.pollTimer = null;
+}
+
 async function pollHomeAssistantCommands() {
+  const settings = normalizeServerSettings(state.serverSettings || defaultServerSettings());
+  if (!state.auth.authenticated || document.hidden || !settings.homeAssistantEnabled || !settings.homeAssistantCommandEnabled) return;
   const res = await fetch(`/api/home-assistant/commands?after=${encodeURIComponent(state.homeAssistant.lastCommandId || 0)}`, { cache: 'no-store' });
   if (!res.ok) return;
   const data = await res.json();
@@ -5762,7 +5922,7 @@ function renderUsersSettings(options = {}) {
   const permHost = $('invitePermissionsList');
   if (permHost) {
     delete permHost.dataset.loadingRendered;
-    permHost.innerHTML = permissions.map(name => `<label class="inline-check"><input type="checkbox" value="${escapeForAttribute(name)}" ${['Login','Bookmark','Read Only'].includes(name) ? 'checked' : ''} /> <span>${escapeHtml(name)}</span></label>`).join('');
+    permHost.innerHTML = permissions.map(name => `<label class="inline-check"><input type="checkbox" value="${escapeForAttribute(name)}" ${['Login','Bookmark','Read Only','Change Password'].includes(name) ? 'checked' : ''} /> <span>${escapeHtml(name)}</span></label>`).join('');
   }
   const usersHost = $('usersList');
   if (usersHost) {
@@ -5797,7 +5957,11 @@ async function inviteUser() {
     const data = await res.json().catch(() => ({}));
     if (!res.ok) throw new Error(data?.error || `Invite failed: ${res.status}`);
     const sent = data.sent === true || data.emailSent === true;
-    setUsersStatus(sent ? 'Invite saved and email sent.' : (data.emailMessage || 'Invite saved. Email was not sent because SMTP is not fully configured or sending failed.'), sent ? 'success' : 'info');
+    const activationLink = String(data.inviteUrl || '').trim();
+    setUsersStatus(sent
+      ? 'Invite saved and activation email sent.'
+      : (activationLink ? `Invite saved. Share this activation link: ${activationLink}` : (data.emailMessage || 'Invite saved, but no activation email was sent.')),
+    sent ? 'success' : 'info');
     ['inviteEmail','inviteDisplayName'].forEach(id => { if ($(id)) $(id).value = ''; });
     await loadUsersSettings(false);
   } catch (err) {
@@ -7752,12 +7916,10 @@ function setupHomebarIconFallbacks() {
 function updateNavActive() {
   document.querySelectorAll('.nav').forEach(btn => {
     const isCustom = !!btn.dataset.customNavId;
-    const isCollectionNav = !!btn.dataset.collectionNavId;
     const matchesCustom = isCustom && state.customFilter?.id === btn.dataset.customNavId;
-    const matchesCollectionNav = isCollectionNav && state.customFilter?.id === `collection-${btn.dataset.collectionNavId}`;
     const matchesCategoryKind = !state.customFilter && !!state.categoryFilter && btn.dataset.filter === state.filter;
     const matchesView = !state.customFilter && !state.categoryFilter && btn.dataset.view === state.viewMode;
-    btn.classList.toggle('active', matchesCustom || matchesCollectionNav || matchesCategoryKind || matchesView);
+    btn.classList.toggle('active', matchesCustom || matchesCategoryKind || matchesView);
   });
   renderCustomSideNavItems();
 }
@@ -7882,6 +8044,7 @@ function isUnfilteredAllContentView() {
 }
 
 function currentLibraryTotalCount() {
+  if (state.viewMode === 'dossiers') return filteredGameDossiers().length;
   if (state.libraryIsPartial && state.librarySummary?.totalCount && isUnfilteredAllContentView()) return state.librarySummary.totalCount;
   return Array.isArray(state.filtered) ? state.filtered.length : 0;
 }
@@ -7981,7 +8144,7 @@ function startupCacheItemsForLibrary(items = state.items) {
 function saveLibraryClientCache(items = state.items) {
   try {
     const startupItems = startupCacheItemsForLibrary(items);
-    localStorage.setItem(GUIDEVAULT_LIBRARY_CACHE_KEY, JSON.stringify({
+    localStorage.setItem(guidevaultUserStorageKey(GUIDEVAULT_LIBRARY_CACHE_KEY), JSON.stringify({
       version: GUIDEVAULT_APP_VERSION,
       savedAt: new Date().toISOString(),
       isStartupSubset: true,
@@ -7995,12 +8158,14 @@ function saveLibraryClientCache(items = state.items) {
 
 function loadLibraryClientCache() {
   try {
-    const raw = localStorage.getItem(GUIDEVAULT_LIBRARY_CACHE_KEY);
+    const storageKey = guidevaultUserStorageKey(GUIDEVAULT_LIBRARY_CACHE_KEY);
+    const raw = localStorage.getItem(storageKey)
+      || (currentUserIsAdmin() ? localStorage.getItem(GUIDEVAULT_LIBRARY_CACHE_KEY) : '');
     if (!raw) return [];
     if (raw.length > GUIDEVAULT_LIBRARY_CACHE_MAX_BYTES) {
       // Older builds saved the complete library index in synchronous localStorage.
       // Drop oversized caches instead of parsing a multi-MB JSON blob on login.
-      localStorage.removeItem(GUIDEVAULT_LIBRARY_CACHE_KEY);
+      localStorage.removeItem(storageKey);
       return [];
     }
     const data = JSON.parse(raw);
@@ -8197,19 +8362,6 @@ function itemIdOfForMerge(item) {
   return String(item?.id || item?.Id || '').trim();
 }
 
-function mergeLibraryItemsById(existingItems = [], nextItems = []) {
-  const map = new Map();
-  (Array.isArray(existingItems) ? existingItems : []).forEach(item => {
-    const id = itemIdOfForMerge(item);
-    if (id) map.set(id, item);
-  });
-  (Array.isArray(nextItems) ? nextItems : []).forEach(item => {
-    const id = itemIdOfForMerge(item);
-    if (id) map.set(id, item);
-  });
-  return [...map.values()];
-}
-
 async function fetchLibraryChunk(offset = 0, limit = GUIDEVAULT_LIBRARY_CHUNK_SIZE) {
   const params = new URLSearchParams({
     offset: String(Math.max(0, Number(offset || 0))),
@@ -8234,7 +8386,11 @@ async function loadFullLibraryInBackground() {
   if (state.libraryFullLoadPromise) return state.libraryFullLoadPromise;
   state.libraryFullLoadPromise = (async () => {
     const initialItems = Array.isArray(state.items) ? state.items.slice() : [];
-    let mergedItems = initialItems;
+    const mergedItemsById = new Map();
+    initialItems.forEach(item => {
+      const id = itemIdOfForMerge(item);
+      if (id) mergedItemsById.set(id, item);
+    });
     let offset = 0;
     let loaded = 0;
     let total = Number(state.librarySummary?.totalCount || 0) || 0;
@@ -8249,7 +8405,10 @@ async function loadFullLibraryInBackground() {
         if (chunk.summary?.counts && Object.values(chunk.summary.counts).some(v => Number(v || 0) > 0)) counts = chunk.summary.counts;
         if (chunk.summary?.generatedAt) generatedAt = chunk.summary.generatedAt;
         if (chunk.total) total = chunk.total;
-        mergedItems = mergeLibraryItemsById(mergedItems, chunk.items);
+        chunk.items.forEach(item => {
+          const id = itemIdOfForMerge(item);
+          if (id) mergedItemsById.set(id, item);
+        });
         loaded = Math.max(chunk.nextOffset, loaded + chunk.items.length);
         state.libraryBackgroundLoad = { running: chunk.hasMore, loaded: Math.min(loaded, total || loaded), total: total || loaded };
         if (total) {
@@ -8259,7 +8418,7 @@ async function loadFullLibraryInBackground() {
             counts: counts || state.librarySummary?.counts || null,
             generatedAt: generatedAt || state.librarySummary?.generatedAt || ''
           };
-          state.libraryIsPartial = chunk.hasMore || mergedItems.length < total;
+          state.libraryIsPartial = chunk.hasMore || mergedItemsById.size < total;
           setStatus(chunk.hasMore
             ? `Loading library index in the background... ${Math.min(loaded, total).toLocaleString()} of ${total.toLocaleString()} items.`
             : `Library index downloaded. Preparing ${total.toLocaleString()} items...`);
@@ -8271,7 +8430,7 @@ async function loadFullLibraryInBackground() {
       await guidevaultYieldToUi(80);
       const currentSelectedId = state.selected?.id || state.selected?.Id || '';
       state.deferredFullLibraryItems = null;
-      state.items = applyClientMetadataOverridesToLibrary(mergedItems);
+      state.items = applyClientMetadataOverridesToLibrary([...mergedItemsById.values()]);
       state.libraryIsPartial = false;
       state.librarySummary = {
         totalCount: state.items.length,
@@ -8993,6 +9152,11 @@ function clearLibrarySearchCaches() {
 }
 
 function applyFilters() {
+  if (state.viewMode === 'dossiers') {
+    state.filtered = [];
+    render();
+    return;
+  }
   activateDeferredFullLibrary();
   const q = ($('search')?.value || '').trim().toLowerCase();
   state.filtered = state.items.filter(item => {
@@ -9785,19 +9949,24 @@ function render() {
   $('countMags').textContent = count('Magazine');
   if (!state.favorites) loadFavorites();
   $('countFavs').textContent = Object.keys(state.favorites || {}).length;
-  if ($('countCollections')) $('countCollections').textContent = String((state.customize?.collections || loadCustomizeSettings().collections || []).length || 0);
+  if ($('countCollections')) $('countCollections').textContent = String(visibleUserCollections().length);
+  renderDossierSidebar();
   const groupMode = ['manual-systems', 'guide-systems', 'magazine-series'].includes(state.viewMode);
   const categoryMode = !!state.categoryFilter;
   const activeSearchQuery = ($('search')?.value || '').trim();
   const searchMode = !!activeSearchQuery;
 
-  $('itemCount').textContent = groupMode ? `${groupCountForView()} categories` : `${currentLibraryTotalCount()} items${state.libraryIsPartial ? ' indexed' : ''}`;
+  $('itemCount').textContent = state.viewMode === 'dossiers'
+    ? `${currentLibraryTotalCount()} dossier${currentLibraryTotalCount() === 1 ? '' : 's'}`
+    : (groupMode ? `${groupCountForView()} categories` : `${currentLibraryTotalCount()} items${state.libraryIsPartial ? ' indexed' : ''}`);
   $('libraryView').classList.toggle('category-mode', categoryMode || groupMode || state.viewMode !== 'all');
   $('libraryView').classList.toggle('group-mode', groupMode);
   $('libraryView').classList.toggle('magazine-mode', state.filter === 'Magazine' || state.viewMode === 'magazine-series');
 
   $('pageTitle').textContent = searchMode && state.viewMode === 'all' && state.filter === 'All Content' && !state.customFilter && !state.categoryFilter ? 'Search Results' : pageTitleForView();
-  $('gridTitle').textContent = groupMode
+  $('gridTitle').textContent = state.viewMode === 'dossiers'
+    ? (searchMode ? `Dossier Results for “${activeSearchQuery}”` : 'Game Dossiers')
+    : groupMode
     ? pageTitleForView()
     : (searchMode
       ? `Search Results for “${activeSearchQuery}”`
@@ -9825,6 +9994,11 @@ function render() {
     if ($('recentGrid')) $('recentGrid').innerHTML = '';
     renderCollectionsLibraryView('grid');
     renderAlphaRail([]);
+  } else if (state.viewMode === 'dossiers') {
+    if ($('homeShelves')) { cancelCoverLoadsForRoot($('homeShelves')); $('homeShelves').innerHTML = ''; }
+    if ($('homeCollections')) $('homeCollections').innerHTML = '';
+    if ($('recentGrid')) $('recentGrid').innerHTML = '';
+    renderGameDossiersLibraryView('grid');
   } else {
     if (homeMode) { renderHomeShelves(); renderHomeCollections(); } else {
       if ($('homeShelves')) { cancelCoverLoadsForRoot($('homeShelves')); $('homeShelves').innerHTML = ''; }
@@ -9850,6 +10024,7 @@ function pageTitleForView() {
   if (state.viewMode === 'magazine-series') return 'Magazines';
   if (state.viewMode === 'favorites' || state.filter === 'Favorites') return 'Favorites';
   if (state.viewMode === 'collections') return 'Collections';
+  if (state.viewMode === 'dossiers') return 'Game Dossiers';
   return state.filter === 'All Content' ? 'Home' : (state.filter || 'Home');
 }
 
@@ -10012,6 +10187,8 @@ function renderGroupGrid(id, viewMode) {
     </article>`;
   }).join('');
   const host = $(id);
+  host.classList.remove('user-collections-grid', 'game-dossiers-grid');
+  host.classList.add('grid');
   cancelCoverLoadsForRoot(host);
   host.innerHTML = overview + (cards || `<div class="empty-message">${def.empty} Set a Library Root folder in Settings and scan your collection.</div>`);
   initializeCoverImages(host);
@@ -10509,7 +10686,7 @@ function clearVirtualGridIfHost(id) {
 function renderGrid(id, items) {
   const host = $(id);
   if (!host) return;
-  host.classList.remove('user-collections-grid');
+  host.classList.remove('user-collections-grid', 'game-dossiers-grid');
   host.classList.add('grid');
   const list = Array.isArray(items) ? items : [];
   if (!list.length) {
@@ -10629,7 +10806,6 @@ function normalizeCollection(value = {}, index = 0) {
     description: String(value.description || '').trim(),
     homeDisplay,
     showOnHome: homeDisplay !== 'hidden',
-    showInSidebar: value.showInSidebar === true,
     coverItemId: String(value.coverItemId || '').trim(),
     itemIds,
     items: itemIds
@@ -10653,7 +10829,7 @@ function collectionById(id) {
 }
 function getHomeShelfOptions(settings = state.customize || loadCustomizeSettings()) {
   const collections = (settings.collections || [])
-    .filter(collection => collection.homeDisplay === 'shelf')
+    .filter(collection => collection.homeDisplay === 'shelf' && collectionHasLibraryItems(collection))
     .map(collection => ({
       id: collectionShelfId(collection.id),
       label: collection.name || collection.title || 'Collection',
@@ -10672,6 +10848,9 @@ function collectionItems(collection, items = state.items) {
   if (!ids.size) return [];
   const lookup = new Map((Array.isArray(items) ? items : []).map(item => [String(item.id || item.Id || '').trim(), item]));
   return [...ids].map(id => lookup.get(id)).filter(Boolean);
+}
+function collectionHasLibraryItems(collection, items = state.items) {
+  return collectionItems(collection, items).length > 0;
 }
 
 function normalizeKeybinds(value = {}) {
@@ -11145,16 +11324,13 @@ function renderCustomSideNavItems() {
   if (!host) return;
   const settings = state.customize || loadCustomizeSettings();
   const items = settings.sideNav?.customItems || [];
-  const collections = (settings.collections || []).filter(collection => collection.showInSidebar === true);
-  const customMarkup = items.map(item => `<button class="nav custom-side-nav-button" type="button" data-custom-nav-id="${escapeForAttribute(item.id)}" title="${escapeForAttribute(item.label)}"><span class="nav-icon custom-list-icon">${escapeHtml(item.icon || customSideNavDefaultIcon(item.type, item.kindScope))}</span><span class="nav-label">${escapeHtml(item.label)}</span><em>${customSideNavCount(item)}</em></button>`).join('');
-  const collectionMarkup = collections.map(collection => {
-    const count = (collection.itemIds || collection.items || []).length;
-    return `<button class="nav custom-side-nav-button collection-side-nav-button" type="button" data-collection-nav-id="${escapeForAttribute(collection.id)}" title="${escapeForAttribute(collection.name)}"><span class="nav-icon custom-list-icon">&#x2637;</span><span class="nav-label">${escapeHtml(collection.name)}</span><em>${count}</em></button>`;
-  }).join('');
-  host.innerHTML = customMarkup + collectionMarkup;
-  host.classList.toggle('hidden', !items.length && !collections.length);
+  const visibleItems = items
+    .map(item => ({ item, count: customSideNavCount(item) }))
+    .filter(entry => entry.count > 0);
+  const customMarkup = visibleItems.map(({ item, count }) => `<button class="nav custom-side-nav-button" type="button" data-custom-nav-id="${escapeForAttribute(item.id)}" title="${escapeForAttribute(item.label)}"><span class="nav-icon custom-list-icon">${escapeHtml(item.icon || customSideNavDefaultIcon(item.type, item.kindScope))}</span><span class="nav-label">${escapeHtml(item.label)}</span><em>${count}</em></button>`).join('');
+  host.innerHTML = customMarkup;
+  host.classList.toggle('hidden', !visibleItems.length);
   host.querySelectorAll('[data-custom-nav-id]').forEach(btn => btn.classList.toggle('active', state.customFilter?.id === btn.dataset.customNavId));
-  host.querySelectorAll('[data-collection-nav-id]').forEach(btn => btn.classList.toggle('active', state.customFilter?.id === `collection-${btn.dataset.collectionNavId}`));
 }
 function renderCustomSideNavList() {
   const list = $('customSideNavList');
@@ -11265,9 +11441,8 @@ function renderCollectionsSettings() {
     list.innerHTML = collections.map(collection => {
       const count = collection.itemIds?.length || 0;
       const homeLabel = collection.homeDisplay === 'card' ? 'Compact Home card' : collection.homeDisplay === 'shelf' ? 'Full Home shelf' : 'Hidden from Home';
-      const sidebarLabel = collection.showInSidebar ? 'Shown in sidebar' : 'Sidebar hidden';
       const isActive = collection.id === activeId;
-      return `<div class="collection-summary-row ${isActive ? 'active' : ''}" data-collection-id="${escapeForAttribute(collection.id)}"><div><strong>${escapeHtml(collection.name)}</strong><p class="sub">${homeLabel} · ${sidebarLabel}</p></div><span>${count} item${count === 1 ? '' : 's'}</span><button class="ghost" type="button" data-collection-action="select">Manage Items</button><button class="danger" type="button" data-collection-action="delete">Delete</button></div>`;
+      return `<div class="collection-summary-row ${isActive ? 'active' : ''}" data-collection-id="${escapeForAttribute(collection.id)}"><div><strong>${escapeHtml(collection.name)}</strong><p class="sub">${homeLabel}</p></div><span>${count} item${count === 1 ? '' : 's'}</span><button class="ghost" type="button" data-collection-action="select">Manage Items</button><button class="danger" type="button" data-collection-action="delete">Delete</button></div>`;
     }).join('') || '<p class="sub">No user-defined collections yet.</p>';
   }
   renderCollectionEditPanel();
@@ -11286,11 +11461,10 @@ function renderCollectionEditPanel() {
   }).join('');
   const members = collectionItems(collection, state.items);
   const homeLabel = collection.homeDisplay === 'card' ? 'Compact Home card' : collection.homeDisplay === 'shelf' ? 'Full Home shelf' : 'Hidden from Home';
-  const sidebarLabel = collection.showInSidebar ? 'Shown in sidebar' : 'Sidebar hidden';
   panel.innerHTML = `<div class="collection-active-summary">
     <div>
       <strong>${escapeHtml(collection.name || 'Untitled Collection')}</strong>
-      <p class="sub">${members.length} item${members.length === 1 ? '' : 's'} · ${escapeHtml(homeLabel)} · ${escapeHtml(sidebarLabel)}</p>
+      <p class="sub">${members.length} item${members.length === 1 ? '' : 's'} · ${escapeHtml(homeLabel)}</p>
     </div>
     <button class="ghost" type="button" data-open-collection="${escapeForAttribute(collection.id)}">Open Collection</button>
   </div>
@@ -11352,7 +11526,7 @@ function collectionCardMarkup(collection, options = {}) {
   </article>`;
 }
 function visibleUserCollections() {
-  return ((state.customize || loadCustomizeSettings()).collections || []).filter(collection => (collection.itemIds || collection.items || []).length);
+  return ((state.customize || loadCustomizeSettings()).collections || []).filter(collection => collectionHasLibraryItems(collection));
 }
 function renderHomeCollections() {
   const host = $('homeCollections');
@@ -11364,9 +11538,9 @@ function renderHomeCollections() {
 function renderCollectionsLibraryView(gridId = 'grid') {
   const host = $(gridId);
   if (!host) return;
-  const collections = (state.customize || loadCustomizeSettings()).collections || [];
+  const collections = visibleUserCollections();
   host.className = 'user-collections-grid';
-  host.innerHTML = collections.length ? collections.map(collection => collectionCardMarkup(collection)).join('') : '<div class="empty-message">No collections yet. Create one from Settings → Account → Customize → Collections.</div>';
+  host.innerHTML = collections.length ? collections.map(collection => collectionCardMarkup(collection)).join('') : '<div class="empty-message">No collections with library items yet. Create or manage collections from Settings → Account → Customize → Collections.</div>';
 }
 function createCollection() {
   const name = String($('collectionNameInput')?.value || '').trim();
@@ -11375,8 +11549,7 @@ function createCollection() {
   const collection = normalizeCollection({
     name,
     description: $('collectionDescriptionInput')?.value || '',
-    homeDisplay: $('collectionHomeDisplayInput')?.value || 'shelf',
-    showInSidebar: $('collectionShowInSidebarInput')?.checked === true
+    homeDisplay: $('collectionHomeDisplayInput')?.value || 'shelf'
   }, settings.collections?.length || 0);
   settings.collections = normalizeCollections([...(settings.collections || []), collection]);
   state.customize = settings;
@@ -11384,7 +11557,6 @@ function createCollection() {
   saveCustomizeSettings();
   ['collectionNameInput','collectionDescriptionInput'].forEach(id => { if ($(id)) $(id).value = ''; });
   if ($('collectionHomeDisplayInput')) $('collectionHomeDisplayInput').value = 'shelf';
-  if ($('collectionShowInSidebarInput')) $('collectionShowInSidebarInput').checked = false;
   renderCustomizeSettings();
   renderHomeShelves();
   renderHomeCollections();
@@ -11401,7 +11573,6 @@ function saveSelectedCollection() {
   collection.description = String($('collectionEditDescription')?.value || '').trim();
   collection.homeDisplay = ['shelf', 'card', 'hidden'].includes($('collectionEditHomeDisplay')?.value) ? $('collectionEditHomeDisplay').value : 'shelf';
   collection.showOnHome = collection.homeDisplay !== 'hidden';
-  collection.showInSidebar = $('collectionEditShowInSidebar')?.checked === true;
   ensureCollectionShelfState(collection);
   saveCustomizeSettings();
   renderCustomizeSettings();
@@ -11683,7 +11854,12 @@ function renderHomeShelves() {
   const host = $('homeShelves');
   if (!host) return;
   const settings = state.customize || loadCustomizeSettings();
-  const shelves = settings.homeShelves?.length ? settings.homeShelves : ['recently-added'];
+  const configuredShelves = settings.homeShelves?.length ? settings.homeShelves : ['recently-added'];
+  const nonEmptyShelves = configuredShelves.filter(id => {
+    const collectionId = collectionIdFromShelfId(id);
+    return !collectionId || collectionHasLibraryItems(collectionById(collectionId));
+  });
+  const shelves = nonEmptyShelves.length ? nonEmptyShelves : ['recently-added'];
   state.homeShelfOffsets = state.homeShelfOffsets || {};
   state.homeShelfSlideDirection = state.homeShelfSlideDirection || {};
   cancelCoverLoadsForRoot(host);
@@ -13288,10 +13464,12 @@ function resetIndividualMetadataLookupsForItem(item = state.selected || {}) {
 function metadataSourceLookupAllowedForSelectedItem(sourceKey = '') {
   const item = state.selected || {};
   if (!STRATEGY_GUIDE_METADATA_SOURCE_LOOKUPS.has(sourceKey)) return false;
+  if (sourceKey === 'igdb') return item.kind === 'Strategy Guide' || item.kind === 'Manual';
   return item.kind === 'Strategy Guide';
 }
 
-function metadataSourceLookupUnavailableMessage(sourceLabel = 'This metadata lookup') {
+function metadataSourceLookupUnavailableMessage(sourceLabel = 'This metadata lookup', sourceKey = '') {
+  if (sourceKey === 'igdb') return `${sourceLabel} is available for Manuals and Strategy Guides.`;
   return `${sourceLabel} is currently available for Strategy Guides only. Item-specific lookup flows for Manuals and Magazines can be added later with their own search criteria.`;
 }
 
@@ -13310,7 +13488,7 @@ function updateMetadataSourceActionVisibility() {
     button.setAttribute('aria-hidden', allowed ? 'false' : 'true');
     button.title = allowed
       ? (button.dataset.defaultTitle || button.title || action.label)
-      : metadataSourceLookupUnavailableMessage(action.label);
+      : metadataSourceLookupUnavailableMessage(action.label, action.source);
   });
 }
 
@@ -14071,7 +14249,9 @@ function igdbDisplayValue(key, value) {
 
 function igdbCurrentMetadataForCompare() {
   let form = {};
-  try { form = buildCurrentMetadataPayloadFromForm(); } catch { form = {}; }
+  if (!state.igdb?.dossierIntent) {
+    try { form = buildCurrentMetadataPayloadFromForm(); } catch { form = {}; }
+  }
   const item = state.selected || {};
   const associated = igdbArray($('editAssociatedPlatforms')?.value || platformListText(item));
   return {
@@ -14088,7 +14268,9 @@ function igdbCurrentMetadataForCompare() {
 
 function igdbInitialSearchValues() {
   let form = {};
-  try { form = buildCurrentMetadataPayloadFromForm(); } catch { form = {}; }
+  if (!state.igdb?.dossierIntent) {
+    try { form = buildCurrentMetadataPayloadFromForm(); } catch { form = {}; }
+  }
   const item = applyClientMetadataOverride(state.selected || {});
   const gameTitle = String(item.gameTitle || item.platformMatchTitle || item.series || form.gameTitle || '').trim();
   const fallbackTitle = String(item.title || displayTitle(item) || form.title || '').trim();
@@ -14115,8 +14297,8 @@ function ensureIgdbMetadataUi() {
       <div class="openlibrary-modal igdb-modal">
         <header class="openlibrary-modal-head igdb-modal-head">
           <div>
-            <h3>Search IGDB Game Metadata</h3>
-            <p>Search by game title first. Use platform and year as secondary hints. Review existing Guidevault game fields beside IGDB values before importing.</p>
+            <h3 id="igdbDialogTitle">Search IGDB Game Metadata</h3>
+            <p id="igdbDialogDescription">Search IGDB, choose the correct game, and review metadata before importing.</p>
           </div>
           <button type="button" id="igdbCloseBtn" class="ghost tiny">Close</button>
         </header>
@@ -14131,7 +14313,7 @@ function ensureIgdbMetadataUi() {
     existing.classList.add('metadata-lookup-button', 'igdb-action-button');
     existing.type = 'button';
     existing.textContent = 'IGDB';
-    existing.dataset.defaultTitle = 'Search IGDB by strategy-guide game title and review game metadata before importing selected fields.';
+    existing.dataset.defaultTitle = 'Find this manual or strategy guide’s game on IGDB and import game metadata.';
     updateMetadataSourceActionVisibility();
     return;
   }
@@ -14145,7 +14327,7 @@ function ensureIgdbMetadataUi() {
     btn.type = 'button';
     btn.className = 'metadata-lookup-button igdb-action-button';
     btn.textContent = 'IGDB';
-    btn.title = 'Search IGDB by strategy-guide game title and review game metadata before importing selected fields.';
+    btn.title = 'Find this manual or strategy guide’s game on IGDB and import game metadata.';
     btn.dataset.defaultTitle = btn.title;
     target.appendChild(btn);
     updateMetadataSourceActionVisibility();
@@ -14178,7 +14360,7 @@ function igdbSearchPanelHtml() {
       </label>
       <button type="button" id="igdbRunSearchBtn" class="primary">Search</button>
     </div>
-    <p class="openlibrary-help">IGDB requires a Twitch/IGDB Client ID and Client Secret in Settings &gt; Server &gt; Integrations &gt; IGDB. Guidevault keeps this lookup separate from Open Library book metadata.</p>
+    <p class="openlibrary-help">${state.igdb?.dossierIntent ? '<strong>Dossier wizard · step 2 of 3:</strong> search for the game represented by the selected document.' : 'Search for the game represented by this document and review the returned metadata.'} IGDB requires a Twitch/IGDB Client ID and Client Secret in Settings &gt; Server &gt; Integrations &gt; IGDB.</p>
     <p id="igdbStatus" class="openlibrary-status igdb-status"></p>
     <div id="igdbResults" class="openlibrary-results igdb-results"></div>
   </section>`;
@@ -14195,12 +14377,16 @@ function renderIgdbSearchResults(results = state.igdb.results || []) {
     const systems = igdbListLabel(result.associatedPlatforms || result.platforms);
     const studios = [igdbListLabel(result.developers), igdbListLabel(result.publishers)].filter(Boolean).join(' / ');
     const genres = igdbListLabel(result.genres);
+    const themes = igdbListLabel(result.themes);
+    const rating = Number(result.totalRating || 0) > 0 ? `${Math.round(Number(result.totalRating))} / 100` : '';
     const facts = [
       metadataLookupFactHtml('Systems', systems, 'wide systems'),
       metadataLookupFactHtml('Year', result.gameReleaseYear),
       metadataLookupFactHtml('Developer / Publisher', studios, 'wide'),
       metadataLookupFactHtml('Franchise', result.gameFranchise),
-      metadataLookupFactHtml('Genres', genres, 'wide')
+      metadataLookupFactHtml('Genres', genres, 'wide'),
+      metadataLookupFactHtml('Themes', themes, 'wide'),
+      metadataLookupFactHtml('IGDB Rating', rating)
     ].join('');
     return `<article class="openlibrary-result-card igdb-result-card metadata-lookup-detailed-card">
       <div class="openlibrary-result-cover igdb-result-cover">${result.coverPreviewUrl ? `<img src="${escapeForAttribute(result.coverPreviewUrl)}" alt="" loading="lazy" />` : '<span>No cover</span>'}</div>
@@ -14210,13 +14396,17 @@ function renderIgdbSearchResults(results = state.igdb.results || []) {
         <div class="metadata-lookup-facts">${facts || metadataLookupFactHtml('Systems', 'No systems returned', 'wide muted')}</div>
         <small>${escapeHtml(result.matchBy || 'Game title')} match - ${escapeHtml(result.confidence || 'Unknown')} confidence</small>
       </div>
-      <button type="button" class="ghost igdb-select-result" data-result-index="${index}">Select</button>
+      <button type="button" class="ghost igdb-select-result" data-result-index="${index}">${state.igdb?.dossierIntent ? 'Continue Dossier Wizard' : 'Review Metadata'}</button>
     </article>`;
   }).join('');
 }
 
 function renderIgdbDialog(step = state.igdb.step || 'search') {
   ensureIgdbMetadataUi();
+  if ($('igdbDialogTitle')) $('igdbDialogTitle').textContent = state.igdb?.dossierIntent ? 'Match the Selected Document to a Game' : 'Search IGDB Game Metadata';
+  if ($('igdbDialogDescription')) $('igdbDialogDescription').textContent = state.igdb?.dossierIntent
+    ? 'Wizard step 2 of 3: find the correct IGDB game, then review and create the dossier.'
+    : 'Search IGDB, choose the correct game, and review metadata before importing.';
   const body = $('igdbDialogBody');
   if (!body) return;
   state.igdb.step = step;
@@ -14228,8 +14418,9 @@ function renderIgdbDialog(step = state.igdb.step || 'search') {
   renderIgdbSearchResults(state.igdb.results || []);
 }
 
-async function openIgdbMetadataDialog() {
+async function openIgdbMetadataDialog(options = {}) {
   if (!state.selected) return;
+  state.igdb.dossierIntent = options.dossierIntent === true;
   ensureIgdbMetadataUi();
   resetIndividualMetadataLookupState('igdb', state.selected, true);
   renderIgdbDialog('search');
@@ -14319,6 +14510,19 @@ function igdbComparisonHtml(result = {}) {
   };
   const currentCover = state.selected ? coverUrl(state.selected) : '';
   const rows = IGDB_IMPORT_FIELDS.map(field => igdbComparisonRowHtml(field, current, proposed)).join('');
+  const relatedCount = ['similarGames','expansions','dlcs','standaloneExpansions','remakes','remasters','ports','bundles']
+    .reduce((count, key) => count + (Array.isArray(result[key]) ? result[key].length : 0), 0);
+  const enrichmentFacts = [
+    ['Themes', igdbListLabel(result.themes)],
+    ['Game Modes', igdbListLabel(result.gameModes)],
+    ['Perspectives', igdbListLabel(result.playerPerspectives)],
+    ['Aliases', igdbListLabel(result.alternativeNames)],
+    ['Collections', igdbListLabel(result.collectionNames)],
+    ['Related Entries', relatedCount ? String(relatedCount) : ''],
+    ['Media', (result.screenshots?.length || 0) + (result.artworks?.length || 0) ? `${(result.screenshots?.length || 0) + (result.artworks?.length || 0)} image(s)` : ''],
+    ['Rating', Number(result.totalRating || 0) > 0 ? `${Math.round(Number(result.totalRating))} / 100` : '']
+  ].filter(([, value]) => value);
+  const dossierIntent = state.igdb?.dossierIntent === true;
   return `<section class="openlibrary-compare-panel igdb-compare-panel">
     <button type="button" id="igdbBackToResultsBtn" class="ghost tiny">Back to results</button>
     <div class="openlibrary-cover-compare igdb-cover-compare">
@@ -14329,6 +14533,10 @@ function igdbComparisonHtml(result = {}) {
       <h4>${escapeHtml(result.gameTitle || result.name || 'Selected IGDB result')}</h4>
       <p>${escapeHtml([igdbListLabel(result.developers), igdbListLabel(result.publishers), result.gameReleaseYear, igdbListLabel(result.associatedPlatforms)].filter(Boolean).join(' - ') || 'Review fields before importing.')}</p>
     </div>
+    <div class="igdb-dossier-preview">
+      <div><span>${dossierIntent ? 'DOSSIER WIZARD · STEP 3 OF 3' : 'IGDB ENRICHMENT'}</span><h4>${dossierIntent ? 'Create the Game Dossier' : 'Review Expanded Game Data'}</h4><p>${escapeHtml(result.summary || 'No summary returned. Related metadata can still be reviewed and imported.')}</p>${dossierIntent ? '<button type="button" data-igdb-create-dossier class="primary dossier-create-button">Create Dossier & Open</button>' : ''}</div>
+      <div class="igdb-dossier-facts">${enrichmentFacts.map(([label, value]) => `<div><span>${escapeHtml(label)}</span><strong>${escapeHtml(value)}</strong></div>`).join('')}</div>
+    </div>
     <div class="openlibrary-table-wrap igdb-table-wrap">
       <table class="openlibrary-comparison-table igdb-comparison-table">
         <thead><tr><th>Import</th><th>Field</th><th>Existing Guidevault Value</th><th>IGDB Value</th></tr></thead>
@@ -14337,9 +14545,7 @@ function igdbComparisonHtml(result = {}) {
     </div>
     <p id="igdbStatus" class="openlibrary-status igdb-status"></p>
     <footer class="openlibrary-import-actions igdb-import-actions">
-      <button type="button" id="igdbImportSelectedBtn" class="primary">Import Selected Fields</button>
-      <button type="button" id="igdbImportEmptyBtn" class="ghost">Import Empty Fields Only</button>
-      <button type="button" id="igdbImportAllBtn" class="ghost">Import All Fields</button>
+      ${dossierIntent ? '' : '<button type="button" id="igdbImportSelectedBtn" class="primary">Import Selected Fields</button><button type="button" id="igdbImportEmptyBtn" class="ghost">Import Empty Fields Only</button><button type="button" id="igdbImportAllBtn" class="ghost">Import All Fields</button>'}
       <button type="button" id="igdbCancelBtn" class="ghost">Cancel</button>
     </footer>
   </section>`;
@@ -14461,6 +14667,482 @@ async function importIgdbMetadata(mode = 'selected') {
     console.error('IGDB metadata import failed', err);
     igdbSetStatus(`IGDB metadata import failed: ${err?.message || err}`, 'error');
   }
+}
+
+function normalizeGameDossier(value = {}) {
+  const arrays = ['developers','publishers','genres','themes','gameModes','playerPerspectives','platforms','keywords','alternativeNames','collectionNames','screenshots','artworks','videos','websites','libraryItemIds','collections'];
+  const dossier = { ...value };
+  arrays.forEach(key => { dossier[key] = Array.isArray(dossier[key]) ? dossier[key] : []; });
+  dossier.collections = dossier.collections.map(collection => ({
+    ...collection,
+    itemIds: Array.isArray(collection?.itemIds) ? collection.itemIds : [],
+    values: Array.isArray(collection?.values) ? collection.values : [],
+    games: Array.isArray(collection?.games) ? collection.games : []
+  }));
+  return dossier;
+}
+
+function gameDossiers() {
+  return Array.isArray(state.dossiers?.items) ? state.dossiers.items : [];
+}
+
+function gameDossierById(id = '') {
+  return gameDossiers().find(dossier => String(dossier.id || '').toLowerCase() === String(id || '').toLowerCase()) || null;
+}
+
+function gameDossierForLibraryItem(item = state.selected || {}) {
+  const itemId = String(itemIdOf(item) || '').trim().toLowerCase();
+  if (!itemId) return null;
+  return gameDossiers().find(dossier => (dossier.libraryItemIds || [])
+    .some(candidate => String(candidate || '').trim().toLowerCase() === itemId)) || null;
+}
+
+function setDossiersStatus(message = '', tone = '') {
+  const el = $('dossiersStatus');
+  if (!el) return;
+  el.textContent = message || '';
+  el.dataset.tone = tone || '';
+}
+
+async function loadGameDossiers(force = false) {
+  state.dossiers = state.dossiers || { items: [], selected: null, loaded: false, loading: false };
+  if (state.dossiers.loading || (state.dossiers.loaded && !force)) return gameDossiers();
+  state.dossiers.loading = true;
+  try {
+    const res = await fetch(`/api/dossiers?_=${Date.now()}`, { cache: 'no-store' });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data?.error || `Unable to load game dossiers. HTTP ${res.status}`);
+    state.dossiers.items = (Array.isArray(data?.dossiers) ? data.dossiers : []).map(normalizeGameDossier);
+    state.dossiers.loaded = true;
+    renderDossierSidebar();
+    renderDossierSettings();
+    if (document.body.classList.contains('dossier-page-mode') && state.dossiers.selected?.id) {
+      const refreshed = gameDossierById(state.dossiers.selected.id);
+      if (refreshed) { state.dossiers.selected = refreshed; renderGameDossierPage(refreshed); }
+      else closeGameDossier();
+    }
+    if (state.viewMode === 'dossiers') applyFilters();
+    return state.dossiers.items;
+  } catch (err) {
+    console.debug('GuideVault dossiers could not be loaded.', err);
+    setDossiersStatus(err?.message || 'Unable to load game dossiers.', 'error');
+    return gameDossiers();
+  } finally {
+    state.dossiers.loading = false;
+  }
+}
+
+function renderDossierSidebar() {
+  const dossiers = gameDossiers();
+  if ($('dossiersNav')) $('dossiersNav').classList.toggle('hidden', dossiers.length === 0);
+  if ($('countDossiers')) $('countDossiers').textContent = String(dossiers.length);
+}
+
+function dossierSafeUrl(value = '') {
+  const url = String(value || '').trim();
+  return /^https?:\/\//i.test(url) ? url : '';
+}
+
+function dossierRatingLabel(dossier = {}) {
+  const value = Number(dossier.totalRating ?? dossier.rating);
+  if (!Number.isFinite(value) || value <= 0) return 'Not rated';
+  return `${Math.round(value)} / 100`;
+}
+
+function dossierFactChips(values = [], className = '') {
+  return (Array.isArray(values) ? values : []).filter(Boolean).map(value => `<span class="dossier-chip ${className}">${escapeHtml(value)}</span>`).join('');
+}
+
+function dossierCardMarkup(dossier = {}) {
+  const collectionCount = (dossier.collections || []).filter(collection => (collection.itemIds?.length || collection.games?.length || collection.values?.length)).length;
+  const documentCount = dossier.libraryItemIds?.length || 0;
+  const subtitle = [dossier.gameReleaseYear, dossier.gameFranchise, (dossier.platforms || []).slice(0, 2).join(', ')].filter(Boolean).join(' · ');
+  return `<article class="game-dossier-card" data-open-dossier="${escapeForAttribute(dossier.id)}" tabindex="0" role="button" aria-label="Open ${escapeForAttribute(dossier.gameTitle || 'game')} dossier">
+    <div class="game-dossier-card-cover">${dossier.coverPreviewUrl ? `<img src="${escapeForAttribute(dossier.coverPreviewUrl)}" alt="" loading="lazy" />` : '<span>GV</span>'}</div>
+    <div class="game-dossier-card-main">
+      <div class="game-dossier-kicker">GAME DOSSIER</div>
+      <h3>${escapeHtml(dossier.gameTitle || 'Untitled Game')}</h3>
+      <p>${escapeHtml(subtitle || 'IGDB game record')}</p>
+      <div class="game-dossier-card-chips">${dossierFactChips((dossier.genres || []).slice(0, 3))}</div>
+      <footer><span>${documentCount} GuideVault document${documentCount === 1 ? '' : 's'}</span><span>${collectionCount} collection${collectionCount === 1 ? '' : 's'}</span><span>${escapeHtml(dossierRatingLabel(dossier))}</span></footer>
+    </div>
+    <button class="ghost" type="button" data-open-dossier="${escapeForAttribute(dossier.id)}">Open Dossier</button>
+  </article>`;
+}
+
+function filteredGameDossiers() {
+  const query = String($('search')?.value || '').trim().toLowerCase();
+  if (!query) return gameDossiers();
+  return gameDossiers().filter(dossier => [
+    dossier.gameTitle, dossier.gameFranchise, dossier.summary,
+    ...(dossier.alternativeNames || []), ...(dossier.genres || []), ...(dossier.platforms || []),
+    ...(dossier.developers || []), ...(dossier.publishers || []), ...(dossier.collectionNames || [])
+  ].join(' ').toLowerCase().includes(query));
+}
+
+function renderGameDossiersLibraryView(gridId = 'grid') {
+  const host = $(gridId);
+  if (!host) return;
+  const dossiers = filteredGameDossiers();
+  host.className = 'game-dossiers-grid';
+  host.innerHTML = dossiers.length
+    ? dossiers.map(dossierCardMarkup).join('')
+    : `<div class="empty-message">${gameDossiers().length ? 'No dossiers match this search.' : 'No game dossiers yet. Create one from Settings → Account → Game Dossiers.'}</div>`;
+  renderAlphaRail([]);
+}
+
+function dossierRelatedGameMarkup(game = {}) {
+  const url = dossierSafeUrl(game.sourceUrl);
+  const inner = `<div class="dossier-related-cover">${game.coverPreviewUrl ? `<img src="${escapeForAttribute(game.coverPreviewUrl)}" alt="" loading="lazy" />` : '<span>IGDB</span>'}</div><div><strong>${escapeHtml(game.name || 'Related Game')}</strong><small>${escapeHtml([game.relation, game.gameReleaseYear].filter(Boolean).join(' · '))}</small></div>`;
+  return url
+    ? `<a class="dossier-related-game" href="${escapeForAttribute(url)}" target="_blank" rel="noreferrer">${inner}</a>`
+    : `<div class="dossier-related-game">${inner}</div>`;
+}
+
+function dossierLibraryItemMarkup(item) {
+  const id = itemIdOf(item);
+  return `<button class="dossier-library-item" type="button" data-dossier-item-id="${escapeForAttribute(id)}">
+    <span>${coverUrl(item, { width: 160 }) ? `<img src="${escapeForAttribute(coverUrl(item, { width: 160 }))}" alt="" loading="lazy" />` : 'GV'}</span>
+    <div><strong>${escapeHtml(displayTitle(item))}</strong><small>${escapeHtml([item.kind, preferredPlatformOf(item) || categoryOf(item)].filter(Boolean).join(' · '))}</small></div>
+  </button>`;
+}
+
+function dossierCollectionMarkup(collection = {}) {
+  const documents = (collection.itemIds || []).map(id => (state.items || []).find(item => itemIdOf(item) === String(id))).filter(Boolean);
+  const values = dossierFactChips(collection.values || [], 'series');
+  const games = (collection.games || []).map(dossierRelatedGameMarkup).join('');
+  const body = collection.kind === 'library'
+    ? `<div class="dossier-library-collection">${documents.map(dossierLibraryItemMarkup).join('') || '<p class="sub">No accessible GuideVault documents are currently linked.</p>'}</div>`
+    : `${values ? `<div class="dossier-chipline">${values}</div>` : ''}${games ? `<div class="dossier-related-grid">${games}</div>` : ''}`;
+  return `<section class="dossier-collection-card" data-dossier-collection="${escapeForAttribute(collection.kind || collection.id)}">
+    <header><div><span>${escapeHtml(String(collection.kind || 'collection').toUpperCase())}</span><h3>${escapeHtml(collection.name || 'Collection')}</h3></div><em>${(collection.itemIds?.length || 0) + (collection.games?.length || 0) + (collection.values?.length || 0)}</em></header>
+    <p>${escapeHtml(collection.description || '')}</p>${body}
+  </section>`;
+}
+
+function dossierLinkedDocuments(dossier = {}) {
+  const ids = new Set((dossier.libraryItemIds || []).map(id => String(id || '').toLowerCase()));
+  return (state.items || []).filter(item => ids.has(String(itemIdOf(item) || '').toLowerCase()));
+}
+
+function dossierDocumentRowMarkup(item = {}) {
+  const id = itemIdOf(item);
+  const platform = preferredPlatformOf(item) || categoryOf(item) || '';
+  const secondary = item.kind === 'Magazine'
+    ? [item.magazineTitle || item.series, item.issueNumber ? `Issue ${item.issueNumber}` : '', item.coverDate || item.year].filter(Boolean).join(' · ')
+    : [item.publisher || item.gamePublisher, platform].filter(Boolean).join(' · ');
+  const detail = [platform, itemPageCountLabel(item)].filter(value => value && value !== '\u2014').join(' · ');
+  return `<div class="dossier-dashboard-document-row">
+    <div class="dossier-dashboard-document-cover">${coverUrl(item, { width: 120 }) ? `<img src="${escapeForAttribute(coverUrl(item, { width: 120 }))}" alt="" loading="lazy" />` : '<span>GV</span>'}</div>
+    <div class="dossier-dashboard-document-copy"><strong>${escapeHtml(displayTitle(item))}</strong><span>${escapeHtml(secondary || item.kind || 'GuideVault document')}</span><small>${escapeHtml(detail)}</small></div>
+    <button type="button" class="ghost tiny" data-dossier-item-id="${escapeForAttribute(id)}">Open</button>
+  </div>`;
+}
+
+function dossierDocumentCardMarkup(kind = '', title = '', icon = '', documents = []) {
+  const matching = documents.filter(item => item.kind === kind);
+  const preview = matching.slice(0, 3);
+  return `<section class="dossier-dashboard-card dossier-document-card" data-dossier-document-kind="${escapeForAttribute(kind)}">
+    <header><div><span>${icon}</span><h2>${escapeHtml(title)} <em>(${matching.length})</em></h2></div></header>
+    <div class="dossier-dashboard-list">${preview.length ? preview.map(dossierDocumentRowMarkup).join('') : `<p class="dossier-dashboard-empty">No linked ${escapeHtml(title.toLowerCase())} yet.</p>`}</div>
+    ${matching.length > preview.length ? `<footer>${matching.length - preview.length} more linked document${matching.length - preview.length === 1 ? '' : 's'}</footer>` : ''}
+  </section>`;
+}
+
+function dossierRelatedGames(dossier = {}) {
+  const seen = new Set();
+  return (dossier.collections || []).flatMap(collection => collection.games || []).filter(game => {
+    const key = String(game.id || game.name || '').trim().toLowerCase();
+    if (!key || seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
+function dossierDashboardRelatedRowMarkup(game = {}) {
+  const url = dossierSafeUrl(game.sourceUrl);
+  const inner = `<div class="dossier-dashboard-related-cover">${game.coverPreviewUrl ? `<img src="${escapeForAttribute(game.coverPreviewUrl)}" alt="" loading="lazy" />` : '<span>IGDB</span>'}</div><div><strong>${escapeHtml(game.name || 'Related Game')}</strong><span>${escapeHtml([game.relation, game.gameReleaseYear].filter(Boolean).join(' · ') || 'Related title')}</span></div><i>\u203A</i>`;
+  return url ? `<a class="dossier-dashboard-related-row" href="${escapeForAttribute(url)}" target="_blank" rel="noreferrer">${inner}</a>` : `<div class="dossier-dashboard-related-row">${inner}</div>`;
+}
+
+function dossierDetailHtml(dossier = {}) {
+  const sourceUrl = dossierSafeUrl(dossier.sourceUrl);
+  const media = [...(dossier.artworks || []), ...(dossier.screenshots || [])].slice(0, 12);
+  const sites = (dossier.websites || []).filter(site => dossierSafeUrl(site.url));
+  const videos = (dossier.videos || []).filter(video => dossierSafeUrl(video.url));
+  const documents = dossierLinkedDocuments(dossier);
+  const relatedGames = dossierRelatedGames(dossier);
+  const heroArtwork = (dossier.artworks || [])[0] || (dossier.screenshots || [])[0] || dossier.coverPreviewUrl || '';
+  const heroUsesCover = heroArtwork && heroArtwork === dossier.coverPreviewUrl;
+  const primaryPublisher = (dossier.publishers || [])[0] || '';
+  const primaryGenre = (dossier.genres || [])[0] || '';
+  const primaryDeveloper = (dossier.developers || [])[0] || '';
+  const series = (dossier.collectionNames || [])[0] || dossier.gameFranchise || '';
+  const identifierRows = [
+    ['IGDB ID', dossier.igdbId],
+    ['Dossier Key', dossier.id],
+    ['Created', formatProfileDate(dossier.createdAt)],
+    ['Last Updated', formatProfileDate(dossier.updatedAt)]
+  ].filter(([, value]) => value);
+  const quickFacts = [
+    ['Genre', (dossier.genres || []).join(', ')],
+    ['Themes', (dossier.themes || []).join(', ')],
+    ['Game Modes', (dossier.gameModes || []).join(', ')],
+    ['Perspective', (dossier.playerPerspectives || []).join(', ')],
+    ['IGDB Rating', dossierRatingLabel(dossier)],
+    ['Linked Documents', String(documents.length)]
+  ].filter(([, value]) => value);
+  return `<article class="dossier-page-record">
+    <div class="dossier-dashboard-breadcrumb"><span>Games</span><i>\u203A</i><strong>${escapeHtml(dossier.gameTitle || 'Game Dossier')}</strong></div>
+    <header class="dossier-dashboard-hero ${heroArtwork ? 'has-artwork' : ''}">
+      ${heroArtwork ? `<div class="dossier-dashboard-hero-backdrop" aria-hidden="true"><img src="${escapeForAttribute(heroArtwork)}" alt="" /></div>` : ''}
+      <div class="dossier-dashboard-hero-art ${heroUsesCover ? 'is-cover' : ''}">${heroArtwork ? `<img src="${escapeForAttribute(heroArtwork)}" alt="${escapeForAttribute(dossier.gameTitle || '')} artwork" />` : '<span>GV</span>'}</div>
+      <div class="dossier-dashboard-hero-main">
+        <span class="dossier-page-kicker">GAME DOSSIER</span>
+        <h1 id="dossierPageTitle">${escapeHtml(dossier.gameTitle || 'Game Dossier')}</h1>
+        <div class="dossier-dashboard-pills">
+          ${dossier.firstReleaseDate || dossier.gameReleaseYear ? `<span>\u25A3 ${escapeHtml(dossier.firstReleaseDate || dossier.gameReleaseYear)}</span>` : ''}
+          ${primaryPublisher ? `<span>\u25C9 ${escapeHtml(primaryPublisher)}</span>` : ''}
+          ${Number(dossier.totalRating || dossier.rating || 0) > 0 ? `<span>\u2605 ${escapeHtml(dossierRatingLabel(dossier))}</span>` : ''}
+          ${primaryGenre ? `<span class="accent">\u25C7 ${escapeHtml(primaryGenre)}</span>` : ''}
+        </div>
+        <div class="dossier-dashboard-core-fields">
+          ${[['Developer', primaryDeveloper], ['Publisher', primaryPublisher], ['Franchise', dossier.gameFranchise], ['Series', series], ['First Release', dossier.firstReleaseDate || dossier.gameReleaseYear]].filter(([, value]) => value).map(([label, value]) => `<div><span>${escapeHtml(label)}</span><strong>${escapeHtml(value)}</strong></div>`).join('')}
+        </div>
+        <p class="dossier-page-summary">${escapeHtml(dossier.summary || 'No IGDB summary was returned for this game.')}</p>
+        <div class="dossier-dashboard-actions">${sourceUrl ? `<a class="primary dossier-source-link" href="${escapeForAttribute(sourceUrl)}" target="_blank" rel="noreferrer">View on IGDB \u2197</a>` : ''}${sites.slice(0, 2).map(site => `<a class="ghost" href="${escapeForAttribute(site.url)}" target="_blank" rel="noreferrer">${escapeHtml(site.category || 'Website')} \u2197</a>`).join('')}</div>
+      </div>
+      <aside class="dossier-dashboard-identifiers">
+        <h2>Game Identifiers</h2>
+        ${identifierRows.map(([label, value]) => `<div><span>${escapeHtml(label)}</span><strong>${escapeHtml(value)}</strong></div>`).join('')}
+      </aside>
+    </header>
+    <div class="dossier-dashboard-grid">
+      ${dossierDocumentCardMarkup('Manual', 'Manuals', '\u25A3', documents)}
+      ${dossierDocumentCardMarkup('Strategy Guide', 'Strategy Guides', '\u25A4', documents)}
+      ${dossierDocumentCardMarkup('Magazine', 'Magazine Appearances', '\u25A5', documents)}
+      <section class="dossier-dashboard-card"><header><div><span>\u25A7</span><h2>Platforms <em>(${(dossier.platforms || []).length})</em></h2></div></header><div class="dossier-dashboard-list">${(dossier.platforms || []).map((platform, index) => `<div class="dossier-dashboard-platform-row"><span>${escapeHtml(platform.slice(0, 2).toUpperCase())}</span><strong>${escapeHtml(platform)}</strong><em class="${index === 0 ? 'primary' : ''}">${index === 0 ? 'Primary' : 'Variant'}</em></div>`).join('') || '<p class="dossier-dashboard-empty">No platform data returned.</p>'}</div></section>
+      <section class="dossier-dashboard-card"><header><div><span>\u25C8</span><h2>Related Games <em>(${relatedGames.length})</em></h2></div></header><div class="dossier-dashboard-list">${relatedGames.slice(0, 5).map(dossierDashboardRelatedRowMarkup).join('') || '<p class="dossier-dashboard-empty">No related games returned.</p>'}</div></section>
+      <section class="dossier-dashboard-card dossier-quick-facts-card"><header><div><span>\u25C9</span><h2>Quick Facts</h2></div></header><dl>${quickFacts.map(([label, value]) => `<dt>${escapeHtml(label)}</dt><dd>${escapeHtml(value)}</dd>`).join('')}</dl></section>
+      ${dossier.storyline ? `<section class="dossier-dashboard-card dossier-dashboard-wide dossier-story-card"><header><div><span>\u25CE</span><h2>Storyline</h2></div></header><p>${escapeHtml(dossier.storyline)}</p></section>` : ''}
+      ${(dossier.alternativeNames || []).length || (dossier.keywords || []).length ? `<section class="dossier-dashboard-card ${dossier.storyline ? '' : 'dossier-dashboard-wide'}"><header><div><span>\u25C7</span><h2>Aliases & Keywords</h2></div></header>${(dossier.alternativeNames || []).length ? `<p class="dossier-dashboard-aliases">${escapeHtml((dossier.alternativeNames || []).join(' · '))}</p>` : ''}<div class="dossier-chipline">${dossierFactChips((dossier.keywords || []).slice(0, 24))}</div></section>` : ''}
+      <section class="dossier-dashboard-card dossier-dashboard-full dossier-activity-card"><header><div><span>\u25F7</span><h2>Recent Activity</h2></div></header><div class="dossier-dashboard-activity-list"><div><i>\u25A3</i><span><strong>Dossier created</strong><small>${escapeHtml(formatProfileDate(dossier.createdAt))}</small></span></div><div><i>\u21BB</i><span><strong>IGDB metadata refreshed</strong><small>${escapeHtml(formatProfileDate(dossier.updatedAt))}</small></span></div><div><i>\u25C9</i><span><strong>${documents.length} GuideVault document${documents.length === 1 ? '' : 's'} linked</strong><small>Library collections synchronized</small></span></div>${videos.length ? `<div><i>\u25B6</i><span><strong>${videos.length} video resource${videos.length === 1 ? '' : 's'}</strong><small>Available from IGDB</small></span></div>` : ''}</div></section>
+      ${media.length ? `<section class="dossier-dashboard-card dossier-dashboard-full dossier-media-section"><header><div><span>\u25A8</span><h2>Artwork & Screenshots <em>(${media.length})</em></h2></div></header><div class="dossier-media-grid">${media.map(url => `<a href="${escapeForAttribute(url)}" target="_blank" rel="noreferrer"><img src="${escapeForAttribute(url)}" alt="" loading="lazy" /></a>`).join('')}</div></section>` : ''}
+    </div>
+  </article>`;
+}
+
+function dossierReturnContext() {
+  if (!$('detailView')?.classList.contains('hidden') && state.selected) return { view: 'item', itemId: itemIdOf(state.selected) };
+  if (!$('settingsView')?.classList.contains('hidden')) return { view: 'settings' };
+  return { view: 'dossiers' };
+}
+
+function renderGameDossierPage(dossier = state.dossiers?.selected || {}) {
+  const host = $('dossierDetailPageContent');
+  if (!host || !dossier?.id) return;
+  host.innerHTML = dossierDetailHtml(dossier);
+  if ($('dossierPageToolbarTitle')) $('dossierPageToolbarTitle').textContent = dossier.gameTitle || 'Game Dossier';
+  if ($('dossierPageRefresh')) {
+    $('dossierPageRefresh').classList.toggle('hidden', !currentUserIsAdmin());
+    $('dossierPageRefresh').dataset.dossierId = dossier.id || '';
+  }
+}
+
+function openGameDossier(id = '', options = {}) {
+  const dossier = gameDossierById(id);
+  if (!dossier) return;
+  if (!options.preserveReturnContext) state.dossiers.returnContext = dossierReturnContext();
+  state.dossiers.selected = dossier;
+  cleanupInactiveViewsForNavigation('dossier');
+  clearColorscapeDetailTheme();
+  document.body.classList.remove('settings-sidebar-mode', 'detail-page-mode', 'reader-page-mode', 'profile-page-mode', 'strategy-detail-mode', 'magazine-detail-mode', 'manual-detail-mode');
+  document.body.classList.add('dossier-page-mode');
+  hideAppView('libraryView');
+  hideAppView('settingsView');
+  hideAppView('detailView');
+  hideAppView('profileView');
+  hideAppView('readerView');
+  showAppView('dossierDetailView');
+  renderGameDossierPage(dossier);
+  document.querySelectorAll('.nav').forEach(button => button.classList.toggle('active', button.id === 'dossiersNav'));
+  const main = document.querySelector('.main');
+  if (main) main.scrollTop = 0;
+  const host = $('dossierDetailPageContent');
+  if (host) host.scrollTop = 0;
+}
+
+function closeGameDossier() {
+  const context = state.dossiers?.returnContext || { view: 'dossiers' };
+  if (context.view === 'item') {
+    const item = (state.items || []).find(candidate => itemIdOf(candidate) === String(context.itemId || ''));
+    if (item) { showDetailScreen(item); updateNavActive(); return; }
+  }
+  if (context.view === 'settings') { showSettingsScreen('dossiers'); return; }
+  state.filter = 'All Content';
+  state.categoryFilter = '';
+  state.customFilter = null;
+  state.viewMode = 'dossiers';
+  showLibraryScreen();
+  updateNavActive();
+  applyFilters();
+}
+
+function dossierPickerEligibleItems() {
+  const picker = state.dossiers?.picker || { query: '', kind: '', selectedId: '' };
+  const query = String(picker.query || '').trim().toLowerCase();
+  const terms = query.split(/\s+/).filter(Boolean);
+  const rank = item => {
+    const title = String(displayTitle(item) || '').toLowerCase();
+    const game = String(item.gameTitle || item.platformMatchTitle || item.series || '').toLowerCase();
+    if (!query) return 3;
+    if (title === query || game === query) return 0;
+    if (title.startsWith(query) || game.startsWith(query)) return 1;
+    return 2;
+  };
+  return (state.items || [])
+    .filter(item => item.kind === 'Manual' || item.kind === 'Strategy Guide')
+    .filter(item => !picker.kind || item.kind === picker.kind)
+    .filter(item => {
+      if (!terms.length) return true;
+      const text = [
+        displayTitle(item), item.gameTitle, item.platformMatchTitle, item.series,
+        item.publisher, item.gamePublisher, preferredPlatformOf(item), categoryOf(item),
+        ...(item.tags || [])
+      ].filter(Boolean).join(' ').toLowerCase();
+      return terms.every(term => text.includes(term));
+    })
+    .sort((a, b) => rank(a) - rank(b) || String(displayTitle(a)).localeCompare(String(displayTitle(b)), undefined, { numeric: true, sensitivity: 'base' }));
+}
+
+function renderDossierItemPickerResults() {
+  const host = $('dossierItemPickerResults');
+  if (!host) return;
+  const picker = state.dossiers.picker;
+  const all = dossierPickerEligibleItems();
+  const visible = all.slice(0, 80);
+  host.innerHTML = visible.length ? visible.map(item => {
+    const id = itemIdOf(item);
+    const selected = String(picker.selectedId || '') === String(id || '');
+    const linked = gameDossierForLibraryItem(item);
+    const context = [item.gameTitle || item.platformMatchTitle || item.series, preferredPlatformOf(item) || categoryOf(item), item.publisher || item.gamePublisher].filter(Boolean).join(' · ');
+    return `<button type="button" class="dossier-item-picker-result ${selected ? 'selected' : ''}" data-dossier-picker-item-id="${escapeForAttribute(id)}" aria-pressed="${selected ? 'true' : 'false'}">
+      <span class="dossier-item-picker-cover">${coverUrl(item, { width: 140 }) ? `<img src="${escapeForAttribute(coverUrl(item, { width: 140 }))}" alt="" loading="lazy" />` : 'GV'}</span>
+      <span class="dossier-item-picker-copy"><em>${escapeHtml(item.kind || 'Document')}</em><strong>${escapeHtml(displayTitle(item))}</strong><small>${escapeHtml(context || 'No additional metadata')}</small></span>
+      ${linked ? `<span class="dossier-item-picker-linked">Linked to ${escapeHtml(linked.gameTitle || 'Dossier')}</span>` : '<span class="dossier-item-picker-select">Select</span>'}
+    </button>`;
+  }).join('') : '<div class="dossier-item-picker-empty"><strong>No matching documents</strong><span>Try a broader title, game, platform, publisher, or tag search.</span></div>';
+  if ($('dossierItemPickerContinue')) $('dossierItemPickerContinue').disabled = !picker.selectedId;
+  if ($('dossierItemPickerStatus')) {
+    const suffix = all.length > visible.length ? ` Showing the first ${visible.length}.` : '';
+    $('dossierItemPickerStatus').textContent = picker.selectedId
+      ? 'Document selected. Continue to match it with IGDB.'
+      : `${all.length} matching document${all.length === 1 ? '' : 's'}.${suffix}`;
+  }
+}
+
+function openDossierItemPicker() {
+  state.dossiers.picker = { query: '', kind: '', selectedId: '' };
+  if ($('dossierItemPickerSearch')) $('dossierItemPickerSearch').value = '';
+  if ($('dossierItemPickerKind')) $('dossierItemPickerKind').value = '';
+  renderDossierItemPickerResults();
+  const dialog = $('dossierItemPickerDialog');
+  try { if (dialog && !dialog.open) dialog.showModal(); } catch { dialog?.setAttribute('open', 'open'); }
+  window.setTimeout(() => $('dossierItemPickerSearch')?.focus(), 0);
+}
+
+function closeDossierItemPicker() {
+  const dialog = $('dossierItemPickerDialog');
+  try { dialog?.close(); } catch { dialog?.removeAttribute('open'); }
+}
+
+function continueDossierItemPicker() {
+  const id = state.dossiers?.picker?.selectedId || '';
+  const item = (state.items || []).find(candidate => String(itemIdOf(candidate)) === String(id));
+  if (!item) {
+    if ($('dossierItemPickerStatus')) $('dossierItemPickerStatus').textContent = 'The selected document is no longer available. Choose another item.';
+    return;
+  }
+  state.selected = applyClientMetadataOverride(item);
+  closeDossierItemPicker();
+  window.setTimeout(() => openIgdbMetadataDialog({ dossierIntent: true }), 0);
+}
+
+function renderDossierSettings() {
+  const host = $('dossierSettingsList');
+  if (!host) return;
+  const isAdmin = currentUserIsAdmin();
+  host.innerHTML = gameDossiers().length ? gameDossiers().map(dossier => `<article class="settings-card dossier-settings-row" data-dossier-id="${escapeForAttribute(dossier.id)}">
+    <div class="dossier-settings-cover">${dossier.coverPreviewUrl ? `<img src="${escapeForAttribute(dossier.coverPreviewUrl)}" alt="" loading="lazy" />` : '<span>GV</span>'}</div>
+    <div><div class="settings-card-kicker">IGDB ${escapeHtml(dossier.igdbId)}</div><h3>${escapeHtml(dossier.gameTitle || 'Game Dossier')}</h3><p class="sub">${dossier.libraryItemIds.length} linked document${dossier.libraryItemIds.length === 1 ? '' : 's'} · ${dossier.collections.length} collection${dossier.collections.length === 1 ? '' : 's'} · Updated ${escapeHtml(formatProfileDate(dossier.updatedAt))}</p></div>
+    <div class="settings-actions inline-actions"><button class="ghost" type="button" data-dossier-action="open">Open</button>${isAdmin ? '<button class="ghost" type="button" data-dossier-action="refresh">Refresh Matches</button><button class="danger" type="button" data-dossier-action="delete">Delete</button>' : ''}</div>
+  </article>`).join('') : '<article class="settings-card dossier-settings-empty"><h3>No dossiers yet</h3><p class="sub">Select Choose a Manual or Guide above to start the searchable creation wizard.</p></article>';
+}
+
+async function createOrUpdateIgdbDossier() {
+  const result = state.igdb?.resolvedResult;
+  const itemId = itemIdOf(state.selected || {});
+  if (!result?.id || !itemId) { igdbSetStatus('Resolve an IGDB game for a selected GuideVault item first.', 'error'); return; }
+  const button = document.querySelector('[data-igdb-create-dossier]');
+  if (button) button.disabled = true;
+  igdbSetStatus('Building game dossier and collections...', 'info');
+  try {
+    const res = await fetch('/api/dossiers', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ itemId, game: result }) });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data?.error || `Dossier creation failed. HTTP ${res.status}`);
+    state.dossiers.items = (Array.isArray(data?.dossiers) ? data.dossiers : [data?.dossier].filter(Boolean)).map(normalizeGameDossier);
+    state.dossiers.loaded = true;
+    renderDossierSidebar();
+    renderDossierSettings();
+    const savedDossier = normalizeGameDossier(data?.dossier || {});
+    const linkedCount = savedDossier.libraryItemIds?.length || 0;
+    setStatus(`Game dossier saved with ${linkedCount} linked GuideVault document(s).`);
+    if (button) button.textContent = 'Dossier Saved';
+    closeIgdbDialog();
+    if (savedDossier.id) openGameDossier(savedDossier.id);
+  } catch (err) {
+    igdbSetStatus(err?.message || 'Unable to create the game dossier.', 'error');
+  } finally {
+    if (button) button.disabled = false;
+  }
+}
+
+async function refreshGameDossier(id = '') {
+  setDossiersStatus('Refreshing linked GuideVault documents...', 'info');
+  try {
+    const res = await fetch(`/api/dossiers/${encodeURIComponent(id)}/refresh-library`, { method: 'POST' });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data?.error || `Refresh failed. HTTP ${res.status}`);
+    state.dossiers.items = (Array.isArray(data?.dossiers) ? data.dossiers : []).map(normalizeGameDossier);
+    renderDossierSidebar(); renderDossierSettings();
+    const refreshed = gameDossierById(id);
+    if (refreshed && document.body.classList.contains('dossier-page-mode')) {
+      state.dossiers.selected = refreshed;
+      renderGameDossierPage(refreshed);
+    }
+    if (state.viewMode === 'dossiers') applyFilters();
+    setDossiersStatus('Dossier document matches refreshed.', 'success');
+  } catch (err) { setDossiersStatus(err?.message || 'Unable to refresh dossier matches.', 'error'); }
+}
+
+async function deleteGameDossier(id = '') {
+  const dossier = gameDossierById(id);
+  if (!dossier) return;
+  const confirmed = typeof showAppConfirm === 'function'
+    ? await showAppConfirm({ title: 'Delete game dossier?', message: `Delete the ${dossier.gameTitle} dossier? GuideVault library documents are not deleted.`, okText: 'Delete dossier', cancelText: 'Cancel', danger: true })
+    : window.confirm(`Delete the ${dossier.gameTitle} dossier?`);
+  if (!confirmed) return;
+  try {
+    const res = await fetch(`/api/dossiers/${encodeURIComponent(id)}`, { method: 'DELETE' });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data?.error || `Delete failed. HTTP ${res.status}`);
+    state.dossiers.items = (Array.isArray(data?.dossiers) ? data.dossiers : []).map(normalizeGameDossier);
+    renderDossierSidebar(); renderDossierSettings();
+    const deletedWasOpen = document.body.classList.contains('dossier-page-mode') && String(state.dossiers.selected?.id || '') === String(id || '');
+    if (deletedWasOpen) { state.dossiers.selected = null; closeGameDossier(); }
+    if (state.viewMode === 'dossiers') applyFilters();
+    setDossiersStatus('Game dossier deleted. Library documents were not removed.', 'success');
+  } catch (err) { setDossiersStatus(err?.message || 'Unable to delete the dossier.', 'error'); }
 }
 
 function updateMetadataFileMaintenance() {
@@ -18567,7 +19249,7 @@ function cleanupReaderResources(options = {}) {
     scheduleHomeAssistantStatusPublish('reader_closed', 'Guidevault reader closed.');
   }
 }
-const GUIDEVAULT_APP_VIEW_IDS = ['libraryView', 'settingsView', 'detailView', 'readerView', 'profileView'];
+const GUIDEVAULT_APP_VIEW_IDS = ['libraryView', 'settingsView', 'detailView', 'dossierDetailView', 'readerView', 'profileView'];
 function resetAppViewInlineState() {
   GUIDEVAULT_APP_VIEW_IDS.forEach(id => {
     const el = $(id);
@@ -18600,6 +19282,10 @@ function hideAppView(id) {
 
 function cleanupInactiveViewsForNavigation(nextView = '') {
   if (nextView !== 'reader' && (state.reader?.pages?.length || state.reader?.item)) cleanupReaderResources();
+  if (nextView !== 'dossier') {
+    document.body.classList.remove('dossier-page-mode');
+    hideAppView('dossierDetailView');
+  }
   metadataManagerHandlePreviewPointerEnd?.();
   resetAppViewInlineState();
   if (coverPrimeObserver && document.querySelectorAll('img[data-cover-src]').length > 900) {
@@ -18633,8 +19319,9 @@ async function openReader(item) {
   document.body.classList.remove('detail-page-mode', 'settings-sidebar-mode', 'profile-page-mode', 'strategy-detail-mode', 'magazine-detail-mode', 'manual-detail-mode');
   document.body.classList.add('reader-page-mode');
   state.reader.item = liveItem; state.reader.pages = pages; state.reader.index = 0;
-  await syncReadingProfilesFromServer({ migrateLocal: false, preferRemote: true });
-  const serverResolvedProfile = await fetchResolvedReadingProfileForItem(liveItem);
+  if (currentUserIsAdmin()) await syncReadingProfilesFromServer({ migrateLocal: false, preferRemote: true });
+  else loadReadingProfiles();
+  const serverResolvedProfile = currentUserIsAdmin() ? await fetchResolvedReadingProfileForItem(liveItem) : null;
   if (!applyResolvedReadingProfileToReader(serverResolvedProfile, liveItem)) {
     applyReadingProfileToReader(liveItem);
     console.info('GuideVault browser reading profile applied', { itemId: itemIdOf(liveItem), profileId: state.reader.appliedProfileId, source: state.reader.appliedProfileSource, key: state.reader.appliedProfileKey, displayMode: state.reader.displayMode, transitionMode: state.reader.transitionMode, background: state.reader.background, brightness: state.reader.backgroundBrightness, zoom: state.reader.zoom });
@@ -18853,7 +19540,11 @@ function updateReaderFullscreenUi() {
 
 function loadReaderBookmarks() {
   try {
-    const parsed = JSON.parse(localStorage.getItem(READER_BOOKMARKS_KEY) || '{}');
+    const storageKey = guidevaultUserStorageKey(READER_BOOKMARKS_KEY);
+    const stored = localStorage.getItem(storageKey)
+      || (currentUserIsAdmin() ? localStorage.getItem(READER_BOOKMARKS_KEY) : '')
+      || '{}';
+    const parsed = JSON.parse(stored);
     return parsed && typeof parsed === 'object' ? parsed : {};
   } catch {
     return {};
@@ -18861,7 +19552,7 @@ function loadReaderBookmarks() {
 }
 
 function saveReaderBookmarks(bookmarks) {
-  try { localStorage.setItem(READER_BOOKMARKS_KEY, JSON.stringify(bookmarks || {})); } catch {}
+  try { localStorage.setItem(guidevaultUserStorageKey(READER_BOOKMARKS_KEY), JSON.stringify(bookmarks || {})); } catch {}
 }
 
 function readerBookmarkKey() {
@@ -22026,12 +22717,18 @@ function updateSettingsInsights() {
 }
 
 const GUIDEVAULT_SETTINGS_GROUPS = {
-  account: ['account', 'preferences', 'keybinds', 'reading-profiles', 'customize', 'devices'],
+  account: ['account', 'preferences', 'keybinds', 'reading-profiles', 'dossiers', 'customize', 'devices'],
   insights: ['insights', 'insights-devices', 'statistics'],
   'file-management': ['files-organize', 'files-writeback', 'files-convert', 'metadata-manager', 'launchbox-match-review'],
   server: ['server', 'integrations', 'opds', 'media', 'email', 'users', 'tasks'],
   info: ['info', 'events']
 };
+
+const GUIDEVAULT_ADMIN_SETTINGS_TABS = new Set([
+  'customize', 'opds', 'devices', 'insights-devices', 'server', 'files-organize', 'files-writeback',
+  'files-convert', 'integrations', 'metadata-manager', 'launchbox-match-review', 'media', 'email',
+  'users', 'tasks', 'info', 'events'
+]);
 
 function settingsGroupForTab(tab = 'account') {
   let normalized = tab === 'insights' ? 'statistics' : tab;
@@ -22167,8 +22864,9 @@ function activateSettingsTab(tab = 'account') {
   if (tab === 'insights') tab = 'statistics';
   if (tab === 'email-history') tab = 'email';
   if (tab === 'files') tab = 'files-organize';
+  if (!currentUserIsAdmin() && GUIDEVAULT_ADMIN_SETTINGS_TABS.has(tab)) tab = 'account';
   const serverFilesTabs = new Set(['files-organize', 'files-writeback', 'files-convert']);
-  const allowed = new Set(['account', 'preferences', 'keybinds', 'reading-profiles', 'customize', 'opds', 'devices', 'insights-devices', 'statistics', 'server', 'files-organize', 'files-writeback', 'files-convert', 'integrations', 'metadata-manager', 'launchbox-match-review', 'media', 'email', 'users', 'tasks', 'info', 'events']);
+  const allowed = new Set(['account', 'preferences', 'keybinds', 'reading-profiles', 'dossiers', 'customize', 'opds', 'devices', 'insights-devices', 'statistics', 'server', 'files-organize', 'files-writeback', 'files-convert', 'integrations', 'metadata-manager', 'launchbox-match-review', 'media', 'email', 'users', 'tasks', 'info', 'events']);
   const active = allowed.has(tab) ? tab : 'account';
   state.settingsActiveTab = active;
   const activeGroup = settingsGroupForTab(active);
@@ -22194,6 +22892,7 @@ function activateSettingsTab(tab = 'account') {
   if ($('settingsInsightDevicesPanel')) $('settingsInsightDevicesPanel').classList.toggle('hidden', active !== 'insights-devices');
   if ($('settingsStatisticsPanel')) $('settingsStatisticsPanel').classList.toggle('hidden', active !== 'statistics');
   if ($('settingsReadingProfilesPanel')) $('settingsReadingProfilesPanel').classList.toggle('hidden', active !== 'reading-profiles');
+  if ($('settingsDossiersPanel')) $('settingsDossiersPanel').classList.toggle('hidden', active !== 'dossiers');
   if ($('settingsCustomizePanel')) $('settingsCustomizePanel').classList.toggle('hidden', active !== 'customize');
   if ($('settingsOpdsPanel')) $('settingsOpdsPanel').classList.toggle('hidden', active !== 'opds');
   if ($('settingsDevicesPanel')) $('settingsDevicesPanel').classList.toggle('hidden', active !== 'devices');
@@ -22224,6 +22923,7 @@ function activateSettingsTab(tab = 'account') {
   if (active === 'info') { trimSystemUpdateHistory(); loadSystemInfo(false); loadSystemPerformance(); checkStableUpdates(false); }
   if (active === 'events') { loadServerSettings(false); loadSystemEvents(false); }
   if (active === 'reading-profiles') renderReadingProfileSettings();
+  if (active === 'dossiers') { renderDossierSettings(); loadGameDossiers(false); }
   if (active === 'opds') { renderOpdsSettings(); syncOpdsSettingsFromServer(false); }
   if (active === 'devices' || active === 'insights-devices') { renderDeviceHistory(); sendDeviceHeartbeat({ refresh: true }); loadDeviceHistory(false); }
   if (active === 'metadata-manager') renderMetadataManager();
@@ -22851,8 +23551,8 @@ document.addEventListener('click', e => {
   const igdb = e.target.closest?.('#igdbSearchBtn');
   if (igdb) {
     e.preventDefault();
-    if (!metadataSourceLookupAllowedForSelectedItem('igdb')) { setStatus(metadataSourceLookupUnavailableMessage('IGDB game metadata lookup')); return; }
-    openIgdbMetadataDialog();
+    if (!metadataSourceLookupAllowedForSelectedItem('igdb')) { setStatus(metadataSourceLookupUnavailableMessage('IGDB game metadata lookup', 'igdb')); return; }
+    openIgdbMetadataDialog({ dossierIntent: false });
     return;
   }
   const close = e.target.closest?.('#igdbCloseBtn, #igdbCancelBtn');
@@ -22863,12 +23563,71 @@ document.addEventListener('click', e => {
   if (select) { e.preventDefault(); selectIgdbSearchResult(select.dataset.resultIndex || '0'); return; }
   const back = e.target.closest?.('#igdbBackToResultsBtn');
   if (back) { e.preventDefault(); renderIgdbDialog('search'); return; }
+  const dossier = e.target.closest?.('[data-igdb-create-dossier]');
+  if (dossier) { e.preventDefault(); createOrUpdateIgdbDossier(); return; }
   const selected = e.target.closest?.('#igdbImportSelectedBtn');
   if (selected) { e.preventDefault(); importIgdbMetadata('selected'); return; }
   const empty = e.target.closest?.('#igdbImportEmptyBtn');
   if (empty) { e.preventDefault(); importIgdbMetadata('empty'); return; }
   const all = e.target.closest?.('#igdbImportAllBtn');
   if (all) { e.preventDefault(); importIgdbMetadata('all'); }
+});
+if ($('dossiersRefresh')) $('dossiersRefresh').addEventListener('click', e => { e.preventDefault(); loadGameDossiers(true); });
+if ($('dossierPageBack')) $('dossierPageBack').addEventListener('click', e => { e.preventDefault(); closeGameDossier(); });
+if ($('dossierPageRefresh')) $('dossierPageRefresh').addEventListener('click', e => {
+  e.preventDefault();
+  const id = e.currentTarget.dataset.dossierId || state.dossiers?.selected?.id || '';
+  if (id) refreshGameDossier(id);
+});
+if ($('dossiersChooseItem')) $('dossiersChooseItem').addEventListener('click', e => { e.preventDefault(); openDossierItemPicker(); });
+if ($('dossierItemPickerSearch')) $('dossierItemPickerSearch').addEventListener('input', e => {
+  state.dossiers.picker.query = e.currentTarget.value || '';
+  state.dossiers.picker.selectedId = '';
+  renderDossierItemPickerResults();
+});
+if ($('dossierItemPickerKind')) $('dossierItemPickerKind').addEventListener('change', e => {
+  state.dossiers.picker.kind = e.currentTarget.value || '';
+  state.dossiers.picker.selectedId = '';
+  renderDossierItemPickerResults();
+});
+if ($('dossierItemPickerContinue')) $('dossierItemPickerContinue').addEventListener('click', e => { e.preventDefault(); continueDossierItemPicker(); });
+if ($('dossierItemPickerClose')) $('dossierItemPickerClose').addEventListener('click', e => { e.preventDefault(); closeDossierItemPicker(); });
+if ($('dossierItemPickerCancel')) $('dossierItemPickerCancel').addEventListener('click', e => { e.preventDefault(); closeDossierItemPicker(); });
+if ($('dossierItemPickerResults')) $('dossierItemPickerResults').addEventListener('click', e => {
+  const result = e.target.closest?.('[data-dossier-picker-item-id]');
+  if (!result) return;
+  e.preventDefault();
+  state.dossiers.picker.selectedId = result.dataset.dossierPickerItemId || '';
+  renderDossierItemPickerResults();
+});
+document.addEventListener('click', e => {
+  const close = e.target.closest?.('#dossierDialogClose');
+  if (close) { e.preventDefault(); closeGameDossier(); return; }
+  const libraryItem = e.target.closest?.('[data-dossier-item-id]');
+  if (libraryItem) {
+    e.preventDefault();
+    const item = (state.items || []).find(candidate => itemIdOf(candidate) === String(libraryItem.dataset.dossierItemId || ''));
+    if (item) showDetailScreen(item);
+    return;
+  }
+  const settingsAction = e.target.closest?.('[data-dossier-action]');
+  if (settingsAction) {
+    e.preventDefault();
+    const id = settingsAction.closest?.('[data-dossier-id]')?.dataset.dossierId || '';
+    if (settingsAction.dataset.dossierAction === 'open') openGameDossier(id);
+    if (settingsAction.dataset.dossierAction === 'refresh') refreshGameDossier(id);
+    if (settingsAction.dataset.dossierAction === 'delete') deleteGameDossier(id);
+    return;
+  }
+  const trigger = e.target.closest?.('[data-open-dossier]');
+  if (trigger) { e.preventDefault(); openGameDossier(trigger.dataset.openDossier || ''); }
+});
+document.addEventListener('keydown', e => {
+  if (!['Enter', ' '].includes(e.key)) return;
+  const trigger = e.target.closest?.('.game-dossier-card[data-open-dossier]');
+  if (!trigger) return;
+  e.preventDefault();
+  openGameDossier(trigger.dataset.openDossier || '');
 });
 if ($('saveNotesBtn')) $('saveNotesBtn').addEventListener('click', async e => { e.preventDefault(); await saveSelectedMetadata({ notes: $('notesText').value }, { tab: 'notes', button: e.currentTarget }); });
 if ($('refreshDetailLaunchBoxLinks')) $('refreshDetailLaunchBoxLinks').addEventListener('click', e => { e.preventDefault(); if (state.selected) loadDetailLaunchBoxLinks(state.selected); });
@@ -22967,13 +23726,6 @@ if ($('customSideNavAdd')) $('customSideNavAdd').addEventListener('click', e => 
 if ($('customSideNavReset')) $('customSideNavReset').addEventListener('click', e => { e.preventDefault(); resetCustomSideNavItems(); });
 if ($('customSideNavList')) $('customSideNavList').addEventListener('click', handleCustomSideNavListAction);
 if ($('customSideNavItems')) $('customSideNavItems').addEventListener('click', e => {
-  const collectionBtn = e.target.closest?.('[data-collection-nav-id]');
-  if (collectionBtn) {
-    e.preventDefault();
-    e.stopPropagation();
-    openUserCollection(collectionBtn.dataset.collectionNavId || '');
-    return;
-  }
   const btn = e.target.closest?.('[data-custom-nav-id]');
   if (!btn) return;
   e.preventDefault();
@@ -24213,14 +24965,7 @@ if ($('settingsSaveLibraryPath')) $('settingsSaveLibraryPath').addEventListener(
 setupRightPanelResize();
 setupLibraryFolderBrowse();
 syncRightToggleLabels();
-loadReaderBackgrounds();
-pollTasks(false);
 installLibraryCardDelegates();
 installGlobalDetailDelegate();
 syncEmailTemplatePreview();
 initializeGuidevaultAuthAndApp();
-loadServerSettings(false).then(() => {
-  startHomeAssistantCommandPolling();
-  scheduleHomeAssistantStatusPublish('client_connected', 'Guidevault browser client connected.');
-}).catch(() => startHomeAssistantCommandPolling());
-

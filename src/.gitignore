@@ -1,0 +1,13 @@
+**/bin/
+**/obj/
+**/data/
+**/.vs/
+**/.vscode/
+*.user
+*.suo
+*.pdb
+*.tmp
+*.bak
+_releases/
+_backup/
+
