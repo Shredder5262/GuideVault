@@ -6,7 +6,7 @@
   <title>Guidevault</title>
   <link rel="icon" type="image/x-icon" href="/assets/favicon.ico?v=0.9.228" />
   <link rel="shortcut icon" type="image/x-icon" href="/assets/favicon.ico?v=0.9.228" />
-  <link rel="stylesheet" href="/styles.css?v=1.2.9" />
+  <link rel="stylesheet" href="/styles.css?v=1.2.10" />
 </head>
 <body class="right-collapsed auth-locked">
   <section id="loginView" class="login-view" aria-labelledby="loginTitle">
@@ -581,6 +581,16 @@
                       </div>
                       <label class="gv-toggle" for="preferenceColorscapeMagazineMenus">
                         <input id="preferenceColorscapeMagazineMenus" type="checkbox" />
+                        <span class="gv-toggle-track"><span class="gv-toggle-thumb"></span></span>
+                      </label>
+                    </div>
+                    <div class="preference-toggle-row preference-toggle-row-child">
+                      <div>
+                        <h3>Game Dossiers</h3>
+                        <p class="sub">Tint dossier tiles and dashboard containers from the game cover.</p>
+                      </div>
+                      <label class="gv-toggle" for="preferenceColorscapeDossiers">
+                        <input id="preferenceColorscapeDossiers" type="checkbox" />
                         <span class="gv-toggle-track"><span class="gv-toggle-thumb"></span></span>
                       </label>
                     </div>
@@ -1440,13 +1450,14 @@
                   <span>Content Type</span>
                   <details id="serverFilesKindDropdown" class="metadata-manager-kind-dropdown server-files-kind-dropdown">
                     <summary class="metadata-manager-kind-summary" role="button" aria-label="Choose one or more file content types">
-                      <span id="serverFilesKindSummary">Manuals, Strategy Guides, Magazines</span>
+                      <span id="serverFilesKindSummary">All Content Types</span>
                       <b aria-hidden="true">&#x25BE;</b>
                     </summary>
                     <div class="metadata-manager-kind-checks server-files-kind-checks">
-                      <label><input type="checkbox" data-server-files-kind="Manual" checked /> Manuals</label>
-                      <label><input type="checkbox" data-server-files-kind="Strategy Guide" checked /> Strategy Guides</label>
-                      <label><input type="checkbox" data-server-files-kind="Magazine" checked /> Magazines</label>
+                      <p>Leave every type unchecked to search everything.</p>
+                      <label><input type="checkbox" data-server-files-kind="Manual" /> Manuals</label>
+                      <label><input type="checkbox" data-server-files-kind="Strategy Guide" /> Strategy Guides</label>
+                      <label><input type="checkbox" data-server-files-kind="Magazine" /> Magazines</label>
                     </div>
                   </details>
                 </div>
@@ -1487,11 +1498,11 @@
               <article class="settings-card server-files-card organize-files-card" data-server-files-action-card="organize">
                 <div class="file-metadata-card-heading">
                   <h3>Organize Files</h3>
-                  <p class="sub">Preview bulk rename and move paths from metadata. Files stay inside their current library root.</p>
+                  <p class="sub">Build one naming rule at a time, then review every proposed path before anything moves.</p>
                 </div>
-                <div class="server-files-section-label"><span>Rename / Move Templates</span><em>Choose a content type, edit its template, then save only that one template.</em></div>
+                <div class="server-files-section-label"><span>Naming Rule</span><em id="serverFilesRuleScopeSummary">Editing the rule used for selected manuals.</em></div>
                 <div class="server-files-template-preset-row" aria-label="Saved file organization templates">
-                  <label for="serverFilesTemplateKindSelect">Template Type
+                  <label for="serverFilesTemplateKindSelect">Content Type
                     <select id="serverFilesTemplateKindSelect">
                       <option value="manual">Manuals</option>
                       <option value="strategyGuide">Strategy Guides</option>
@@ -1505,30 +1516,32 @@
                     <input id="serverFilesTemplatePresetName" type="text" placeholder="My manual layout" />
                   </label>
                   <div class="settings-actions inline-actions server-files-template-preset-actions">
-                    <button id="serverFilesSaveTemplatePreset" class="primary" type="button">Save Selected Type</button>
-                    <button id="serverFilesDeleteTemplatePreset" class="ghost" type="button">Delete Selected</button>
+                    <button id="serverFilesSaveTemplatePreset" class="primary" type="button">Save as New</button>
+                    <button id="serverFilesUpdateTemplatePreset" class="ghost" type="button">Update Saved</button>
+                    <button id="serverFilesDeleteTemplatePreset" class="ghost" type="button">Delete Custom</button>
                   </div>
                 </div>
                 <div class="server-files-template-grid">
-                  <label for="serverFilesManualTemplate">Manual template
-                    <input id="serverFilesManualTemplate" class="server-files-template-input" spellcheck="false" value="Manuals/{Platform}/{GameTitle}/{Title} - Manual{Extension}" />
+                  <label class="server-files-template-editor" data-server-files-template-editor-kind="manual" for="serverFilesManualTemplate">Pattern for Manuals
+                    <input id="serverFilesManualTemplate" class="server-files-template-input" spellcheck="false" value="Manuals/{Platform}/{GameTitle}/{Title} - Manual" />
                   </label>
-                  <label for="serverFilesStrategyTemplate">Strategy guide template
-                    <input id="serverFilesStrategyTemplate" class="server-files-template-input" spellcheck="false" value="Strategy Guides/{Platform}/{GameTitle}/{Title}{Extension}" />
+                  <label class="server-files-template-editor hidden" data-server-files-template-editor-kind="strategyGuide" for="serverFilesStrategyTemplate">Pattern for Strategy Guides
+                    <input id="serverFilesStrategyTemplate" class="server-files-template-input" spellcheck="false" value="Strategy Guides/{Platform}/{GameTitle}/{Title}" />
                   </label>
-                  <label for="serverFilesMagazineTemplate">Magazine template
-                    <input id="serverFilesMagazineTemplate" class="server-files-template-input" spellcheck="false" value="Magazines/{MagazineSeries}/{Year}/{MagazineSeries} - {IssuePart}{Extension}" />
+                  <label class="server-files-template-editor hidden" data-server-files-template-editor-kind="magazine" for="serverFilesMagazineTemplate">Pattern for Magazines
+                    <input id="serverFilesMagazineTemplate" class="server-files-template-input" spellcheck="false" value="Magazines/{MagazineSeries}/{Year}/{MagazineSeries} - {IssuePart}" />
                   </label>
+                  <div id="serverFilesTemplateBreakdown" class="server-files-template-breakdown" aria-live="polite"></div>
                 </div>
                 <details class="server-files-token-builder server-files-token-dropdown" aria-label="File name template builder">
                   <summary class="server-files-token-summary">
                     <span>
-                      <strong>Template Builder</strong>
-                      <em>Open field buttons for Common, Manuals, Strategy Guides, and Magazines.</em>
+                      <strong>Add Metadata Fields</strong>
+                      <em>Only fields relevant to the active content type are shown.</em>
                     </span>
                     <b aria-hidden="true">&#x25BE;</b>
                   </summary>
-                  <div class="server-files-token-help">Click into a template field first, then insert tokens from the grouped buttons. Volume is the raw magazine volume field. Number currently maps to the issue/number field. Use Volume Part, Issue Part, Number Part, or Edition Part when you only want text to appear if that metadata exists.</div>
+                  <div class="server-files-token-help">Choose a field to insert it into the active pattern. Folder separators create subfolders. GuideVault preserves the original file extension automatically.</div>
                   <div class="server-files-token-groups">
                     <section class="server-files-token-group" aria-label="Common template fields">
                       <h4>Common</h4>
@@ -1545,19 +1558,18 @@
                         <button type="button" data-server-files-token="{PublicationDate}" title="Insert {PublicationDate}">Publication Date</button>
                         <button type="button" data-server-files-token="{Region}" title="Insert {Region}">Region</button>
                         <button type="button" data-server-files-token="{Language}" title="Insert {Language}">Language</button>
-                        <button type="button" data-server-files-token="{Extension}" title="Insert {Extension}">File Extension</button>
                         <button type="button" data-server-files-token="/" title="Insert folder separator">Folder /</button>
                         <button type="button" data-server-files-token=" - " title="Insert separator">Separator -</button>
                       </div>
                     </section>
-                    <section class="server-files-token-group" aria-label="Manual template fields">
+                    <section class="server-files-token-group" data-server-files-token-kind="manual" aria-label="Manual template fields">
                       <h4>Manuals</h4>
                       <div class="server-files-token-bank">
                         <button type="button" data-server-files-token="{ManualTitle}" title="Insert {ManualTitle}">Manual Title</button>
                         <button type="button" data-server-files-token="{ManualType}" title="Insert {ManualType}">Manual Type</button>
                       </div>
                     </section>
-                    <section class="server-files-token-group" aria-label="Strategy guide template fields">
+                    <section class="server-files-token-group hidden" data-server-files-token-kind="strategyGuide" aria-label="Strategy guide template fields">
                       <h4>Strategy Guides</h4>
                       <div class="server-files-token-bank">
                         <button type="button" data-server-files-token="{StrategyGuideTitle}" title="Insert {StrategyGuideTitle}">Strategy Guide Title</button>
@@ -1572,7 +1584,7 @@
                         <button type="button" data-server-files-token="{ASIN}" title="Insert {ASIN}">ASIN</button>
                       </div>
                     </section>
-                    <section class="server-files-token-group" aria-label="Magazine template fields">
+                    <section class="server-files-token-group hidden" data-server-files-token-kind="magazine" aria-label="Magazine template fields">
                       <h4>Magazines</h4>
                       <div class="server-files-token-bank">
                         <button type="button" data-server-files-token="{MagazineSeries}" title="Insert {MagazineSeries}">Magazine Series</button>
@@ -1588,12 +1600,13 @@
                     </section>
                   </div>
                 </details>
-                <p class="field-help">The preview below shows the exact current file name/path and proposed file name/path before anything is applied.</p>
+                <p class="field-help">Build the plan after selecting files. Apply remains locked until the current selection and naming rules have a fresh, conflict-checked preview.</p>
                 <div class="settings-actions inline-actions server-files-actions">
-                  <button id="serverFilesPreviewSelected" class="primary" type="button">Preview Selected</button>
-                  <button id="serverFilesApplyPreview" class="danger" type="button" disabled>Apply Previewed Moves</button>
+                  <button id="serverFilesPreviewSelected" class="primary" type="button">Build Rename Plan</button>
+                  <button id="serverFilesApplyPreview" class="danger" type="button" disabled>Apply Ready Changes</button>
                 </div>
                 <p id="serverFilesOrganizeStatus" class="sub account-status" aria-live="polite"></p>
+                <div id="serverFilesPreviewSummary" class="server-files-plan-metrics" aria-live="polite"></div>
                 <div id="serverFilesPreviewTable" class="server-files-preview-table"></div>
               </article>
 
@@ -1708,6 +1721,22 @@
                 <div class="server-settings-grid server-metadata-source-grid integrations-credential-grid">
                   <label for="igdbClientId">IGDB Client ID<input id="igdbClientId" type="text" autocomplete="off" placeholder="Twitch Developer Client ID" /></label>
                   <label for="igdbClientSecret">IGDB Client Secret<input id="igdbClientSecret" type="password" autocomplete="new-password" placeholder="Twitch Developer Client Secret" /></label>
+                  <label for="igdbPreferredRegion">Preferred Cover Locale
+                    <select id="igdbPreferredRegion">
+                      <option value="north-america">North America</option>
+                      <option value="europe">Europe</option>
+                      <option value="japan">Japan</option>
+                      <option value="worldwide">Worldwide</option>
+                      <option value="australia">Australia</option>
+                      <option value="new-zealand">New Zealand</option>
+                      <option value="china">China</option>
+                      <option value="asia">Asia</option>
+                      <option value="korea">South Korea</option>
+                      <option value="brazil">Brazil</option>
+                      <option value="automatic">IGDB Default</option>
+                    </select>
+                    <span class="field-help">Prioritizes this region in dossier covers. If IGDB has no separate regional image, its default cover is treated as the selected locale.</span>
+                  </label>
                 </div>
                 <div class="settings-actions inline-actions integrations-actions">
                   <button id="integrationsSaveSettings" class="primary" type="button">Save Integrations</button>
@@ -3641,6 +3670,7 @@
   </dialog>
 
 
-  <script src="/app.js?v=1.2.9"></script>
+  <script src="/app.js?v=1.2.10"></script>
 </body>
 </html>
+

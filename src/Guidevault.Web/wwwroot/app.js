@@ -24,7 +24,7 @@ const state = {
   opds: { connectionUrl: '', selectedKeyId: '', keys: [], editingUrl: false, revealUrl: false, creatingKey: false },
   devices: { emailDevices: [], clientDevices: [], generatedAt: null, addingEmail: false, editingEmailId: '', editingClientId: '', clientMenuId: '' },
   metadataManager: { selectedIds: [], dirty: {}, filterKind: '', kindFilters: ['Manual','Strategy Guide','Magazine'], statusFilter: '', search: '', missing: '', category: '', visibleColumns: [], useCustomColumns: false, sortKey: '', sortDirection: 'asc', draggedColumnKey: '', renderLimit: 250 },
-  serverFiles: { selectedIds: [], kindFilters: ['Manual','Strategy Guide','Magazine'], search: '', renderLimit: 250 },
+  serverFiles: { selectedIds: [], kindFilters: [], search: '', renderLimit: 250 },
   metadataSourceBatch: { results: [], running: false, applied: 0, runId: 0, abortController: null },
   keybinds: { bindings: {}, awaitingId: '' },
   folderBrowser: { targetInputId: '', currentPath: '/app/data/library', roots: [] },
@@ -42,8 +42,8 @@ const state = {
   statistics: { activeTab: 'stats', range: 'all' },
   profilePage: { activeTab: 'overview', range: 'all' },
   itemReviews: { cache: {}, loading: {} },
-  preferences: { useColorscape: false, colorscapeDetailPane: true, colorscapeManualMenus: false, colorscapeStrategyMenus: false, colorscapeMagazineMenus: false },
-  colorscape: { itemId: '', token: 0, menuToken: 0, cache: {}, persistentLoaded: false, cacheSaveTimer: 0, imageSampleQueue: [], imageSampleQueued: false },
+  preferences: { useColorscape: false, colorscapeDetailPane: true, colorscapeManualMenus: false, colorscapeStrategyMenus: false, colorscapeMagazineMenus: false, colorscapeDossiers: false },
+  colorscape: { itemId: '', token: 0, menuToken: 0, dossierToken: 0, cache: {}, persistentLoaded: false, cacheSaveTimer: 0, imageSampleQueue: [], imageSampleQueued: false },
   coverResults: { cache: {}, loaded: false, saveTimer: 0, serverPrewarmToken: 0, browserPrewarmQueued: false },
   systemInfo: null,
   performanceInfo: null,
@@ -56,7 +56,7 @@ const state = {
   deviceHeartbeatTimer: null,
   openLibrary: { results: [], selectedResult: null, resolvedResult: null, step: 'search' },
   igdb: { results: [], selectedResult: null, resolvedResult: null, step: 'search', dossierIntent: false },
-  dossiers: { items: [], selected: null, loaded: false, loading: false, manageMode: false, returnContext: { view: 'dossiers' }, picker: { query: '', kind: '', selectedId: '' } },
+  dossiers: { items: [], selected: null, loaded: false, loading: false, manageMode: false, reviews: {}, reviewsLoading: {}, returnContext: { view: 'dossiers' }, picker: { query: '', kind: '', selectedId: '' } },
   esrb: { results: [], selectedResult: null, resolvedResult: null, step: 'search' }
 };
 const $ = id => document.getElementById(id);
@@ -114,7 +114,7 @@ const GUIDEVAULT_LIBRARY_CHUNK_YIELD_MS = 30;
 const GUIDEVAULT_STARTUP_STATUS_HIDE_MS = 2400;
 const GUIDEVAULT_LIBRARY_SEARCH_DEBOUNCE_MS = 180;
 const GUIDEVAULT_SORT_COLLATOR = new Intl.Collator(undefined, { numeric: true, sensitivity: 'base' });
-const GUIDEVAULT_APP_VERSION = '1.2.9';
+const GUIDEVAULT_APP_VERSION = '1.2.10';
 const GUIDEVAULT_FILENAME_SCHEMA_KEY = 'guidevault.filenameRename.schema.v1';
 const GUIDEVAULT_FILE_ORGANIZATION_TEMPLATE_PRESETS_KEY = 'guidevault.fileOrganization.templatePresets.v2';
 const GUIDEVAULT_FILE_ORGANIZATION_TEMPLATE_PRESETS_LEGACY_KEY = 'guidevault.fileOrganization.templatePresets.v1';
@@ -2923,7 +2923,8 @@ function defaultGuidevaultPreferences() {
     colorscapeDetailPane: true,
     colorscapeManualMenus: false,
     colorscapeStrategyMenus: false,
-    colorscapeMagazineMenus: false
+    colorscapeMagazineMenus: false,
+    colorscapeDossiers: false
   };
 }
 
@@ -2943,7 +2944,8 @@ function normalizeGuidevaultPreferences(value = {}) {
     colorscapeDetailPane: preferenceBool(value.colorscapeDetailPane, defaults.colorscapeDetailPane),
     colorscapeManualMenus: preferenceBool(value.colorscapeManualMenus, defaults.colorscapeManualMenus),
     colorscapeStrategyMenus: preferenceBool(value.colorscapeStrategyMenus, defaults.colorscapeStrategyMenus),
-    colorscapeMagazineMenus: preferenceBool(value.colorscapeMagazineMenus, defaults.colorscapeMagazineMenus)
+    colorscapeMagazineMenus: preferenceBool(value.colorscapeMagazineMenus, defaults.colorscapeMagazineMenus),
+    colorscapeDossiers: preferenceBool(value.colorscapeDossiers, defaults.colorscapeDossiers)
   };
 }
 
@@ -2978,7 +2980,8 @@ function renderPreferencesSettings() {
     ['preferenceColorscapeDetailPane', 'colorscapeDetailPane'],
     ['preferenceColorscapeManualMenus', 'colorscapeManualMenus'],
     ['preferenceColorscapeStrategyMenus', 'colorscapeStrategyMenus'],
-    ['preferenceColorscapeMagazineMenus', 'colorscapeMagazineMenus']
+    ['preferenceColorscapeMagazineMenus', 'colorscapeMagazineMenus'],
+    ['preferenceColorscapeDossiers', 'colorscapeDossiers']
   ].forEach(([id, key]) => {
     const input = $(id);
     if (!input) return;
@@ -2989,6 +2992,7 @@ function renderPreferencesSettings() {
   if (card) card.classList.toggle('colorscape-disabled', !masterEnabled);
   if (document.body.classList.contains('detail-page-mode')) applyColorscapeToDetail(state.selected);
   refreshColorscapeGroupCards();
+  refreshColorscapeDossiers();
 }
 
 function colorscapePreferenceLabel(key) {
@@ -2997,7 +3001,8 @@ function colorscapePreferenceLabel(key) {
     colorscapeDetailPane: 'Details pane Colorscape',
     colorscapeManualMenus: 'Manual menu container Colorscape',
     colorscapeStrategyMenus: 'Strategy guide menu container Colorscape',
-    colorscapeMagazineMenus: 'Magazine menu container Colorscape'
+    colorscapeMagazineMenus: 'Magazine menu container Colorscape',
+    colorscapeDossiers: 'Game dossier container Colorscape'
   })[key] || 'Colorscape';
 }
 
@@ -3015,6 +3020,7 @@ function setGuidevaultPreferenceValue(key, enabled) {
   if (document.body.classList.contains('detail-page-mode')) applyColorscapeToDetail(state.selected);
   else clearColorscapeDetailTheme();
   refreshColorscapeGroupCards();
+  refreshColorscapeDossiers();
 }
 
 function setUseColorscapePreference(enabled) {
@@ -3210,6 +3216,7 @@ function fastColorscapeFallbackColor(seed) {
 function loadImageForColorscape(url) {
   return new Promise((resolve, reject) => {
     const img = new Image();
+    img.crossOrigin = 'anonymous';
     img.decoding = 'async';
     img.onload = () => resolve(img);
     img.onerror = () => reject(new Error('Cover image could not be loaded for Colorscape.'));
@@ -3384,6 +3391,69 @@ function scheduleApplyColorscapeToGroupCards(kind) {
     const loadedImage = findLoadedColorscapeImage(card, url);
     if (loadedImage) scheduleColorscapeSampleForLoadedCover(loadedImage);
   });
+}
+
+function isColorscapeDossiersEnabled() {
+  const preferences = state.preferences || loadGuidevaultPreferences();
+  return !!(preferences.useColorscape && preferences.colorscapeDossiers);
+}
+
+function applyColorscapeRgbToDossierContainer(element, rgb) {
+  if (!element) return;
+  const [r, g, b] = normalizeRgbTriplet(rgb);
+  element.style.setProperty('--dossier-colorscape-rgb', `${r}, ${g}, ${b}`);
+  element.classList.add('dossier-colorscape-active');
+}
+
+function clearColorscapeDossierContainers(root = document) {
+  root.querySelectorAll?.('.dossier-colorscape-active').forEach(element => {
+    element.classList.remove('dossier-colorscape-active');
+    element.style.removeProperty('--dossier-colorscape-rgb');
+  });
+}
+
+async function applyColorscapeToDossierCards() {
+  const root = $('grid');
+  if (!root || state.viewMode !== 'dossiers') return;
+  const token = ++state.colorscape.dossierToken;
+  const cards = Array.from(root.querySelectorAll('.game-dossier-card[data-dossier-colorscape-cover]'));
+  if (!isColorscapeDossiersEnabled()) {
+    clearColorscapeDossierContainers(root);
+    return;
+  }
+  for (const card of cards) {
+    if (token !== state.colorscape.dossierToken || !card.isConnected) return;
+    const url = card.dataset.dossierColorscapeCover || '';
+    const seed = `${card.dataset.dossierTitle || ''}:${url}`;
+    const cached = getCachedDominantCoverColor(url);
+    applyColorscapeRgbToDossierContainer(card, cached || fastColorscapeFallbackColor(seed));
+    if (!url || cached) continue;
+    const rgb = await getDominantCoverColor(url);
+    if (token !== state.colorscape.dossierToken || !card.isConnected) return;
+    applyColorscapeRgbToDossierContainer(card, rgb);
+  }
+}
+
+async function applyColorscapeToDossierPage(dossier = state.dossiers?.selected || {}) {
+  const record = document.querySelector('#dossierDetailPageContent .dossier-page-record');
+  if (!record) return;
+  const token = ++state.colorscape.dossierToken;
+  if (!isColorscapeDossiersEnabled()) {
+    clearColorscapeDossierContainers(record);
+    return;
+  }
+  const url = dossierSafeUrl(dossier.primaryCoverUrl) || dossierSafeUrl(dossier.coverPreviewUrl) || dossierSafeUrl((dossier.artworks || [])[0]);
+  const cached = getCachedDominantCoverColor(url);
+  applyColorscapeRgbToDossierContainer(record, cached || fastColorscapeFallbackColor(`${dossier.gameTitle || ''}:${url}`));
+  if (!url || cached) return;
+  const rgb = await getDominantCoverColor(url);
+  if (token !== state.colorscape.dossierToken || !record.isConnected || String(state.dossiers?.selected?.id || '') !== String(dossier.id || '')) return;
+  applyColorscapeRgbToDossierContainer(record, rgb);
+}
+
+function refreshColorscapeDossiers() {
+  if (state.viewMode === 'dossiers') applyColorscapeToDossierCards();
+  if (document.body.classList.contains('dossier-page-mode') && state.dossiers?.selected) applyColorscapeToDossierPage(state.dossiers.selected);
 }
 function cancelAccountEdit() {
   renderAccountProfile();
@@ -4878,7 +4948,7 @@ function setTasksSettingsStatus(message = '', tone = '') {
   if (el) { el.textContent = message || ''; el.dataset.tone = tone || ''; }
 }
 function defaultServerSettings() {
-  return { hostName: window.location?.origin || 'http://localhost:5478', baseUrl: '/', ipAddresses: '', port: 5478, loggingLevel: 'Information', backupDirectory: 'data/backups', bookmarksDirectory: 'data/bookmarks', igdbClientId: '', igdbClientSecret: '', homeAssistantEnabled: false, homeAssistantUrl: '', homeAssistantLongLivedAccessToken: '', homeAssistantEntityPrefix: 'guidevault', homeAssistantPushStateEnabled: true, homeAssistantPushEventsEnabled: true, homeAssistantCommandEnabled: true, homeAssistantCommandToken: '' };
+  return { hostName: window.location?.origin || 'http://localhost:5478', baseUrl: '/', ipAddresses: '', port: 5478, loggingLevel: 'Information', backupDirectory: 'data/backups', bookmarksDirectory: 'data/bookmarks', igdbClientId: '', igdbClientSecret: '', igdbPreferredRegion: 'north-america', homeAssistantEnabled: false, homeAssistantUrl: '', homeAssistantLongLivedAccessToken: '', homeAssistantEntityPrefix: 'guidevault', homeAssistantPushStateEnabled: true, homeAssistantPushEventsEnabled: true, homeAssistantCommandEnabled: true, homeAssistantCommandToken: '' };
 }
 function normalizeServerSettings(value = {}) {
   const defaults = defaultServerSettings();
@@ -4892,6 +4962,7 @@ function normalizeServerSettings(value = {}) {
     bookmarksDirectory: String(value.bookmarksDirectory || defaults.bookmarksDirectory).trim(),
     igdbClientId: String(value.igdbClientId || '').trim(),
     igdbClientSecret: String(value.igdbClientSecret || '').trim(),
+    igdbPreferredRegion: String(value.igdbPreferredRegion || defaults.igdbPreferredRegion).trim().toLowerCase() || 'north-america',
     homeAssistantEnabled: !!value.homeAssistantEnabled,
     homeAssistantUrl: String(value.homeAssistantUrl || '').trim(),
     homeAssistantLongLivedAccessToken: String(value.homeAssistantLongLivedAccessToken || '').trim(),
@@ -4908,6 +4979,7 @@ async function loadServerSettings(showStatus = false) {
     if (!res.ok) throw new Error(`Server settings request failed: ${res.status}`);
     state.serverSettings = normalizeServerSettings(await res.json());
     renderServerSettings();
+    if (state.dossiers?.selected && !$('dossierDetailView')?.classList.contains('hidden')) renderGameDossierPage(state.dossiers.selected);
     if (showStatus) setServerSettingsStatus('General server settings loaded.', 'success');
     loadServerBackups(false);
   } catch (err) {
@@ -4929,6 +5001,7 @@ function renderServerSettings() {
   if ($('mediaBookmarksDirectory')) $('mediaBookmarksDirectory').value = settings.bookmarksDirectory;
   if ($('igdbClientId')) $('igdbClientId').value = settings.igdbClientId || '';
   if ($('igdbClientSecret')) $('igdbClientSecret').value = settings.igdbClientSecret || '';
+  if ($('igdbPreferredRegion')) $('igdbPreferredRegion').value = settings.igdbPreferredRegion || 'north-america';
   if ($('homeAssistantEnabled')) $('homeAssistantEnabled').checked = !!settings.homeAssistantEnabled;
   if ($('homeAssistantUrl')) $('homeAssistantUrl').value = settings.homeAssistantUrl || '';
   if ($('homeAssistantToken')) $('homeAssistantToken').value = settings.homeAssistantLongLivedAccessToken || '';
@@ -4952,6 +5025,7 @@ function collectServerSettings() {
     bookmarksDirectory: $('mediaBookmarksDirectory')?.value ?? existing.bookmarksDirectory,
     igdbClientId: $('igdbClientId')?.value ?? existing.igdbClientId,
     igdbClientSecret: $('igdbClientSecret')?.value ?? existing.igdbClientSecret,
+    igdbPreferredRegion: $('igdbPreferredRegion')?.value ?? existing.igdbPreferredRegion,
     homeAssistantEnabled: $('homeAssistantEnabled') ? $('homeAssistantEnabled').checked : existing.homeAssistantEnabled,
     homeAssistantUrl: $('homeAssistantUrl')?.value ?? existing.homeAssistantUrl,
     homeAssistantLongLivedAccessToken: $('homeAssistantToken')?.value ?? existing.homeAssistantLongLivedAccessToken,
@@ -4969,6 +5043,8 @@ async function saveServerSettings(source = 'general') {
     if (!res.ok) throw new Error(`Save failed: ${res.status}`);
     state.serverSettings = normalizeServerSettings(await res.json());
     renderServerSettings();
+    if (state.dossiers?.selected && !$('dossierDetailView')?.classList.contains('hidden')) renderGameDossierPage(state.dossiers.selected);
+    if (source === 'integrations' && state.dossiers?.loaded) await loadGameDossiers(true);
     if (state.serverSettings.homeAssistantEnabled && state.serverSettings.homeAssistantCommandEnabled) startHomeAssistantCommandPolling();
     else stopHomeAssistantCommandPolling();
     const msg = source === 'media' ? 'Media settings saved.'
@@ -14746,7 +14822,7 @@ function dossierSafeUrl(value = '') {
 function dossierRatingLabel(dossier = {}) {
   const value = Number(dossier.totalRating ?? dossier.rating);
   if (!Number.isFinite(value) || value <= 0) return 'Not rated';
-  return `${Math.round(value)} / 100`;
+  return String(Math.round(value));
 }
 
 function dossierFactChips(values = [], className = '') {
@@ -14754,19 +14830,16 @@ function dossierFactChips(values = [], className = '') {
 }
 
 function dossierCardMarkup(dossier = {}) {
-  const collectionCount = (dossier.collections || []).filter(collection => (collection.itemIds?.length || collection.games?.length || collection.values?.length)).length;
-  const documentCount = dossier.libraryItemIds?.length || 0;
   const subtitle = [dossier.gameReleaseYear, dossier.gameFranchise, (dossier.platforms || []).slice(0, 2).join(', ')].filter(Boolean).join(' · ');
-  return `<article class="game-dossier-card" data-open-dossier="${escapeForAttribute(dossier.id)}" tabindex="0" role="button" aria-label="Open ${escapeForAttribute(dossier.gameTitle || 'game')} dossier">
-    <div class="game-dossier-card-cover">${dossier.coverPreviewUrl ? `<img src="${escapeForAttribute(dossier.coverPreviewUrl)}" alt="" loading="lazy" />` : '<span>GV</span>'}</div>
+  const cover = dossierSafeUrl(dossier.primaryCoverUrl) || dossierSafeUrl(dossier.coverPreviewUrl);
+  return `<article class="game-dossier-card" role="button" tabindex="0" aria-label="Open ${escapeForAttribute(dossier.gameTitle || 'game')} dossier" data-open-dossier="${escapeForAttribute(dossier.id)}" data-dossier-title="${escapeForAttribute(dossier.gameTitle || '')}" data-dossier-colorscape-cover="${escapeForAttribute(cover)}">
+    <div class="game-dossier-card-cover">${cover ? `<img src="${escapeForAttribute(cover)}" alt="" loading="lazy" />` : '<span>GV</span>'}</div>
     <div class="game-dossier-card-main">
       <div class="game-dossier-kicker">GAME DOSSIER</div>
       <h3>${escapeHtml(dossier.gameTitle || 'Untitled Game')}</h3>
       <p>${escapeHtml(subtitle || 'IGDB game record')}</p>
       <div class="game-dossier-card-chips">${dossierFactChips((dossier.genres || []).slice(0, 3))}</div>
-      <footer><span>${documentCount} GuideVault document${documentCount === 1 ? '' : 's'}</span><span>${collectionCount} collection${collectionCount === 1 ? '' : 's'}</span><span>${escapeHtml(dossierRatingLabel(dossier))}</span></footer>
     </div>
-    <button class="ghost" type="button" data-open-dossier="${escapeForAttribute(dossier.id)}">Open Dossier</button>
   </article>`;
 }
 
@@ -14788,6 +14861,7 @@ function renderGameDossiersLibraryView(gridId = 'grid') {
   host.innerHTML = dossiers.length
     ? dossiers.map(dossierCardMarkup).join('')
     : `<div class="empty-message">${gameDossiers().length ? 'No dossiers match this search.' : 'No game dossiers yet. Create one from Settings → Account → Game Dossiers.'}</div>`;
+  applyColorscapeToDossierCards();
   renderAlphaRail([]);
 }
 
@@ -14825,6 +14899,110 @@ function dossierLinkedDocuments(dossier = {}) {
   return (state.items || []).filter(item => ids.has(String(itemIdOf(item) || '').toLowerCase()));
 }
 
+function dossierEsrbRating(documents = []) {
+  const candidates = [...documents].sort((a, b) => {
+    const priority = item => item?.kind === 'Manual' ? 0 : item?.kind === 'Strategy Guide' ? 1 : 2;
+    return priority(a) - priority(b);
+  });
+  return String(candidates.find(item => normalizeEsrbRating(item?.rating) !== 'none')?.rating || '').trim();
+}
+
+function dossierQuickRatingsHtml(dossier = {}, documents = []) {
+  const rawRating = Number(dossier.totalRating ?? dossier.rating);
+  const hasRating = Number.isFinite(rawRating) && rawRating > 0;
+  const rating = hasRating ? Math.max(0, Math.min(100, rawRating)) : 0;
+  const ratingText = hasRating ? String(Math.round(rating)) : '\u2014';
+  const esrbRating = dossierEsrbRating(documents);
+  const esrbLabel = esrbDisplayLabel(esrbRating);
+  return `<div class="dossier-quick-ratings">
+    <div class="dossier-igdb-rating" role="img" aria-label="${hasRating ? `IGDB rating ${Math.round(rating)} out of 100` : 'IGDB rating not available'}">
+      <div class="dossier-igdb-donut" style="--dossier-rating-angle:${(rating * 3.6).toFixed(1)}deg"><div><strong>${escapeHtml(ratingText)}</strong><span>IGDB</span></div></div>
+      <div><span>IGDB rating</span><strong>${hasRating ? 'Community score' : 'Not rated'}</strong></div>
+    </div>
+    <div class="dossier-esrb-rating">
+      <img src="${escapeForAttribute(esrbIconUrl(esrbRating))}" alt="${escapeForAttribute(`ESRB ${esrbLabel}`)}" title="${escapeForAttribute(esrbLabel)}" loading="lazy" onerror="this.onerror=null;this.src='/assets/ESRB/RatedNone.png';" />
+      <div><span>ESRB rating</span><strong>${escapeHtml(esrbLabel)}</strong></div>
+    </div>
+  </div>`;
+}
+
+function dossierReviewsFor(dossier = {}) {
+  const dossierId = String(dossier.id || '');
+  const localReviews = (dossier.libraryItemIds || []).flatMap(publicReviewsForItemFromLocal);
+  return mergeReviewLists(state.dossiers?.reviews?.[dossierId] || [], localReviews);
+}
+
+function dossierReviewDocumentLabel(review = {}) {
+  const item = (state.items || []).find(candidate => String(itemIdOf(candidate)) === String(review.itemId || ''));
+  return {
+    title: item ? displayTitle(item) : (review.title || 'GuideVault document'),
+    kind: item?.kind || review.kind || 'Document'
+  };
+}
+
+function dossierReviewRowsHtml(reviews = []) {
+  if (!reviews.length) return '<div class="dossier-reviews-empty"><strong>No public reviews yet</strong><span>Reviews of linked manuals, strategy guides, and magazines will appear here.</span></div>';
+  return reviews.map(review => {
+    const document = dossierReviewDocumentLabel(review);
+    const author = reviewAuthorLabel(review);
+    const date = formatProfileDateWithRelative(review.updatedAt || review.createdAt);
+    return `<article class="dossier-review-row">
+      ${detailReviewAvatarHtml(review)}
+      <div class="dossier-review-copy">
+        <div class="dossier-review-head"><div><strong>${escapeHtml(author)}</strong><em>${escapeHtml(date)}</em></div>${reviewRatingStarsHtml(review.rating, 'dossier-review-stars')}</div>
+        <div class="dossier-review-source"><span>${escapeHtml(document.kind)}</span><strong>${escapeHtml(document.title)}</strong></div>
+        <p>${escapeHtml(review.text || '')}</p>
+      </div>
+    </article>`;
+  }).join('');
+}
+
+function dossierReviewsCardInnerHtml(dossier = {}, reviews = [], loading = false) {
+  const average = reviews.length ? reviews.reduce((sum, review) => sum + clampReviewRating(review.rating, 5), 0) / reviews.length : 0;
+  return `<header><div><span>\u2605</span><h2>Reviews <em>(${reviews.length})</em></h2></div></header>
+    <div class="dossier-reviews-summary${reviews.length ? '' : ' is-empty'}">
+      <div><strong>${reviews.length ? average.toFixed(1) : '\u2014'}</strong><span>Average rating</span></div>
+      <div>${reviews.length ? reviewRatingStarsHtml(average, 'dossier-review-summary-stars') : '<strong>No ratings yet</strong>'}<span>${reviews.length ? `Based on ${reviews.length} public review${reviews.length === 1 ? '' : 's'}` : 'Linked-document reviews will be collected here.'}</span></div>
+    </div>
+    ${loading ? '<div class="dossier-reviews-loading">Refreshing reviews\u2026</div>' : ''}
+    <div class="dossier-review-list">${dossierReviewRowsHtml(reviews)}</div>`;
+}
+
+function dossierReviewsCardHtml(dossier = {}, fullWidth = true) {
+  const reviews = dossierReviewsFor(dossier);
+  const loading = !!state.dossiers?.reviewsLoading?.[String(dossier.id || '')];
+  return `<section id="dossierReviewsCard" class="dossier-dashboard-card dossier-card-knowledge ${fullWidth ? 'dossier-dashboard-full ' : ''}dossier-reviews-card">${dossierReviewsCardInnerHtml(dossier, reviews, loading)}</section>`;
+}
+
+function renderDossierReviewsCard(dossier = state.dossiers?.selected || {}) {
+  const host = $('dossierReviewsCard');
+  if (!host || !dossier?.id) return;
+  host.innerHTML = dossierReviewsCardInnerHtml(dossier, dossierReviewsFor(dossier), !!state.dossiers?.reviewsLoading?.[String(dossier.id)]);
+}
+
+async function loadDossierReviews(dossier = state.dossiers?.selected || {}, force = false) {
+  const dossierId = String(dossier?.id || '');
+  if (!dossierId) return;
+  state.dossiers.reviews = state.dossiers.reviews || {};
+  state.dossiers.reviewsLoading = state.dossiers.reviewsLoading || {};
+  if (!force && Array.isArray(state.dossiers.reviews[dossierId])) {
+    renderDossierReviewsCard(dossier);
+    return;
+  }
+  if (state.dossiers.reviewsLoading[dossierId]) return;
+  state.dossiers.reviewsLoading[dossierId] = true;
+  renderDossierReviewsCard(dossier);
+  try {
+    const response = await fetch(`/api/dossiers/${encodeURIComponent(dossierId)}/reviews`, { cache: 'no-store' });
+    const data = await response.json().catch(() => ({}));
+    if (response.ok) state.dossiers.reviews[dossierId] = Array.isArray(data.reviews) ? data.reviews : [];
+  } catch {}
+  finally {
+    state.dossiers.reviewsLoading[dossierId] = false;
+    if (String(state.dossiers?.selected?.id || '') === dossierId) renderDossierReviewsCard(state.dossiers.selected);
+  }
+}
+
 function dossierDocumentRowMarkup(item = {}, overflow = false) {
   const id = itemIdOf(item);
   const platform = preferredPlatformOf(item) || categoryOf(item) || '';
@@ -14841,7 +15019,7 @@ function dossierDocumentRowMarkup(item = {}, overflow = false) {
 
 function dossierDocumentCardMarkup(kind = '', title = '', icon = '', documents = []) {
   const matching = documents.filter(item => item.kind === kind);
-  return `<section class="dossier-dashboard-card dossier-document-card" data-dossier-document-kind="${escapeForAttribute(kind)}">
+  return `<section class="dossier-dashboard-card dossier-card-documents dossier-document-card" data-dossier-document-kind="${escapeForAttribute(kind)}">
     <header><div><span>${icon}</span><h2>${escapeHtml(title)} <em>(${matching.length})</em></h2></div></header>
     <div class="dossier-dashboard-list">${matching.length ? matching.map((item, index) => dossierDocumentRowMarkup(item, index >= 3)).join('') : `<p class="dossier-dashboard-empty">No linked ${escapeHtml(title.toLowerCase())} yet.</p>`}</div>
     ${matching.length > 3 ? `<footer><button type="button" class="dossier-document-toggle" data-dossier-toggle-documents aria-expanded="false"><span>View all ${matching.length}</span><em>${matching.length - 3} more</em></button></footer>` : ''}
@@ -14911,16 +15089,86 @@ function dossierLocalizedCoverMarkup(cover = {}) {
   return `<a class="dossier-localized-cover" href="${escapeForAttribute(url)}" target="_blank" rel="noreferrer"><img src="${escapeForAttribute(url)}" alt="${escapeForAttribute(label)} cover" loading="lazy" /><span>${escapeHtml(label)}</span></a>`;
 }
 
+const IGDB_COVER_REGION_LABELS = new Map([
+  ['north-america', 'North America'], ['europe', 'Europe'], ['japan', 'Japan'],
+  ['worldwide', 'Worldwide'], ['australia', 'Australia'], ['new-zealand', 'New Zealand'],
+  ['china', 'China'], ['asia', 'Asia'], ['korea', 'South Korea'], ['brazil', 'Brazil'],
+  ['automatic', 'IGDB Default']
+]);
+
+function dossierRegionKey(value = '') {
+  return String(value || '').trim().toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
+}
+
+function dossierPreferredCoverRegion(dossier = {}) {
+  const region = dossierRegionKey(state.serverSettings?.igdbPreferredRegion || dossier.preferredCoverRegion || 'north-america');
+  return IGDB_COVER_REGION_LABELS.has(region) ? region : 'north-america';
+}
+
+function dossierCoverMatchesRegion(cover = {}, preferredRegion = dossierPreferredCoverRegion()) {
+  if (!preferredRegion || preferredRegion === 'automatic') return false;
+  const region = dossierRegionKey(`${cover.region || ''} ${cover.regionIdentifier || ''}`);
+  if (preferredRegion === 'north-america') return /(^|-)north-america($|-)|(^|-)united-states($|-)|(^|-)usa?($|-)/.test(region);
+  return region.includes(preferredRegion);
+}
+
+function dossierLocalizedCovers(dossier = {}) {
+  const covers = (Array.isArray(dossier.localizedCovers) ? dossier.localizedCovers : [])
+    .filter(cover => dossierSafeUrl(cover?.coverPreviewUrl))
+    .map(cover => ({ ...cover }));
+  const preferredRegion = dossierPreferredCoverRegion(dossier);
+  const preferredLabel = IGDB_COVER_REGION_LABELS.get(preferredRegion) || 'North America';
+  const primaryUrl = dossierSafeUrl(dossier.coverPreviewUrl);
+  const primaryIndex = primaryUrl
+    ? covers.findIndex(cover => dossierSafeUrl(cover.coverPreviewUrl).toLowerCase() === primaryUrl.toLowerCase())
+    : -1;
+  const primaryCover = primaryIndex >= 0 ? covers.splice(primaryIndex, 1)[0] : null;
+  const hasPreferredLocalization = covers.some(cover => dossierCoverMatchesRegion(cover, preferredRegion));
+  if (primaryUrl) {
+    covers.push({
+      ...(primaryCover || {}),
+      name: dossier.gameTitle || '',
+      region: preferredRegion !== 'automatic' && !hasPreferredLocalization ? preferredLabel : (primaryCover?.region || 'IGDB Default'),
+      regionIdentifier: preferredRegion !== 'automatic' && !hasPreferredLocalization ? preferredRegion : (primaryCover?.regionIdentifier || 'automatic'),
+      coverPreviewUrl: primaryUrl
+    });
+  }
+  return covers
+    .map((cover, index) => ({ cover, index }))
+    .sort((left, right) => {
+      const leftPreferred = dossierCoverMatchesRegion(left.cover, preferredRegion);
+      const rightPreferred = dossierCoverMatchesRegion(right.cover, preferredRegion);
+      if (leftPreferred !== rightPreferred) return leftPreferred ? -1 : 1;
+      if (preferredRegion === 'automatic') {
+        const leftPrimary = dossierSafeUrl(left.cover.coverPreviewUrl).toLowerCase() === primaryUrl.toLowerCase();
+        const rightPrimary = dossierSafeUrl(right.cover.coverPreviewUrl).toLowerCase() === primaryUrl.toLowerCase();
+        if (leftPrimary !== rightPrimary) return leftPrimary ? -1 : 1;
+      }
+      return left.index - right.index;
+    })
+    .map(entry => entry.cover)
+    .slice(0, 12);
+}
+
+function dossierAliasesCardHtml(dossier = {}) {
+  const alternativeNames = Array.isArray(dossier.alternativeNames) ? dossier.alternativeNames : [];
+  const keywords = Array.isArray(dossier.keywords) ? dossier.keywords : [];
+  if (!alternativeNames.length && !keywords.length) return '';
+  return `<section class="dossier-dashboard-card dossier-card-knowledge dossier-aliases-card"><header><div><span>\u25C7</span><h2>Aliases & Keywords</h2></div></header>${alternativeNames.length ? `<p class="dossier-dashboard-aliases">${escapeHtml(alternativeNames.join(' · '))}</p>` : ''}<div class="dossier-chipline">${dossierFactChips(keywords.slice(0, 24))}</div></section>`;
+}
+
 function dossierDetailHtml(dossier = {}) {
   const sourceUrl = dossierSafeUrl(dossier.sourceUrl);
   const sites = (dossier.websites || []).filter(site => dossierSafeUrl(site.url));
   const videos = (dossier.videos || []).filter(video => dossierSafeUrl(video.url));
   const documents = dossierLinkedDocuments(dossier);
   const relatedGames = dossierRelatedGames(dossier);
-  const localizedCovers = (dossier.localizedCovers || []).filter(cover => dossierSafeUrl(cover.coverPreviewUrl)).slice(0, 12);
+  const localizedCovers = dossierLocalizedCovers(dossier);
   const screenshots = (dossier.screenshots || []).filter(dossierSafeUrl).slice(0, 12);
-  const primaryCover = dossierSafeUrl(dossier.primaryCoverUrl) || localizedCovers[0]?.coverPreviewUrl || dossierSafeUrl(dossier.coverPreviewUrl);
-  const heroArtwork = dossierSafeUrl((dossier.artworks || [])[0]);
+  const primaryCover = localizedCovers[0]?.coverPreviewUrl || dossierSafeUrl(dossier.primaryCoverUrl) || dossierSafeUrl(dossier.coverPreviewUrl);
+  const heroArtwork = dossierSafeUrl((dossier.artworks || [])[0]) || screenshots[0] || primaryCover;
+  const heroArtworkStyle = heroArtwork ? ` style="--dossier-hero-artwork:url('${escapeForAttribute(escapeForCssString(heroArtwork))}')"` : '';
+  const aliasesCard = dossierAliasesCardHtml(dossier);
   const platforms = dossierPlatformRows(dossier);
   const primaryPlatform = (dossier.platforms || []).find(platform => String(platform).toLowerCase() === String(dossier.primaryPlatform || '').toLowerCase()) || dossier.platforms?.[0] || '';
   const excludedDocumentCount = (dossier.excludedLibraryItemIds || []).length;
@@ -14938,14 +15186,11 @@ function dossierDetailHtml(dossier = {}) {
     ['Genre', (dossier.genres || []).join(', ')],
     ['Themes', (dossier.themes || []).join(', ')],
     ['Game Modes', (dossier.gameModes || []).join(', ')],
-    ['Perspective', (dossier.playerPerspectives || []).join(', ')],
-    ['IGDB Rating', dossierRatingLabel(dossier)],
-    ['Linked Documents', String(documents.length)]
+    ['Perspective', (dossier.playerPerspectives || []).join(', ')]
   ].filter(([, value]) => value);
   return `<article class="dossier-page-record">
     <div class="dossier-dashboard-breadcrumb"><span>Games</span><i>\u203A</i><strong>${escapeHtml(dossier.gameTitle || 'Game Dossier')}</strong></div>
-    <header class="dossier-dashboard-hero ${heroArtwork ? 'has-artwork' : ''}">
-      ${heroArtwork ? `<div class="dossier-dashboard-hero-backdrop" aria-hidden="true"><img src="${escapeForAttribute(heroArtwork)}" alt="" /></div>` : ''}
+    <header class="dossier-dashboard-hero ${heroArtwork ? 'has-artwork' : ''}"${heroArtworkStyle}>
       <div class="dossier-dashboard-hero-art is-cover">${primaryCover ? `<img src="${escapeForAttribute(primaryCover)}" alt="${escapeForAttribute(dossier.gameTitle || '')} cover" />` : '<span>GV</span>'}</div>
       <div class="dossier-dashboard-hero-main">
         <span class="dossier-page-kicker">GAME DOSSIER</span>
@@ -14971,14 +15216,14 @@ function dossierDetailHtml(dossier = {}) {
       ${dossierDocumentCardMarkup('Manual', 'Manuals', '\u25A3', documents)}
       ${dossierDocumentCardMarkup('Strategy Guide', 'Strategy Guides', '\u25A4', documents)}
       ${dossierDocumentCardMarkup('Magazine', 'Magazine Appearances', '\u25A5', documents)}
-      <section class="dossier-dashboard-card"><header><div><span>\u25A7</span><h2>Platforms <em>(${platforms.length})</em></h2></div></header><div class="dossier-dashboard-list">${platforms.map(platform => dossierPlatformRowMarkup(platform, primaryPlatform)).join('') || '<p class="dossier-dashboard-empty">No platform data returned.</p>'}</div></section>
-      <section class="dossier-dashboard-card"><header><div><span>\u25C8</span><h2>Related Games <em>(${relatedGames.length})</em></h2></div></header><div class="dossier-dashboard-list">${relatedGames.slice(0, 5).map(dossierDashboardRelatedRowMarkup).join('') || '<p class="dossier-dashboard-empty">No related games returned.</p>'}</div></section>
-      <section class="dossier-dashboard-card dossier-quick-facts-card"><header><div><span>\u25C9</span><h2>Quick Facts</h2></div></header><dl>${quickFacts.map(([label, value]) => `<dt>${escapeHtml(label)}</dt><dd>${escapeHtml(value)}</dd>`).join('')}</dl></section>
-      ${dossier.storyline ? `<section class="dossier-dashboard-card dossier-dashboard-wide dossier-story-card"><header><div><span>\u25CE</span><h2>Storyline</h2></div></header><p>${escapeHtml(dossier.storyline)}</p></section>` : ''}
-      ${(dossier.alternativeNames || []).length || (dossier.keywords || []).length ? `<section class="dossier-dashboard-card ${dossier.storyline ? '' : 'dossier-dashboard-wide'}"><header><div><span>\u25C7</span><h2>Aliases & Keywords</h2></div></header>${(dossier.alternativeNames || []).length ? `<p class="dossier-dashboard-aliases">${escapeHtml((dossier.alternativeNames || []).join(' · '))}</p>` : ''}<div class="dossier-chipline">${dossierFactChips((dossier.keywords || []).slice(0, 24))}</div></section>` : ''}
-      <section class="dossier-dashboard-card dossier-dashboard-full dossier-activity-card"><header><div><span>\u25F7</span><h2>Recent Activity</h2></div></header><div class="dossier-dashboard-activity-list"><div><i>\u25A3</i><span><strong>Dossier created</strong><small>${escapeHtml(formatProfileDate(dossier.createdAt))}</small></span></div><div><i>\u21BB</i><span><strong>IGDB metadata refreshed</strong><small>${escapeHtml(formatProfileDate(dossier.updatedAt))}</small></span></div><div><i>\u25C9</i><span><strong>${documents.length} GuideVault document${documents.length === 1 ? '' : 's'} linked</strong><small>Library collections synchronized</small></span></div>${videos.length ? `<div><i>\u25B6</i><span><strong>${videos.length} video resource${videos.length === 1 ? '' : 's'}</strong><small>Available from IGDB</small></span></div>` : ''}</div></section>
-      ${screenshots.length ? `<section class="dossier-dashboard-card dossier-dashboard-full dossier-media-section"><header><div><span>\u25A8</span><h2>Screenshots <em>(${screenshots.length})</em></h2></div></header><div class="dossier-media-grid">${screenshots.map(url => `<a href="${escapeForAttribute(url)}" target="_blank" rel="noreferrer"><img src="${escapeForAttribute(url)}" alt="" loading="lazy" /></a>`).join('')}</div></section>` : ''}
-      ${localizedCovers.length ? `<section class="dossier-dashboard-card dossier-dashboard-full dossier-media-section dossier-localized-covers-section"><header><div><span>\u25A3</span><h2>Localized Covers <em>(${localizedCovers.length})</em></h2></div></header><div class="dossier-localized-cover-grid">${localizedCovers.map(dossierLocalizedCoverMarkup).join('')}</div></section>` : ''}
+      <section class="dossier-dashboard-card dossier-card-reference"><header><div><span>\u25A7</span><h2>Platforms <em>(${platforms.length})</em></h2></div></header><div class="dossier-dashboard-list">${platforms.map(platform => dossierPlatformRowMarkup(platform, primaryPlatform)).join('') || '<p class="dossier-dashboard-empty">No platform data returned.</p>'}</div></section>
+      <section class="dossier-dashboard-card dossier-card-reference"><header><div><span>\u25C8</span><h2>Related Games <em>(${relatedGames.length})</em></h2></div></header><div class="dossier-dashboard-list">${relatedGames.slice(0, 5).map(dossierDashboardRelatedRowMarkup).join('') || '<p class="dossier-dashboard-empty">No related games returned.</p>'}</div></section>
+      <section class="dossier-dashboard-card dossier-card-facts dossier-quick-facts-card"><header><div><span>\u25C9</span><h2>Quick Facts</h2></div></header>${dossierQuickRatingsHtml(dossier, documents)}<dl>${quickFacts.map(([label, value]) => `<dt>${escapeHtml(label)}</dt><dd>${escapeHtml(value)}</dd>`).join('')}</dl></section>
+      ${aliasesCard ? `<div class="dossier-dashboard-pair dossier-dashboard-full">${dossierReviewsCardHtml(dossier, false)}${aliasesCard}</div>` : dossierReviewsCardHtml(dossier)}
+      ${dossier.storyline ? `<section class="dossier-dashboard-card dossier-card-knowledge dossier-dashboard-full dossier-story-card"><header><div><span>\u25CE</span><h2>Storyline</h2></div></header><p>${escapeHtml(dossier.storyline)}</p></section>` : ''}
+      <section class="dossier-dashboard-card dossier-card-activity dossier-dashboard-full dossier-activity-card"><header><div><span>\u25F7</span><h2>Recent Activity</h2></div></header><div class="dossier-dashboard-activity-list"><div><i>\u25A3</i><span><strong>Dossier created</strong><small>${escapeHtml(formatProfileDate(dossier.createdAt))}</small></span></div><div><i>\u21BB</i><span><strong>IGDB metadata refreshed</strong><small>${escapeHtml(formatProfileDate(dossier.updatedAt))}</small></span></div><div><i>\u25C9</i><span><strong>${documents.length} GuideVault document${documents.length === 1 ? '' : 's'} linked</strong><small>Library collections synchronized</small></span></div>${videos.length ? `<div><i>\u25B6</i><span><strong>${videos.length} video resource${videos.length === 1 ? '' : 's'}</strong><small>Available from IGDB</small></span></div>` : ''}</div></section>
+      ${screenshots.length ? `<section class="dossier-dashboard-card dossier-card-media dossier-dashboard-full dossier-media-section"><header><div><span>\u25A8</span><h2>Screenshots <em>(${screenshots.length})</em></h2></div></header><div class="dossier-media-grid">${screenshots.map(url => `<a href="${escapeForAttribute(url)}" target="_blank" rel="noreferrer"><img src="${escapeForAttribute(url)}" alt="" loading="lazy" /></a>`).join('')}</div></section>` : ''}
+      ${localizedCovers.length ? `<section class="dossier-dashboard-card dossier-card-media dossier-dashboard-full dossier-media-section dossier-localized-covers-section"><header><div><span>\u25A3</span><h2>Localized Covers <em>(${localizedCovers.length})</em></h2></div></header><div class="dossier-localized-cover-grid">${localizedCovers.map(dossierLocalizedCoverMarkup).join('')}</div></section>` : ''}
     </div>
   </article>`;
 }
@@ -15001,6 +15246,8 @@ function renderGameDossierPage(dossier = state.dossiers?.selected || {}) {
   const canManageDossier = currentUserIsAdmin();
   if ($('dossierPageManage')) $('dossierPageManage').classList.toggle('hidden', !canManageDossier);
   setDossierManageMode(canManageDossier && state.dossiers?.manageMode === true);
+  applyColorscapeToDossierPage(dossier);
+  loadDossierReviews(dossier);
 }
 
 function setDossierManageMode(enabled = false) {
@@ -15041,6 +15288,7 @@ function openGameDossier(id = '', options = {}) {
 
 function closeGameDossier() {
   const context = state.dossiers?.returnContext || { view: 'dossiers' };
+  state.dossiers.manageMode = false;
   if (context.view === 'item') {
     const item = (state.items || []).find(candidate => itemIdOf(candidate) === String(context.itemId || ''));
     if (item) { showDetailScreen(item); updateNavActive(); return; }
@@ -23463,7 +23711,8 @@ if ($('preferenceUseColorscape')) $('preferenceUseColorscape').addEventListener(
   ['preferenceColorscapeDetailPane', 'colorscapeDetailPane'],
   ['preferenceColorscapeManualMenus', 'colorscapeManualMenus'],
   ['preferenceColorscapeStrategyMenus', 'colorscapeStrategyMenus'],
-  ['preferenceColorscapeMagazineMenus', 'colorscapeMagazineMenus']
+  ['preferenceColorscapeMagazineMenus', 'colorscapeMagazineMenus'],
+  ['preferenceColorscapeDossiers', 'colorscapeDossiers']
 ].forEach(([id, key]) => {
   if ($(id)) $(id).addEventListener('change', e => setGuidevaultPreferenceValue(key, e.currentTarget.checked));
 });
@@ -23805,7 +24054,7 @@ document.addEventListener('click', async e => {
   if (trigger) { e.preventDefault(); openGameDossier(trigger.dataset.openDossier || ''); }
 });
 document.addEventListener('keydown', e => {
-  if (!['Enter', ' '].includes(e.key)) return;
+  if (e.key !== 'Enter' && e.key !== ' ') return;
   const trigger = e.target.closest?.('.game-dossier-card[data-open-dossier]');
   if (!trigger) return;
   e.preventDefault();
@@ -24006,9 +24255,9 @@ function renderServerFilesModeChrome() {
 }
 
 function serverFilesEnsureState() {
-  state.serverFiles = state.serverFiles || { selectedIds: [], kindFilters: ['Manual','Strategy Guide','Magazine'], search: '', renderLimit: METADATA_MANAGER_DEFAULT_RENDER_LIMIT, templateKind: 'manual', templateTargetId: 'serverFilesManualTemplate', mode: 'organize' };
+  state.serverFiles = state.serverFiles || { selectedIds: [], kindFilters: [], search: '', renderLimit: METADATA_MANAGER_DEFAULT_RENDER_LIMIT, templateKind: 'manual', templateTargetId: 'serverFilesManualTemplate', mode: 'organize' };
   if (!Array.isArray(state.serverFiles.selectedIds)) state.serverFiles.selectedIds = [];
-  if (!Array.isArray(state.serverFiles.kindFilters) || !state.serverFiles.kindFilters.length) state.serverFiles.kindFilters = ['Manual','Strategy Guide','Magazine'];
+  if (!Array.isArray(state.serverFiles.kindFilters)) state.serverFiles.kindFilters = [];
   if (!Number.isFinite(Number(state.serverFiles.renderLimit)) || Number(state.serverFiles.renderLimit) <= 0) state.serverFiles.renderLimit = METADATA_MANAGER_DEFAULT_RENDER_LIMIT;
   if (!SERVER_FILES_MODES[state.serverFiles.mode]) state.serverFiles.mode = serverFilesModeFromTab(state.settingsActiveTab || 'files-organize');
   return state.serverFiles;
@@ -24016,13 +24265,13 @@ function serverFilesEnsureState() {
 
 function serverFilesSelectedKinds() {
   const files = serverFilesEnsureState();
-  const kinds = (files.kindFilters || []).filter(kind => METADATA_MANAGER_KIND_FILTERS.includes(kind));
-  return kinds.length ? kinds : METADATA_MANAGER_KIND_FILTERS.slice();
+  return (files.kindFilters || []).filter(kind => METADATA_MANAGER_KIND_FILTERS.includes(kind));
 }
 
 function serverFilesKindSummaryLabel(kinds = serverFilesSelectedKinds()) {
-  const selected = (Array.isArray(kinds) && kinds.length ? kinds : METADATA_MANAGER_KIND_FILTERS).filter(kind => METADATA_MANAGER_KIND_FILTERS.includes(kind));
-  if (!selected.length || selected.length === METADATA_MANAGER_KIND_FILTERS.length) return 'Manuals, Strategy Guides, Magazines';
+  const selected = (Array.isArray(kinds) ? kinds : []).filter(kind => METADATA_MANAGER_KIND_FILTERS.includes(kind));
+  if (!selected.length) return 'All Content Types';
+  if (selected.length === METADATA_MANAGER_KIND_FILTERS.length) return 'All Content Types';
   return selected.map(kind => kind === 'Strategy Guide' ? 'Strategy Guides' : `${kind}s`).join(', ');
 }
 
@@ -24080,7 +24329,7 @@ function serverFilesMatchingItems() {
   const q = String(files.search || '').trim().toLowerCase();
   return (state.items || []).filter(item => {
     if (!METADATA_MANAGER_KIND_FILTERS.includes(item.kind)) return false;
-    if (!selectedKinds.has(item.kind)) return false;
+    if (selectedKinds.size && !selectedKinds.has(item.kind)) return false;
     if (q && !serverFilesSearchText(item).includes(q)) return false;
     return true;
   }).slice().sort((a, b) => {
@@ -24126,6 +24375,44 @@ function serverFilesSetStatus(targetId, message = '', tone = '') {
   el.textContent = message;
   el.classList.toggle('success', tone === 'success');
   el.classList.toggle('error', tone === 'error');
+}
+
+function serverFilesPreviewCounts(rows = state.serverFilesPreview || []) {
+  return (Array.isArray(rows) ? rows : []).reduce((counts, row) => {
+    const status = String(row?.status || '').trim().toLowerCase();
+    counts.total++;
+    if (status === 'ready') counts.ready++;
+    else if (status === 'unchanged' || status === 'moved') counts.unchanged++;
+    else counts.attention++;
+    return counts;
+  }, { ready: 0, unchanged: 0, attention: 0, total: 0 });
+}
+
+function serverFilesRenderPreviewSummary(rows = state.serverFilesPreview || []) {
+  const summary = $('serverFilesPreviewSummary');
+  const counts = serverFilesPreviewCounts(rows);
+  if (summary) {
+    summary.innerHTML = counts.total ? `
+      <div data-tone="ready"><strong>${counts.ready}</strong><span>Ready</span></div>
+      <div data-tone="unchanged"><strong>${counts.unchanged}</strong><span>Unchanged</span></div>
+      <div data-tone="attention"><strong>${counts.attention}</strong><span>Needs attention</span></div>
+      <div data-tone="total"><strong>${counts.total}</strong><span>Total checked</span></div>` : '';
+  }
+  const applyBtn = $('serverFilesApplyPreview');
+  if (applyBtn) {
+    applyBtn.disabled = counts.ready < 1 || !state.serverFilesPreviewRequest;
+    applyBtn.textContent = counts.ready > 0 ? `Apply ${counts.ready} Ready Change${counts.ready === 1 ? '' : 's'}` : 'Apply Ready Changes';
+  }
+  return counts;
+}
+
+function serverFilesInvalidatePreview(message = '') {
+  state.serverFilesPreviewGeneration = (Number(state.serverFilesPreviewGeneration) || 0) + 1;
+  state.serverFilesPreview = [];
+  state.serverFilesPreviewRequest = null;
+  state.serverFilesPreviewShowAll = false;
+  serverFilesRenderPreviewSummary([]);
+  if ($('serverFilesPreviewTable')) $('serverFilesPreviewTable').innerHTML = message ? `<p class="sub">${escapeHtml(message)}</p>` : '';
 }
 
 function serverFilesPaintNextFrame() {
@@ -24224,7 +24511,7 @@ function serverFilesUpdateSearch(value) {
 function serverFilesUpdateKinds() {
   const files = serverFilesEnsureState();
   const kinds = Array.from(document.querySelectorAll('[data-server-files-kind]:checked')).map(input => input.dataset.serverFilesKind || '').filter(kind => METADATA_MANAGER_KIND_FILTERS.includes(kind));
-  files.kindFilters = kinds.length ? kinds : METADATA_MANAGER_KIND_FILTERS.slice();
+  files.kindFilters = kinds;
   files.renderLimit = metadataManagerDefaultRenderLimit();
   syncServerFilesKindDropdown();
   renderServerFilesWorkspace();
@@ -24236,6 +24523,7 @@ function serverFilesToggleSelection(id, checked) {
   const selected = new Set(files.selectedIds || []);
   if (checked) selected.add(id); else selected.delete(id);
   files.selectedIds = Array.from(selected);
+  serverFilesInvalidatePreview('Selection changed. Build a new rename plan before applying changes.');
   renderServerFilesWorkspace();
 }
 
@@ -24247,6 +24535,7 @@ function serverFilesSelectRendered(select = true) {
   const selected = new Set(files.selectedIds || []);
   ids.forEach(id => select ? selected.add(id) : selected.delete(id));
   files.selectedIds = Array.from(selected);
+  serverFilesInvalidatePreview('Selection changed. Build a new rename plan before applying changes.');
   renderServerFilesWorkspace();
 }
 
@@ -24255,18 +24544,16 @@ function serverFilesSelectMatching() {
   const selected = new Set(files.selectedIds || []);
   serverFilesMatchingItems().map(metadataManagerItemId).filter(Boolean).forEach(id => selected.add(id));
   files.selectedIds = Array.from(selected);
+  serverFilesInvalidatePreview('Selection changed. Build a new rename plan before applying changes.');
   renderServerFilesWorkspace();
 }
 
 function serverFilesClearSelection() {
   const files = serverFilesEnsureState();
   files.selectedIds = [];
-  state.serverFilesPreview = [];
-  state.serverFilesPreviewShowAll = false;
-  if ($('serverFilesPreviewTable')) $('serverFilesPreviewTable').innerHTML = '';
+  serverFilesInvalidatePreview();
   if ($('serverFilesWriteBackResults')) $('serverFilesWriteBackResults').innerHTML = '';
   if ($('serverFilesConvertResults')) $('serverFilesConvertResults').innerHTML = '';
-  if ($('serverFilesApplyPreview')) $('serverFilesApplyPreview').disabled = true;
   renderServerFilesWorkspace();
 }
 
@@ -24275,6 +24562,7 @@ function serverFilesUseMetadataSelection() {
   const files = serverFilesEnsureState();
   files.selectedIds = ids;
   files.renderLimit = Math.max(files.renderLimit || metadataManagerDefaultRenderLimit(), ids.length, metadataManagerDefaultRenderLimit());
+  serverFilesInvalidatePreview('Selection changed. Build a new rename plan before applying changes.');
   renderServerFilesWorkspace();
   serverFilesSetStatus('serverFilesSelectionStatus', ids.length ? `Loaded ${ids.length} Metadata Manager selection(s) into Files.` : 'No Metadata Manager rows were selected.', ids.length ? 'success' : 'error');
 }
@@ -24313,21 +24601,21 @@ function serverFilesTemplateKindDefinitions() {
       singularLabel: 'Manual',
       inputId: 'serverFilesManualTemplate',
       defaultPresetId: 'guidevault-default-manual',
-      defaultTemplate: 'Manuals/{Platform}/{GameTitle}/{Title} - Manual{Extension}'
+      defaultTemplate: 'Manuals/{Platform}/{GameTitle}/{Title} - Manual'
     },
     strategyGuide: {
       label: 'Strategy Guides',
       singularLabel: 'Strategy Guide',
       inputId: 'serverFilesStrategyTemplate',
       defaultPresetId: 'guidevault-default-strategy-guide',
-      defaultTemplate: 'Strategy Guides/{Platform}/{GameTitle}/{Title}{Extension}'
+      defaultTemplate: 'Strategy Guides/{Platform}/{GameTitle}/{Title}'
     },
     magazine: {
       label: 'Magazines',
       singularLabel: 'Magazine',
       inputId: 'serverFilesMagazineTemplate',
       defaultPresetId: 'guidevault-default-magazine',
-      defaultTemplate: 'Magazines/{MagazineSeries}/{Year}/{MagazineSeries} - {IssuePart}{Extension}'
+      defaultTemplate: 'Magazines/{MagazineSeries}/{Year}/{MagazineSeries} - {IssuePart}'
     }
   };
 }
@@ -24361,19 +24649,19 @@ function serverFilesCurrentTemplateKind() {
 function serverFilesDefaultTemplatePresets(kind = '') {
   const presets = {
     manual: [
-      { id: 'guidevault-default-manual', name: 'GuideVault Manual Default', template: 'Manuals/{Platform}/{GameTitle}/{Title} - Manual{Extension}', builtIn: true },
-      { id: 'manual-flat-title', name: 'Manual Flat Title', template: '{Title}{Extension}', builtIn: true },
-      { id: 'manual-publisher-year', name: 'Manual Publisher / Title / Year', template: '{Publisher}/{Title} - Manual - {Year}{Extension}', builtIn: true }
+      { id: 'guidevault-default-manual', name: 'GuideVault Manual Default', template: 'Manuals/{Platform}/{GameTitle}/{Title} - Manual', builtIn: true },
+      { id: 'manual-flat-title', name: 'Manual Flat Title', template: '{Title}', builtIn: true },
+      { id: 'manual-publisher-year', name: 'Manual Publisher / Title / Year', template: '{Publisher}/{Title} - Manual - {Year}', builtIn: true }
     ],
     strategyGuide: [
-      { id: 'guidevault-default-strategy-guide', name: 'GuideVault Strategy Guide Default', template: 'Strategy Guides/{Platform}/{GameTitle}/{Title}{Extension}', builtIn: true },
-      { id: 'strategy-guide-edition', name: 'Strategy Guide with Optional Edition', template: 'Strategy Guides/{Platform}/{GameTitle}/{Title} - {EditionPart}{Extension}', builtIn: true },
-      { id: 'strategy-guide-publisher-isbn-year', name: 'Strategy Guide Publisher / ISBN / Year', template: '{Publisher}/{Title} - {GuideTypePart} - {ISBN10} - {Year}{Extension}', builtIn: true }
+      { id: 'guidevault-default-strategy-guide', name: 'GuideVault Strategy Guide Default', template: 'Strategy Guides/{Platform}/{GameTitle}/{Title}', builtIn: true },
+      { id: 'strategy-guide-edition', name: 'Strategy Guide with Optional Edition', template: 'Strategy Guides/{Platform}/{GameTitle}/{Title} - {EditionPart}', builtIn: true },
+      { id: 'strategy-guide-publisher-isbn-year', name: 'Strategy Guide Publisher / ISBN / Year', template: '{Publisher}/{Title} - {GuideTypePart} - {ISBN10} - {Year}', builtIn: true }
     ],
     magazine: [
-      { id: 'guidevault-default-magazine', name: 'GuideVault Magazine Default', template: 'Magazines/{MagazineSeries}/{Year}/{MagazineSeries} - {IssuePart}{Extension}', builtIn: true },
-      { id: 'magazine-volume-issue', name: 'Magazine with Optional Volume + Issue', template: 'Magazines/{MagazineSeries}/{Year}/{MagazineSeries} - {VolumePart} - {IssuePart}{Extension}', builtIn: true },
-      { id: 'magazine-flat-series-issue', name: 'Magazine Flat Series + Issue', template: '{MagazineSeries} - {IssuePart}{Extension}', builtIn: true }
+      { id: 'guidevault-default-magazine', name: 'GuideVault Magazine Default', template: 'Magazines/{MagazineSeries}/{Year}/{MagazineSeries} - {IssuePart}', builtIn: true },
+      { id: 'magazine-volume-issue', name: 'Magazine with Optional Volume + Issue', template: 'Magazines/{MagazineSeries}/{Year}/{MagazineSeries} - {VolumePart} - {IssuePart}', builtIn: true },
+      { id: 'magazine-flat-series-issue', name: 'Magazine Flat Series + Issue', template: '{MagazineSeries} - {IssuePart}', builtIn: true }
     ]
   };
   const normalizedKind = serverFilesNormalizeTemplateKind(kind);
@@ -24421,10 +24709,7 @@ function serverFilesBuildDefaultTemplatePresetState() {
 
 function serverFilesApplyHiddenBuiltInTemplatePresets(stateValue) {
   serverFilesTemplateKindOrder().forEach(kind => {
-    const hidden = new Set((stateValue.hiddenBuiltIns?.[kind] || []).map(id => String(id || '').trim()).filter(Boolean));
-    hidden.forEach(id => {
-      if (stateValue.presets?.[kind]?.[id]?.builtIn) delete stateValue.presets[kind][id];
-    });
+    stateValue.hiddenBuiltIns[kind] = [];
     if (!Object.keys(stateValue.presets?.[kind] || {}).length) {
       const fallback = normalizeServerFilesTemplatePreset(serverFilesDefaultTemplatePresets(kind)[0], kind, serverFilesTemplateKindDefinitions()[kind].defaultPresetId);
       stateValue.presets[kind] = { [fallback.id]: fallback };
@@ -24453,6 +24738,7 @@ function serverFilesNormalizeTemplatePresetState(parsed = null) {
       Object.entries(kindPresets).forEach(([id, preset]) => {
         const normalized = normalizeServerFilesTemplatePreset({ ...(preset || {}), id: preset?.id || id }, kind, id);
         if (normalized.builtIn && stateValue.hiddenBuiltIns[kind]?.includes(normalized.id)) return;
+        if (normalized.builtIn && stateValue.presets[kind]?.[normalized.id]) return;
         stateValue.presets[kind][normalized.id] = normalized;
       });
     });
@@ -24517,6 +24803,63 @@ function saveServerFilesTemplatePresets(presetsState) {
   return normalized;
 }
 
+function serverFilesTemplateBreakdown(template = '') {
+  const normalized = String(template || '').replace(/\\/g, '/').replace(/^\/+|\/+$/g, '');
+  const parts = normalized.split('/').filter(Boolean);
+  return {
+    folders: parts.length > 1 ? parts.slice(0, -1).join(' / ') : 'Current library root',
+    fileName: parts.length ? parts[parts.length - 1] : 'No file name pattern'
+  };
+}
+
+function serverFilesUpdateTemplateBreakdown() {
+  const kind = serverFilesCurrentTemplateKind();
+  const input = serverFilesTemplateInputForKind(kind);
+  const breakdown = serverFilesTemplateBreakdown(input?.value || '');
+  const target = $('serverFilesTemplateBreakdown');
+  if (target) target.innerHTML = `
+    <div><span>Folders</span><code>${escapeHtml(breakdown.folders)}</code></div>
+    <div><span>File name</span><code>${escapeHtml(breakdown.fileName)}</code></div>
+    <p>Original file extension is preserved automatically.</p>`;
+}
+
+function serverFilesSyncTemplateEditor(kind = serverFilesCurrentTemplateKind()) {
+  const normalizedKind = serverFilesNormalizeTemplateKind(kind);
+  const defs = serverFilesTemplateKindDefinitions();
+  document.querySelectorAll('[data-server-files-template-editor-kind]').forEach(editor => {
+    editor.classList.toggle('hidden', editor.dataset.serverFilesTemplateEditorKind !== normalizedKind);
+  });
+  document.querySelectorAll('[data-server-files-token-kind]').forEach(group => {
+    group.classList.toggle('hidden', group.dataset.serverFilesTokenKind !== normalizedKind);
+  });
+  const selectedCount = serverFilesSelectedItemsFromState().filter(item => {
+    if (normalizedKind === 'manual') return item.kind === 'Manual';
+    if (normalizedKind === 'magazine') return item.kind === 'Magazine';
+    return item.kind === 'Strategy Guide';
+  }).length;
+  const scope = $('serverFilesRuleScopeSummary');
+  if (scope) scope.textContent = `Editing ${defs[normalizedKind].label}${selectedCount ? ` · ${selectedCount} selected` : ''}.`;
+  serverFilesUpdateTemplateBreakdown();
+}
+
+function serverFilesSyncTemplatePresetActions() {
+  const kind = serverFilesCurrentTemplateKind();
+  const presetsState = loadServerFilesTemplatePresets();
+  const id = String($('serverFilesTemplatePresetSelect')?.value || '').trim();
+  const preset = presetsState.presets?.[kind]?.[id];
+  const customSelected = !!preset && !preset.builtIn;
+  const updateBtn = $('serverFilesUpdateTemplatePreset');
+  const deleteBtn = $('serverFilesDeleteTemplatePreset');
+  if (updateBtn) {
+    updateBtn.disabled = !customSelected;
+    updateBtn.title = customSelected ? 'Update this saved custom rule.' : 'Built-in rules are read-only. Save a copy to customize it.';
+  }
+  if (deleteBtn) {
+    deleteBtn.disabled = !customSelected;
+    deleteBtn.title = customSelected ? 'Delete this custom rule.' : 'Built-in rules cannot be deleted.';
+  }
+}
+
 function serverFilesSetActiveTemplateKind(kind = '', options = {}) {
   const normalizedKind = serverFilesNormalizeTemplateKind(kind);
   const files = serverFilesEnsureState();
@@ -24525,6 +24868,7 @@ function serverFilesSetActiveTemplateKind(kind = '', options = {}) {
   const kindSelect = $('serverFilesTemplateKindSelect');
   if (kindSelect && kindSelect.value !== normalizedKind) kindSelect.value = normalizedKind;
   renderServerFilesTemplatePresetOptions();
+  serverFilesSyncTemplateEditor(normalizedKind);
   if (options.focusInput) {
     const input = serverFilesTemplateInputForKind(normalizedKind);
     if (input) {
@@ -24572,6 +24916,8 @@ function renderServerFilesTemplatePresetOptions() {
   if (selectedId) select.value = selectedId;
   const selected = presetsState.presets?.[kind]?.[select.value];
   if ($('serverFilesTemplatePresetName') && selected) $('serverFilesTemplatePresetName').value = selected.name || '';
+  serverFilesSyncTemplatePresetActions();
+  serverFilesSyncTemplateEditor(kind);
 }
 
 function serverFilesApplySelectedTemplatesToInputs(presetsState) {
@@ -24599,6 +24945,7 @@ function hydrateServerFilesTemplatePresets(forceApply = false) {
   renderServerFilesTemplatePresetOptions();
   if (forceApply || firstHydrate) serverFilesApplySelectedTemplatesToInputs(presetsState);
   select.dataset.hydrated = 'true';
+  serverFilesSyncTemplateEditor(activeKind);
 }
 
 function serverFilesApplySelectedTemplatePreset() {
@@ -24614,7 +24961,9 @@ function serverFilesApplySelectedTemplatePreset() {
   if ($('serverFilesTemplatePresetName')) $('serverFilesTemplatePresetName').value = preset.name || '';
   const input = serverFilesTemplateInputForKind(kind);
   if (input) input.value = String(preset.template || '');
-  if ($('serverFilesPreviewTable')) $('serverFilesPreviewTable').innerHTML = '<p class="sub">Template loaded. Preview selected files to see the updated before/after plan.</p>';
+  serverFilesInvalidatePreview('Naming rule changed. Build a new rename plan before applying changes.');
+  serverFilesUpdateTemplateBreakdown();
+  serverFilesSyncTemplatePresetActions();
   serverFilesSetStatus('serverFilesOrganizeStatus', `Loaded ${serverFilesTemplateKindDefinitions()[kind].singularLabel.toLowerCase()} template: ${preset.name}.`, 'success');
 }
 
@@ -24624,10 +24973,11 @@ function serverFilesSaveTemplatePreset() {
   const kind = serverFilesCurrentTemplateKind();
   const currentId = String(select?.value || '').trim();
   const existing = presetsState.presets?.[kind]?.[currentId];
-  const name = serverFilesCurrentTemplateName(kind);
+  const currentName = serverFilesCurrentTemplateName(kind);
+  const name = existing?.builtIn && currentName === existing.name ? `${currentName} Copy` : currentName;
   const input = serverFilesTemplateInputForKind(kind);
   const template = String(input?.value || '').trim() || serverFilesTemplateKindDefinitions()[kind].defaultTemplate;
-  const id = currentId && existing && !existing.builtIn ? currentId : `custom-${kind}-${Date.now()}`;
+  const id = `custom-${kind}-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
   const preset = normalizeServerFilesTemplatePreset({ id, name, template, builtIn: false }, kind, id);
   presetsState.presets[kind] = presetsState.presets[kind] || {};
   presetsState.presets[kind][id] = preset;
@@ -24637,7 +24987,38 @@ function serverFilesSaveTemplatePreset() {
   renderServerFilesTemplatePresetOptions();
   if ($('serverFilesTemplatePresetSelect')) $('serverFilesTemplatePresetSelect').value = id;
   if ($('serverFilesTemplatePresetName')) $('serverFilesTemplatePresetName').value = preset.name;
-  serverFilesSetStatus('serverFilesOrganizeStatus', `Saved ${serverFilesTemplateKindDefinitions()[kind].singularLabel.toLowerCase()} template: ${preset.name}.`, 'success');
+  serverFilesSyncTemplatePresetActions();
+  serverFilesSetStatus('serverFilesOrganizeStatus', `Saved a new ${serverFilesTemplateKindDefinitions()[kind].singularLabel.toLowerCase()} rule: ${preset.name}.`, 'success');
+}
+
+function serverFilesUpdateTemplatePreset() {
+  const select = $('serverFilesTemplatePresetSelect');
+  if (!select) return;
+  const kind = serverFilesCurrentTemplateKind();
+  const presetsState = loadServerFilesTemplatePresets();
+  const id = String(select.value || '').trim();
+  const existing = presetsState.presets?.[kind]?.[id];
+  if (!existing || existing.builtIn) {
+    serverFilesSetStatus('serverFilesOrganizeStatus', 'Built-in rules are read-only. Use Save as New to create an editable copy.', 'error');
+    return;
+  }
+  const input = serverFilesTemplateInputForKind(kind);
+  const preset = normalizeServerFilesTemplatePreset({
+    ...existing,
+    name: serverFilesCurrentTemplateName(kind),
+    template: String(input?.value || '').trim() || serverFilesTemplateKindDefinitions()[kind].defaultTemplate,
+    builtIn: false,
+    updatedAt: new Date().toISOString()
+  }, kind, id);
+  presetsState.presets[kind][id] = preset;
+  presetsState.selectedKind = kind;
+  presetsState.selectedIds[kind] = id;
+  saveServerFilesTemplatePresets(presetsState);
+  renderServerFilesTemplatePresetOptions();
+  if ($('serverFilesTemplatePresetSelect')) $('serverFilesTemplatePresetSelect').value = id;
+  if ($('serverFilesTemplatePresetName')) $('serverFilesTemplatePresetName').value = preset.name;
+  serverFilesSyncTemplatePresetActions();
+  serverFilesSetStatus('serverFilesOrganizeStatus', `Updated ${serverFilesTemplateKindDefinitions()[kind].singularLabel.toLowerCase()} rule: ${preset.name}.`, 'success');
 }
 
 function serverFilesDeleteTemplatePreset() {
@@ -24648,28 +25029,21 @@ function serverFilesDeleteTemplatePreset() {
   const id = String(select.value || '').trim();
   const preset = presetsState.presets?.[kind]?.[id];
   if (!preset) return;
-  const visibleCount = Object.keys(presetsState.presets?.[kind] || {}).length;
-  if (visibleCount <= 1) {
-    serverFilesSetStatus('serverFilesOrganizeStatus', `Keep at least one ${serverFilesTemplateKindDefinitions()[kind].singularLabel.toLowerCase()} template available.`, 'error');
-    return;
-  }
   if (preset.builtIn) {
-    presetsState.hiddenBuiltIns[kind] = Array.from(new Set([...(presetsState.hiddenBuiltIns?.[kind] || []), id]));
+    serverFilesSetStatus('serverFilesOrganizeStatus', 'Built-in rules cannot be deleted. Select a custom rule first.', 'error');
+    return;
   }
   delete presetsState.presets[kind][id];
   presetsState.selectedKind = kind;
-  presetsState.selectedIds[kind] = Object.keys(presetsState.presets[kind] || {})[0] || serverFilesTemplateKindDefinitions()[kind].defaultPresetId;
+  presetsState.selectedIds[kind] = serverFilesTemplateKindDefinitions()[kind].defaultPresetId;
   saveServerFilesTemplatePresets(presetsState);
-  hydrateServerFilesTemplatePresets(false);
-  serverFilesSetStatus('serverFilesOrganizeStatus', `Deleted ${serverFilesTemplateKindDefinitions()[kind].singularLabel.toLowerCase()} template: ${preset.name}.`, 'success');
+  renderServerFilesTemplatePresetOptions();
+  serverFilesApplySelectedTemplatePreset();
+  serverFilesSetStatus('serverFilesOrganizeStatus', `Deleted custom ${serverFilesTemplateKindDefinitions()[kind].singularLabel.toLowerCase()} rule: ${preset.name}.`, 'success');
 }
 
 function serverFilesCurrentTemplateInput() {
-  const files = serverFilesEnsureState();
-  const targetId = files.templateTargetId || document.activeElement?.id || 'serverFilesManualTemplate';
-  const input = $(targetId);
-  if (input && input.classList?.contains('server-files-template-input')) return input;
-  return $('serverFilesManualTemplate') || $('serverFilesStrategyTemplate') || $('serverFilesMagazineTemplate');
+  return serverFilesTemplateInputForKind(serverFilesCurrentTemplateKind());
 }
 
 function serverFilesInsertTemplateToken(token = '') {
@@ -24683,8 +25057,8 @@ function serverFilesInsertTemplateToken(token = '') {
   input.focus();
   try { input.setSelectionRange(nextPos, nextPos); } catch {}
   serverFilesTrackTemplateTarget(input);
-  if ($('serverFilesApplyPreview')) $('serverFilesApplyPreview').disabled = true;
-  if ($('serverFilesPreviewTable')) $('serverFilesPreviewTable').innerHTML = '<p class="sub">Template changed. Preview selected files again to see the updated before/after plan.</p>';
+  serverFilesInvalidatePreview('Naming rule changed. Build a new rename plan before applying changes.');
+  serverFilesUpdateTemplateBreakdown();
 }
 
 function serverFilesTemplatesPayload() {
@@ -24702,7 +25076,7 @@ function serverFilesPreviewRowsHtml(rows = [], options = {}) {
   const showAll = options.showAll === true || total <= SERVER_FILES_PREVIEW_RENDER_LIMIT;
   const visibleRows = showAll ? rows : rows.slice(0, SERVER_FILES_PREVIEW_RENDER_LIMIT);
   const note = total > visibleRows.length
-    ? `<div class="server-files-preview-note"><strong>Showing ${visibleRows.length} of ${total} preview rows for speed.</strong><span>Apply Previewed Moves still uses the full validated preview result.</span><button class="ghost" type="button" data-server-files-preview-show-all="true">Show All Rows</button></div>`
+    ? `<div class="server-files-preview-note"><strong>Showing ${visibleRows.length} of ${total} preview rows for speed.</strong><span>Apply Ready Changes still uses the full validated plan.</span><button class="ghost" type="button" data-server-files-preview-show-all="true">Show All Rows</button></div>`
     : '';
   return `${note}<table class="server-files-before-after-table"><thead><tr><th>Type</th><th>Title</th><th>Before</th><th>After</th><th>Status</th></tr></thead><tbody>${visibleRows.map(row => {
     const currentPath = row.currentPath || '';
@@ -24724,6 +25098,7 @@ function serverFilesRenderPreviewRows(showAll = false) {
   if (!table) return;
   state.serverFilesPreviewShowAll = !!showAll;
   table.innerHTML = serverFilesPreviewRowsHtml(state.serverFilesPreview || [], { showAll: state.serverFilesPreviewShowAll });
+  serverFilesRenderPreviewSummary(state.serverFilesPreview || []);
 }
 
 async function serverFilesPreviewSelected() {
@@ -24735,8 +25110,12 @@ async function serverFilesPreviewSelected() {
     serverFilesSetStatus('serverFilesOrganizeStatus', 'Select one or more target files first.', 'error');
     return;
   }
+  const request = { ids: ids.slice(), templates: serverFilesTemplatesPayload() };
+  const previewGeneration = (Number(state.serverFilesPreviewGeneration) || 0) + 1;
+  state.serverFilesPreviewGeneration = previewGeneration;
   state.serverFilesPreviewShowAll = false;
   state.serverFilesPreview = [];
+  state.serverFilesPreviewRequest = null;
   if (previewBtn) previewBtn.disabled = true;
   if (applyBtn) applyBtn.disabled = true;
   if ($('serverFilesPreviewTable')) $('serverFilesPreviewTable').innerHTML = `<div class="server-files-preview-loading"><strong>Building preview for ${ids.length} selected file(s)...</strong><span>Checking proposed paths and conflicts without moving anything.</span></div>`;
@@ -24746,14 +25125,18 @@ async function serverFilesPreviewSelected() {
     const res = await fetch('/api/items/files/organize/preview', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ ids, templates: serverFilesTemplatesPayload() })
+      body: JSON.stringify(request)
     });
     let data = null;
     try { data = await res.json(); } catch {}
     if (!res.ok) throw new Error(data?.error || `Preview failed. HTTP ${res.status}`);
+    if (previewGeneration !== state.serverFilesPreviewGeneration) {
+      serverFilesSetStatus('serverFilesOrganizeStatus', 'The selection or naming rule changed while the plan was being built. Build the rename plan again.', 'error');
+      return;
+    }
     state.serverFilesPreview = data?.results || [];
+    state.serverFilesPreviewRequest = request;
     serverFilesRenderPreviewRows(false);
-    if (applyBtn) applyBtn.disabled = !(data?.readyToApply > 0);
     const cappedMessage = state.serverFilesPreview.length > SERVER_FILES_PREVIEW_RENDER_LIMIT
       ? ` Showing the first ${SERVER_FILES_PREVIEW_RENDER_LIMIT} rows in the table for speed.`
       : '';
@@ -24764,29 +25147,33 @@ async function serverFilesPreviewSelected() {
 }
 
 async function serverFilesApplyPreview() {
-  const ids = serverFilesCurrentSelectedIds();
-  if (!ids.length) {
-    serverFilesSetStatus('serverFilesOrganizeStatus', 'Select one or more target files first.', 'error');
+  const request = state.serverFilesPreviewRequest;
+  const counts = serverFilesPreviewCounts();
+  if (!request || !Array.isArray(request.ids) || !request.ids.length || counts.ready < 1) {
+    serverFilesSetStatus('serverFilesOrganizeStatus', 'Build a fresh rename plan with at least one ready change first.', 'error');
     return;
   }
+  const ids = request.ids.slice();
   const confirmed = await showAppConfirm({
     title: 'Apply file moves?',
-    message: `GuideVault will rename and/or move ${ids.length} selected source file(s) inside their current library roots. Existing destination files will not be overwritten.`,
-    okText: 'Apply Moves',
+    message: `GuideVault will apply ${counts.ready} ready rename/move change${counts.ready === 1 ? '' : 's'} from this validated plan. Unchanged or conflicted rows will be skipped, and existing destination files will not be overwritten.`,
+    okText: 'Apply Ready Changes',
     cancelText: 'Cancel'
   });
   if (!confirmed) return;
-  serverFilesSetStatus('serverFilesOrganizeStatus', `Applying file organization to ${ids.length} selected file(s)...`, '');
+  serverFilesSetStatus('serverFilesOrganizeStatus', `Applying ${counts.ready} ready file change${counts.ready === 1 ? '' : 's'}...`, '');
   const res = await fetch('/api/items/files/organize/apply', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ ids, templates: serverFilesTemplatesPayload() })
+    body: JSON.stringify(request)
   });
   let data = null;
   try { data = await res.json(); } catch {}
   if (!res.ok) throw new Error(data?.error || `Apply failed. HTTP ${res.status}`);
   state.serverFilesPreview = data?.results || [];
+  state.serverFilesPreviewRequest = null;
   if ($('serverFilesPreviewTable')) $('serverFilesPreviewTable').innerHTML = serverFilesPreviewRowsHtml(state.serverFilesPreview);
+  serverFilesRenderPreviewSummary([]);
   const updatedItems = Array.isArray(data?.items) ? data.items : [];
   updatedItems.forEach(item => replaceItemInState(item));
   if (updatedItems.length) {
@@ -25057,6 +25444,7 @@ document.querySelectorAll('[data-server-files-kind]').forEach(input => input.add
 if ($('serverFilesTemplateKindSelect')) $('serverFilesTemplateKindSelect').addEventListener('change', e => serverFilesSetActiveTemplateKind(e.currentTarget.value, { focusInput: true }));
 if ($('serverFilesTemplatePresetSelect')) $('serverFilesTemplatePresetSelect').addEventListener('change', serverFilesApplySelectedTemplatePreset);
 if ($('serverFilesSaveTemplatePreset')) $('serverFilesSaveTemplatePreset').addEventListener('click', e => { e.preventDefault(); serverFilesSaveTemplatePreset(); });
+if ($('serverFilesUpdateTemplatePreset')) $('serverFilesUpdateTemplatePreset').addEventListener('click', e => { e.preventDefault(); serverFilesUpdateTemplatePreset(); });
 if ($('serverFilesDeleteTemplatePreset')) $('serverFilesDeleteTemplatePreset').addEventListener('click', e => { e.preventDefault(); serverFilesDeleteTemplatePreset(); });
 if ($('serverFilesHeaderCheck')) $('serverFilesHeaderCheck').addEventListener('change', e => serverFilesSelectRendered(!!e.currentTarget.checked));
 if ($('serverFilesTableBody')) $('serverFilesTableBody').addEventListener('change', e => {
@@ -25074,8 +25462,8 @@ document.querySelectorAll('.server-files-template-input').forEach(input => {
   input.addEventListener('focus', () => serverFilesTrackTemplateTarget(input));
   input.addEventListener('click', () => serverFilesTrackTemplateTarget(input));
   input.addEventListener('input', () => {
-    if ($('serverFilesApplyPreview')) $('serverFilesApplyPreview').disabled = true;
-    if ($('serverFilesPreviewTable')) $('serverFilesPreviewTable').innerHTML = '<p class="sub">Template changed. Preview selected files again to see the updated before/after plan.</p>';
+    serverFilesInvalidatePreview('Naming rule changed. Build a new rename plan before applying changes.');
+    serverFilesUpdateTemplateBreakdown();
   });
 });
 document.querySelectorAll('[data-server-files-token]').forEach(btn => btn.addEventListener('click', e => {
@@ -25090,7 +25478,7 @@ if ($('serverFilesPreviewTable')) $('serverFilesPreviewTable').addEventListener(
   serverFilesRenderPreviewRows(true);
   serverFilesSetStatus('serverFilesOrganizeStatus', `Showing all ${(state.serverFilesPreview || []).length} preview row(s).`, 'success');
 });
-if ($('serverFilesPreviewSelected')) $('serverFilesPreviewSelected').addEventListener('click', async () => { try { await serverFilesPreviewSelected(); } catch (err) { console.error(err); serverFilesSetStatus('serverFilesOrganizeStatus', `Preview failed: ${err?.message || err}`, 'error'); if ($('serverFilesPreviewTable')) $('serverFilesPreviewTable').innerHTML = `<p class="sub">Preview failed: ${escapeHtml(err?.message || String(err || 'Unknown error'))}</p>`; if ($('serverFilesApplyPreview')) $('serverFilesApplyPreview').disabled = true; } });
+if ($('serverFilesPreviewSelected')) $('serverFilesPreviewSelected').addEventListener('click', async () => { try { await serverFilesPreviewSelected(); } catch (err) { console.error(err); state.serverFilesPreviewRequest = null; serverFilesRenderPreviewSummary([]); serverFilesSetStatus('serverFilesOrganizeStatus', `Preview failed: ${err?.message || err}`, 'error'); if ($('serverFilesPreviewTable')) $('serverFilesPreviewTable').innerHTML = `<p class="sub">Preview failed: ${escapeHtml(err?.message || String(err || 'Unknown error'))}</p>`; } });
 if ($('serverFilesApplyPreview')) $('serverFilesApplyPreview').addEventListener('click', async () => { try { await serverFilesApplyPreview(); } catch (err) { console.error(err); serverFilesSetStatus('serverFilesOrganizeStatus', `Apply failed: ${err?.message || err}`, 'error'); } });
 if ($('serverFilesWriteBackSelected')) $('serverFilesWriteBackSelected').addEventListener('click', async () => { try { await metadataManagerWriteBackSelected('files'); } catch (err) { console.error(err); serverFilesSetStatus('serverFilesWriteBackStatus', `Write-back failed: ${err?.message || err}`, 'error'); } });
 if ($('serverFilesConvertCbz')) $('serverFilesConvertCbz').addEventListener('click', async () => { try { await serverFilesConvertSelected('cbz'); } catch (err) { console.error(err); serverFilesSetStatus('serverFilesConvertStatus', `Conversion failed: ${err?.message || err}`, 'error'); renderServerFilesFormatTools(); } });
@@ -25151,3 +25539,4 @@ installLibraryCardDelegates();
 installGlobalDetailDelegate();
 syncEmailTemplatePreview();
 initializeGuidevaultAuthAndApp();
+

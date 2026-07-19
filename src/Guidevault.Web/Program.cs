@@ -31,7 +31,7 @@ builder.Services.AddResponseCompression(responseCompression =>
         "image/svg+xml"
     });
 });
-const string GuidevaultVersion = "1.2.9";
+const string GuidevaultVersion = "1.2.10";
 var app = builder.Build();
 var metadataJsonOptions = new JsonSerializerOptions(JsonSerializerDefaults.Web) { PropertyNameCaseInsensitive = true };
 var options = app.Configuration.GetSection("Guidevault").Get<GuidevaultOptions>() ?? new GuidevaultOptions();
@@ -656,6 +656,7 @@ app.MapGet("/api/server/settings", () => Results.Ok(serverSettingsStore.GetClien
 app.MapPut("/api/server/settings", (GuidevaultServerSettings payload) =>
 {
     var saved = serverSettingsStore.Update(payload ?? new GuidevaultServerSettings());
+    gameDossierStore.SetPreferredCoverRegionForAll(saved.IgdbPreferredRegion);
     RecordSystemEvent("System", "Server settings updated", "Server settings were saved from the web UI.", "api");
     return Results.Ok(saved);
 });
@@ -2064,6 +2065,27 @@ app.MapGet("/api/dossiers/{id}", (HttpRequest request, string id) =>
     return dossier is null ? Results.NotFound(new { error = "Game dossier not found." }) : Results.Ok(dossier);
 });
 
+app.MapGet("/api/dossiers/{id}/reviews", (HttpRequest request, string id) =>
+{
+    var dossier = VisibleGameDossiers(request)
+        .FirstOrDefault(candidate => string.Equals(candidate.Id, id, StringComparison.OrdinalIgnoreCase));
+    if (dossier is null) return Results.NotFound(new { error = "Game dossier not found." });
+    var linkedIds = new HashSet<string>(dossier.LibraryItemIds, StringComparer.OrdinalIgnoreCase);
+    var reviewableIds = VisibleLibraryItems(request, cache.GetItemsSnapshot())
+        .Where(item => linkedIds.Contains(item.Id)
+            && (string.Equals(item.Kind, "Manual", StringComparison.OrdinalIgnoreCase)
+                || string.Equals(item.Kind, "Strategy Guide", StringComparison.OrdinalIgnoreCase)
+                || string.Equals(item.Kind, "Magazine", StringComparison.OrdinalIgnoreCase)))
+        .Select(item => item.Id)
+        .ToArray();
+
+    return Results.Ok(new
+    {
+        dossierId = dossier.Id,
+        reviews = itemReviewStore.GetPublicForItems(reviewableIds)
+    });
+});
+
 app.MapPost("/api/dossiers", (HttpRequest request, [FromBody] JsonElement payload) =>
 {
     if (payload.ValueKind != JsonValueKind.Object
@@ -2080,7 +2102,8 @@ app.MapPost("/api/dossiers", (HttpRequest request, [FromBody] JsonElement payloa
     if (game.Id <= 0 || string.IsNullOrWhiteSpace(game.GameTitle))
         return Results.BadRequest(new { error = "Resolve a valid IGDB game before creating its dossier." });
 
-    var dossier = gameDossierStore.CreateOrUpdate(game, itemId, currentUser.UserId, cache.GetItemsSnapshot());
+    var settings = serverSettingsStore.GetSnapshot();
+    var dossier = gameDossierStore.CreateOrUpdate(game, itemId, currentUser.UserId, cache.GetItemsSnapshot(), settings.IgdbPreferredRegion);
     RecordSystemEvent("Dossier", "Game dossier saved", $"Saved the {dossier.GameTitle} game dossier with {dossier.LibraryItemIds.Length} linked library item(s).", "igdb");
     return Results.Ok(new { dossier, dossiers = gameDossierStore.GetAll() });
 });
@@ -2103,7 +2126,7 @@ app.MapPost("/api/dossiers/{id}/refresh-igdb", async (HttpRequest request, strin
     {
         var settings = serverSettingsStore.GetSnapshot();
         var game = await IgdbGameMetadataClient.ResolveByIdAsync(existing.IgdbId, settings.IgdbClientId, settings.IgdbClientSecret);
-        var dossier = gameDossierStore.CreateOrUpdate(game, existing.LibraryItemIds.FirstOrDefault(), currentUser.UserId, cache.GetItemsSnapshot());
+        var dossier = gameDossierStore.CreateOrUpdate(game, existing.LibraryItemIds.FirstOrDefault(), currentUser.UserId, cache.GetItemsSnapshot(), settings.IgdbPreferredRegion);
         RecordSystemEvent("Dossier", "IGDB dossier refreshed", $"Refreshed IGDB metadata and linked GuideVault documents for {dossier.GameTitle}.", "igdb");
         return Results.Ok(new { dossier, dossiers = gameDossierStore.GetAll() });
     }
@@ -4406,12 +4429,33 @@ static string ResolveGuidevaultDataRoot(IConfiguration configuration, string con
     .Where(p => !string.IsNullOrWhiteSpace(p))
     .Select(Path.GetFullPath)
     .Distinct(StringComparer.OrdinalIgnoreCase)
+    .Where(path => !IsGuidevaultBuildOutputPath(path, contentRoot))
     .Select(path => new { Path = path, Score = ScoreGuidevaultDataRoot(path) })
     .OrderByDescending(x => x.Score)
     .ToList();
 
     var best = candidates.FirstOrDefault(x => x.Score > 0);
     return best?.Path ?? Path.Combine(contentRoot, "data");
+}
+
+static bool IsGuidevaultBuildOutputPath(string path, string contentRoot)
+{
+    try
+    {
+        var relative = Path.GetRelativePath(Path.GetFullPath(contentRoot), Path.GetFullPath(path));
+        if (relative == "." || relative.StartsWith(".." + Path.DirectorySeparatorChar, StringComparison.Ordinal))
+            return false;
+
+        var segments = relative.Split(
+            new[] { Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar },
+            StringSplitOptions.RemoveEmptyEntries);
+        return segments.Any(segment => string.Equals(segment, "bin", StringComparison.OrdinalIgnoreCase)
+            || string.Equals(segment, "obj", StringComparison.OrdinalIgnoreCase));
+    }
+    catch
+    {
+        return false;
+    }
 }
 
 static string ResolveGuidevaultPathRoot(string contentRoot, string dataRoot)
@@ -4565,16 +4609,31 @@ static List<FileOrganizationPlan> BuildFileOrganizationPlans(IEnumerable<string>
         plans.Add(new FileOrganizationPlan(item.Id, item.Kind, item.Title, item.FileName, currentPath, destinationPath, relativePath, "Ready", apply ? "Ready to apply." : "Ready to move/rename."));
     }
 
-    return plans;
+    var duplicateDestinations = plans
+        .Where(plan => plan.Status.Equals("Ready", StringComparison.OrdinalIgnoreCase) && !string.IsNullOrWhiteSpace(plan.ProposedPath))
+        .GroupBy(plan => Path.GetFullPath(plan.ProposedPath), StringComparer.OrdinalIgnoreCase)
+        .Where(group => group.Count() > 1)
+        .SelectMany(group => group.Select(plan => plan.Id))
+        .ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+    if (duplicateDestinations.Count == 0) return plans;
+
+    return plans.Select(plan => duplicateDestinations.Contains(plan.Id)
+        ? plan with
+        {
+            Status = "Conflict",
+            Message = "Multiple selected files resolve to the same proposed destination. Adjust the naming rule or metadata."
+        }
+        : plan).ToList();
 }
 
 static string FileOrganizationTemplateForKind(JsonElement payload, string kind)
 {
     var defaults = kind.Equals("Manual", StringComparison.OrdinalIgnoreCase)
-        ? "Manuals/{Platform}/{GameTitle}/{Title} - Manual{Extension}"
+        ? "Manuals/{Platform}/{GameTitle}/{Title} - Manual"
         : kind.Equals("Magazine", StringComparison.OrdinalIgnoreCase)
-            ? "Magazines/{MagazineSeries}/{Year}/{MagazineSeries} - {IssuePart}{Extension}"
-            : "Strategy Guides/{Platform}/{GameTitle}/{Title}{Extension}";
+            ? "Magazines/{MagazineSeries}/{Year}/{MagazineSeries} - {IssuePart}"
+            : "Strategy Guides/{Platform}/{GameTitle}/{Title}";
 
     if (payload.ValueKind != JsonValueKind.Object) return defaults;
     if (!TryGetJsonProperty(payload, "templates", out var templates) || templates.ValueKind != JsonValueKind.Object) return defaults;
@@ -5952,6 +6011,7 @@ public sealed class GuidevaultServerSettingsStore
         value.BookmarksDirectory = NormalizePathValue(value.BookmarksDirectory, "data/bookmarks");
         value.IgdbClientId = Clean(value.IgdbClientId, string.Empty);
         value.IgdbClientSecret = Clean(value.IgdbClientSecret, string.Empty);
+        value.IgdbPreferredRegion = NormalizeIgdbPreferredRegion(value.IgdbPreferredRegion);
         value.HomeAssistantEnabled = value.HomeAssistantEnabled;
         value.HomeAssistantUrl = NormalizeHomeAssistantUrl(value.HomeAssistantUrl);
         value.HomeAssistantLongLivedAccessToken = Clean(value.HomeAssistantLongLivedAccessToken, string.Empty);
@@ -5974,6 +6034,7 @@ public sealed class GuidevaultServerSettingsStore
         BookmarksDirectory = value.BookmarksDirectory,
         IgdbClientId = value.IgdbClientId,
         IgdbClientSecret = string.IsNullOrWhiteSpace(value.IgdbClientSecret) ? string.Empty : SecretMask,
+        IgdbPreferredRegion = value.IgdbPreferredRegion,
         HomeAssistantEnabled = value.HomeAssistantEnabled,
         HomeAssistantUrl = value.HomeAssistantUrl,
         HomeAssistantLongLivedAccessToken = string.IsNullOrWhiteSpace(value.HomeAssistantLongLivedAccessToken) ? string.Empty : SecretMask,
@@ -5995,6 +6056,7 @@ public sealed class GuidevaultServerSettingsStore
         BookmarksDirectory = value.BookmarksDirectory,
         IgdbClientId = value.IgdbClientId,
         IgdbClientSecret = value.IgdbClientSecret,
+        IgdbPreferredRegion = value.IgdbPreferredRegion,
         HomeAssistantEnabled = value.HomeAssistantEnabled,
         HomeAssistantUrl = value.HomeAssistantUrl,
         HomeAssistantLongLivedAccessToken = value.HomeAssistantLongLivedAccessToken,
@@ -6017,6 +6079,17 @@ public sealed class GuidevaultServerSettingsStore
         var text = Clean(value, "Information");
         var allowed = new[] { "Trace", "Debug", "Information", "Warning", "Error", "Critical", "None" };
         return allowed.FirstOrDefault(x => string.Equals(x, text, StringComparison.OrdinalIgnoreCase)) ?? "Information";
+    }
+
+    private static string NormalizeIgdbPreferredRegion(string? value)
+    {
+        var normalized = Clean(value, "north-america").ToLowerInvariant().Replace('_', '-').Replace(' ', '-');
+        var allowed = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+        {
+            "north-america", "europe", "japan", "worldwide", "australia", "new-zealand",
+            "china", "asia", "korea", "brazil", "automatic"
+        };
+        return allowed.Contains(normalized) ? normalized : "north-america";
     }
     private static string NormalizePathValue(string? value, string fallback) => string.IsNullOrWhiteSpace(value) ? fallback : value.Trim().Replace('\\', '/');
     private static string NormalizeHomeAssistantUrl(string? value)
@@ -6065,6 +6138,7 @@ public sealed class GuidevaultServerSettings
     public string BookmarksDirectory { get; set; } = "data/bookmarks";
     public string IgdbClientId { get; set; } = string.Empty;
     public string IgdbClientSecret { get; set; } = string.Empty;
+    public string IgdbPreferredRegion { get; set; } = "north-america";
     public bool HomeAssistantEnabled { get; set; } = false;
     public string HomeAssistantUrl { get; set; } = string.Empty;
     public string HomeAssistantLongLivedAccessToken { get; set; } = string.Empty;
@@ -7111,6 +7185,7 @@ public sealed class GuidevaultGameDossier
     public string GameFranchise { get; set; } = string.Empty;
     public string CoverPreviewUrl { get; set; } = string.Empty;
     public string PrimaryCoverUrl { get; set; } = string.Empty;
+    public string PreferredCoverRegion { get; set; } = "north-america";
     public string SourceUrl { get; set; } = string.Empty;
     public string[] Developers { get; set; } = Array.Empty<string>();
     public string[] Publishers { get; set; } = Array.Empty<string>();
@@ -7182,7 +7257,7 @@ public sealed class GuidevaultGameDossierStore
                 .ToArray();
     }
 
-    public GuidevaultGameDossier CreateOrUpdate(IgdbGameMetadataResult game, string? selectedItemId, string createdByUserId, IReadOnlyList<LibraryItem> libraryItems)
+    public GuidevaultGameDossier CreateOrUpdate(IgdbGameMetadataResult game, string? selectedItemId, string createdByUserId, IReadOnlyList<LibraryItem> libraryItems, string? preferredCoverRegion = "north-america")
     {
         lock (_gate)
         {
@@ -7212,13 +7287,19 @@ public sealed class GuidevaultGameDossierStore
             dossier.GameReleaseYear = Clean(game.GameReleaseYear);
             dossier.GameFranchise = Clean(game.GameFranchise);
             dossier.CoverPreviewUrl = Clean(game.CoverPreviewUrl);
+            dossier.PreferredCoverRegion = FirstNonEmpty(NormalizeRegionKey(preferredCoverRegion), "north-america");
             dossier.LocalizedCovers = (game.LocalizedCovers ?? Array.Empty<IgdbLocalizedCoverMetadata>())
                 .Where(cover => !string.IsNullOrWhiteSpace(cover.CoverPreviewUrl))
                 .GroupBy(cover => cover.CoverPreviewUrl, StringComparer.OrdinalIgnoreCase)
                 .Select(group => group.First())
+                .OrderBy(cover => CoverMatchesPreferredRegion(cover, preferredCoverRegion) ? 0 : 1)
                 .Take(24)
                 .ToArray();
-            dossier.PrimaryCoverUrl = dossier.LocalizedCovers.FirstOrDefault()?.CoverPreviewUrl ?? dossier.CoverPreviewUrl;
+            var preferredCover = dossier.LocalizedCovers.FirstOrDefault(cover => CoverMatchesPreferredRegion(cover, preferredCoverRegion));
+            dossier.PrimaryCoverUrl = FirstNonEmpty(
+                preferredCover?.CoverPreviewUrl,
+                dossier.CoverPreviewUrl,
+                dossier.LocalizedCovers.FirstOrDefault()?.CoverPreviewUrl);
             dossier.SourceUrl = Clean(game.SourceUrl);
             dossier.Developers = CleanArray(game.Developers);
             dossier.Publishers = CleanArray(game.Publishers);
@@ -7260,6 +7341,46 @@ public sealed class GuidevaultGameDossierStore
             if (existing is null) _data.Dossiers.Add(dossier);
             Save();
             return Clone(dossier);
+        }
+    }
+
+    private static bool CoverMatchesPreferredRegion(IgdbLocalizedCoverMetadata cover, string? preferredRegion)
+    {
+        var preferred = NormalizeRegionKey(preferredRegion);
+        if (string.IsNullOrWhiteSpace(preferred) || preferred == "automatic") return false;
+        var region = NormalizeRegionKey($"{cover.Region} {cover.RegionIdentifier}");
+        if (preferred == "north-america")
+            return region.Contains("north-america", StringComparison.Ordinal)
+                || region.Contains("united-states", StringComparison.Ordinal)
+                || Regex.IsMatch(region, @"(?:^|-)usa?(?:-|$)");
+        return region.Contains(preferred, StringComparison.Ordinal);
+    }
+
+    private static string NormalizeRegionKey(string? value)
+        => Regex.Replace((value ?? string.Empty).Trim().ToLowerInvariant(), @"[^a-z0-9]+", "-").Trim('-');
+
+    public void SetPreferredCoverRegionForAll(string? preferredCoverRegion)
+    {
+        lock (_gate)
+        {
+            var preferred = FirstNonEmpty(NormalizeRegionKey(preferredCoverRegion), "north-america");
+            var changed = false;
+            foreach (var dossier in _data.Dossiers)
+            {
+                var preferredCover = (dossier.LocalizedCovers ?? Array.Empty<IgdbLocalizedCoverMetadata>())
+                    .FirstOrDefault(cover => CoverMatchesPreferredRegion(cover, preferred));
+                var primaryCoverUrl = FirstNonEmpty(
+                    preferredCover?.CoverPreviewUrl,
+                    dossier.CoverPreviewUrl,
+                    dossier.LocalizedCovers?.FirstOrDefault()?.CoverPreviewUrl);
+                if (string.Equals(dossier.PreferredCoverRegion, preferred, StringComparison.OrdinalIgnoreCase)
+                    && string.Equals(dossier.PrimaryCoverUrl, primaryCoverUrl, StringComparison.OrdinalIgnoreCase))
+                    continue;
+                dossier.PreferredCoverRegion = preferred;
+                dossier.PrimaryCoverUrl = primaryCoverUrl;
+                changed = true;
+            }
+            if (changed) Save();
         }
     }
 
@@ -7402,6 +7523,7 @@ public sealed class GuidevaultGameDossierStore
         dossier.Screenshots ??= Array.Empty<string>();
         dossier.Artworks ??= Array.Empty<string>();
         dossier.LocalizedCovers ??= Array.Empty<IgdbLocalizedCoverMetadata>();
+        dossier.PreferredCoverRegion = FirstNonEmpty(NormalizeRegionKey(dossier.PreferredCoverRegion), "north-america");
         dossier.PrimaryCoverUrl = FirstNonEmpty(dossier.PrimaryCoverUrl, dossier.LocalizedCovers.FirstOrDefault()?.CoverPreviewUrl, dossier.CoverPreviewUrl);
         dossier.Videos ??= Array.Empty<IgdbVideoMetadata>();
         dossier.Websites ??= Array.Empty<IgdbWebsiteMetadata>();
@@ -10643,6 +10765,24 @@ public sealed class GuidevaultItemReviewStore
                 .Where(r => string.Equals(r.ItemId, cleanItemId, StringComparison.OrdinalIgnoreCase)
                     && string.Equals(NormalizeVisibility(r.Visibility), "public", StringComparison.OrdinalIgnoreCase))
                 .OrderByDescending(r => r.UpdatedAt)
+                .Select(Clone)
+                .ToArray();
+        }
+    }
+
+    public IReadOnlyList<GuidevaultReviewRecord> GetPublicForItems(IEnumerable<string> itemIds)
+    {
+        var ids = new HashSet<string>(
+            (itemIds ?? Array.Empty<string>()).Where(id => !string.IsNullOrWhiteSpace(id)).Select(id => id.Trim()),
+            StringComparer.OrdinalIgnoreCase);
+        if (ids.Count == 0) return Array.Empty<GuidevaultReviewRecord>();
+
+        lock (_gate)
+        {
+            return _settings.Reviews
+                .Where(review => ids.Contains(review.ItemId)
+                    && string.Equals(NormalizeVisibility(review.Visibility), "public", StringComparison.OrdinalIgnoreCase))
+                .OrderByDescending(review => review.UpdatedAt)
                 .Select(Clone)
                 .ToArray();
         }
@@ -19607,28 +19747,33 @@ static class IgdbGameMetadataClient
 
     private static IgdbLocalizedCoverMetadata[] LocalizedCoverArray(JsonElement json)
     {
-        if (!json.TryGetProperty("game_localizations", out var value) || value.ValueKind != JsonValueKind.Array)
-            return Array.Empty<IgdbLocalizedCoverMetadata>();
-        return value.EnumerateArray()
-            .Where(item => item.ValueKind == JsonValueKind.Object)
-            .Select(item =>
-            {
-                var regionName = string.Empty;
-                var regionIdentifier = string.Empty;
-                if (item.TryGetProperty("region", out var region) && region.ValueKind == JsonValueKind.Object)
+        var covers = new List<IgdbLocalizedCoverMetadata>();
+        if (json.TryGetProperty("game_localizations", out var value) && value.ValueKind == JsonValueKind.Array)
+        {
+            covers.AddRange(value.EnumerateArray()
+                .Where(item => item.ValueKind == JsonValueKind.Object)
+                .Select(item =>
                 {
-                    regionName = GetString(region, "name") ?? string.Empty;
-                    regionIdentifier = GetString(region, "identifier") ?? string.Empty;
-                }
-                var imageId = item.TryGetProperty("cover", out var cover) && cover.ValueKind == JsonValueKind.Object
-                    ? GetString(cover, "image_id") ?? string.Empty
-                    : string.Empty;
-                return new IgdbLocalizedCoverMetadata(
-                    GetString(item, "name") ?? string.Empty,
-                    regionName,
-                    regionIdentifier,
-                    IgdbImageUrl(imageId, "t_cover_big"));
-            })
+                    var regionName = string.Empty;
+                    var regionIdentifier = string.Empty;
+                    if (item.TryGetProperty("region", out var region) && region.ValueKind == JsonValueKind.Object)
+                    {
+                        regionName = GetString(region, "name") ?? string.Empty;
+                        regionIdentifier = GetString(region, "identifier") ?? string.Empty;
+                    }
+                    var imageId = item.TryGetProperty("cover", out var cover) && cover.ValueKind == JsonValueKind.Object
+                        ? GetString(cover, "image_id") ?? string.Empty
+                        : string.Empty;
+                    return new IgdbLocalizedCoverMetadata(
+                        GetString(item, "name") ?? string.Empty,
+                        regionName,
+                        regionIdentifier,
+                        IgdbImageUrl(imageId, "t_cover_big"));
+                })
+                .Where(cover => !string.IsNullOrWhiteSpace(cover.CoverPreviewUrl)));
+        }
+
+        return covers
             .Where(cover => !string.IsNullOrWhiteSpace(cover.CoverPreviewUrl))
             .GroupBy(cover => cover.CoverPreviewUrl, StringComparer.OrdinalIgnoreCase)
             .Select(group => group.First())
@@ -20572,7 +20717,25 @@ static class GuidevaultAtomicFile
         try
         {
             File.WriteAllText(temporaryPath, contents ?? string.Empty, new UTF8Encoding(false));
-            File.Move(temporaryPath, fullPath, overwrite: true);
+            ClearReadOnlyAttribute(fullPath);
+            const int retryCount = 4;
+            for (var attempt = 1; ; attempt++)
+            {
+                try
+                {
+                    File.Move(temporaryPath, fullPath, overwrite: true);
+                    break;
+                }
+                catch (IOException) when (attempt < retryCount)
+                {
+                    Thread.Sleep(attempt * 40);
+                }
+                catch (UnauthorizedAccessException) when (attempt < retryCount)
+                {
+                    ClearReadOnlyAttribute(fullPath);
+                    Thread.Sleep(attempt * 40);
+                }
+            }
         }
         finally
         {
@@ -20585,6 +20748,14 @@ static class GuidevaultAtomicFile
                 // A stale temporary file is safer than replacing a valid settings file with a partial write.
             }
         }
+    }
+
+    private static void ClearReadOnlyAttribute(string path)
+    {
+        if (!File.Exists(path)) return;
+        var attributes = File.GetAttributes(path);
+        if ((attributes & FileAttributes.ReadOnly) == 0) return;
+        File.SetAttributes(path, attributes & ~FileAttributes.ReadOnly);
     }
 }
 
@@ -20631,5 +20802,6 @@ static class GuidevaultLibraryIoGate
 
 static class GuidevaultBuildInfo
 {
-    public const string Version = "1.2.9";
+    public const string Version = "1.2.10";
 }
+
