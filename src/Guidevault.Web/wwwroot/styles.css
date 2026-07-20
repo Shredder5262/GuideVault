@@ -19265,7 +19265,7 @@ body.colorscape-active.detail-page-mode .library-data-plain-list dt{
   box-shadow:inset 0 1px 0 rgba(255,255,255,.05),0 14px 34px rgba(0,0,0,.14);
 }
 .server-files-summary::before{
-  content:"✓";
+  content:"\2713";
   display:inline-grid;
   place-items:center;
   width:24px;
@@ -20576,7 +20576,7 @@ button.danger{border-color:rgba(255,122,122,.34)!important;color:#ffd0d0!importa
 }
 .integration-endpoint-details summary::-webkit-details-marker{display:none;}
 .integration-endpoint-details summary::after{content:'+';float:right;color:#77caff;font-weight:950;}
-.integration-endpoint-details[open] summary::after{content:'–';}
+.integration-endpoint-details[open] summary::after{content:'\2013';}
 .integration-endpoint-copy{
   display:grid;
   gap:5px;
@@ -22432,4 +22432,44 @@ body.dossier-page-mode .main{min-width:0;overflow:hidden!important;}
   width:0!important;
   opacity:0!important;
   visibility:hidden!important;
+}
+
+
+/* Reader stability guard: temporary transition layers use the fixed book footprint.
+   This final override prevents legacy width/height transitions or stale helper layers
+   from reflowing the reader during an active page turn. */
+#book.book.reader-sized,
+#book.book.reader-sized.reader-frame-locked,
+#book.book.reader-sized.reader-page-turn-footprint-locked{
+  width:var(--guidevault-reader-width)!important;
+  height:var(--guidevault-reader-height)!important;
+  transition-property:transform,filter,opacity!important;
+  contain:layout size!important;
+}
+.book.reader-sized.reader-page-turn-footprint-locked .page-shell,
+.book.reader-sized.reader-frame-locked .page-shell,
+.page-shell.reader-page-turn-shell-locked{
+  width:100%!important;
+  height:100%!important;
+  min-width:100%!important;
+  min-height:100%!important;
+  max-width:100%!important;
+  max-height:100%!important;
+  transition:none!important;
+  animation:none!important;
+  contain:layout paint size!important;
+}
+.book.reader-sized.reader-fixed-cover-opening .reader-fixed-cover-slide-overlay{
+  transform-origin:left top!important;
+  backface-visibility:hidden!important;
+  -webkit-backface-visibility:hidden!important;
+  contain:layout paint size!important;
+}
+.turning-page.hidden,
+.under-page.hidden,
+.previous-spread.hidden{
+  display:none!important;
+  visibility:hidden!important;
+  opacity:0!important;
+  pointer-events:none!important;
 }

@@ -1,6 +1,6 @@
-﻿const state = {
+const state = {
   items: [], filtered: [], selected: null, filter: 'All Content', categoryFilter: '', viewMode: 'all', activeTab: 'overview', customFilter: null,
-  reader: { item: null, pages: [], index: 0, animating: false, displayMode: 2, transitionMode: 'stable', overlayVisible: false, advancedVisible: false, bookmarkMenuOpen: false, editingBookmarkNotePage: null, magnifierSettingsVisible: false, scrubbing: false, shading: null, zoom: 100, fullscreenOnOpen: false, magnifier: null, magnifierActive: false, longPressTimer: null, suppressHitClickUntil: 0, backgrounds: [], background: '', backgroundBrightness: 72 },
+  reader: { item: null, pages: [], index: 0, animating: false, transitionToken: 0, displayMode: 2, transitionMode: 'stable', overlayVisible: false, advancedVisible: false, bookmarkMenuOpen: false, editingBookmarkNotePage: null, magnifierSettingsVisible: false, scrubbing: false, shading: null, zoom: 100, fullscreenOnOpen: false, magnifier: null, magnifierActive: false, longPressTimer: null, suppressHitClickUntil: 0, backgrounds: [], background: '', backgroundBrightness: 72 },
   libraryPath: '',
   libraries: [],
   editingLibraryIndex: null,
@@ -62,7 +62,7 @@
 const $ = id => document.getElementById(id);
 function setText(id, value) {
   const el = $(id);
-  if (el) el.textContent = value || '\u2014';
+  if (el) el.textContent = repairMojibakeText(value || '\u2014');
 }
 const READER_BOOKMARKS_KEY = 'guidevault.readerBookmarks.v1';
 const READER_SHADING_KEY = 'guidevault.readerShading.v1';
@@ -1225,8 +1225,8 @@ function updateReadingProfileBackgroundPreview() {
   if (nameEl) nameEl.textContent = bg?.displayName || readerBackgroundDisplayName(selected) || 'Default Gradient';
   if (metaEl) {
     const source = bg?.isUserUploaded ? 'Uploaded background' : (bg ? 'Default background' : 'Default gradient');
-    const size = bg?.url ? '1920 Ã— 1080' : 'CSS gradient';
-    metaEl.textContent = `${source} â€¢ ${size} â€¢ ${Math.round(brightness)}% brightness`;
+    const size = bg?.url ? '1920 \u00D7 1080' : 'CSS gradient';
+    metaEl.textContent = `${source} \u2022 ${size} \u2022 ${Math.round(brightness)}% brightness`;
   }
 }
 
@@ -1285,7 +1285,7 @@ async function uploadReaderBackgroundFromSettings() {
     if (uploadedName && $('readingProfilePresetBackground')) {
       $('readingProfilePresetBackground').value = uploadedName;
     }
-    setReaderBackgroundUploadStatus('Reader background uploaded at 1920 Ã— 1080. It is now available in Background Type.', 'success');
+    setReaderBackgroundUploadStatus('Reader background uploaded at 1920 \u00D7 1080. It is now available in Background Type.', 'success');
   } catch (err) {
     setReaderBackgroundUploadStatus(err?.message || 'Unable to upload reader background.', 'error');
   }
@@ -4176,7 +4176,7 @@ function renderLaunchBoxCoverage() {
     const visible = !!job.status && job.status !== 'Idle';
     jobBox.classList.toggle('hidden', !visible);
     if (visible) {
-      jobBox.innerHTML = `<strong>Sync job:</strong><span>${escapeHtml(job.status || 'Idle')} â€” ${launchBoxNumber(job.processedGames)} / ${launchBoxNumber(job.totalGames)} processed. ${escapeHtml(job.message || '')}</span>`;
+      jobBox.innerHTML = `<strong>Sync job:</strong><span>${escapeHtml(job.status || 'Idle')} \u2014 ${launchBoxNumber(job.processedGames)} / ${launchBoxNumber(job.totalGames)} processed. ${escapeHtml(job.message || '')}</span>`;
     }
   }
   renderLaunchBoxPlatformCoverage(coverage.byPlatform || []);
@@ -4278,12 +4278,12 @@ function launchBoxGameResultHtml(game = {}, selectedId = '') {
   const active = String(game.id || '').toLowerCase() === String(selectedId || '').toLowerCase();
   return `<button type="button" class="launchbox-manual-result ${active ? 'active' : ''}" data-launchbox-manual-select-game="${escapeForAttribute(game.id || '')}">
     <strong>${escapeHtml(game.title || 'Unknown game')}</strong>
-    <span>${escapeHtml([game.platform, game.releaseYear, game.region].filter(Boolean).join(' Â· ') || 'No LaunchBox metadata')}</span>
+    <span>${escapeHtml([game.platform, game.releaseYear, game.region].filter(Boolean).join(' \u00B7 ') || 'No LaunchBox metadata')}</span>
   </button>`;
 }
 function launchBoxItemResultHtml(item = {}, selectedId = '') {
   const active = String(item.id || '').toLowerCase() === String(selectedId || '').toLowerCase();
-  const meta = [item.kind || item.matchType, item.system || item.primarySystem, item.year || item.coverDate || item.issueNumber].filter(Boolean).join(' Â· ');
+  const meta = [item.kind || item.matchType, item.system || item.primarySystem, item.year || item.coverDate || item.issueNumber].filter(Boolean).join(' \u00B7 ');
   return `<button type="button" class="launchbox-manual-result ${active ? 'active' : ''}" data-launchbox-manual-select-item="${escapeForAttribute(item.id || '')}">
     <strong>${escapeHtml(item.title || 'Unknown GuideVault item')}</strong>
     <span>${escapeHtml(meta || 'GuideVault item')}</span>
@@ -4395,12 +4395,12 @@ function renderLaunchBoxReview() {
   if (!host) return;
   const data = state.launchBox.review || {};
   const rows = Array.isArray(data.items) ? data.items : [];
-  const filterBits = [data.status ? `Status: ${data.status}` : '', state.launchBox.reviewPlatform ? `Platform: ${state.launchBox.reviewPlatform}` : '', data.query ? `Search: ${data.query}` : ''].filter(Boolean).join(' Â· ');
+  const filterBits = [data.status ? `Status: ${data.status}` : '', state.launchBox.reviewPlatform ? `Platform: ${state.launchBox.reviewPlatform}` : '', data.query ? `Search: ${data.query}` : ''].filter(Boolean).join(' \u00B7 ');
   if (!rows.length) {
     host.innerHTML = `<p class="sub">No LaunchBox review rows found. ${escapeHtml(filterBits)}</p>`;
     return;
   }
-  host.innerHTML = `<div class="launchbox-review-count">${escapeHtml(filterBits)} Â· Showing ${launchBoxNumber(rows.length)} of ${launchBoxNumber(data.total || rows.length)}</div>${rows.map(launchBoxReviewRowHtml).join('')}`;
+  host.innerHTML = `<div class="launchbox-review-count">${escapeHtml(filterBits)} \u00B7 Showing ${launchBoxNumber(rows.length)} of ${launchBoxNumber(data.total || rows.length)}</div>${rows.map(launchBoxReviewRowHtml).join('')}`;
 }
 function launchBoxReviewMatchVisibleForStatus(match = {}, status = '') {
   const normalized = String(status || '').toLowerCase().replace(/\s+/g, '-');
@@ -4478,7 +4478,7 @@ function launchBoxActiveMatchesHtml(row = {}) {
         const titleHtml = read
           ? `<a href="${escapeForAttribute(read)}" title="Open ${escapeForAttribute(title)} in the reader">${escapeHtml(title)}</a>`
           : `<span>${escapeHtml(title)}</span>`;
-        return `<li>${titleHtml}<em>${escapeHtml(status)} Â· ${score}%</em>${detail ? `<a class="launchbox-active-detail" href="${escapeForAttribute(detail)}" title="Open details">Details</a>` : ''}</li>`;
+        return `<li>${titleHtml}<em>${escapeHtml(status)} \u00B7 ${score}%</em>${detail ? `<a class="launchbox-active-detail" href="${escapeForAttribute(detail)}" title="Open details">Details</a>` : ''}</li>`;
       }).join('');
       return `<div class="launchbox-active-match-group ${escapeForAttribute(key)}"><strong>${escapeHtml(launchBoxMatchTypeLabel(key, 'active'))} <span>${groups[key].length}</span></strong><ul>${items}</ul></div>`;
     })
@@ -4497,14 +4497,14 @@ function launchBoxReviewRowHtml(row) {
     <div class="launchbox-match-line" data-launchbox-game-id="${escapeForAttribute(game.id || '')}" data-guidevault-item-id="${escapeForAttribute(m.guideVaultItemId || '')}" data-match-type="${escapeForAttribute(m.matchType || '')}">
       <span class="launchbox-match-kind"><span>${escapeHtml(launchBoxReviewMatchLabel(m, reviewStatus))}</span><b>${escapeHtml(m.matchType || 'Match')}</b></span>
       <strong>${escapeHtml(m.guideVaultItemTitle || m.guideVaultItemId || 'Unknown item')}</strong>
-      <em>${escapeHtml(m.matchStatus || '')} Â· ${Math.round(Number(m.confidenceScore || 0))}% Â· ${escapeHtml(m.matchReason || '')}</em>
+      <em>${escapeHtml(m.matchStatus || '')} \u00B7 ${Math.round(Number(m.confidenceScore || 0))}% \u00B7 ${escapeHtml(m.matchReason || '')}</em>
       <span class="launchbox-match-actions">${launchBoxReviewMatchActionsHtml(m, reviewStatus)}</span>
     </div>`).join('') : missingActionHtml;
   const activeHtml = launchBoxActiveMatchesHtml(row);
   const candidateTitle = matches.length ? '<div class="launchbox-candidate-title">Review candidates</div>' : '';
   return `<article class="launchbox-review-row">
     <div class="launchbox-game-head">
-      <div><strong>${escapeHtml(game.title || 'Unknown game')}</strong><span>${escapeHtml(game.platform || 'Unknown platform')} Â· Manual: ${escapeHtml(row.manualStatus || 'Missing')} Â· Guide: ${escapeHtml(row.strategyGuideStatus || 'Missing')} Â· Magazine: ${escapeHtml(row.magazineStatus || 'Missing')}</span></div>
+      <div><strong>${escapeHtml(game.title || 'Unknown game')}</strong><span>${escapeHtml(game.platform || 'Unknown platform')} \u00B7 Manual: ${escapeHtml(row.manualStatus || 'Missing')} \u00B7 Guide: ${escapeHtml(row.strategyGuideStatus || 'Missing')} \u00B7 Magazine: ${escapeHtml(row.magazineStatus || 'Missing')}</span></div>
       <span class="launchbox-status-badge ${escapeForAttribute((row.status || '').toLowerCase())}">${escapeHtml(row.status || '')}</span>
     </div>
     ${activeHtml}
@@ -4593,7 +4593,7 @@ function launchBoxDetailValue(label, value) {
 }
 function launchBoxCustomFieldValues(fields) {
   if (!fields || typeof fields !== 'object') return '';
-  return Object.entries(fields).filter(([, value]) => String(value ?? '').trim()).slice(0, 8).map(([key, value]) => `${key}: ${value}`).join(' Â· ');
+  return Object.entries(fields).filter(([, value]) => String(value ?? '').trim()).slice(0, 8).map(([key, value]) => `${key}: ${value}`).join(' \u00B7 ');
 }
 function launchBoxMatchDetailsHtml(game = {}, match = {}, item = null) {
   const itemId = item?.id || match.guideVaultItemId || '';
@@ -5451,7 +5451,7 @@ function renderServerBackups(backups = []) {
     const date = backup.createdAt ? new Date(backup.createdAt).toLocaleString() : 'Unknown date';
     const size = fmtBytes(Number(backup.sizeBytes || 0));
     const isSelected = name === selected;
-    return `<div class="backup-entry ${isSelected ? 'selected' : ''}" data-backup-file="${escapeForAttribute(name)}"><div><strong>${escapeHtml(name)}</strong><span>${escapeHtml(date)} â€¢ ${escapeHtml(size)}</span></div><button class="ghost tiny" type="button" data-backup-select="${escapeForAttribute(name)}">${isSelected ? 'Selected' : 'Select'}</button></div>`;
+    return `<div class="backup-entry ${isSelected ? 'selected' : ''}" data-backup-file="${escapeForAttribute(name)}"><div><strong>${escapeHtml(name)}</strong><span>${escapeHtml(date)} \u2022 ${escapeHtml(size)}</span></div><button class="ghost tiny" type="button" data-backup-select="${escapeForAttribute(name)}">${isSelected ? 'Selected' : 'Select'}</button></div>`;
   }).join('');
 }
 function renderBackupPreview(preview = {}) {
@@ -5467,7 +5467,7 @@ function renderBackupPreview(preview = {}) {
   try { manifest = manifestText ? JSON.parse(manifestText) : null; } catch {}
   const created = manifest?.createdAt ? new Date(manifest.createdAt).toLocaleString() : 'Unknown';
   host.innerHTML = `
-    <div class="backup-preview-row"><div><strong>${escapeHtml(preview.fileName || 'Backup package')}</strong><span>${escapeHtml(fmtBytes(Number(preview.sizeBytes || 0)))} â€¢ Created ${escapeHtml(created)}</span></div></div>
+    <div class="backup-preview-row"><div><strong>${escapeHtml(preview.fileName || 'Backup package')}</strong><span>${escapeHtml(fmtBytes(Number(preview.sizeBytes || 0)))} \u2022 Created ${escapeHtml(created)}</span></div></div>
     <div class="backup-preview-row"><strong>Config/data files</strong><span>${Number(preview.configEntries || 0)}</span></div>
     <div class="backup-preview-row"><strong>Library index</strong><span>${Number(preview.cacheEntries || 0)}</span></div>
     <div class="backup-preview-row"><strong>Uploaded backgrounds</strong><span>${Number(preview.uploadedBackgrounds || 0)}</span></div>
@@ -6145,9 +6145,9 @@ async function saveTaskSettings() {
 }
 
 function formatTaskScheduleDate(value = '') {
-  if (!value) return 'â€”';
+  if (!value) return '\u2014';
   const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return 'â€”';
+  if (Number.isNaN(date.getTime())) return '\u2014';
   return date.toLocaleString([], { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
 }
 
@@ -6171,10 +6171,10 @@ function renderTaskScheduleStatus(snapshot = {}) {
     if (nextEl) {
       const enabled = entry.enabled ?? entry.Enabled;
       const running = entry.running ?? entry.Running;
-      const label = entry.label || entry.Label || entry.schedule || entry.Schedule || 'â€”';
+      const label = entry.label || entry.Label || entry.schedule || entry.Schedule || '\u2014';
       const next = formatTaskScheduleDate(entry.nextRunAt || entry.NextRunAt || '');
       const lastStatus = entry.lastStatus || entry.LastStatus || 'not run';
-      nextEl.textContent = enabled ? `${running ? 'Running now' : `Next: ${next}`} â€¢ ${label} â€¢ Last: ${lastStatus}` : 'Disabled';
+      nextEl.textContent = enabled ? `${running ? 'Running now' : `Next: ${next}`} \u2022 ${label} \u2022 Last: ${lastStatus}` : 'Disabled';
     }
   });
 }
@@ -7876,8 +7876,55 @@ function cancelReaderLongPress() {
   state.reader.longPressTimer = null;
 }
 
+const GUIDEVAULT_CP1252_REVERSE = new Map([
+  [0x20ac,0x80],[0x201a,0x82],[0x0192,0x83],[0x201e,0x84],[0x2026,0x85],[0x2020,0x86],
+  [0x2021,0x87],[0x02c6,0x88],[0x2030,0x89],[0x0160,0x8a],[0x2039,0x8b],[0x0152,0x8c],
+  [0x017d,0x8e],[0x2018,0x91],[0x2019,0x92],[0x201c,0x93],[0x201d,0x94],[0x2022,0x95],
+  [0x2013,0x96],[0x2014,0x97],[0x02dc,0x98],[0x2122,0x99],[0x0161,0x9a],[0x203a,0x9b],
+  [0x0153,0x9c],[0x017e,0x9e],[0x0178,0x9f]
+]);
+const GUIDEVAULT_MOJIBAKE_REPLACEMENTS = Object.freeze([
+  ['\u00e2\u20ac\u00a2','\u2022'], ['\u00c2\u00b7','\u00b7'], ['\u00c2\u00d7','\u00d7'],
+  ['\u00e2\u20ac\u201c','\u2013'], ['\u00e2\u20ac\u201d','\u2014'],
+  ['\u00e2\u20ac\u02dc','\u2018'], ['\u00e2\u20ac\u2122','\u2019'],
+  ['\u00e2\u20ac\u0153','\u201c'], ['\u00e2\u20ac\u009d','\u201d'],
+  ['\u00e2\u20ac\u00a6','\u2026'], ['\u00e2\u2020\u2019','\u2192'],
+  ['\u00e2\u2020\u0090','\u2190'], ['\u00ef\u00bf\u00bd',''], ['\u00ef\u00bb\u00bf','']
+]);
+
+function repairMojibakeText(value) {
+  let text = String(value ?? '');
+  if (!/[\u00c2\u00c3\u00e2\u00ef\u00f0]/.test(text)) return text;
+
+  for (let pass = 0; pass < 2; pass += 1) {
+    let mapped = text;
+    GUIDEVAULT_MOJIBAKE_REPLACEMENTS.forEach(([broken, repaired]) => {
+      mapped = mapped.split(broken).join(repaired);
+    });
+    text = mapped;
+
+    const bytes = [];
+    let canDecode = true;
+    for (const char of text) {
+      const code = char.codePointAt(0);
+      if (code <= 0xff) bytes.push(code);
+      else if (GUIDEVAULT_CP1252_REVERSE.has(code)) bytes.push(GUIDEVAULT_CP1252_REVERSE.get(code));
+      else { canDecode = false; break; }
+    }
+    if (!canDecode || !bytes.length) break;
+    try {
+      const decoded = new TextDecoder('utf-8', { fatal: true }).decode(Uint8Array.from(bytes));
+      const beforeScore = (text.match(/[\u00c2\u00c3\u00e2\u00ef\u00f0]/g) || []).length;
+      const afterScore = (decoded.match(/[\u00c2\u00c3\u00e2\u00ef\u00f0]/g) || []).length;
+      if (afterScore >= beforeScore) break;
+      text = decoded;
+    } catch { break; }
+  }
+  return text;
+}
+
 function escapeHtml(value) {
-  return String(value ?? '').replace(/[&<>"]/g, ch => ({ '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;' }[ch]));
+  return repairMojibakeText(value).replace(/[&<>"]/g, ch => ({ '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;' }[ch]));
 }
 function normalizeName(value) {
   return String(value || '')
@@ -10034,11 +10081,11 @@ function render() {
 
   $('pageTitle').textContent = searchMode && state.viewMode === 'all' && state.filter === 'All Content' && !state.customFilter && !state.categoryFilter ? 'Search Results' : pageTitleForView();
   $('gridTitle').textContent = state.viewMode === 'dossiers'
-    ? (searchMode ? `Dossier Results for â€œ${activeSearchQuery}â€` : 'Game Dossiers')
+    ? (searchMode ? `Dossier Results for \u201c${activeSearchQuery}\u201d` : 'Game Dossiers')
     : groupMode
     ? pageTitleForView()
     : (searchMode
-      ? `Search Results for â€œ${activeSearchQuery}â€`
+      ? `Search Results for \u201c${activeSearchQuery}\u201d`
       : (state.customFilter ? `${pageTitleForView()} Results` : (categoryMode ? `${currentCategoryName()} Library` : 'Home Library')));
   $('manualSummary').textContent = `${count('Manual')} items`;
   $('guideSummary').textContent = `${count('Strategy Guide')} items`;
@@ -11531,21 +11578,21 @@ function renderCollectionEditPanel() {
   }
   const itemOptions = (state.items || []).slice().sort((a,b) => compareTextForSort(displayTitle(a), displayTitle(b))).map(item => {
     const id = String(item.id || item.Id || '').trim();
-    return `<option value="${escapeForAttribute(id)}">${escapeHtml(displayTitle(item))} â€” ${escapeHtml(item.kind || 'Item')}</option>`;
+    return `<option value="${escapeForAttribute(id)}">${escapeHtml(displayTitle(item))} \u2014 ${escapeHtml(item.kind || 'Item')}</option>`;
   }).join('');
   const members = collectionItems(collection, state.items);
   const homeLabel = collection.homeDisplay === 'card' ? 'Compact Home card' : collection.homeDisplay === 'shelf' ? 'Full Home shelf' : 'Hidden from Home';
   panel.innerHTML = `<div class="collection-active-summary">
     <div>
       <strong>${escapeHtml(collection.name || 'Untitled Collection')}</strong>
-      <p class="sub">${members.length} item${members.length === 1 ? '' : 's'} Â· ${escapeHtml(homeLabel)}</p>
+      <p class="sub">${members.length} item${members.length === 1 ? '' : 's'} \u00B7 ${escapeHtml(homeLabel)}</p>
     </div>
     <button class="ghost" type="button" data-open-collection="${escapeForAttribute(collection.id)}">Open Collection</button>
   </div>
   <div class="collection-add-row"><select id="collectionItemAddSelect">${itemOptions}</select><button id="collectionAddItemButton" class="ghost" type="button">Add Item</button></div>
   <div class="collection-member-list">${members.map((item, index) => {
     const itemId = String(item.id || item.Id || '').trim();
-    return `<div class="collection-member-row" data-item-id="${escapeForAttribute(itemId)}"><span class="collection-member-order">${index + 1}</span><div><strong>${escapeHtml(displayTitle(item))}</strong><p class="sub">${escapeHtml(item.kind || 'Item')} Â· ${escapeHtml(preferredPlatformOf(item) || categoryOf(item) || 'Unsorted')}</p></div><button class="ghost" type="button" data-collection-item-action="up" ${index === 0 ? 'disabled' : ''}>Up</button><button class="ghost" type="button" data-collection-item-action="down" ${index === members.length - 1 ? 'disabled' : ''}>Down</button><button class="danger" type="button" data-collection-item-action="remove">Remove</button></div>`;
+    return `<div class="collection-member-row" data-item-id="${escapeForAttribute(itemId)}"><span class="collection-member-order">${index + 1}</span><div><strong>${escapeHtml(displayTitle(item))}</strong><p class="sub">${escapeHtml(item.kind || 'Item')} \u00B7 ${escapeHtml(preferredPlatformOf(item) || categoryOf(item) || 'Unsorted')}</p></div><button class="ghost" type="button" data-collection-item-action="up" ${index === 0 ? 'disabled' : ''}>Up</button><button class="ghost" type="button" data-collection-item-action="down" ${index === members.length - 1 ? 'disabled' : ''}>Down</button><button class="danger" type="button" data-collection-item-action="remove">Remove</button></div>`;
   }).join('') || '<p class="sub">No items in this collection yet. Add from this panel or from an item details page.</p>'}</div>`;
 }
 
@@ -11592,9 +11639,9 @@ function collectionCardMarkup(collection, options = {}) {
     counts.Manual ? `${counts.Manual} manual${counts.Manual === 1 ? '' : 's'}` : '',
     counts['Strategy Guide'] ? `${counts['Strategy Guide']} guide${counts['Strategy Guide'] === 1 ? '' : 's'}` : '',
     counts.Magazine ? `${counts.Magazine} magazine${counts.Magazine === 1 ? '' : 's'}` : ''
-  ].filter(Boolean).join(' Â· ');
+  ].filter(Boolean).join(' \u00B7 ');
   return `<article class="user-collection-card ${options.compact ? 'compact' : ''}" data-open-collection="${escapeForAttribute(collection.id)}" tabindex="0" role="button" aria-label="Open ${escapeForAttribute(collection.name)} collection">
-    <div class="user-collection-cover">${cover ? `<img decoding="async" loading="lazy" src="${escapeForAttribute(cover)}" alt="" />` : '<span>â˜·</span>'}</div>
+    <div class="user-collection-cover">${cover ? `<img decoding="async" loading="lazy" src="${escapeForAttribute(cover)}" alt="" />` : '<span>\u2637</span>'}</div>
     <div class="user-collection-copy"><strong>${escapeHtml(collection.name || 'Untitled Collection')}</strong><small>${escapeHtml(countText)}</small>${detailBits ? `<em>${escapeHtml(detailBits)}</em>` : ''}</div>
     <button class="ghost" type="button" data-open-collection="${escapeForAttribute(collection.id)}">Open</button>
   </article>`;
@@ -11614,7 +11661,7 @@ function renderCollectionsLibraryView(gridId = 'grid') {
   if (!host) return;
   const collections = visibleUserCollections();
   host.className = 'user-collections-grid';
-  host.innerHTML = collections.length ? collections.map(collection => collectionCardMarkup(collection)).join('') : '<div class="empty-message">No collections with library items yet. Create or manage collections from Settings â†’ Account â†’ Customize â†’ Collections.</div>';
+  host.innerHTML = collections.length ? collections.map(collection => collectionCardMarkup(collection)).join('') : '<div class="empty-message">No collections with library items yet. Create or manage collections from Settings \u2192 Account \u2192 Customize \u2192 Collections.</div>';
 }
 function createCollection() {
   const name = String($('collectionNameInput')?.value || '').trim();
@@ -14583,7 +14630,7 @@ function ensureIgdbMetadataUi() {
     existing.classList.add('metadata-lookup-button', 'igdb-action-button');
     existing.type = 'button';
     existing.textContent = 'IGDB';
-    existing.dataset.defaultTitle = 'Find this manual or strategy guideâ€™s game on IGDB and import game metadata.';
+    existing.dataset.defaultTitle = 'Find this manual or strategy guide\u2019s game on IGDB and import game metadata.';
     updateMetadataSourceActionVisibility();
     return;
   }
@@ -14597,7 +14644,7 @@ function ensureIgdbMetadataUi() {
     btn.type = 'button';
     btn.className = 'metadata-lookup-button igdb-action-button';
     btn.textContent = 'IGDB';
-    btn.title = 'Find this manual or strategy guideâ€™s game on IGDB and import game metadata.';
+    btn.title = 'Find this manual or strategy guide\u2019s game on IGDB and import game metadata.';
     btn.dataset.defaultTitle = btn.title;
     target.appendChild(btn);
     updateMetadataSourceActionVisibility();
@@ -14630,7 +14677,7 @@ function igdbSearchPanelHtml() {
       </label>
       <button type="button" id="igdbRunSearchBtn" class="primary">Search</button>
     </div>
-    <p class="openlibrary-help">${state.igdb?.dossierIntent ? '<strong>Dossier wizard Â· step 2 of 3:</strong> search for the game represented by the selected document.' : 'Search for the game represented by this document and review the returned metadata.'} IGDB requires a Twitch/IGDB Client ID and Client Secret in Settings &gt; Server &gt; Integrations &gt; IGDB.</p>
+    <p class="openlibrary-help">${state.igdb?.dossierIntent ? '<strong>Dossier wizard \u00B7 step 2 of 3:</strong> search for the game represented by the selected document.' : 'Search for the game represented by this document and review the returned metadata.'} IGDB requires a Twitch/IGDB Client ID and Client Secret in Settings &gt; Server &gt; Integrations &gt; IGDB.</p>
     <p id="igdbStatus" class="openlibrary-status igdb-status"></p>
     <div id="igdbResults" class="openlibrary-results igdb-results"></div>
   </section>`;
@@ -14804,7 +14851,7 @@ function igdbComparisonHtml(result = {}) {
       <p>${escapeHtml([igdbListLabel(result.developers), igdbListLabel(result.publishers), result.gameReleaseYear, igdbListLabel(result.associatedPlatforms)].filter(Boolean).join(' - ') || 'Review fields before importing.')}</p>
     </div>
     <div class="igdb-dossier-preview">
-      <div><span>${dossierIntent ? 'DOSSIER WIZARD Â· STEP 3 OF 3' : 'IGDB ENRICHMENT'}</span><h4>${dossierIntent ? 'Create the Game Dossier' : 'Review Expanded Game Data'}</h4><p>${escapeHtml(result.summary || 'No summary returned. Related metadata can still be reviewed and imported.')}</p>${dossierIntent ? '<button type="button" data-igdb-create-dossier class="primary dossier-create-button">Create Dossier & Open</button>' : ''}</div>
+      <div><span>${dossierIntent ? 'DOSSIER WIZARD \u00B7 STEP 3 OF 3' : 'IGDB ENRICHMENT'}</span><h4>${dossierIntent ? 'Create the Game Dossier' : 'Review Expanded Game Data'}</h4><p>${escapeHtml(result.summary || 'No summary returned. Related metadata can still be reviewed and imported.')}</p>${dossierIntent ? '<button type="button" data-igdb-create-dossier class="primary dossier-create-button">Create Dossier & Open</button>' : ''}</div>
       <div class="igdb-dossier-facts">${enrichmentFacts.map(([label, value]) => `<div><span>${escapeHtml(label)}</span><strong>${escapeHtml(value)}</strong></div>`).join('')}</div>
     </div>
     <div class="openlibrary-table-wrap igdb-table-wrap">
@@ -15024,7 +15071,7 @@ function dossierFactChips(values = [], className = '') {
 }
 
 function dossierCardMarkup(dossier = {}) {
-  const subtitle = [dossier.gameReleaseYear, dossier.gameFranchise, (dossier.platforms || []).slice(0, 2).join(', ')].filter(Boolean).join(' Â· ');
+  const subtitle = [dossier.gameReleaseYear, dossier.gameFranchise, (dossier.platforms || []).slice(0, 2).join(', ')].filter(Boolean).join(' \u00B7 ');
   const cover = dossierSafeUrl(dossier.primaryCoverUrl) || dossierSafeUrl(dossier.coverPreviewUrl);
   return `<article class="game-dossier-card" role="button" tabindex="0" aria-label="Open ${escapeForAttribute(dossier.gameTitle || 'game')} dossier" data-open-dossier="${escapeForAttribute(dossier.id)}" data-dossier-title="${escapeForAttribute(dossier.gameTitle || '')}" data-dossier-colorscape-cover="${escapeForAttribute(cover)}">
     <div class="game-dossier-card-cover">${cover ? `<img src="${escapeForAttribute(cover)}" alt="" loading="lazy" />` : '<span>GV</span>'}</div>
@@ -15054,14 +15101,14 @@ function renderGameDossiersLibraryView(gridId = 'grid') {
   host.className = 'game-dossiers-grid';
   host.innerHTML = dossiers.length
     ? dossiers.map(dossierCardMarkup).join('')
-    : `<div class="empty-message">${gameDossiers().length ? 'No dossiers match this search.' : 'No game dossiers yet. Create one from Settings â†’ Account â†’ Game Dossiers.'}</div>`;
+    : `<div class="empty-message">${gameDossiers().length ? 'No dossiers match this search.' : 'No game dossiers yet. Create one from Settings \u2192 Account \u2192 Game Dossiers.'}</div>`;
   applyColorscapeToDossierCards();
   renderAlphaRail([]);
 }
 
 function dossierRelatedGameMarkup(game = {}) {
   const url = dossierSafeUrl(game.sourceUrl);
-  const inner = `<div class="dossier-related-cover">${game.coverPreviewUrl ? `<img src="${escapeForAttribute(game.coverPreviewUrl)}" alt="" loading="lazy" />` : '<span>IGDB</span>'}</div><div><strong>${escapeHtml(game.name || 'Related Game')}</strong><small>${escapeHtml([game.relation, game.gameReleaseYear].filter(Boolean).join(' Â· '))}</small></div>`;
+  const inner = `<div class="dossier-related-cover">${game.coverPreviewUrl ? `<img src="${escapeForAttribute(game.coverPreviewUrl)}" alt="" loading="lazy" />` : '<span>IGDB</span>'}</div><div><strong>${escapeHtml(game.name || 'Related Game')}</strong><small>${escapeHtml([game.relation, game.gameReleaseYear].filter(Boolean).join(' \u00B7 '))}</small></div>`;
   return url
     ? `<a class="dossier-related-game" href="${escapeForAttribute(url)}" target="_blank" rel="noreferrer">${inner}</a>`
     : `<div class="dossier-related-game">${inner}</div>`;
@@ -15071,7 +15118,7 @@ function dossierLibraryItemMarkup(item) {
   const id = itemIdOf(item);
   return `<button class="dossier-library-item" type="button" data-dossier-item-id="${escapeForAttribute(id)}">
     <span>${coverUrl(item, { width: 160 }) ? `<img src="${escapeForAttribute(coverUrl(item, { width: 160 }))}" alt="" loading="lazy" />` : 'GV'}</span>
-    <div><strong>${escapeHtml(displayTitle(item))}</strong><small>${escapeHtml([item.kind, preferredPlatformOf(item) || categoryOf(item)].filter(Boolean).join(' Â· '))}</small></div>
+    <div><strong>${escapeHtml(displayTitle(item))}</strong><small>${escapeHtml([item.kind, preferredPlatformOf(item) || categoryOf(item)].filter(Boolean).join(' \u00B7 '))}</small></div>
   </button>`;
 }
 
@@ -15201,9 +15248,9 @@ function dossierDocumentRowMarkup(item = {}, overflow = false) {
   const id = itemIdOf(item);
   const platform = preferredPlatformOf(item) || categoryOf(item) || '';
   const secondary = item.kind === 'Magazine'
-    ? [item.magazineTitle || item.series, item.issueNumber ? `Issue ${item.issueNumber}` : '', item.coverDate || item.year].filter(Boolean).join(' Â· ')
-    : [item.publisher || item.gamePublisher, platform].filter(Boolean).join(' Â· ');
-  const detail = [platform, itemPageCountLabel(item)].filter(value => value && value !== '\u2014').join(' Â· ');
+    ? [item.magazineTitle || item.series, item.issueNumber ? `Issue ${item.issueNumber}` : '', item.coverDate || item.year].filter(Boolean).join(' \u00B7 ')
+    : [item.publisher || item.gamePublisher, platform].filter(Boolean).join(' \u00B7 ');
+  const detail = [platform, itemPageCountLabel(item)].filter(value => value && value !== '\u2014').join(' \u00B7 ');
   return `<div class="dossier-dashboard-document-row ${overflow ? 'dossier-document-overflow' : ''}">
     <div class="dossier-dashboard-document-cover">${coverUrl(item, { width: 120 }) ? `<img src="${escapeForAttribute(coverUrl(item, { width: 120 }))}" alt="" loading="lazy" />` : '<span>GV</span>'}</div>
     <div class="dossier-dashboard-document-copy"><strong>${escapeHtml(displayTitle(item))}</strong><span>${escapeHtml(secondary || item.kind || 'GuideVault document')}</span><small>${escapeHtml(detail)}</small></div>
@@ -15240,7 +15287,7 @@ function dossierDashboardRelatedRowMarkup(game = {}) {
   const url = dossierSafeUrl(game.sourceUrl);
   const key = dossierRelatedGameKey(game);
   const cover = `<div class="dossier-dashboard-related-cover">${game.coverPreviewUrl ? `<img src="${escapeForAttribute(game.coverPreviewUrl)}" alt="" loading="lazy" />` : '<span>IGDB</span>'}</div>`;
-  const copy = `<div>${url ? `<a href="${escapeForAttribute(url)}" target="_blank" rel="noreferrer"><strong>${escapeHtml(game.name || 'Related Game')}</strong></a>` : `<strong>${escapeHtml(game.name || 'Related Game')}</strong>`}<span>${escapeHtml([game.relation, game.gameReleaseYear].filter(Boolean).join(' Â· ') || 'Related title')}</span></div>`;
+  const copy = `<div>${url ? `<a href="${escapeForAttribute(url)}" target="_blank" rel="noreferrer"><strong>${escapeHtml(game.name || 'Related Game')}</strong></a>` : `<strong>${escapeHtml(game.name || 'Related Game')}</strong>`}<span>${escapeHtml([game.relation, game.gameReleaseYear].filter(Boolean).join(' \u00B7 ') || 'Related title')}</span></div>`;
   return `<div class="dossier-dashboard-related-row">${url ? `<a class="dossier-dashboard-related-cover-link" href="${escapeForAttribute(url)}" target="_blank" rel="noreferrer">${cover}</a>` : cover}${copy}<button type="button" class="danger tiny" data-dossier-remove-related-game="${escapeForAttribute(key)}" title="Remove this related-game reference">Remove</button></div>`;
 }
 
@@ -15348,7 +15395,7 @@ function dossierAliasesCardHtml(dossier = {}) {
   const alternativeNames = Array.isArray(dossier.alternativeNames) ? dossier.alternativeNames : [];
   const keywords = Array.isArray(dossier.keywords) ? dossier.keywords : [];
   if (!alternativeNames.length && !keywords.length) return '';
-  return `<section class="dossier-dashboard-card dossier-card-knowledge dossier-aliases-card"><header><div><span>\u25C7</span><h2>Aliases & Keywords</h2></div></header>${alternativeNames.length ? `<p class="dossier-dashboard-aliases">${escapeHtml(alternativeNames.join(' Â· '))}</p>` : ''}<div class="dossier-chipline">${dossierFactChips(keywords.slice(0, 24))}</div></section>`;
+  return `<section class="dossier-dashboard-card dossier-card-knowledge dossier-aliases-card"><header><div><span>\u25C7</span><h2>Aliases & Keywords</h2></div></header>${alternativeNames.length ? `<p class="dossier-dashboard-aliases">${escapeHtml(alternativeNames.join(' \u00B7 '))}</p>` : ''}<div class="dossier-chipline">${dossierFactChips(keywords.slice(0, 24))}</div></section>`;
 }
 
 function dossierDetailHtml(dossier = {}) {
@@ -15534,7 +15581,7 @@ function renderDossierItemPickerResults() {
     const id = itemIdOf(item);
     const selected = String(picker.selectedId || '') === String(id || '');
     const linked = gameDossierForLibraryItem(item);
-    const context = [item.gameTitle || item.platformMatchTitle || item.series, preferredPlatformOf(item) || categoryOf(item), item.publisher || item.gamePublisher].filter(Boolean).join(' Â· ');
+    const context = [item.gameTitle || item.platformMatchTitle || item.series, preferredPlatformOf(item) || categoryOf(item), item.publisher || item.gamePublisher].filter(Boolean).join(' \u00B7 ');
     return `<button type="button" class="dossier-item-picker-result ${selected ? 'selected' : ''}" data-dossier-picker-item-id="${escapeForAttribute(id)}" aria-pressed="${selected ? 'true' : 'false'}">
       <span class="dossier-item-picker-cover">${coverUrl(item, { width: 140 }) ? `<img src="${escapeForAttribute(coverUrl(item, { width: 140 }))}" alt="" loading="lazy" />` : 'GV'}</span>
       <span class="dossier-item-picker-copy"><em>${escapeHtml(item.kind || 'Document')}</em><strong>${escapeHtml(displayTitle(item))}</strong><small>${escapeHtml(context || 'No additional metadata')}</small></span>
@@ -15583,7 +15630,7 @@ function renderDossierSettings() {
   const isAdmin = currentUserIsAdmin();
   host.innerHTML = gameDossiers().length ? gameDossiers().map(dossier => `<article class="settings-card dossier-settings-row" data-dossier-id="${escapeForAttribute(dossier.id)}">
     <div class="dossier-settings-cover">${dossier.primaryCoverUrl || dossier.coverPreviewUrl ? `<img src="${escapeForAttribute(dossier.primaryCoverUrl || dossier.coverPreviewUrl)}" alt="" loading="lazy" />` : '<span>GV</span>'}</div>
-    <div><div class="settings-card-kicker">IGDB ${escapeHtml(dossier.igdbId)}</div><h3>${escapeHtml(dossier.gameTitle || 'Game Dossier')}</h3><p class="sub">${dossier.libraryItemIds.length} linked document${dossier.libraryItemIds.length === 1 ? '' : 's'} Â· ${dossier.collections.length} collection${dossier.collections.length === 1 ? '' : 's'} Â· Updated ${escapeHtml(formatProfileDate(dossier.updatedAt))}</p></div>
+    <div><div class="settings-card-kicker">IGDB ${escapeHtml(dossier.igdbId)}</div><h3>${escapeHtml(dossier.gameTitle || 'Game Dossier')}</h3><p class="sub">${dossier.libraryItemIds.length} linked document${dossier.libraryItemIds.length === 1 ? '' : 's'} \u00B7 ${dossier.collections.length} collection${dossier.collections.length === 1 ? '' : 's'} \u00B7 Updated ${escapeHtml(formatProfileDate(dossier.updatedAt))}</p></div>
     <div class="settings-actions inline-actions"><button class="ghost" type="button" data-dossier-action="open">Open</button>${isAdmin ? '<button class="ghost" type="button" data-dossier-action="refresh">Refresh IGDB + Matches</button><button class="danger" type="button" data-dossier-action="delete">Delete</button>' : ''}</div>
   </article>`).join('') : '<article class="settings-card dossier-settings-empty"><h3>No dossiers yet</h3><p class="sub">Select Choose a Manual or Guide above to start the searchable creation wizard.</p></article>';
 }
@@ -15669,8 +15716,8 @@ async function unlinkDossierLibraryItem(id = '', itemId = '') {
   if (!dossier || !itemId) return;
   const label = item ? displayTitle(item) : 'this document';
   const confirmed = typeof showAppConfirm === 'function'
-    ? await showAppConfirm({ title: 'Remove dossier link?', message: `Remove â€œ${label}â€ from the ${dossier.gameTitle} dossier? The library file will not be deleted, and automatic refreshes will keep this link excluded.`, okText: 'Remove link', cancelText: 'Cancel', danger: true })
-    : window.confirm(`Remove â€œ${label}â€ from this dossier?`);
+    ? await showAppConfirm({ title: 'Remove dossier link?', message: `Remove \u201c${label}\u201d from the ${dossier.gameTitle} dossier? The library file will not be deleted, and automatic refreshes will keep this link excluded.`, okText: 'Remove link', cancelText: 'Cancel', danger: true })
+    : window.confirm(`Remove \u201c${label}\u201d from this dossier?`);
   if (!confirmed) return;
   try {
     const res = await fetch(`/api/dossiers/${encodeURIComponent(id)}/library-items?itemId=${encodeURIComponent(itemId)}`, { method: 'DELETE' });
@@ -15698,8 +15745,8 @@ async function removeDossierRelatedGame(id = '', gameKey = '') {
   if (!dossier || !gameKey) return;
   const label = relatedGame?.name || 'this related game';
   const confirmed = typeof showAppConfirm === 'function'
-    ? await showAppConfirm({ title: 'Remove related game?', message: `Remove â€œ${label}â€ from the ${dossier.gameTitle} dossier? IGDB refreshes will keep this reference excluded.`, okText: 'Remove reference', cancelText: 'Cancel', danger: true })
-    : window.confirm(`Remove â€œ${label}â€ from this dossier?`);
+    ? await showAppConfirm({ title: 'Remove related game?', message: `Remove \u201c${label}\u201d from the ${dossier.gameTitle} dossier? IGDB refreshes will keep this reference excluded.`, okText: 'Remove reference', cancelText: 'Cancel', danger: true })
+    : window.confirm(`Remove \u201c${label}\u201d from this dossier?`);
   if (!confirmed) return;
   try {
     const res = await fetch(`/api/dossiers/${encodeURIComponent(id)}/related-games?gameKey=${encodeURIComponent(gameKey)}`, { method: 'DELETE' });
@@ -19340,8 +19387,8 @@ function renderDetailLaunchBoxLinks(item = {}, payload = null, loading = false) 
     const status = connection.matchStatus || 'Matched';
     const type = connection.matchType || item.kind || 'Match';
     const score = Math.round(Number(connection.confidenceScore || 0));
-    const reason = connection.matchReason ? ` Â· ${connection.matchReason}` : '';
-    const details = [platform, connection.launchBoxReleaseYear, connection.launchBoxDeveloper || connection.launchBoxPublisher].filter(Boolean).join(' Â· ');
+    const reason = connection.matchReason ? ` \u00B7 ${connection.matchReason}` : '';
+    const details = [platform, connection.launchBoxReleaseYear, connection.launchBoxDeveloper || connection.launchBoxPublisher].filter(Boolean).join(' \u00B7 ');
     const gameId = connection.launchBoxGameId || '';
     const itemId = item.id || payload?.itemId || connection.guideVaultItemId || '';
     return `<article class="detail-launchbox-link-row ${escapeForAttribute(String(type).toLowerCase().replace(/[^a-z0-9]+/g, '-'))}">
@@ -19351,7 +19398,7 @@ function renderDetailLaunchBoxLinks(item = {}, payload = null, loading = false) 
       </div>
       <div class="detail-launchbox-link-meta">
         <b>${escapeHtml(type)}</b>
-        <span>${escapeHtml(status)} Â· ${score}%${escapeHtml(reason)}</span>
+        <span>${escapeHtml(status)} \u00B7 ${score}%${escapeHtml(reason)}</span>
       </div>
       <div class="detail-launchbox-link-actions">
         <button type="button" class="ghost mini danger" data-detail-launchbox-remove-link="1" data-guidevault-item-id="${escapeForAttribute(itemId)}" data-launchbox-game-id="${escapeForAttribute(gameId)}" data-match-type="${escapeForAttribute(type)}" data-launchbox-game-title="${escapeForAttribute(title)}">Remove</button>
@@ -19813,20 +19860,40 @@ function cleanupReaderResources(options = {}) {
   const keepState = options.keepState === true;
   window.clearTimeout(state.reader?.resizeTimer);
   window.clearTimeout(state.reader?.longPressTimer);
+  state.reader.transitionToken = (Number(state.reader.transitionToken) || 0) + 1;
   state.reader.animating = false;
   state.reader.overlayVisible = false;
   state.reader.advancedVisible = false;
   state.reader.bookmarkMenuOpen = false;
   state.reader.magnifierSettingsVisible = false;
   state.reader.magnifierActive = false;
-  ['pageLeftImage', 'pageRightImage'].forEach(id => {
+  ['pageLeftImage', 'pageRightImage', 'prevLeftImage', 'prevRightImage'].forEach(id => {
     const img = $(id);
     if (img) {
+      img.style.removeProperty('visibility');
+      img.style.removeProperty('opacity');
       img.removeAttribute('srcset');
       img.removeAttribute('src');
     }
   });
-  document.querySelectorAll('.turning-page, .reader-turn-overlay, .adaptive-turn-overlay').forEach(el => el.remove());
+  const book = $('book');
+  const shell = $('pageShell');
+  book?.classList.remove(
+    'reader-frame-locked', 'reader-page-turn-footprint-locked', 'reader-fixed-edge-turning',
+    'reader-fixed-cover-opening', 'reader-final-page-settling', 'reader-cover-open-active',
+    'reader-cover-stack-hidden', 'reader-cover-opening-stage', 'reader-cover-page3-stack-visible',
+    'flipping-next', 'flipping-prev', 'page-turning'
+  );
+  shell?.classList.remove(
+    'reader-page-turn-shell-locked', 'reader-page-turn-active', 'reader-page-turn-webgl-active',
+    'reader-page-turn-mesh-active', 'reader-page-turn-single-curl-active', 'reader-webgl-shadow-settle',
+    'reader-cover-open-slide-phase', 'reader-cover-webgl-open-active'
+  );
+  document.querySelectorAll(
+    '.turning-page, .reader-turn-overlay, .adaptive-turn-overlay, .reader-webgl-page-curl, ' +
+    '.reader-fixed-turn-sheet, .reader-fixed-cover-slide-overlay, .reader-fixed-final-landing-overlay, ' +
+    '.reader-page-turn-blank-underlay'
+  ).forEach(el => el.remove());
   guidevaultReaderTextureImageCache.clear();
   guidevaultReaderTextureSourceCache = new WeakMap();
   if (!keepState) {
@@ -20058,7 +20125,13 @@ function setReaderImageSource(imgId, url = '') {
   const img = typeof imgId === 'string' ? $(imgId) : imgId;
   if (!img) return;
   const next = String(url || '');
-  if (img.getAttribute('src') === next) return;
+  const current = img.getAttribute('src') || '';
+  if (current === next) return;
+  if (current && next) {
+    try {
+      if (new URL(current, document.baseURI).href === new URL(next, document.baseURI).href) return;
+    } catch {}
+  }
   if (!next) {
     img.removeAttribute('src');
     return;
@@ -20066,6 +20139,34 @@ function setReaderImageSource(imgId, url = '') {
   img.decoding = 'async';
   img.loading = 'eager';
   img.src = next;
+}
+
+async function waitForReaderImageDecode(img) {
+  if (!img?.getAttribute('src')) return;
+  const decode = typeof img.decode === 'function'
+    ? img.decode().catch(() => {})
+    : new Promise(resolve => {
+        if (img.complete) { resolve(); return; }
+        img.addEventListener('load', resolve, { once: true });
+        img.addEventListener('error', resolve, { once: true });
+      });
+  // A broken page should not hold the reader indefinitely, but a healthy page
+  // must be decoded before the WebGL turn surface is removed.
+  await Promise.race([
+    decode,
+    new Promise(resolve => window.setTimeout(resolve, 2500))
+  ]);
+}
+
+async function waitForRenderedReaderSpread(spread = null) {
+  if (!spread) return;
+  const images = [];
+  if (!spread.isSingle && !spread.isAdaptiveSpread && !$('pageLeft')?.classList.contains('hidden')) {
+    images.push($('pageLeftImage'));
+  }
+  images.push($('pageRightImage'));
+  await Promise.all(images.filter(Boolean).map(waitForReaderImageDecode));
+  await waitForReaderPaint();
 }
 
 function setReaderRightPageBlank(isBlank) {
@@ -20721,6 +20822,48 @@ function applyReaderTurnGeometry(el, geometry) {
   el.style.top = px(geometry.top);
   el.style.width = px(geometry.width);
   el.style.height = px(geometry.height);
+}
+
+function readerGeometryFromShellToBook(geometry, shell, book) {
+  if (!geometry || !shell || !book) return geometry || null;
+  return {
+    left: (shell.offsetLeft || 0) + (geometry.left || 0),
+    top: (shell.offsetTop || 0) + (geometry.top || 0),
+    width: geometry.width,
+    height: geometry.height
+  };
+}
+
+function readerPredictedSpreadSlotGeometry(book, shell, side = 'right') {
+  if (!book || !shell) return null;
+  const width = book.clientWidth || book.offsetWidth || 0;
+  const height = book.clientHeight || book.offsetHeight || 0;
+  if (!width || !height) return null;
+  const style = getComputedStyle(shell);
+  const paddingLeft = Number.parseFloat(style.paddingLeft) || 12;
+  const paddingRight = Number.parseFloat(style.paddingRight) || 12;
+  const paddingTop = Number.parseFloat(style.paddingTop) || 12;
+  const paddingBottom = Number.parseFloat(style.paddingBottom) || 12;
+  const contentWidth = Math.max(16, width - paddingLeft - paddingRight);
+  const columnWidth = contentWidth / 2;
+  return {
+    left: paddingLeft + (side === 'right' ? columnWidth : 0),
+    top: paddingTop,
+    width: columnWidth,
+    height: Math.max(16, height - paddingTop - paddingBottom)
+  };
+}
+
+function readerTranslateGeometryIntoSlot(sourceGeometry, slotGeometry, align = 'center') {
+  if (!sourceGeometry || !slotGeometry) return sourceGeometry || slotGeometry || null;
+  const spareX = slotGeometry.width - sourceGeometry.width;
+  const leftOffset = align === 'left' ? 0 : align === 'right' ? spareX : spareX / 2;
+  return {
+    left: slotGeometry.left + leftOffset,
+    top: slotGeometry.top + ((slotGeometry.height - sourceGeometry.height) / 2),
+    width: sourceGeometry.width,
+    height: sourceGeometry.height
+  };
 }
 
 function lockExperimentalTurnFootprint(book, shell) {
@@ -21491,7 +21634,7 @@ function readerDisposePreparedFixedSlotCurl(curl) {
   if (curl.webgl?.canvas) curl.webgl.canvas.remove();
 }
 
-async function performReaderCoverOpenFixedTransition(nextIndex) {
+async function performReaderCoverOpenFixedTransition(nextIndex, transitionToken = state.reader.transitionToken) {
   const shell = $('pageShell');
   const book = $('book');
   const coverImage = $('pageRightImage');
@@ -21502,6 +21645,7 @@ async function performReaderCoverOpenFixedTransition(nextIndex) {
     return;
   }
 
+  const transitionIsCurrent = () => Number(state.reader.transitionToken) === Number(transitionToken) && !!state.reader.item;
   const coverUrl = coverImage.src;
   const pageTwoUrl = destination.leftUrl || '';
   const pageThreeUrl = destination.rightUrl || '';
@@ -21517,54 +21661,75 @@ async function performReaderCoverOpenFixedTransition(nextIndex) {
       readerLoadImageForTexture(pageTwoUrl),
       readerLoadImageForTexture(pageThreeUrl)
     ]);
-    const coverStart = readerPageGeometry($('pageRight'), coverImage, 'right', shell);
-    if (!coverStart) throw new Error('Missing centered cover geometry');
+    if (!transitionIsCurrent()) return;
 
+    const coverStartInShell = readerPageGeometry($('pageRight'), coverImage, 'right', shell);
+    const coverStartInBook = readerGeometryFromShellToBook(coverStartInShell, shell, book);
+    const predictedRightSlot = readerPredictedSpreadSlotGeometry(book, shell, 'right');
+    const predictedCoverTarget = readerTranslateGeometryIntoSlot(coverStartInBook, predictedRightSlot, 'left');
+    if (!coverStartInShell || !coverStartInBook || !predictedCoverTarget) throw new Error('Missing centered cover geometry');
+
+    // Lock the outer book before creating any temporary layer. The overlay belongs to
+    // the book, not pageShell, because pageShell changes from a centered half-width
+    // cover to a full-width spread. Keeping the overlay book-relative prevents the
+    // apparent shrink/jump that used to happen before the first page turned.
     lockExperimentalTurnFootprint(book, shell);
     book.classList.add('reader-fixed-edge-turning', 'reader-fixed-cover-opening');
 
     slideOverlay = makeReaderTurnImageLayer(
       'reader-fixed-cover-slide-overlay',
       coverUrl,
-      coverStart,
+      coverStartInBook,
       'left top'
     );
-    slideOverlay.style.transform = 'translate3d(0,0,0) scale(1)';
-    shell.appendChild(slideOverlay);
+    slideOverlay.style.transform = 'translate3d(0,0,0)';
+    book.appendChild(slideOverlay);
     if (coverImage?.style) coverImage.style.visibility = 'hidden';
     if (leftImage?.style) leftImage.style.visibility = 'hidden';
-
-    // Paint and decode the first real spread underneath, but keep both pages
-    // hidden until their physical sheet is actually exposed by the turn.
-    renderSpread(nextIndex, { preserveSize: true });
-    const destinationRight = $('pageRightImage');
-    const destinationLeft = $('pageLeftImage');
-    if (destinationRight?.style) destinationRight.style.visibility = 'hidden';
-    if (destinationLeft?.style) destinationLeft.style.visibility = 'hidden';
-    if (typeof destinationRight?.decode === 'function') await destinationRight.decode().catch(() => {});
-    if (typeof destinationLeft?.decode === 'function') await destinationLeft.decode().catch(() => {});
     await waitForReaderPaint();
 
-    const rightSlot = readerPageSlotGeometry($('pageRight'));
-    const coverTarget = readerContainGeometryForImage($('pageRight'), coverImg, 'left');
-    if (!rightSlot || !coverTarget) throw new Error('Missing right-page cover target');
-
-    // Cover and target share one natural aspect ratio. A single uniform scale
-    // preserves the scan instead of the previous independent X/Y stretch.
-    const scale = coverTarget.width / Math.max(1, coverStart.width);
-    const moveX = coverTarget.left - coverStart.left;
-    const moveY = coverTarget.top - coverStart.top;
-    const slideTransform = `translate3d(${moveX.toFixed(2)}px,${moveY.toFixed(2)}px,0) scale(${scale.toFixed(5)})`;
+    const predictedMoveX = predictedCoverTarget.left - coverStartInBook.left;
+    const predictedMoveY = predictedCoverTarget.top - coverStartInBook.top;
+    const predictedSlideTransform = `translate3d(${predictedMoveX.toFixed(2)}px,${predictedMoveY.toFixed(2)}px,0)`;
     await slideOverlay.animate([
-      { transform: 'translate3d(0,0,0) scale(1)', offset: 0 },
-      { transform: slideTransform, offset: 1 }
+      { transform: 'translate3d(0,0,0)', offset: 0 },
+      { transform: predictedSlideTransform, offset: 1 }
     ], {
       duration: 560,
       easing: 'cubic-bezier(.22,.72,.18,1)',
       fill: 'forwards'
     }).finished.catch(() => {});
+    if (!transitionIsCurrent()) return;
 
-    curl = readerPrepareFixedSlotCurl(shell, rightSlot, coverImg, pageTwoImg);
+    // Only switch the hidden DOM from cover mode to spread mode after the cover has
+    // completed its translation. The visible overlay remains anchored to the book,
+    // so this layout change cannot resize or displace it.
+    renderSpread(nextIndex, { preserveSize: true });
+    const destinationRight = $('pageRightImage');
+    const destinationLeft = $('pageLeftImage');
+    if (destinationRight?.style) destinationRight.style.visibility = 'hidden';
+    if (destinationLeft?.style) destinationLeft.style.visibility = 'hidden';
+    await Promise.all([
+      typeof destinationRight?.decode === 'function' ? destinationRight.decode().catch(() => {}) : Promise.resolve(),
+      typeof destinationLeft?.decode === 'function' ? destinationLeft.decode().catch(() => {}) : Promise.resolve()
+    ]);
+    if (!transitionIsCurrent()) return;
+    await waitForReaderPaint();
+
+    const rightSlotInShell = readerPageSlotGeometry($('pageRight'));
+    const coverTargetInShell = readerTranslateGeometryIntoSlot(coverStartInShell, rightSlotInShell, 'left');
+    const coverTargetInBook = readerGeometryFromShellToBook(coverTargetInShell, shell, book);
+    if (!rightSlotInShell || !coverTargetInShell || !coverTargetInBook) throw new Error('Missing right-page cover target');
+
+    // Snap to the exact post-layout coordinates without changing width or height.
+    // Normally this is identical to the predicted transform; the correction covers
+    // fractional grid rounding without introducing a visible scale operation.
+    const exactMoveX = coverTargetInBook.left - coverStartInBook.left;
+    const exactMoveY = coverTargetInBook.top - coverStartInBook.top;
+    slideOverlay.style.transform = `translate3d(${exactMoveX.toFixed(2)}px,${exactMoveY.toFixed(2)}px,0)`;
+    await waitForReaderPaint();
+
+    curl = readerPrepareFixedSlotCurl(shell, coverTargetInShell, coverImg, pageTwoImg);
     if (curl) {
       curl.drawFrame(0);
       await waitForReaderPaint();
@@ -21573,9 +21738,6 @@ async function performReaderCoverOpenFixedTransition(nextIndex) {
       await waitForReaderPaint();
       let pageThreeRevealed = false;
       await readerAnimatePreparedFixedSlotCurl(curl, 980, eased => {
-        // The right-hand third page is the under-page. It appears only after the
-        // cover has developed a visible bend; page two remains exclusively on the
-        // true backside until the curl settles on the left.
         if (!pageThreeRevealed && eased >= .22) {
           pageThreeRevealed = true;
           if (destinationRight?.style) destinationRight.style.visibility = previousRightVisibility;
@@ -21583,11 +21745,9 @@ async function performReaderCoverOpenFixedTransition(nextIndex) {
       });
       if (!pageThreeRevealed && destinationRight?.style) destinationRight.style.visibility = previousRightVisibility;
     } else {
-      // WebGL-less fallback preserves the corrected page order, even though it is
-      // intentionally flatter than the curved primary path.
       turnSheet = makeReaderFixedTurnSheet(
         'reader-fixed-cover-turn-sheet',
-        rightSlot,
+        coverTargetInShell,
         coverUrl,
         pageTwoUrl
       );
@@ -21607,6 +21767,7 @@ async function performReaderCoverOpenFixedTransition(nextIndex) {
       await turnAnimation.finished.catch(() => {});
     }
 
+    if (!transitionIsCurrent()) return;
     if (destinationLeft?.style) destinationLeft.style.visibility = previousLeftVisibility;
     if (destinationRight?.style) destinationRight.style.visibility = previousRightVisibility;
     await waitForReaderPaint();
@@ -21624,23 +21785,30 @@ async function performReaderCoverOpenFixedTransition(nextIndex) {
     updateReaderPageEdgeShadingBounds();
   } catch (err) {
     console.warn('Guidevault fixed-geometry cover turn unavailable; using stable spread reveal.', err);
-    renderSpread(nextIndex, { preserveSize: true });
-    const destinationRight = $('pageRightImage');
-    const destinationLeft = $('pageLeftImage');
-    if (destinationRight?.style) destinationRight.style.visibility = previousRightVisibility;
-    if (destinationLeft?.style) destinationLeft.style.visibility = previousLeftVisibility;
-    applyReaderShadingSettings();
-    updateReaderPageStackEffect(spreadForIndex(nextIndex));
-    updateReaderPageEdgeShadingBounds();
+    if (transitionIsCurrent()) {
+      renderSpread(nextIndex, { preserveSize: true });
+      const destinationRight = $('pageRightImage');
+      const destinationLeft = $('pageLeftImage');
+      if (destinationRight?.style) destinationRight.style.visibility = previousRightVisibility;
+      if (destinationLeft?.style) destinationLeft.style.visibility = previousLeftVisibility;
+      applyReaderShadingSettings();
+      updateReaderPageStackEffect(spreadForIndex(nextIndex));
+      updateReaderPageEdgeShadingBounds();
+    }
   } finally {
     if (slideOverlay) slideOverlay.remove();
     if (turnSheet) turnSheet.remove();
     if (curl) readerDisposePreparedFixedSlotCurl(curl);
     book.classList.remove('reader-fixed-edge-turning', 'reader-fixed-cover-opening');
-    unlockExperimentalTurnFootprint(book, shell);
+    if (transitionIsCurrent()) {
+      const currentRight = $('pageRightImage');
+      const currentLeft = $('pageLeftImage');
+      if (currentRight?.style) currentRight.style.visibility = previousRightVisibility;
+      if (currentLeft?.style) currentLeft.style.visibility = previousLeftVisibility;
+      unlockExperimentalTurnFootprint(book, shell);
+    }
   }
 }
-
 
 async function performReaderCoverOpenTransition(nextIndex) {
   const shell = $('pageShell');
@@ -21794,13 +21962,7 @@ async function performReaderCoverOpenTransition(nextIndex) {
 
     const moveX = coverTargetGeometry.left - fromGeometry.left;
     const moveY = coverTargetGeometry.top - fromGeometry.top;
-    const scaleX = coverTargetGeometry.width / Math.max(1, fromGeometry.width);
-    const scaleY = coverTargetGeometry.height / Math.max(1, fromGeometry.height);
-    const transformAt = (k) => {
-      const sx = 1 + (scaleX - 1) * k;
-      const sy = 1 + (scaleY - 1) * k;
-      return `translate3d(${(moveX * k).toFixed(2)}px,${(moveY * k).toFixed(2)}px,0) scale(${sx.toFixed(5)},${sy.toFixed(5)})`;
-    };
+    const transformAt = k => `translate3d(${(moveX * k).toFixed(2)}px,${(moveY * k).toFixed(2)}px,0)`;
     const landedTransform = transformAt(1);
 
     // Stage 1: the part that tested well \u2014 a pure, smooth slide from the centered
@@ -22039,17 +22201,11 @@ async function performReaderCoverOpenAdaptiveTransition(nextIndex) {
       width: Math.max(8, (shell.clientWidth || book.clientWidth || 1) / 2),
       height: Math.max(8, shell.clientHeight || book.clientHeight || 1)
     };
-    const coverTargetGeometry = containInRect(coverSlotRect, coverImg.naturalWidth || 0, coverImg.naturalHeight || 0, 'right');
+    const coverTargetGeometry = readerTranslateGeometryIntoSlot(fromGeometry, coverSlotRect, 'right');
 
     const moveX = coverTargetGeometry.left - fromGeometry.left;
     const moveY = coverTargetGeometry.top - fromGeometry.top;
-    const scaleX = coverTargetGeometry.width / Math.max(1, fromGeometry.width);
-    const scaleY = coverTargetGeometry.height / Math.max(1, fromGeometry.height);
-    const transformAt = (k) => {
-      const sx = 1 + (scaleX - 1) * k;
-      const sy = 1 + (scaleY - 1) * k;
-      return `translate3d(${(moveX * k).toFixed(2)}px,${(moveY * k).toFixed(2)}px,0) scale(${sx.toFixed(5)},${sy.toFixed(5)})`;
-    };
+    const transformAt = k => `translate3d(${(moveX * k).toFixed(2)}px,${(moveY * k).toFixed(2)}px,0)`;
 
     await overlay.animate([
       { transform: transformAt(0), opacity: 1, filter: 'brightness(1)', offset: 0 },
@@ -22128,6 +22284,7 @@ async function performReaderCoverOpenAdaptiveTransition(nextIndex) {
     });
 
     renderSpread(nextIndex, { preserveSize: true });
+    await waitForRenderedReaderSpread(spreadForIndex(nextIndex));
     const finalRightImage = $('pageRightImage');
     const finalLeftImage = $('pageLeftImage');
     if (finalRightImage?.style) finalRightImage.style.visibility = '';
@@ -22635,6 +22792,7 @@ async function performReaderAdaptiveSpreadTurn(nextIndex, dir) {
     console.warn('Guidevault adaptive spread half-page curl unavailable; falling back to stable adaptive swap.', err);
   } finally {
     renderSpread(nextIndex, { preserveSize: true });
+    await waitForRenderedReaderSpread(spreadForIndex(nextIndex));
     if (sourceImage?.style) sourceImage.style.visibility = sourceOriginalVisibility;
     applyReaderShadingSettings();
     updateReaderPageStackEffect(spreadForIndex(nextIndex));
@@ -23021,7 +23179,7 @@ async function performReaderPageTurnExperimental(nextIndex, dir) {
     return;
   }
   if (isCoverOpenTurn) {
-    await performReaderCoverOpenFixedTransition(nextIndex);
+    await performReaderCoverOpenFixedTransition(nextIndex, state.reader.transitionToken);
     return;
   }
   if (isCoverCloseTurn) {
@@ -23185,6 +23343,7 @@ async function performReaderPageTurnExperimental(nextIndex, dir) {
 
     if (!finalPageSettled) {
       renderSpread(nextIndex, { preserveSize: true });
+      await waitForRenderedReaderSpread(spreadForIndex(nextIndex));
       if (sourceHidden && hideTarget?.style) hideTarget.style.visibility = sourceOriginalVisibility;
       applyReaderShadingSettings();
       updateReaderPageStackEffect(spreadForIndex(nextIndex));
@@ -23377,49 +23536,60 @@ async function showPage(index, dir) {
   const toSpread = spreadForIndex(nextIndex);
   if (!fromSpread || !toSpread || toSpread.index === state.reader.index) return;
 
+  const transitionToken = (Number(state.reader.transitionToken) || 0) + 1;
+  state.reader.transitionToken = transitionToken;
   state.reader.animating = true;
 
   const book = $('book');
   const turning = $('turningPage');
   const under = $('underPage');
   const snapshot = $('previousSpread');
+  const transitionIsCurrent = () => Number(state.reader.transitionToken) === transitionToken && !!state.reader.item;
+  const hideLegacyLayers = () => {
+    if (turning) turning.className = 'turning-page hidden';
+    if (under) under.className = 'under-page hidden';
+    if (snapshot) snapshot.className = 'previous-spread hidden';
+  };
 
-  // v0.9.6: completely bypass the old snapshot/turning-page transition stack.
-  // Those temporary layers had their own footprint/styling and caused the visible
-  // frame flash plus the tiny shrink/bounce during page advance. For now the reader
-  // performs an in-place, fixed-footprint spread swap; a new page-turn effect should
-  // be rebuilt later on top of this stable base.
-  book.classList.remove(
+  book?.classList.remove(
     'flipping-next', 'flipping-prev', 'page-turning',
     'snapshot-turn-next', 'snapshot-turn-prev',
     'soft-turn-next', 'soft-turn-prev'
   );
-  if (turning) turning.className = 'turning-page hidden';
-  if (under) under.className = 'under-page hidden';
-  if (snapshot) snapshot.className = 'previous-spread hidden';
+  hideLegacyLayers();
 
-  if (!book.classList.contains('reader-sized')) applyReaderBookSize(fromSpread);
-  lockReaderFrame(book);
+  try {
+    if (!book?.classList.contains('reader-sized')) applyReaderBookSize(fromSpread);
+    lockReaderFrame(book);
 
-  const preloadTargets = [toSpread.leftUrl, toSpread.rightUrl, toSpread.adaptiveUrl].filter(Boolean);
-  await Promise.all(preloadTargets.map(preloadReaderImage));
-  if (!state.reader.animating) return;
+    const preloadTargets = [toSpread.leftUrl, toSpread.rightUrl, toSpread.adaptiveUrl].filter(Boolean);
+    await Promise.all(preloadTargets.map(preloadReaderImage));
+    if (!transitionIsCurrent()) return;
 
-  await performReaderTransition(nextIndex, dir, state.reader.transitionMode || 'stable');
+    await performReaderTransition(nextIndex, dir, state.reader.transitionMode || 'stable');
+    if (!transitionIsCurrent()) return;
 
-  // Keep hidden helper layers hidden after the swap. This prevents old CSS rules from
-  // briefly drawing a panel around the book during the next paint.
-  if (turning) turning.className = 'turning-page hidden';
-  if (under) under.className = 'under-page hidden';
-  if (snapshot) snapshot.className = 'previous-spread hidden';
-
-  requestAnimationFrame(() => {
-    state.reader.animating = false;
+    hideLegacyLayers();
+    await waitForReaderPaint();
     updateReaderOverlay();
-    requestAnimationFrame(() => unlockReaderFrame(book));
-  });
+  } catch (err) {
+    console.warn('Guidevault reader transition failed; using a stable page swap.', err);
+    if (transitionIsCurrent()) {
+      renderSpread(nextIndex, { preserveSize: true });
+      await waitForRenderedReaderSpread(spreadForIndex(nextIndex));
+      updateReaderOverlay();
+    }
+  } finally {
+    hideLegacyLayers();
+    if (transitionIsCurrent()) {
+      // Unlock before accepting another navigation input. The old nested animation
+      // frames allowed a second turn to begin and then had the first turn remove its
+      // frame lock, which produced an intermittent flash/reflow.
+      unlockReaderFrame(book);
+      state.reader.animating = false;
+    }
+  }
 }
-
 
 function normalizeTaskTone(tone = '') {
   const value = String(tone || '').toLowerCase();
@@ -23843,7 +24013,7 @@ function statCoverageGauge(percent = 0, label = 'Coverage') {
     <text x="60" y="73" text-anchor="middle" class="launchbox-stat-gauge-label">${escapeHtml(label)}</text>
   </svg>`;
 }
-function launchBoxStatKpi(label, value, sub = '', icon = 'â—†') {
+function launchBoxStatKpi(label, value, sub = '', icon = '\u25c6') {
   return `<div class="launchbox-stat-kpi"><i>${escapeHtml(icon)}</i><strong>${escapeHtml(value)}</strong><span>${escapeHtml(label)}</span>${sub ? `<em>${escapeHtml(sub)}</em>` : ''}</div>`;
 }
 function launchBoxStatLane(label, value, total, tone = 'blue') {
@@ -23862,7 +24032,7 @@ function launchBoxPlatformSpark(row = {}, maxGames = 1) {
   const rowWidth = Math.max(8, Math.min(100, (games / Math.max(1, maxGames)) * 100));
   const matchedPct = games > 0 ? Math.max(0, Math.min(100, (matched / games) * 100)) : 0;
   return `<div class="launchbox-platform-spark">
-    <div class="launchbox-platform-spark-name"><strong>${escapeHtml(row.platform || 'Unknown')}</strong><span>${launchBoxNumber(games)} games Â· ${launchBoxPercent(row.coveragePercent)} covered</span></div>
+    <div class="launchbox-platform-spark-name"><strong>${escapeHtml(row.platform || 'Unknown')}</strong><span>${launchBoxNumber(games)} games \u00B7 ${launchBoxPercent(row.coveragePercent)} covered</span></div>
     <div class="launchbox-platform-spark-track" style="width:${rowWidth.toFixed(2)}%"><b style="width:${matchedPct.toFixed(2)}%"></b><i style="width:${Math.max(0, 100 - matchedPct).toFixed(2)}%"></i></div>
     <em>${launchBoxNumber(matched)} matched / ${launchBoxNumber(missing)} missing</em>
   </div>`;
@@ -23907,13 +24077,13 @@ function renderStatisticsLaunchBoxManagement() {
   const rejectedDeg = Math.max(0, 360 - ambiguousDeg - confirmedDeg);
   host.innerHTML = `
     <div class="statistics-launchbox-hero">
-      <div class="launchbox-stat-gauge-card">${statCoverageGauge(coverage.coveragePercent, 'covered')}<div><h3>${launchBoxNumber(total)} LaunchBox games</h3><p>${launchBoxNumber(matched)} matched Â· ${launchBoxNumber(missing)} missing</p></div></div>
+      <div class="launchbox-stat-gauge-card">${statCoverageGauge(coverage.coveragePercent, 'covered')}<div><h3>${launchBoxNumber(total)} LaunchBox games</h3><p>${launchBoxNumber(matched)} matched \u00B7 ${launchBoxNumber(missing)} missing</p></div></div>
       <div class="launchbox-stat-kpi-grid">
-        ${launchBoxStatKpi('Matched Games', launchBoxNumber(matched), `${launchBoxNumber(missing)} missing`, 'âœ“')}
-        ${launchBoxStatKpi('Manual Matches', launchBoxNumber(manual), `${launchBoxPercent(coverage.manualCoveragePercent)} manual coverage`, 'ðŸ“˜')}
-        ${launchBoxStatKpi('Strategy Guide Matches', launchBoxNumber(guide), `${launchBoxPercent(coverage.strategyGuideCoveragePercent)} guide coverage`, 'ðŸ§­')}
-        ${launchBoxStatKpi('Magazine Matches', launchBoxNumber(magazine), `${launchBoxPercent(coverage.magazineCoveragePercent)} magazine coverage`, 'ðŸ“°')}
-        ${launchBoxStatKpi('Ambiguous', launchBoxNumber(ambiguous), 'needs review', 'âš ')}
+        ${launchBoxStatKpi('Matched Games', launchBoxNumber(matched), `${launchBoxNumber(missing)} missing`, '\u2713')}
+        ${launchBoxStatKpi('Manual Matches', launchBoxNumber(manual), `${launchBoxPercent(coverage.manualCoveragePercent)} manual coverage`, '\u{1f4d8}')}
+        ${launchBoxStatKpi('Strategy Guide Matches', launchBoxNumber(guide), `${launchBoxPercent(coverage.strategyGuideCoveragePercent)} guide coverage`, '\u{1f9ed}')}
+        ${launchBoxStatKpi('Magazine Matches', launchBoxNumber(magazine), `${launchBoxPercent(coverage.magazineCoveragePercent)} magazine coverage`, '\u{1f4f0}')}
+        ${launchBoxStatKpi('Ambiguous', launchBoxNumber(ambiguous), 'needs review', '\u26a0')}
       </div>
     </div>
     <div class="statistics-launchbox-chart-grid">
@@ -25728,7 +25898,7 @@ function serverFilesSyncTemplateEditor(kind = serverFilesCurrentTemplateKind()) 
     return item.kind === 'Strategy Guide';
   }).length;
   const scope = $('serverFilesRuleScopeSummary');
-  if (scope) scope.textContent = `Editing ${defs[normalizedKind].label}${selectedCount ? ` Â· ${selectedCount} selected` : ''}.`;
+  if (scope) scope.textContent = `Editing ${defs[normalizedKind].label}${selectedCount ? ` \u00B7 ${selectedCount} selected` : ''}.`;
   serverFilesUpdateTemplateBreakdown();
 }
 
@@ -26137,7 +26307,7 @@ function serverFilesConvertRowsHtml(rows = []) {
       <td><span class="conversion-type-pill">${escapeHtml(row.kind || '')}</span></td>
       <td><strong class="conversion-title">${escapeHtml(row.title || '')}</strong></td>
       <td><b>${escapeHtml(row.sourceFormat || '')}</b><small>${escapeHtml(row.sourceFileName || row.fileName || '')}</small></td>
-      <td><b>${escapeHtml(row.targetFormat || '')}</b><small>${escapeHtml(row.outputFileName || 'â€”')}</small></td>
+      <td><b>${escapeHtml(row.targetFormat || '')}</b><small>${escapeHtml(row.outputFileName || '\u2014')}</small></td>
       <td><span class="conversion-size-text">${serverFilesFormatBytes(row.sourceBytes)} &rarr; ${serverFilesFormatBytes(row.outputBytes)}</span></td>
       <td><b>${escapeHtml(row.success ? 'Created' : 'Failed')}</b>${row.message ? `<small>${escapeHtml(row.message)}</small>` : ''}</td>
     </tr>`).join('')}</tbody></table>`;
@@ -26429,4 +26599,3 @@ installLibraryCardDelegates();
 installGlobalDetailDelegate();
 syncEmailTemplatePreview();
 initializeGuidevaultAuthAndApp();
-

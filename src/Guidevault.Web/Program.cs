@@ -1,4 +1,4 @@
-﻿using System.Collections.Concurrent;
+using System.Collections.Concurrent;
 using System.IO.Compression;
 using System.Security.Cryptography;
 using System.Text;
@@ -423,6 +423,18 @@ app.UseStaticFiles(new StaticFileOptions
     OnPrepareResponse = context =>
     {
         var requestPath = context.Context.Request.Path.Value ?? string.Empty;
+        // Explicit UTF-8 response metadata prevents proxies and embedded browser
+        // runtimes from decoding app.js literals as Windows-1252. Without this,
+        // separators such as bullets, middle dots, and multiplication signs render as mojibake in the UI.
+        if (requestPath.EndsWith(".js", StringComparison.OrdinalIgnoreCase))
+            context.Context.Response.ContentType = "text/javascript; charset=utf-8";
+        else if (requestPath.EndsWith(".css", StringComparison.OrdinalIgnoreCase))
+            context.Context.Response.ContentType = "text/css; charset=utf-8";
+        else if (requestPath.EndsWith(".html", StringComparison.OrdinalIgnoreCase))
+            context.Context.Response.ContentType = "text/html; charset=utf-8";
+
+        context.Context.Response.Headers["X-Content-Type-Options"] = "nosniff";
+
         if (requestPath.StartsWith("/assets/", StringComparison.OrdinalIgnoreCase))
         {
             context.Context.Response.Headers.CacheControl = "public, max-age=604800";
@@ -430,9 +442,9 @@ app.UseStaticFiles(new StaticFileOptions
         else if (requestPath.EndsWith(".js", StringComparison.OrdinalIgnoreCase)
             || requestPath.EndsWith(".css", StringComparison.OrdinalIgnoreCase))
         {
-            // Script and stylesheet names are not content-hashed, so keep their
-            // cache lifetime short enough that deployments are picked up quickly.
-            context.Context.Response.Headers.CacheControl = "public, max-age=3600, must-revalidate";
+            // Script and stylesheet names are not content-hashed, so require revalidation
+            // and let the cache-busting query string select each deployed revision.
+            context.Context.Response.Headers.CacheControl = "no-cache, must-revalidate";
         }
     }
 });
@@ -10270,7 +10282,7 @@ public static class GuidevaultLaunchBoxMatcher
         var issue = Clean(item.IssueNumber);
         if (!string.IsNullOrWhiteSpace(volume)) parts.Add(HasPrefix(volume, "vol", "volume") ? volume : $"Vol. {volume}");
         if (!string.IsNullOrWhiteSpace(issue)) parts.Add(HasPrefix(issue, "issue", "#", "no") ? issue : $"Issue #{issue}");
-        return string.Join(" â€¢ ", parts);
+        return string.Join(" \u2022 ", parts);
     }
 
     private static bool HasPrefix(string value, params string[] prefixes)
@@ -20945,4 +20957,3 @@ static class GuidevaultBuildInfo
 {
     public const string Version = "1.3.1";
 }
-
