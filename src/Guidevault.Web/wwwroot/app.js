@@ -1,4 +1,4 @@
-const state = {
+﻿const state = {
   items: [], filtered: [], selected: null, filter: 'All Content', categoryFilter: '', viewMode: 'all', activeTab: 'overview', customFilter: null,
   reader: { item: null, pages: [], index: 0, animating: false, displayMode: 2, transitionMode: 'stable', overlayVisible: false, advancedVisible: false, bookmarkMenuOpen: false, editingBookmarkNotePage: null, magnifierSettingsVisible: false, scrubbing: false, shading: null, zoom: 100, fullscreenOnOpen: false, magnifier: null, magnifierActive: false, longPressTimer: null, suppressHitClickUntil: 0, backgrounds: [], background: '', backgroundBrightness: 72 },
   libraryPath: '',
@@ -92,8 +92,11 @@ let guidevaultStartupDeepLinkHandled = false;
 const GUIDEVAULT_READING_ACTIVITY_KEY = 'guidevault.readingActivity.v1';
 const GUIDEVAULT_READING_ACTIVITY_LIMIT = 1000;
 let guidevaultReadingProfilesSaveTimer = 0;
-let guidevaultReaderLivePreferenceSaveTimer = 0;
 let guidevaultReadingProfilesRemoteSyncInFlight = null;
+const GUIDEVAULT_READER_TEXTURE_IMAGE_CACHE_LIMIT = 8;
+const guidevaultReaderTextureImageCache = new Map();
+let guidevaultReaderTextureSourceCache = new WeakMap();
+let guidevaultReaderWebGlPageCurlSupported = null;
 
 const GUIDEVAULT_PROFILE_ACTIVITY_DISPLAY_LIMIT = 100;
 const GUIDEVAULT_PROFILE_REVIEWS_KEY = 'guidevault.profileReviews.v1';
@@ -114,7 +117,7 @@ const GUIDEVAULT_LIBRARY_CHUNK_YIELD_MS = 30;
 const GUIDEVAULT_STARTUP_STATUS_HIDE_MS = 2400;
 const GUIDEVAULT_LIBRARY_SEARCH_DEBOUNCE_MS = 180;
 const GUIDEVAULT_SORT_COLLATOR = new Intl.Collator(undefined, { numeric: true, sensitivity: 'base' });
-const GUIDEVAULT_APP_VERSION = '1.2.10';
+const GUIDEVAULT_APP_VERSION = '1.3.1';
 const GUIDEVAULT_FILENAME_SCHEMA_KEY = 'guidevault.filenameRename.schema.v1';
 const GUIDEVAULT_FILE_ORGANIZATION_TEMPLATE_PRESETS_KEY = 'guidevault.fileOrganization.templatePresets.v2';
 const GUIDEVAULT_FILE_ORGANIZATION_TEMPLATE_PRESETS_LEGACY_KEY = 'guidevault.fileOrganization.templatePresets.v1';
@@ -646,6 +649,13 @@ function isAutoEntryReadingProfilePreset(profile = null, presetId = '') {
     || (id.startsWith('entry-') && name.endsWith('reader settings'));
 }
 
+function countAutoEntryReadingProfilePresets(value = {}) {
+  const source = value?.readingProfiles || value?.profiles || value || {};
+  return Object.entries(source.presets || {}).reduce((count, [id, profile]) => (
+    count + (isAutoEntryReadingProfilePreset(profile, id) ? 1 : 0)
+  ), 0);
+}
+
 function readingProfileTimeValue(profile = null) {
   const raw = profile?.updatedAt || '';
   if (!raw) return 0;
@@ -685,6 +695,7 @@ function normalizeReadingProfiles(value = {}) {
     Object.entries(source.presets || {}).forEach(([id, profile]) => {
       if (!id) return;
       const preset = normalizeReadingProfilePreset({ ...(profile || {}), id: (profile && profile.id) || id }, id);
+      if (isAutoEntryReadingProfilePreset(preset, id)) return;
       normalized.presets[preset.id] = preset;
     });
   } else {
@@ -741,6 +752,9 @@ function loadReadingProfiles() {
     const parsed = raw ? JSON.parse(raw) : {};
     const normalized = normalizeReadingProfiles(parsed);
     state.readingProfiles = normalized;
+    if (countAutoEntryReadingProfilePresets(parsed) > 0) {
+      try { localStorage.setItem(storageKey, JSON.stringify(normalized)); } catch {}
+    }
     return normalized;
   } catch {
     const empty = emptyReadingProfilesState();
@@ -753,59 +767,6 @@ function saveReadingProfiles(profiles = state.readingProfiles) {
   const normalized = persistReadingProfilesLocal(profiles || {});
   if (currentUserIsAdmin()) scheduleReadingProfilesServerSave(normalized);
   return normalized;
-}
-
-function readerEntryProfilePresetId(item) {
-  const id = itemIdOf(item) || item?.id || item?.Id || readingProfileEntryKey(item) || displayTitle(item) || item?.title || 'item';
-  return `entry-${normalizeReadingProfileKeyPart(id)}`;
-}
-
-function readerEntryProfilePresetName(item) {
-  const title = displayTitle(item) || item?.title || item?.Title || 'Selected Item';
-  return `${title} Reader Settings`;
-}
-
-function saveCurrentReaderSettingsToEntryProfile(reason = '', options = {}) {
-  const item = state.reader?.item;
-  if (!item) return null;
-  if (!options.force && !state.reader?.settingsDirty) return state.readingProfiles || loadReadingProfiles();
-  const entryKey = readingProfileEntryKey(item);
-  if (!entryKey) return null;
-  const profiles = state.readingProfiles || loadReadingProfiles();
-  profiles.presets = profiles.presets || {};
-  profiles.entryAssignments = profiles.entryAssignments || {};
-
-  let profileId = profiles.entryAssignments[entryKey] || '';
-  if (!profileId || !profiles.presets[profileId]) profileId = readerEntryProfilePresetId(item);
-  const existing = profiles.presets[profileId] || {};
-  profiles.presets[profileId] = normalizeReadingProfilePreset({
-    ...existing,
-    ...currentReaderSettingsAsProfile(),
-    id: profileId,
-    name: existing.name || readerEntryProfilePresetName(item),
-    builtIn: false,
-    autoGenerated: true,
-    source: 'reader-live-settings',
-    updatedAt: new Date().toISOString()
-  }, profileId);
-  profiles.entryAssignments[entryKey] = profileId;
-  const saved = saveReadingProfiles(profiles);
-  state.reader.appliedProfileId = profileId;
-  state.reader.appliedProfileSource = 'Manual reader override';
-  state.reader.settingsDirty = false;
-  if (reason) console.debug(`Guidevault reader settings saved for entry profile (${reason}).`, { entryKey, profileId });
-  return saved;
-}
-
-function scheduleSaveCurrentReaderSettingsToEntryProfile(reason = '', delayMs = 500) {
-  if (!state.reader?.item) return;
-  state.reader.settingsDirty = true;
-  if (guidevaultReaderLivePreferenceSaveTimer) clearTimeout(guidevaultReaderLivePreferenceSaveTimer);
-  guidevaultReaderLivePreferenceSaveTimer = window.setTimeout(() => {
-    guidevaultReaderLivePreferenceSaveTimer = 0;
-    try { saveCurrentReaderSettingsToEntryProfile(reason); }
-    catch (err) { console.debug('Guidevault reader settings could not be saved for this entry yet.', err); }
-  }, Math.max(0, Number(delayMs) || 0));
 }
 
 function readingProfilesHaveMeaningfulSettings(profiles = null) {
@@ -863,10 +824,19 @@ async function syncReadingProfilesFromServer(options = {}) {
     try {
       const res = await fetch(`${GUIDEVAULT_READER_PREFERENCES_ENDPOINT}?_=${Date.now()}`, { cache: 'no-store' });
       if (!res.ok) throw new Error(await res.text());
-      const remotePayload = normalizeReaderPreferencesPayload(await res.json());
+      const remoteRawPayload = await res.json();
+      const removedAutoProfileCount = countAutoEntryReadingProfilePresets(remoteRawPayload);
+      const remotePayload = normalizeReaderPreferencesPayload(remoteRawPayload);
       const remoteProfiles = remotePayload.readingProfiles;
       const localMeaningful = readingProfilesHaveMeaningfulSettings(localProfiles);
       const remoteMeaningful = readingProfilesHaveMeaningfulSettings(remoteProfiles);
+
+      if (removedAutoProfileCount > 0 && currentUserIsAdmin()) {
+        const savedPayload = await saveReadingProfilesToServer(remoteProfiles);
+        persistReadingProfilesLocal(savedPayload.readingProfiles);
+        console.info(`Removed ${removedAutoProfileCount} auto-generated per-item reading profile${removedAutoProfileCount === 1 ? '' : 's'}.`);
+        return state.readingProfiles;
+      }
 
       if (remoteMeaningful || options.preferRemote === true) {
         persistReadingProfilesLocal(remoteProfiles);
@@ -1255,8 +1225,8 @@ function updateReadingProfileBackgroundPreview() {
   if (nameEl) nameEl.textContent = bg?.displayName || readerBackgroundDisplayName(selected) || 'Default Gradient';
   if (metaEl) {
     const source = bg?.isUserUploaded ? 'Uploaded background' : (bg ? 'Default background' : 'Default gradient');
-    const size = bg?.url ? '1920 × 1080' : 'CSS gradient';
-    metaEl.textContent = `${source} • ${size} • ${Math.round(brightness)}% brightness`;
+    const size = bg?.url ? '1920 Ã— 1080' : 'CSS gradient';
+    metaEl.textContent = `${source} â€¢ ${size} â€¢ ${Math.round(brightness)}% brightness`;
   }
 }
 
@@ -1315,7 +1285,7 @@ async function uploadReaderBackgroundFromSettings() {
     if (uploadedName && $('readingProfilePresetBackground')) {
       $('readingProfilePresetBackground').value = uploadedName;
     }
-    setReaderBackgroundUploadStatus('Reader background uploaded at 1920 × 1080. It is now available in Background Type.', 'success');
+    setReaderBackgroundUploadStatus('Reader background uploaded at 1920 Ã— 1080. It is now available in Background Type.', 'success');
   } catch (err) {
     setReaderBackgroundUploadStatus(err?.message || 'Unable to upload reader background.', 'error');
   }
@@ -1693,6 +1663,10 @@ function toggleFavoriteItem(itemOrId) {
 function updateFavoriteVisuals(itemId) {
   const isFav = isFavoriteItem(itemId);
   document.querySelectorAll(`.favorite[data-id="${CSS.escape(String(itemId || ''))}"]`).forEach(btn => {
+    if (!isFav) {
+      btn.remove();
+      return;
+    }
     btn.classList.toggle('active', isFav);
     btn.setAttribute('aria-pressed', isFav ? 'true' : 'false');
     btn.title = isFav ? 'Remove from favorites' : 'Add to favorites';
@@ -4202,7 +4176,7 @@ function renderLaunchBoxCoverage() {
     const visible = !!job.status && job.status !== 'Idle';
     jobBox.classList.toggle('hidden', !visible);
     if (visible) {
-      jobBox.innerHTML = `<strong>Sync job:</strong><span>${escapeHtml(job.status || 'Idle')} — ${launchBoxNumber(job.processedGames)} / ${launchBoxNumber(job.totalGames)} processed. ${escapeHtml(job.message || '')}</span>`;
+      jobBox.innerHTML = `<strong>Sync job:</strong><span>${escapeHtml(job.status || 'Idle')} â€” ${launchBoxNumber(job.processedGames)} / ${launchBoxNumber(job.totalGames)} processed. ${escapeHtml(job.message || '')}</span>`;
     }
   }
   renderLaunchBoxPlatformCoverage(coverage.byPlatform || []);
@@ -4304,12 +4278,12 @@ function launchBoxGameResultHtml(game = {}, selectedId = '') {
   const active = String(game.id || '').toLowerCase() === String(selectedId || '').toLowerCase();
   return `<button type="button" class="launchbox-manual-result ${active ? 'active' : ''}" data-launchbox-manual-select-game="${escapeForAttribute(game.id || '')}">
     <strong>${escapeHtml(game.title || 'Unknown game')}</strong>
-    <span>${escapeHtml([game.platform, game.releaseYear, game.region].filter(Boolean).join(' · ') || 'No LaunchBox metadata')}</span>
+    <span>${escapeHtml([game.platform, game.releaseYear, game.region].filter(Boolean).join(' Â· ') || 'No LaunchBox metadata')}</span>
   </button>`;
 }
 function launchBoxItemResultHtml(item = {}, selectedId = '') {
   const active = String(item.id || '').toLowerCase() === String(selectedId || '').toLowerCase();
-  const meta = [item.kind || item.matchType, item.system || item.primarySystem, item.year || item.coverDate || item.issueNumber].filter(Boolean).join(' · ');
+  const meta = [item.kind || item.matchType, item.system || item.primarySystem, item.year || item.coverDate || item.issueNumber].filter(Boolean).join(' Â· ');
   return `<button type="button" class="launchbox-manual-result ${active ? 'active' : ''}" data-launchbox-manual-select-item="${escapeForAttribute(item.id || '')}">
     <strong>${escapeHtml(item.title || 'Unknown GuideVault item')}</strong>
     <span>${escapeHtml(meta || 'GuideVault item')}</span>
@@ -4421,12 +4395,12 @@ function renderLaunchBoxReview() {
   if (!host) return;
   const data = state.launchBox.review || {};
   const rows = Array.isArray(data.items) ? data.items : [];
-  const filterBits = [data.status ? `Status: ${data.status}` : '', state.launchBox.reviewPlatform ? `Platform: ${state.launchBox.reviewPlatform}` : '', data.query ? `Search: ${data.query}` : ''].filter(Boolean).join(' · ');
+  const filterBits = [data.status ? `Status: ${data.status}` : '', state.launchBox.reviewPlatform ? `Platform: ${state.launchBox.reviewPlatform}` : '', data.query ? `Search: ${data.query}` : ''].filter(Boolean).join(' Â· ');
   if (!rows.length) {
     host.innerHTML = `<p class="sub">No LaunchBox review rows found. ${escapeHtml(filterBits)}</p>`;
     return;
   }
-  host.innerHTML = `<div class="launchbox-review-count">${escapeHtml(filterBits)} · Showing ${launchBoxNumber(rows.length)} of ${launchBoxNumber(data.total || rows.length)}</div>${rows.map(launchBoxReviewRowHtml).join('')}`;
+  host.innerHTML = `<div class="launchbox-review-count">${escapeHtml(filterBits)} Â· Showing ${launchBoxNumber(rows.length)} of ${launchBoxNumber(data.total || rows.length)}</div>${rows.map(launchBoxReviewRowHtml).join('')}`;
 }
 function launchBoxReviewMatchVisibleForStatus(match = {}, status = '') {
   const normalized = String(status || '').toLowerCase().replace(/\s+/g, '-');
@@ -4504,7 +4478,7 @@ function launchBoxActiveMatchesHtml(row = {}) {
         const titleHtml = read
           ? `<a href="${escapeForAttribute(read)}" title="Open ${escapeForAttribute(title)} in the reader">${escapeHtml(title)}</a>`
           : `<span>${escapeHtml(title)}</span>`;
-        return `<li>${titleHtml}<em>${escapeHtml(status)} · ${score}%</em>${detail ? `<a class="launchbox-active-detail" href="${escapeForAttribute(detail)}" title="Open details">Details</a>` : ''}</li>`;
+        return `<li>${titleHtml}<em>${escapeHtml(status)} Â· ${score}%</em>${detail ? `<a class="launchbox-active-detail" href="${escapeForAttribute(detail)}" title="Open details">Details</a>` : ''}</li>`;
       }).join('');
       return `<div class="launchbox-active-match-group ${escapeForAttribute(key)}"><strong>${escapeHtml(launchBoxMatchTypeLabel(key, 'active'))} <span>${groups[key].length}</span></strong><ul>${items}</ul></div>`;
     })
@@ -4523,14 +4497,14 @@ function launchBoxReviewRowHtml(row) {
     <div class="launchbox-match-line" data-launchbox-game-id="${escapeForAttribute(game.id || '')}" data-guidevault-item-id="${escapeForAttribute(m.guideVaultItemId || '')}" data-match-type="${escapeForAttribute(m.matchType || '')}">
       <span class="launchbox-match-kind"><span>${escapeHtml(launchBoxReviewMatchLabel(m, reviewStatus))}</span><b>${escapeHtml(m.matchType || 'Match')}</b></span>
       <strong>${escapeHtml(m.guideVaultItemTitle || m.guideVaultItemId || 'Unknown item')}</strong>
-      <em>${escapeHtml(m.matchStatus || '')} · ${Math.round(Number(m.confidenceScore || 0))}% · ${escapeHtml(m.matchReason || '')}</em>
+      <em>${escapeHtml(m.matchStatus || '')} Â· ${Math.round(Number(m.confidenceScore || 0))}% Â· ${escapeHtml(m.matchReason || '')}</em>
       <span class="launchbox-match-actions">${launchBoxReviewMatchActionsHtml(m, reviewStatus)}</span>
     </div>`).join('') : missingActionHtml;
   const activeHtml = launchBoxActiveMatchesHtml(row);
   const candidateTitle = matches.length ? '<div class="launchbox-candidate-title">Review candidates</div>' : '';
   return `<article class="launchbox-review-row">
     <div class="launchbox-game-head">
-      <div><strong>${escapeHtml(game.title || 'Unknown game')}</strong><span>${escapeHtml(game.platform || 'Unknown platform')} · Manual: ${escapeHtml(row.manualStatus || 'Missing')} · Guide: ${escapeHtml(row.strategyGuideStatus || 'Missing')} · Magazine: ${escapeHtml(row.magazineStatus || 'Missing')}</span></div>
+      <div><strong>${escapeHtml(game.title || 'Unknown game')}</strong><span>${escapeHtml(game.platform || 'Unknown platform')} Â· Manual: ${escapeHtml(row.manualStatus || 'Missing')} Â· Guide: ${escapeHtml(row.strategyGuideStatus || 'Missing')} Â· Magazine: ${escapeHtml(row.magazineStatus || 'Missing')}</span></div>
       <span class="launchbox-status-badge ${escapeForAttribute((row.status || '').toLowerCase())}">${escapeHtml(row.status || '')}</span>
     </div>
     ${activeHtml}
@@ -4619,7 +4593,7 @@ function launchBoxDetailValue(label, value) {
 }
 function launchBoxCustomFieldValues(fields) {
   if (!fields || typeof fields !== 'object') return '';
-  return Object.entries(fields).filter(([, value]) => String(value ?? '').trim()).slice(0, 8).map(([key, value]) => `${key}: ${value}`).join(' · ');
+  return Object.entries(fields).filter(([, value]) => String(value ?? '').trim()).slice(0, 8).map(([key, value]) => `${key}: ${value}`).join(' Â· ');
 }
 function launchBoxMatchDetailsHtml(game = {}, match = {}, item = null) {
   const itemId = item?.id || match.guideVaultItemId || '';
@@ -5477,7 +5451,7 @@ function renderServerBackups(backups = []) {
     const date = backup.createdAt ? new Date(backup.createdAt).toLocaleString() : 'Unknown date';
     const size = fmtBytes(Number(backup.sizeBytes || 0));
     const isSelected = name === selected;
-    return `<div class="backup-entry ${isSelected ? 'selected' : ''}" data-backup-file="${escapeForAttribute(name)}"><div><strong>${escapeHtml(name)}</strong><span>${escapeHtml(date)} • ${escapeHtml(size)}</span></div><button class="ghost tiny" type="button" data-backup-select="${escapeForAttribute(name)}">${isSelected ? 'Selected' : 'Select'}</button></div>`;
+    return `<div class="backup-entry ${isSelected ? 'selected' : ''}" data-backup-file="${escapeForAttribute(name)}"><div><strong>${escapeHtml(name)}</strong><span>${escapeHtml(date)} â€¢ ${escapeHtml(size)}</span></div><button class="ghost tiny" type="button" data-backup-select="${escapeForAttribute(name)}">${isSelected ? 'Selected' : 'Select'}</button></div>`;
   }).join('');
 }
 function renderBackupPreview(preview = {}) {
@@ -5493,7 +5467,7 @@ function renderBackupPreview(preview = {}) {
   try { manifest = manifestText ? JSON.parse(manifestText) : null; } catch {}
   const created = manifest?.createdAt ? new Date(manifest.createdAt).toLocaleString() : 'Unknown';
   host.innerHTML = `
-    <div class="backup-preview-row"><div><strong>${escapeHtml(preview.fileName || 'Backup package')}</strong><span>${escapeHtml(fmtBytes(Number(preview.sizeBytes || 0)))} • Created ${escapeHtml(created)}</span></div></div>
+    <div class="backup-preview-row"><div><strong>${escapeHtml(preview.fileName || 'Backup package')}</strong><span>${escapeHtml(fmtBytes(Number(preview.sizeBytes || 0)))} â€¢ Created ${escapeHtml(created)}</span></div></div>
     <div class="backup-preview-row"><strong>Config/data files</strong><span>${Number(preview.configEntries || 0)}</span></div>
     <div class="backup-preview-row"><strong>Library index</strong><span>${Number(preview.cacheEntries || 0)}</span></div>
     <div class="backup-preview-row"><strong>Uploaded backgrounds</strong><span>${Number(preview.uploadedBackgrounds || 0)}</span></div>
@@ -6171,9 +6145,9 @@ async function saveTaskSettings() {
 }
 
 function formatTaskScheduleDate(value = '') {
-  if (!value) return '—';
+  if (!value) return 'â€”';
   const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return '—';
+  if (Number.isNaN(date.getTime())) return 'â€”';
   return date.toLocaleString([], { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
 }
 
@@ -6197,10 +6171,10 @@ function renderTaskScheduleStatus(snapshot = {}) {
     if (nextEl) {
       const enabled = entry.enabled ?? entry.Enabled;
       const running = entry.running ?? entry.Running;
-      const label = entry.label || entry.Label || entry.schedule || entry.Schedule || '—';
+      const label = entry.label || entry.Label || entry.schedule || entry.Schedule || 'â€”';
       const next = formatTaskScheduleDate(entry.nextRunAt || entry.NextRunAt || '');
       const lastStatus = entry.lastStatus || entry.LastStatus || 'not run';
-      nextEl.textContent = enabled ? `${running ? 'Running now' : `Next: ${next}`} • ${label} • Last: ${lastStatus}` : 'Disabled';
+      nextEl.textContent = enabled ? `${running ? 'Running now' : `Next: ${next}`} â€¢ ${label} â€¢ Last: ${lastStatus}` : 'Disabled';
     }
   });
 }
@@ -7162,11 +7136,9 @@ function saveReaderBackgroundBrightness(value) {
 }
 function setReaderBackgroundBrightness(value) {
   state.reader.backgroundBrightness = clampNumber(value, 15, 100, 72);
-  saveReaderBackgroundBrightness(state.reader.backgroundBrightness);
   applyReaderBackground();
   updateReaderOverlay();
   scheduleHomeAssistantStatusPublish();
-  scheduleSaveCurrentReaderSettingsToEntryProfile('background-brightness', 750);
 }
 function selectedReaderBackground() {
   const selected = String(state.reader.background || '').trim();
@@ -7257,11 +7229,9 @@ function setReaderBackground(name) {
   const selected = String(name || '').trim();
   const exists = !selected || (state.reader.backgrounds || []).some(bg => bg.name === selected);
   state.reader.background = exists ? selected : '';
-  saveReaderBackgroundChoice(state.reader.background);
   applyReaderBackground();
   updateReaderOverlay();
   scheduleHomeAssistantStatusPublish();
-  scheduleSaveCurrentReaderSettingsToEntryProfile('background', 350);
 }
 
 function cycleReaderBackground(step = 1) {
@@ -7453,7 +7423,13 @@ function pageImageContainBounds(pageEl, imgEl, side) {
   }
 
   const ratio = naturalW / naturalH;
-  let imageW = w;
+  const book = $('book');
+  // The unpaired end page keeps the same half-book footprint it had when it
+  // landed on the left. Its final movement is translation only, not an expansion
+  // into the full wide reader frame.
+  const centeredEndPage = !!book && book.classList.contains('end-page-mode');
+  const availableW = centeredEndPage ? w / 2 : w;
+  let imageW = availableW;
   let imageH = imageW / ratio;
   if (imageH > h) {
     imageH = h;
@@ -7461,8 +7437,7 @@ function pageImageContainBounds(pageEl, imgEl, side) {
   }
 
   const y = Math.max(0, (h - imageH) / 2);
-  const extraX = Math.max(0, w - imageW);
-  const book = $('book');
+  const extraX = Math.max(0, availableW - imageW);
   const centerSingleVisual = !!book && (
     book.classList.contains('cover-mode')
     || book.classList.contains('single-page-mode')
@@ -7472,7 +7447,9 @@ function pageImageContainBounds(pageEl, imgEl, side) {
   // Two-page spreads anchor each page toward the binding. Single/cover pages use
   // object-position:center, so their measured bounds must be centered too. This
   // keeps portrait covers from placing the remaining-page stack on the left edge.
-  const x = centerSingleVisual ? extraX / 2 : (side === 'left' ? extraX : 0);
+  const x = centeredEndPage
+    ? ((w - availableW) / 2) + (extraX / 2)
+    : (centerSingleVisual ? extraX / 2 : (side === 'left' ? extraX : 0));
   return { left: x, right: x + imageW, top: y, height: imageH };
 }
 
@@ -10031,6 +10008,7 @@ function render() {
   const categoryMode = !!state.categoryFilter;
   const activeSearchQuery = ($('search')?.value || '').trim();
   const searchMode = !!activeSearchQuery;
+  const manualSystemMode = categoryMode && state.filter === 'Manual';
 
   $('itemCount').textContent = state.viewMode === 'dossiers'
     ? `${currentLibraryTotalCount()} dossier${currentLibraryTotalCount() === 1 ? '' : 's'}`
@@ -10038,14 +10016,29 @@ function render() {
   $('libraryView').classList.toggle('category-mode', categoryMode || groupMode || state.viewMode !== 'all');
   $('libraryView').classList.toggle('group-mode', groupMode);
   $('libraryView').classList.toggle('magazine-mode', state.filter === 'Magazine' || state.viewMode === 'magazine-series');
+  $('libraryView').classList.toggle('manual-system-mode', manualSystemMode);
+  if ($('libraryHeader')) $('libraryHeader').classList.toggle('system-context', categoryMode);
+  if ($('libraryContextLabel')) {
+    $('libraryContextLabel').textContent = manualSystemMode
+      ? 'MANUAL SYSTEM'
+      : categoryMode && state.filter === 'Strategy Guide'
+        ? 'STRATEGY GUIDE PLATFORM'
+        : categoryMode && state.filter === 'Magazine'
+          ? 'MAGAZINE SERIES'
+          : state.viewMode === 'collections'
+            ? 'YOUR LIBRARY'
+            : state.viewMode === 'dossiers'
+              ? 'GUIDEVAULT DOSSIERS'
+              : 'GUIDEVAULT LIBRARY';
+  }
 
   $('pageTitle').textContent = searchMode && state.viewMode === 'all' && state.filter === 'All Content' && !state.customFilter && !state.categoryFilter ? 'Search Results' : pageTitleForView();
   $('gridTitle').textContent = state.viewMode === 'dossiers'
-    ? (searchMode ? `Dossier Results for “${activeSearchQuery}”` : 'Game Dossiers')
+    ? (searchMode ? `Dossier Results for â€œ${activeSearchQuery}â€` : 'Game Dossiers')
     : groupMode
     ? pageTitleForView()
     : (searchMode
-      ? `Search Results for “${activeSearchQuery}”`
+      ? `Search Results for â€œ${activeSearchQuery}â€`
       : (state.customFilter ? `${pageTitleForView()} Results` : (categoryMode ? `${currentCategoryName()} Library` : 'Home Library')));
   $('manualSummary').textContent = `${count('Manual')} items`;
   $('guideSummary').textContent = `${count('Strategy Guide')} items`;
@@ -10085,6 +10078,7 @@ function render() {
     renderAlphaRail(state.filtered.map(displayTitle));
   }
   installLibraryCardDelegates();
+  installCardActionMenuDelegates();
   updateSettingsInsights();
   if (state.selected && $('detailView') && !$('detailView').classList.contains('hidden')) renderDetails(state.selected);
 }
@@ -10823,6 +10817,10 @@ function itemPageCountLabel(item) {
   if (format === 'PDF') return 'Browser PDF';
   return count > 0 ? `${count} pages` : `${format || 'Archive'} pages`;
 }
+function itemPageCountBadgeHtml(item) {
+  const count = Number(item?.pageCount ?? item?.PageCount ?? 0) || 0;
+  return count > 0 ? `<span class="pill">${count} pages</span>` : '';
+}
 function isNintendoEntertainmentSystemName(value) {
   const n = normalizeName(value || '');
   return n === 'nintendo entertainment system' || n === 'nes' || n === 'nintendo nes' || n.includes('nintendo entertainment system');
@@ -11533,21 +11531,21 @@ function renderCollectionEditPanel() {
   }
   const itemOptions = (state.items || []).slice().sort((a,b) => compareTextForSort(displayTitle(a), displayTitle(b))).map(item => {
     const id = String(item.id || item.Id || '').trim();
-    return `<option value="${escapeForAttribute(id)}">${escapeHtml(displayTitle(item))} — ${escapeHtml(item.kind || 'Item')}</option>`;
+    return `<option value="${escapeForAttribute(id)}">${escapeHtml(displayTitle(item))} â€” ${escapeHtml(item.kind || 'Item')}</option>`;
   }).join('');
   const members = collectionItems(collection, state.items);
   const homeLabel = collection.homeDisplay === 'card' ? 'Compact Home card' : collection.homeDisplay === 'shelf' ? 'Full Home shelf' : 'Hidden from Home';
   panel.innerHTML = `<div class="collection-active-summary">
     <div>
       <strong>${escapeHtml(collection.name || 'Untitled Collection')}</strong>
-      <p class="sub">${members.length} item${members.length === 1 ? '' : 's'} · ${escapeHtml(homeLabel)}</p>
+      <p class="sub">${members.length} item${members.length === 1 ? '' : 's'} Â· ${escapeHtml(homeLabel)}</p>
     </div>
     <button class="ghost" type="button" data-open-collection="${escapeForAttribute(collection.id)}">Open Collection</button>
   </div>
   <div class="collection-add-row"><select id="collectionItemAddSelect">${itemOptions}</select><button id="collectionAddItemButton" class="ghost" type="button">Add Item</button></div>
   <div class="collection-member-list">${members.map((item, index) => {
     const itemId = String(item.id || item.Id || '').trim();
-    return `<div class="collection-member-row" data-item-id="${escapeForAttribute(itemId)}"><span class="collection-member-order">${index + 1}</span><div><strong>${escapeHtml(displayTitle(item))}</strong><p class="sub">${escapeHtml(item.kind || 'Item')} · ${escapeHtml(preferredPlatformOf(item) || categoryOf(item) || 'Unsorted')}</p></div><button class="ghost" type="button" data-collection-item-action="up" ${index === 0 ? 'disabled' : ''}>Up</button><button class="ghost" type="button" data-collection-item-action="down" ${index === members.length - 1 ? 'disabled' : ''}>Down</button><button class="danger" type="button" data-collection-item-action="remove">Remove</button></div>`;
+    return `<div class="collection-member-row" data-item-id="${escapeForAttribute(itemId)}"><span class="collection-member-order">${index + 1}</span><div><strong>${escapeHtml(displayTitle(item))}</strong><p class="sub">${escapeHtml(item.kind || 'Item')} Â· ${escapeHtml(preferredPlatformOf(item) || categoryOf(item) || 'Unsorted')}</p></div><button class="ghost" type="button" data-collection-item-action="up" ${index === 0 ? 'disabled' : ''}>Up</button><button class="ghost" type="button" data-collection-item-action="down" ${index === members.length - 1 ? 'disabled' : ''}>Down</button><button class="danger" type="button" data-collection-item-action="remove">Remove</button></div>`;
   }).join('') || '<p class="sub">No items in this collection yet. Add from this panel or from an item details page.</p>'}</div>`;
 }
 
@@ -11594,9 +11592,9 @@ function collectionCardMarkup(collection, options = {}) {
     counts.Manual ? `${counts.Manual} manual${counts.Manual === 1 ? '' : 's'}` : '',
     counts['Strategy Guide'] ? `${counts['Strategy Guide']} guide${counts['Strategy Guide'] === 1 ? '' : 's'}` : '',
     counts.Magazine ? `${counts.Magazine} magazine${counts.Magazine === 1 ? '' : 's'}` : ''
-  ].filter(Boolean).join(' · ');
+  ].filter(Boolean).join(' Â· ');
   return `<article class="user-collection-card ${options.compact ? 'compact' : ''}" data-open-collection="${escapeForAttribute(collection.id)}" tabindex="0" role="button" aria-label="Open ${escapeForAttribute(collection.name)} collection">
-    <div class="user-collection-cover">${cover ? `<img decoding="async" loading="lazy" src="${escapeForAttribute(cover)}" alt="" />` : '<span>☷</span>'}</div>
+    <div class="user-collection-cover">${cover ? `<img decoding="async" loading="lazy" src="${escapeForAttribute(cover)}" alt="" />` : '<span>â˜·</span>'}</div>
     <div class="user-collection-copy"><strong>${escapeHtml(collection.name || 'Untitled Collection')}</strong><small>${escapeHtml(countText)}</small>${detailBits ? `<em>${escapeHtml(detailBits)}</em>` : ''}</div>
     <button class="ghost" type="button" data-open-collection="${escapeForAttribute(collection.id)}">Open</button>
   </article>`;
@@ -11616,7 +11614,7 @@ function renderCollectionsLibraryView(gridId = 'grid') {
   if (!host) return;
   const collections = visibleUserCollections();
   host.className = 'user-collections-grid';
-  host.innerHTML = collections.length ? collections.map(collection => collectionCardMarkup(collection)).join('') : '<div class="empty-message">No collections with library items yet. Create or manage collections from Settings → Account → Customize → Collections.</div>';
+  host.innerHTML = collections.length ? collections.map(collection => collectionCardMarkup(collection)).join('') : '<div class="empty-message">No collections with library items yet. Create or manage collections from Settings â†’ Account â†’ Customize â†’ Collections.</div>';
 }
 function createCollection() {
   const name = String($('collectionNameInput')?.value || '').trim();
@@ -11995,15 +11993,211 @@ function cardMarkupForItem(item) {
   const computed = libraryItemComputed(item);
   const title = computed.title || displayTitle(item);
   return `<article class="card ${specialCardClass(item)} ${state.selected?.id === item.id ? 'selected' : ''}" data-id="${escapeForAttribute(itemId)}" data-alpha="${computed.alpha || alphaKey(title)}">
-      <button class="favorite${favorite ? ' active' : ''}" type="button" data-id="${escapeForAttribute(itemId)}" aria-label="${favorite ? 'Remove from favorites' : 'Add to favorites'}" aria-pressed="${favorite ? 'true' : 'false'}" title="${favorite ? 'Remove from favorites' : 'Add to favorites'}">\u2605</button>
+      ${favorite ? `<button class="favorite active" type="button" data-id="${escapeForAttribute(itemId)}" aria-label="Remove from favorites" aria-pressed="true" title="Remove from favorites">\u2605</button>` : ''}
       <div class="cover-wrap"><img decoding="async" loading="lazy" fetchpriority="low" data-cover-src="${escapeForAttribute(cover)}" src="${GUIDEVAULT_TRANSPARENT_COVER_PLACEHOLDER}" alt="${escapeForAttribute(title)} cover" /></div>
       <div class="card-body">
         <div class="card-title">${escapeHtml(title)}</div>
         ${libraryCardPlatformMetaHtml(item)}
         <small>${escapeHtml(item.year)}</small>
-        <div class="badge-line"><span class="format ${kindClass(item.kind)}">${escapeHtml(item.kind)}</span><span class="pill">${itemPageCountLabel(item)}</span></div>
+        <div class="badge-line"><span class="format ${kindClass(item.kind)}">${escapeHtml(item.kind)}</span>${itemPageCountBadgeHtml(item)}</div>
       </div>
+      <button class="card-menu-trigger" type="button" data-card-menu-id="${escapeForAttribute(itemId)}" aria-label="Actions for ${escapeForAttribute(title)}" aria-haspopup="menu" aria-expanded="false" title="Item actions"><span aria-hidden="true">&#x22EE;</span></button>
     </article>`;
+}
+
+let guidevaultCardActionTrigger = null;
+
+function closeCardActionMenu() {
+  document.querySelector('.card-action-popover')?.remove();
+  if (guidevaultCardActionTrigger) guidevaultCardActionTrigger.setAttribute('aria-expanded', 'false');
+  guidevaultCardActionTrigger = null;
+}
+
+function cardActionMenuCollectionsHtml(itemId) {
+  const collections = ((state.customize || loadCustomizeSettings()).collections || []);
+  if (!collections.length) {
+    return `<button type="button" class="card-action-empty" data-card-action="manage-collections">Create a collection first</button>`;
+  }
+  return collections.map(collection => {
+    const ids = collection.itemIds || collection.items || [];
+    const included = ids.some(id => String(id) === String(itemId));
+    return `<button type="button" data-card-action="add-collection" data-collection-id="${escapeForAttribute(collection.id)}" ${included ? 'disabled' : ''}>${included ? '<span aria-hidden="true">\u2713</span>' : '<span aria-hidden="true">+</span>'}<span>${escapeHtml(collection.name || 'Untitled Collection')}</span></button>`;
+  }).join('');
+}
+
+function cardActionMenuDossiersHtml(itemId) {
+  const dossiers = gameDossiers();
+  const existing = dossiers.map(dossier => {
+    const linked = (dossier.libraryItemIds || []).some(id => String(id) === String(itemId));
+    return `<button type="button" data-card-action="add-dossier" data-dossier-id="${escapeForAttribute(dossier.id)}" ${linked ? 'disabled' : ''}>${linked ? '<span aria-hidden="true">\u2713</span>' : '<span aria-hidden="true">+</span>'}<span>${escapeHtml(dossier.gameTitle || 'Game Dossier')}</span></button>`;
+  }).join('');
+  return `${existing}<button type="button" data-card-action="create-dossier"><span aria-hidden="true">+</span><span>Create a new dossier\u2026</span></button>`;
+}
+
+function cardActionMenuMarkup(item) {
+  const itemId = itemIdOf(item);
+  const favorite = isFavoriteItem(item);
+  return `<div class="card-action-popover-head"><strong>${escapeHtml(displayTitle(item))}</strong><span>${escapeHtml(item.kind || 'Library item')}</span></div>
+    <div class="card-action-list" role="menu">
+      <button type="button" role="menuitem" data-card-action="open"><span class="card-action-icon" aria-hidden="true">&#x25B6;</span><span>Open item</span></button>
+      <button type="button" role="menuitem" data-card-action="refresh"><span class="card-action-icon" aria-hidden="true">&#x21BB;</span><span>Refresh item</span></button>
+      <button type="button" role="menuitem" data-card-action="favorite"><span class="card-action-icon" aria-hidden="true">&#x2605;</span><span>${favorite ? 'Remove from favorites' : 'Mark as favorite'}</span></button>
+      <details class="card-action-submenu">
+        <summary><span class="card-action-icon" aria-hidden="true">&#x25A6;</span><span>Add to collection</span><span class="card-action-caret" aria-hidden="true">&#x203A;</span></summary>
+        <div class="card-action-submenu-list">${cardActionMenuCollectionsHtml(itemId)}</div>
+      </details>
+      <details class="card-action-submenu">
+        <summary><span class="card-action-icon" aria-hidden="true">&#x25C8;</span><span>Add to dossier</span><span class="card-action-caret" aria-hidden="true">&#x203A;</span></summary>
+        <div class="card-action-submenu-list">${cardActionMenuDossiersHtml(itemId)}</div>
+      </details>
+    </div>`;
+}
+
+function positionCardActionMenu(menu, trigger) {
+  if (!menu || !trigger) return;
+  const rect = trigger.getBoundingClientRect();
+  const menuRect = menu.getBoundingClientRect();
+  const gutter = 12;
+  let left = Math.min(window.innerWidth - menuRect.width - gutter, Math.max(gutter, rect.right - menuRect.width));
+  let top = rect.bottom + 7;
+  if (top + menuRect.height > window.innerHeight - gutter) top = Math.max(gutter, rect.top - menuRect.height - 7);
+  menu.style.left = `${Math.round(left)}px`;
+  menu.style.top = `${Math.round(top)}px`;
+}
+
+function openCardActionMenu(trigger, item) {
+  if (!trigger || !item) return;
+  const wasOpen = guidevaultCardActionTrigger === trigger && !!document.querySelector('.card-action-popover');
+  closeCardActionMenu();
+  if (wasOpen) return;
+  const menu = document.createElement('div');
+  menu.className = 'card-action-popover';
+  menu.dataset.itemId = itemIdOf(item);
+  menu.setAttribute('role', 'dialog');
+  menu.setAttribute('aria-label', `Actions for ${displayTitle(item)}`);
+  menu.innerHTML = cardActionMenuMarkup(item);
+  document.body.appendChild(menu);
+  guidevaultCardActionTrigger = trigger;
+  trigger.setAttribute('aria-expanded', 'true');
+  positionCardActionMenu(menu, trigger);
+  menu.querySelector('button:not(:disabled)')?.focus({ preventScroll: true });
+}
+
+function replaceLibraryItemAfterRefresh(updated) {
+  const id = itemIdOf(updated);
+  if (!id) return;
+  const normalized = applyClientMetadataOverride(updated);
+  state.items = (state.items || []).map(item => itemIdOf(item) === id ? normalized : item);
+  state.filtered = (state.filtered || []).map(item => itemIdOf(item) === id ? normalized : item);
+  if (itemIdOf(state.selected || {}) === id) state.selected = normalized;
+  state.libraryCategoryCacheVersion = Number(state.libraryCategoryCacheVersion || 0) + 1;
+  state._countCache = null;
+  state._countCacheSource = null;
+  clearLibrarySearchCaches();
+  setCoverOverrideBust(id);
+}
+
+async function refreshSingleLibraryItem(item) {
+  const itemId = itemIdOf(item);
+  if (!itemId) return;
+  setStatus(`Refreshing ${displayTitle(item)}\u2026`);
+  const res = await fetch(`/api/items/${encodeURIComponent(itemId)}/refresh`, { method: 'POST', cache: 'no-store' });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data?.error || `Item refresh failed. HTTP ${res.status}`);
+  if (!data?.item) throw new Error('The refreshed item was not returned by the server.');
+  replaceLibraryItemAfterRefresh(data.item);
+  applyFilters();
+  setStatus(`${displayTitle(data.item)} refreshed without scanning the rest of the library.`);
+}
+
+async function addLibraryItemToDossier(dossierId, item) {
+  const itemId = itemIdOf(item);
+  if (!dossierId || !itemId) return;
+  const res = await fetch(`/api/dossiers/${encodeURIComponent(dossierId)}/library-items`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ itemId })
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data?.error || `Unable to add the item to the dossier. HTTP ${res.status}`);
+  state.dossiers.items = (Array.isArray(data?.dossiers) ? data.dossiers : [data?.dossier].filter(Boolean)).map(normalizeGameDossier);
+  state.dossiers.loaded = true;
+  renderDossierSidebar();
+  renderDossierSettings();
+  setStatus(`${displayTitle(item)} added to ${data?.dossier?.gameTitle || 'the dossier'}.`);
+}
+
+function installCardActionMenuDelegates() {
+  if (document.body.dataset.cardActionMenuDelegated === 'true') return;
+  document.body.dataset.cardActionMenuDelegated = 'true';
+  document.addEventListener('click', async event => {
+    const trigger = event.target.closest?.('.card-menu-trigger[data-card-menu-id]');
+    if (trigger) {
+      event.preventDefault();
+      event.stopPropagation();
+      const item = (state.items || []).find(candidate => itemIdOf(candidate) === String(trigger.dataset.cardMenuId || ''));
+      if (item) openCardActionMenu(trigger, item);
+      return;
+    }
+
+    const menu = event.target.closest?.('.card-action-popover');
+    if (!menu) {
+      closeCardActionMenu();
+      return;
+    }
+    const action = event.target.closest?.('[data-card-action]');
+    if (!action || action.disabled) return;
+    event.preventDefault();
+    event.stopPropagation();
+    const item = (state.items || []).find(candidate => itemIdOf(candidate) === String(menu.dataset.itemId || ''));
+    if (!item) { closeCardActionMenu(); return; }
+
+    try {
+      const name = action.dataset.cardAction;
+      if (name === 'open') {
+        closeCardActionMenu();
+        await openReader(item);
+      } else if (name === 'refresh') {
+        action.disabled = true;
+        action.classList.add('working');
+        await refreshSingleLibraryItem(item);
+        closeCardActionMenu();
+      } else if (name === 'favorite') {
+        const favorite = toggleFavoriteItem(item);
+        closeCardActionMenu();
+        applyFilters();
+        setStatus(favorite ? `${displayTitle(item)} marked as a favorite.` : `${displayTitle(item)} removed from favorites.`);
+      } else if (name === 'add-collection') {
+        const collection = collectionById(action.dataset.collectionId || '');
+        if (addItemToCollection(action.dataset.collectionId || '', itemIdOf(item))) {
+          closeCardActionMenu();
+          setStatus(`${displayTitle(item)} added to ${collection?.name || 'the collection'}.`);
+        }
+      } else if (name === 'manage-collections') {
+        closeCardActionMenu();
+        showSettingsScreen('customize');
+      } else if (name === 'add-dossier') {
+        action.disabled = true;
+        await addLibraryItemToDossier(action.dataset.dossierId || '', item);
+        closeCardActionMenu();
+      } else if (name === 'create-dossier') {
+        state.selected = applyClientMetadataOverride(item);
+        closeCardActionMenu();
+        await openIgdbMetadataDialog({ dossierIntent: true });
+      }
+    } catch (err) {
+      console.error('GuideVault item action failed', err);
+      setStatus(err?.message || 'The item action could not be completed.');
+      if (action) { action.disabled = false; action.classList.remove('working'); }
+    }
+  });
+  document.addEventListener('keydown', event => {
+    if (event.key === 'Escape' && document.querySelector('.card-action-popover')) closeCardActionMenu();
+  });
+  window.addEventListener('resize', closeCardActionMenu, { passive: true });
+  document.addEventListener('scroll', event => {
+    if (document.querySelector('.card-action-popover') && !event.target?.closest?.('.card-action-popover')) closeCardActionMenu();
+  }, true);
 }
 function dateValue(value) {
   if (value instanceof Date) {
@@ -12075,7 +12269,7 @@ function installLibraryCardDelegates() {
     if (!host || host.dataset.detailDelegateInstalled === 'true') return;
     host.dataset.detailDelegateInstalled = 'true';
     host.addEventListener('click', e => {
-      if (e.target.closest?.('.favorite')) return;
+      if (e.target.closest?.('.favorite, .card-menu-trigger, .card-action-popover')) return;
       const card = e.target.closest?.('.card');
       if (!card || !host.contains(card)) return;
       const item = state.items.find(i => String(i.id) === String(card.dataset.id));
@@ -12092,7 +12286,7 @@ function installGlobalDetailDelegate() {
   if (document.body.dataset.guidevaultGlobalDetailDelegate === 'true') return;
   document.body.dataset.guidevaultGlobalDetailDelegate = 'true';
   document.addEventListener('click', e => {
-    if (e.target.closest?.('.favorite')) return;
+    if (e.target.closest?.('.favorite, .card-menu-trigger, .card-action-popover')) return;
     const card = e.target.closest?.('article.card[data-id]');
     if (!card) return;
     if ($('settingsView')?.contains(card) || $('readerView')?.contains(card)) return;
@@ -14389,7 +14583,7 @@ function ensureIgdbMetadataUi() {
     existing.classList.add('metadata-lookup-button', 'igdb-action-button');
     existing.type = 'button';
     existing.textContent = 'IGDB';
-    existing.dataset.defaultTitle = 'Find this manual or strategy guide’s game on IGDB and import game metadata.';
+    existing.dataset.defaultTitle = 'Find this manual or strategy guideâ€™s game on IGDB and import game metadata.';
     updateMetadataSourceActionVisibility();
     return;
   }
@@ -14403,7 +14597,7 @@ function ensureIgdbMetadataUi() {
     btn.type = 'button';
     btn.className = 'metadata-lookup-button igdb-action-button';
     btn.textContent = 'IGDB';
-    btn.title = 'Find this manual or strategy guide’s game on IGDB and import game metadata.';
+    btn.title = 'Find this manual or strategy guideâ€™s game on IGDB and import game metadata.';
     btn.dataset.defaultTitle = btn.title;
     target.appendChild(btn);
     updateMetadataSourceActionVisibility();
@@ -14436,7 +14630,7 @@ function igdbSearchPanelHtml() {
       </label>
       <button type="button" id="igdbRunSearchBtn" class="primary">Search</button>
     </div>
-    <p class="openlibrary-help">${state.igdb?.dossierIntent ? '<strong>Dossier wizard · step 2 of 3:</strong> search for the game represented by the selected document.' : 'Search for the game represented by this document and review the returned metadata.'} IGDB requires a Twitch/IGDB Client ID and Client Secret in Settings &gt; Server &gt; Integrations &gt; IGDB.</p>
+    <p class="openlibrary-help">${state.igdb?.dossierIntent ? '<strong>Dossier wizard Â· step 2 of 3:</strong> search for the game represented by the selected document.' : 'Search for the game represented by this document and review the returned metadata.'} IGDB requires a Twitch/IGDB Client ID and Client Secret in Settings &gt; Server &gt; Integrations &gt; IGDB.</p>
     <p id="igdbStatus" class="openlibrary-status igdb-status"></p>
     <div id="igdbResults" class="openlibrary-results igdb-results"></div>
   </section>`;
@@ -14610,7 +14804,7 @@ function igdbComparisonHtml(result = {}) {
       <p>${escapeHtml([igdbListLabel(result.developers), igdbListLabel(result.publishers), result.gameReleaseYear, igdbListLabel(result.associatedPlatforms)].filter(Boolean).join(' - ') || 'Review fields before importing.')}</p>
     </div>
     <div class="igdb-dossier-preview">
-      <div><span>${dossierIntent ? 'DOSSIER WIZARD · STEP 3 OF 3' : 'IGDB ENRICHMENT'}</span><h4>${dossierIntent ? 'Create the Game Dossier' : 'Review Expanded Game Data'}</h4><p>${escapeHtml(result.summary || 'No summary returned. Related metadata can still be reviewed and imported.')}</p>${dossierIntent ? '<button type="button" data-igdb-create-dossier class="primary dossier-create-button">Create Dossier & Open</button>' : ''}</div>
+      <div><span>${dossierIntent ? 'DOSSIER WIZARD Â· STEP 3 OF 3' : 'IGDB ENRICHMENT'}</span><h4>${dossierIntent ? 'Create the Game Dossier' : 'Review Expanded Game Data'}</h4><p>${escapeHtml(result.summary || 'No summary returned. Related metadata can still be reviewed and imported.')}</p>${dossierIntent ? '<button type="button" data-igdb-create-dossier class="primary dossier-create-button">Create Dossier & Open</button>' : ''}</div>
       <div class="igdb-dossier-facts">${enrichmentFacts.map(([label, value]) => `<div><span>${escapeHtml(label)}</span><strong>${escapeHtml(value)}</strong></div>`).join('')}</div>
     </div>
     <div class="openlibrary-table-wrap igdb-table-wrap">
@@ -14830,7 +15024,7 @@ function dossierFactChips(values = [], className = '') {
 }
 
 function dossierCardMarkup(dossier = {}) {
-  const subtitle = [dossier.gameReleaseYear, dossier.gameFranchise, (dossier.platforms || []).slice(0, 2).join(', ')].filter(Boolean).join(' · ');
+  const subtitle = [dossier.gameReleaseYear, dossier.gameFranchise, (dossier.platforms || []).slice(0, 2).join(', ')].filter(Boolean).join(' Â· ');
   const cover = dossierSafeUrl(dossier.primaryCoverUrl) || dossierSafeUrl(dossier.coverPreviewUrl);
   return `<article class="game-dossier-card" role="button" tabindex="0" aria-label="Open ${escapeForAttribute(dossier.gameTitle || 'game')} dossier" data-open-dossier="${escapeForAttribute(dossier.id)}" data-dossier-title="${escapeForAttribute(dossier.gameTitle || '')}" data-dossier-colorscape-cover="${escapeForAttribute(cover)}">
     <div class="game-dossier-card-cover">${cover ? `<img src="${escapeForAttribute(cover)}" alt="" loading="lazy" />` : '<span>GV</span>'}</div>
@@ -14860,14 +15054,14 @@ function renderGameDossiersLibraryView(gridId = 'grid') {
   host.className = 'game-dossiers-grid';
   host.innerHTML = dossiers.length
     ? dossiers.map(dossierCardMarkup).join('')
-    : `<div class="empty-message">${gameDossiers().length ? 'No dossiers match this search.' : 'No game dossiers yet. Create one from Settings → Account → Game Dossiers.'}</div>`;
+    : `<div class="empty-message">${gameDossiers().length ? 'No dossiers match this search.' : 'No game dossiers yet. Create one from Settings â†’ Account â†’ Game Dossiers.'}</div>`;
   applyColorscapeToDossierCards();
   renderAlphaRail([]);
 }
 
 function dossierRelatedGameMarkup(game = {}) {
   const url = dossierSafeUrl(game.sourceUrl);
-  const inner = `<div class="dossier-related-cover">${game.coverPreviewUrl ? `<img src="${escapeForAttribute(game.coverPreviewUrl)}" alt="" loading="lazy" />` : '<span>IGDB</span>'}</div><div><strong>${escapeHtml(game.name || 'Related Game')}</strong><small>${escapeHtml([game.relation, game.gameReleaseYear].filter(Boolean).join(' · '))}</small></div>`;
+  const inner = `<div class="dossier-related-cover">${game.coverPreviewUrl ? `<img src="${escapeForAttribute(game.coverPreviewUrl)}" alt="" loading="lazy" />` : '<span>IGDB</span>'}</div><div><strong>${escapeHtml(game.name || 'Related Game')}</strong><small>${escapeHtml([game.relation, game.gameReleaseYear].filter(Boolean).join(' Â· '))}</small></div>`;
   return url
     ? `<a class="dossier-related-game" href="${escapeForAttribute(url)}" target="_blank" rel="noreferrer">${inner}</a>`
     : `<div class="dossier-related-game">${inner}</div>`;
@@ -14877,7 +15071,7 @@ function dossierLibraryItemMarkup(item) {
   const id = itemIdOf(item);
   return `<button class="dossier-library-item" type="button" data-dossier-item-id="${escapeForAttribute(id)}">
     <span>${coverUrl(item, { width: 160 }) ? `<img src="${escapeForAttribute(coverUrl(item, { width: 160 }))}" alt="" loading="lazy" />` : 'GV'}</span>
-    <div><strong>${escapeHtml(displayTitle(item))}</strong><small>${escapeHtml([item.kind, preferredPlatformOf(item) || categoryOf(item)].filter(Boolean).join(' · '))}</small></div>
+    <div><strong>${escapeHtml(displayTitle(item))}</strong><small>${escapeHtml([item.kind, preferredPlatformOf(item) || categoryOf(item)].filter(Boolean).join(' Â· '))}</small></div>
   </button>`;
 }
 
@@ -15007,9 +15201,9 @@ function dossierDocumentRowMarkup(item = {}, overflow = false) {
   const id = itemIdOf(item);
   const platform = preferredPlatformOf(item) || categoryOf(item) || '';
   const secondary = item.kind === 'Magazine'
-    ? [item.magazineTitle || item.series, item.issueNumber ? `Issue ${item.issueNumber}` : '', item.coverDate || item.year].filter(Boolean).join(' · ')
-    : [item.publisher || item.gamePublisher, platform].filter(Boolean).join(' · ');
-  const detail = [platform, itemPageCountLabel(item)].filter(value => value && value !== '\u2014').join(' · ');
+    ? [item.magazineTitle || item.series, item.issueNumber ? `Issue ${item.issueNumber}` : '', item.coverDate || item.year].filter(Boolean).join(' Â· ')
+    : [item.publisher || item.gamePublisher, platform].filter(Boolean).join(' Â· ');
+  const detail = [platform, itemPageCountLabel(item)].filter(value => value && value !== '\u2014').join(' Â· ');
   return `<div class="dossier-dashboard-document-row ${overflow ? 'dossier-document-overflow' : ''}">
     <div class="dossier-dashboard-document-cover">${coverUrl(item, { width: 120 }) ? `<img src="${escapeForAttribute(coverUrl(item, { width: 120 }))}" alt="" loading="lazy" />` : '<span>GV</span>'}</div>
     <div class="dossier-dashboard-document-copy"><strong>${escapeHtml(displayTitle(item))}</strong><span>${escapeHtml(secondary || item.kind || 'GuideVault document')}</span><small>${escapeHtml(detail)}</small></div>
@@ -15046,7 +15240,7 @@ function dossierDashboardRelatedRowMarkup(game = {}) {
   const url = dossierSafeUrl(game.sourceUrl);
   const key = dossierRelatedGameKey(game);
   const cover = `<div class="dossier-dashboard-related-cover">${game.coverPreviewUrl ? `<img src="${escapeForAttribute(game.coverPreviewUrl)}" alt="" loading="lazy" />` : '<span>IGDB</span>'}</div>`;
-  const copy = `<div>${url ? `<a href="${escapeForAttribute(url)}" target="_blank" rel="noreferrer"><strong>${escapeHtml(game.name || 'Related Game')}</strong></a>` : `<strong>${escapeHtml(game.name || 'Related Game')}</strong>`}<span>${escapeHtml([game.relation, game.gameReleaseYear].filter(Boolean).join(' · ') || 'Related title')}</span></div>`;
+  const copy = `<div>${url ? `<a href="${escapeForAttribute(url)}" target="_blank" rel="noreferrer"><strong>${escapeHtml(game.name || 'Related Game')}</strong></a>` : `<strong>${escapeHtml(game.name || 'Related Game')}</strong>`}<span>${escapeHtml([game.relation, game.gameReleaseYear].filter(Boolean).join(' Â· ') || 'Related title')}</span></div>`;
   return `<div class="dossier-dashboard-related-row">${url ? `<a class="dossier-dashboard-related-cover-link" href="${escapeForAttribute(url)}" target="_blank" rel="noreferrer">${cover}</a>` : cover}${copy}<button type="button" class="danger tiny" data-dossier-remove-related-game="${escapeForAttribute(key)}" title="Remove this related-game reference">Remove</button></div>`;
 }
 
@@ -15154,7 +15348,7 @@ function dossierAliasesCardHtml(dossier = {}) {
   const alternativeNames = Array.isArray(dossier.alternativeNames) ? dossier.alternativeNames : [];
   const keywords = Array.isArray(dossier.keywords) ? dossier.keywords : [];
   if (!alternativeNames.length && !keywords.length) return '';
-  return `<section class="dossier-dashboard-card dossier-card-knowledge dossier-aliases-card"><header><div><span>\u25C7</span><h2>Aliases & Keywords</h2></div></header>${alternativeNames.length ? `<p class="dossier-dashboard-aliases">${escapeHtml(alternativeNames.join(' · '))}</p>` : ''}<div class="dossier-chipline">${dossierFactChips(keywords.slice(0, 24))}</div></section>`;
+  return `<section class="dossier-dashboard-card dossier-card-knowledge dossier-aliases-card"><header><div><span>\u25C7</span><h2>Aliases & Keywords</h2></div></header>${alternativeNames.length ? `<p class="dossier-dashboard-aliases">${escapeHtml(alternativeNames.join(' Â· '))}</p>` : ''}<div class="dossier-chipline">${dossierFactChips(keywords.slice(0, 24))}</div></section>`;
 }
 
 function dossierDetailHtml(dossier = {}) {
@@ -15340,7 +15534,7 @@ function renderDossierItemPickerResults() {
     const id = itemIdOf(item);
     const selected = String(picker.selectedId || '') === String(id || '');
     const linked = gameDossierForLibraryItem(item);
-    const context = [item.gameTitle || item.platformMatchTitle || item.series, preferredPlatformOf(item) || categoryOf(item), item.publisher || item.gamePublisher].filter(Boolean).join(' · ');
+    const context = [item.gameTitle || item.platformMatchTitle || item.series, preferredPlatformOf(item) || categoryOf(item), item.publisher || item.gamePublisher].filter(Boolean).join(' Â· ');
     return `<button type="button" class="dossier-item-picker-result ${selected ? 'selected' : ''}" data-dossier-picker-item-id="${escapeForAttribute(id)}" aria-pressed="${selected ? 'true' : 'false'}">
       <span class="dossier-item-picker-cover">${coverUrl(item, { width: 140 }) ? `<img src="${escapeForAttribute(coverUrl(item, { width: 140 }))}" alt="" loading="lazy" />` : 'GV'}</span>
       <span class="dossier-item-picker-copy"><em>${escapeHtml(item.kind || 'Document')}</em><strong>${escapeHtml(displayTitle(item))}</strong><small>${escapeHtml(context || 'No additional metadata')}</small></span>
@@ -15389,7 +15583,7 @@ function renderDossierSettings() {
   const isAdmin = currentUserIsAdmin();
   host.innerHTML = gameDossiers().length ? gameDossiers().map(dossier => `<article class="settings-card dossier-settings-row" data-dossier-id="${escapeForAttribute(dossier.id)}">
     <div class="dossier-settings-cover">${dossier.primaryCoverUrl || dossier.coverPreviewUrl ? `<img src="${escapeForAttribute(dossier.primaryCoverUrl || dossier.coverPreviewUrl)}" alt="" loading="lazy" />` : '<span>GV</span>'}</div>
-    <div><div class="settings-card-kicker">IGDB ${escapeHtml(dossier.igdbId)}</div><h3>${escapeHtml(dossier.gameTitle || 'Game Dossier')}</h3><p class="sub">${dossier.libraryItemIds.length} linked document${dossier.libraryItemIds.length === 1 ? '' : 's'} · ${dossier.collections.length} collection${dossier.collections.length === 1 ? '' : 's'} · Updated ${escapeHtml(formatProfileDate(dossier.updatedAt))}</p></div>
+    <div><div class="settings-card-kicker">IGDB ${escapeHtml(dossier.igdbId)}</div><h3>${escapeHtml(dossier.gameTitle || 'Game Dossier')}</h3><p class="sub">${dossier.libraryItemIds.length} linked document${dossier.libraryItemIds.length === 1 ? '' : 's'} Â· ${dossier.collections.length} collection${dossier.collections.length === 1 ? '' : 's'} Â· Updated ${escapeHtml(formatProfileDate(dossier.updatedAt))}</p></div>
     <div class="settings-actions inline-actions"><button class="ghost" type="button" data-dossier-action="open">Open</button>${isAdmin ? '<button class="ghost" type="button" data-dossier-action="refresh">Refresh IGDB + Matches</button><button class="danger" type="button" data-dossier-action="delete">Delete</button>' : ''}</div>
   </article>`).join('') : '<article class="settings-card dossier-settings-empty"><h3>No dossiers yet</h3><p class="sub">Select Choose a Manual or Guide above to start the searchable creation wizard.</p></article>';
 }
@@ -15475,8 +15669,8 @@ async function unlinkDossierLibraryItem(id = '', itemId = '') {
   if (!dossier || !itemId) return;
   const label = item ? displayTitle(item) : 'this document';
   const confirmed = typeof showAppConfirm === 'function'
-    ? await showAppConfirm({ title: 'Remove dossier link?', message: `Remove “${label}” from the ${dossier.gameTitle} dossier? The library file will not be deleted, and automatic refreshes will keep this link excluded.`, okText: 'Remove link', cancelText: 'Cancel', danger: true })
-    : window.confirm(`Remove “${label}” from this dossier?`);
+    ? await showAppConfirm({ title: 'Remove dossier link?', message: `Remove â€œ${label}â€ from the ${dossier.gameTitle} dossier? The library file will not be deleted, and automatic refreshes will keep this link excluded.`, okText: 'Remove link', cancelText: 'Cancel', danger: true })
+    : window.confirm(`Remove â€œ${label}â€ from this dossier?`);
   if (!confirmed) return;
   try {
     const res = await fetch(`/api/dossiers/${encodeURIComponent(id)}/library-items?itemId=${encodeURIComponent(itemId)}`, { method: 'DELETE' });
@@ -15504,8 +15698,8 @@ async function removeDossierRelatedGame(id = '', gameKey = '') {
   if (!dossier || !gameKey) return;
   const label = relatedGame?.name || 'this related game';
   const confirmed = typeof showAppConfirm === 'function'
-    ? await showAppConfirm({ title: 'Remove related game?', message: `Remove “${label}” from the ${dossier.gameTitle} dossier? IGDB refreshes will keep this reference excluded.`, okText: 'Remove reference', cancelText: 'Cancel', danger: true })
-    : window.confirm(`Remove “${label}” from this dossier?`);
+    ? await showAppConfirm({ title: 'Remove related game?', message: `Remove â€œ${label}â€ from the ${dossier.gameTitle} dossier? IGDB refreshes will keep this reference excluded.`, okText: 'Remove reference', cancelText: 'Cancel', danger: true })
+    : window.confirm(`Remove â€œ${label}â€ from this dossier?`);
   if (!confirmed) return;
   try {
     const res = await fetch(`/api/dossiers/${encodeURIComponent(id)}/related-games?gameKey=${encodeURIComponent(gameKey)}`, { method: 'DELETE' });
@@ -19146,8 +19340,8 @@ function renderDetailLaunchBoxLinks(item = {}, payload = null, loading = false) 
     const status = connection.matchStatus || 'Matched';
     const type = connection.matchType || item.kind || 'Match';
     const score = Math.round(Number(connection.confidenceScore || 0));
-    const reason = connection.matchReason ? ` · ${connection.matchReason}` : '';
-    const details = [platform, connection.launchBoxReleaseYear, connection.launchBoxDeveloper || connection.launchBoxPublisher].filter(Boolean).join(' · ');
+    const reason = connection.matchReason ? ` Â· ${connection.matchReason}` : '';
+    const details = [platform, connection.launchBoxReleaseYear, connection.launchBoxDeveloper || connection.launchBoxPublisher].filter(Boolean).join(' Â· ');
     const gameId = connection.launchBoxGameId || '';
     const itemId = item.id || payload?.itemId || connection.guideVaultItemId || '';
     return `<article class="detail-launchbox-link-row ${escapeForAttribute(String(type).toLowerCase().replace(/[^a-z0-9]+/g, '-'))}">
@@ -19157,7 +19351,7 @@ function renderDetailLaunchBoxLinks(item = {}, payload = null, loading = false) 
       </div>
       <div class="detail-launchbox-link-meta">
         <b>${escapeHtml(type)}</b>
-        <span>${escapeHtml(status)} · ${score}%${escapeHtml(reason)}</span>
+        <span>${escapeHtml(status)} Â· ${score}%${escapeHtml(reason)}</span>
       </div>
       <div class="detail-launchbox-link-actions">
         <button type="button" class="ghost mini danger" data-detail-launchbox-remove-link="1" data-guidevault-item-id="${escapeForAttribute(itemId)}" data-launchbox-game-id="${escapeForAttribute(gameId)}" data-match-type="${escapeForAttribute(type)}" data-launchbox-game-title="${escapeForAttribute(title)}">Remove</button>
@@ -19629,10 +19823,12 @@ function cleanupReaderResources(options = {}) {
     const img = $(id);
     if (img) {
       img.removeAttribute('srcset');
-      img.src = '';
+      img.removeAttribute('src');
     }
   });
   document.querySelectorAll('.turning-page, .reader-turn-overlay, .adaptive-turn-overlay').forEach(el => el.remove());
+  guidevaultReaderTextureImageCache.clear();
+  guidevaultReaderTextureSourceCache = new WeakMap();
   if (!keepState) {
     state.reader.item = null;
     state.reader.pages = [];
@@ -19717,7 +19913,6 @@ async function openReader(item) {
     applyReadingProfileToReader(liveItem);
     console.info('GuideVault browser reading profile applied', { itemId: itemIdOf(liveItem), profileId: state.reader.appliedProfileId, source: state.reader.appliedProfileSource, key: state.reader.appliedProfileKey, displayMode: state.reader.displayMode, transitionMode: state.reader.transitionMode, background: state.reader.background, brightness: state.reader.backgroundBrightness, zoom: state.reader.zoom });
   }
-  state.reader.settingsDirty = false;
   state.reader.displayMode = normalizeReaderDisplayMode(state.reader.displayMode);
   state.reader.overlayVisible = false;
   state.reader.advancedVisible = false;
@@ -19780,7 +19975,7 @@ function spreadForIndex(index) {
       isSingle: false,
       isAdaptiveSpread: true,
       index: normalized,
-      leftIndex: normalized,
+      leftIndex: null,
       rightIndex: normalized,
       leftUrl: '',
       rightUrl: state.reader.pages[normalized].imageUrl,
@@ -19793,7 +19988,27 @@ function spreadForIndex(index) {
 
   let leftIndex = normalized % 2 === 0 ? normalized - 1 : normalized;
   leftIndex = Math.max(1, leftIndex);
-  const rightIndex = Math.min(leftIndex + 1, max);
+  const rightIndex = leftIndex + 1 <= max ? leftIndex + 1 : null;
+  const hasRightPage = rightIndex !== null;
+  // An unpaired final page is a closed-book endpoint, not an open spread with a
+  // synthetic sheet beside it.  The page-turn renderer still supplies a temporary
+  // blank right leaf while the last physical sheet curls; once that turn completes,
+  // this single-page state lets the real final page settle into the center.
+  if (!hasRightPage) {
+    return {
+      isCover: false,
+      isSingle: true,
+      isEndPage: true,
+      index: leftIndex,
+      leftIndex,
+      rightIndex: leftIndex,
+      leftUrl: '',
+      rightUrl: state.reader.pages[leftIndex].imageUrl,
+      isBlankRight: false,
+      label: `Page ${leftIndex + 1} / ${total}`,
+      positionText: `Page ${leftIndex + 1} of ${total}`
+    };
+  }
   return {
     isCover: false,
     isSingle: false,
@@ -19801,10 +20016,10 @@ function spreadForIndex(index) {
     leftIndex,
     rightIndex,
     leftUrl: state.reader.pages[leftIndex].imageUrl,
-    rightUrl: state.reader.pages[rightIndex].imageUrl,
-    isBlankRight: rightIndex === leftIndex,
-    label: `Pages ${leftIndex + 1}${rightIndex !== leftIndex ? `-${rightIndex + 1}` : ''} / ${total}`,
-    positionText: `Pages ${leftIndex + 1}${rightIndex !== leftIndex ? `-${rightIndex + 1}` : ''} of ${total}`
+    rightUrl: hasRightPage ? state.reader.pages[rightIndex].imageUrl : '',
+    isBlankRight: !hasRightPage,
+    label: hasRightPage ? `Pages ${leftIndex + 1}-${rightIndex + 1} / ${total}` : `Page ${leftIndex + 1} / ${total}`,
+    positionText: hasRightPage ? `Pages ${leftIndex + 1}-${rightIndex + 1} of ${total}` : `Page ${leftIndex + 1} of ${total}`
   };
 }
 
@@ -19844,9 +20059,26 @@ function setReaderImageSource(imgId, url = '') {
   if (!img) return;
   const next = String(url || '');
   if (img.getAttribute('src') === next) return;
+  if (!next) {
+    img.removeAttribute('src');
+    return;
+  }
   img.decoding = 'async';
   img.loading = 'eager';
   img.src = next;
+}
+
+function setReaderRightPageBlank(isBlank) {
+  const blank = !!isBlank;
+  const page = $('pageRight');
+  const image = $('pageRightImage');
+  page?.classList.toggle('blank-page', blank);
+  image?.classList.toggle('reader-page-image-empty', blank);
+  if (image) {
+    image.alt = blank ? '' : 'Right page';
+    if (blank) image.setAttribute('aria-hidden', 'true');
+    else image.removeAttribute('aria-hidden');
+  }
 }
 
 
@@ -19858,12 +20090,13 @@ function renderSpread(index, options = {}) {
   const book = $('book');
   book.classList.toggle('cover-mode', spread.isCover);
   book.classList.toggle('single-page-mode', !!spread.isSingle);
+  book.classList.toggle('end-page-mode', !!spread.isEndPage);
   book.classList.toggle('adaptive-spread-mode', !!spread.isAdaptiveSpread);
   updateReaderVisualModeFlags(spread);
   applyReaderShadingSettings();
   scheduleReaderPageEdgeShadingBounds();
   $('pageLeft').classList.toggle('hidden', !!spread.isSingle || !!spread.isAdaptiveSpread);
-  $('pageRight').classList.remove('blank-page');
+  setReaderRightPageBlank(false);
 
   if (spread.isSingle) {
     setReaderImageSource('pageRightImage', spread.rightUrl);
@@ -19892,7 +20125,7 @@ function renderSpread(index, options = {}) {
 
   setReaderImageSource('pageLeftImage', spread.leftUrl);
   setReaderImageSource('pageRightImage', spread.rightUrl);
-  $('pageRight').classList.toggle('blank-page', spread.isBlankRight);
+  setReaderRightPageBlank(spread.isBlankRight);
   if ($('pageLabel')) $('pageLabel').textContent = spread.label;
   updateReaderOverlay(spread);
   updateReaderPageStackEffect(spread);
@@ -20355,7 +20588,6 @@ function adjustReaderZoom(delta, options = {}) {
   applyReaderZoom();
   if (options.showOverlay !== false) setReaderOverlayVisible(true);
   scheduleReaderPageEdgeShadingBounds();
-  scheduleSaveCurrentReaderSettingsToEntryProfile('zoom', 350);
 }
 
 function setReaderDisplayMode(mode) {
@@ -20365,7 +20597,6 @@ function setReaderDisplayMode(mode) {
     return;
   }
   state.reader.displayMode = nextMode;
-  scheduleSaveCurrentReaderSettingsToEntryProfile('display-mode', 250);
   if (!state.reader.pages.length || state.reader.animating) { updateReaderOverlay(); return; }
   renderSpread(state.reader.index, { preserveSize: false });
   updateReaderOverlay();
@@ -20374,7 +20605,6 @@ function setReaderDisplayMode(mode) {
 function setReaderTransitionMode(mode) {
   state.reader.transitionMode = normalizeReaderTransitionMode(mode);
   updateReaderOverlay();
-  scheduleSaveCurrentReaderSettingsToEntryProfile('transition-mode', 250);
 }
 
 function setReaderSliderPreview(pageNumber) {
@@ -20475,10 +20705,13 @@ function readerPageTurnUnderlayUrl(nextIndex, dir, source = null) {
 
   const nextSpread = spreadForIndex(nextIndex);
   if (!nextSpread) return '';
+  if (nextSpread.isEndPage) return '';
   if (nextSpread.isSingle) return nextSpread.rightUrl || nextSpread.leftUrl || '';
-  return dir === 'prev'
-    ? (nextSpread.leftUrl || nextSpread.rightUrl || '')
-    : (nextSpread.rightUrl || nextSpread.leftUrl || '');
+  if (nextSpread.isAdaptiveSpread) return nextSpread.adaptiveUrl || nextSpread.rightUrl || '';
+  // Do not fall across the binding when the destination side is intentionally blank.
+  // The old fallback reused the final left page as the right-side underlay, producing
+  // the duplicated last page during and after the final two-page turn.
+  return dir === 'prev' ? (nextSpread.leftUrl || '') : (nextSpread.rightUrl || '');
 }
 
 function applyReaderTurnGeometry(el, geometry) {
@@ -20581,6 +20814,54 @@ function makeReaderTurnImageLayer(className, src, geometry, origin) {
   img.src = src || '';
   layer.appendChild(img);
   return layer;
+}
+
+function readerPageSlotGeometry(pageEl) {
+  if (!pageEl) return null;
+  const width = pageEl.clientWidth || pageEl.offsetWidth || 0;
+  const height = pageEl.clientHeight || pageEl.offsetHeight || 0;
+  if (!width || !height) return null;
+  return {
+    left: pageEl.offsetLeft || 0,
+    top: pageEl.offsetTop || 0,
+    width,
+    height
+  };
+}
+
+function readerContainGeometryForImage(pageEl, imageInfo, align = 'center') {
+  const slot = readerPageSlotGeometry(pageEl);
+  if (!slot || !imageInfo) return null;
+  const naturalW = imageInfo.naturalWidth || imageInfo.width || 0;
+  const naturalH = imageInfo.naturalHeight || imageInfo.height || 0;
+  const ratio = naturalW > 0 && naturalH > 0 ? naturalW / naturalH : 0.735;
+  let width = slot.width;
+  let height = width / ratio;
+  if (height > slot.height) {
+    height = slot.height;
+    width = height * ratio;
+  }
+  const spareX = Math.max(0, slot.width - width);
+  const x = align === 'right' ? spareX : align === 'left' ? 0 : spareX / 2;
+  return {
+    left: slot.left + x,
+    top: slot.top + Math.max(0, (slot.height - height) / 2),
+    width: Math.max(8, width),
+    height: Math.max(8, height)
+  };
+}
+
+function makeReaderFixedTurnSheet(className, geometry, frontUrl, backUrl) {
+  if (!geometry) return null;
+  const sheet = document.createElement('div');
+  sheet.className = `reader-fixed-turn-sheet ${className || ''}`.trim();
+  applyReaderTurnGeometry(sheet, geometry);
+  sheet.innerHTML = `<div class="reader-fixed-turn-face reader-fixed-turn-front"><img alt="" /></div><div class="reader-fixed-turn-face reader-fixed-turn-back"><img alt="" /></div>`;
+  const front = sheet.querySelector('.reader-fixed-turn-front img');
+  const back = sheet.querySelector('.reader-fixed-turn-back img');
+  if (front) front.src = frontUrl || '';
+  if (back) back.src = backUrl || '';
+  return sheet;
 }
 
 function readerCurlTurnGeometry(fullGeometry, dir, role) {
@@ -20797,23 +21078,57 @@ function readerMeshStripDelay(role, dir, i, stripCount) {
 
 
 function readerCanUseWebGlPageCurl() {
+  if (guidevaultReaderWebGlPageCurlSupported !== null) return guidevaultReaderWebGlPageCurlSupported;
   try {
     const canvas = document.createElement('canvas');
-    return !!(canvas.getContext('webgl', { alpha: true, antialias: true }) || canvas.getContext('experimental-webgl', { alpha: true, antialias: true }));
+    const contextOptions = { alpha: true, antialias: true, powerPreference: 'high-performance', preserveDrawingBuffer: false };
+    const gl = canvas.getContext('webgl', contextOptions) || canvas.getContext('experimental-webgl', contextOptions);
+    guidevaultReaderWebGlPageCurlSupported = !!gl;
+    try { gl?.getExtension('WEBGL_lose_context')?.loseContext(); } catch {}
   } catch {
-    return false;
+    guidevaultReaderWebGlPageCurlSupported = false;
   }
+  return guidevaultReaderWebGlPageCurlSupported;
 }
 
 function readerLoadImageForTexture(url) {
   if (!url) return Promise.reject(new Error('Missing image URL'));
-  return new Promise((resolve, reject) => {
+  let key = String(url);
+  try { key = new URL(key, document.baseURI || window.location.href).href; } catch {}
+  const cached = guidevaultReaderTextureImageCache.get(key);
+  if (cached) {
+    guidevaultReaderTextureImageCache.delete(key);
+    guidevaultReaderTextureImageCache.set(key, cached);
+    return cached;
+  }
+
+  const liveImage = ['pageLeftImage', 'pageRightImage', 'prevLeftImage', 'prevRightImage']
+    .map(id => $(id))
+    .find(img => {
+      if (!img?.complete || !(img.naturalWidth > 0)) return false;
+      try { return new URL(img.currentSrc || img.src, document.baseURI || window.location.href).href === key; }
+      catch { return String(img.currentSrc || img.src || '') === key; }
+    });
+
+  const finishDecode = img => {
+    if (typeof img?.decode !== 'function') return Promise.resolve(img);
+    return img.decode().then(() => img).catch(() => img);
+  };
+  const pending = liveImage ? finishDecode(liveImage) : new Promise((resolve, reject) => {
     const img = new Image();
     img.decoding = 'async';
-    img.onload = () => resolve(img);
+    img.onload = () => finishDecode(img).then(resolve);
     img.onerror = () => reject(new Error('Failed to load page texture'));
-    img.src = url;
+    img.src = key;
   });
+  guidevaultReaderTextureImageCache.set(key, pending);
+  while (guidevaultReaderTextureImageCache.size > GUIDEVAULT_READER_TEXTURE_IMAGE_CACHE_LIMIT) {
+    guidevaultReaderTextureImageCache.delete(guidevaultReaderTextureImageCache.keys().next().value);
+  }
+  pending.catch(() => {
+    if (guidevaultReaderTextureImageCache.get(key) === pending) guidevaultReaderTextureImageCache.delete(key);
+  });
+  return pending;
 }
 
 function readerCreateWebGlShader(gl, type, source) {
@@ -20869,13 +21184,40 @@ function readerCreateWebGlProgram(gl) {
 
 function readerTextureSourceForWebGl(gl, img) {
   const maxSize = gl.getParameter(gl.MAX_TEXTURE_SIZE) || 4096;
-  if (img.naturalWidth <= maxSize && img.naturalHeight <= maxSize) return img;
-  const scale = Math.min(maxSize / img.naturalWidth, maxSize / img.naturalHeight, 1);
+  const sourceWidth = img.naturalWidth || img.width || 1;
+  const sourceHeight = img.naturalHeight || img.height || 1;
+  const drawingTarget = Math.max(gl.drawingBufferWidth || 0, gl.drawingBufferHeight || 0, 1024);
+  const targetMaxDimension = Math.min(maxSize, Math.max(1024, Math.ceil(drawingTarget * 1.12)));
+  if (sourceWidth <= targetMaxDimension && sourceHeight <= targetMaxDimension) return img;
+  const cached = guidevaultReaderTextureSourceCache.get(img);
+  if (cached?.maxDimension === targetMaxDimension && cached.source) return cached.source;
+  const scale = Math.min(targetMaxDimension / sourceWidth, targetMaxDimension / sourceHeight, 1);
   const canvas = document.createElement('canvas');
-  canvas.width = Math.max(1, Math.floor(img.naturalWidth * scale));
-  canvas.height = Math.max(1, Math.floor(img.naturalHeight * scale));
+  canvas.width = Math.max(1, Math.floor(sourceWidth * scale));
+  canvas.height = Math.max(1, Math.floor(sourceHeight * scale));
   const ctx = canvas.getContext('2d');
+  if (!ctx) return img;
+  ctx.imageSmoothingQuality = 'medium';
   ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+  guidevaultReaderTextureSourceCache.set(img, { maxDimension: targetMaxDimension, source: canvas });
+  return canvas;
+}
+
+function readerCreateBlankPageTextureSource(reference = null) {
+  const sourceWidth = reference?.naturalWidth || reference?.width || 735;
+  const sourceHeight = reference?.naturalHeight || reference?.height || 1000;
+  const ratio = sourceWidth > 0 && sourceHeight > 0 ? sourceWidth / sourceHeight : .735;
+  const canvas = document.createElement('canvas');
+  canvas.width = 96;
+  canvas.height = Math.max(96, Math.round(canvas.width / Math.max(.2, ratio)));
+  const ctx = canvas.getContext('2d');
+  if (ctx) {
+    const gradient = ctx.createLinearGradient(0, 0, canvas.width, 0);
+    gradient.addColorStop(0, '#eee8dc');
+    gradient.addColorStop(1, '#d5ccbd');
+    ctx.fillStyle = gradient;
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+  }
   return canvas;
 }
 
@@ -20922,8 +21264,10 @@ function readerBuildWebGlQuad(geometry, shellWidth, shellHeight, flipU = false) 
 }
 
 function readerBuildWebGlCurlMesh({ geometry, dir, progress, shellWidth, shellHeight, backside, texRange = null }) {
-  const cols = 34;
-  const rows = 5;
+  // These subdivisions retain a smooth curl while roughly halving the vertices and
+  // temporary arrays built for every animation frame versus the previous 34 x 5 mesh.
+  const cols = 26;
+  const rows = 3;
   const positions = [];
   const texCoords = [];
   const initialSign = dir === 'prev' ? -1 : 1;
@@ -20987,12 +21331,12 @@ function readerDrawWebGlMesh(gl, program, buffers, texture, mesh, alpha = 1, sha
   gl.uniform1f(buffers.uShadow, shadow);
 
   gl.bindBuffer(gl.ARRAY_BUFFER, buffers.position);
-  gl.bufferData(gl.ARRAY_BUFFER, mesh.positions, gl.DYNAMIC_DRAW);
+  gl.bufferData(gl.ARRAY_BUFFER, mesh.positions, gl.STREAM_DRAW);
   gl.enableVertexAttribArray(buffers.aPosition);
   gl.vertexAttribPointer(buffers.aPosition, 2, gl.FLOAT, false, 0, 0);
 
   gl.bindBuffer(gl.ARRAY_BUFFER, buffers.texCoord);
-  gl.bufferData(gl.ARRAY_BUFFER, mesh.texCoords, gl.DYNAMIC_DRAW);
+  gl.bufferData(gl.ARRAY_BUFFER, mesh.texCoords, gl.STREAM_DRAW);
   gl.enableVertexAttribArray(buffers.aTexCoord);
   gl.vertexAttribPointer(buffers.aTexCoord, 2, gl.FLOAT, false, 0, 0);
 
@@ -21005,14 +21349,17 @@ function readerCreateWebGlPageCurlCanvas(shell) {
   canvas.setAttribute('aria-hidden', 'true');
   const width = Math.max(1, shell.clientWidth || shell.offsetWidth || 1);
   const height = Math.max(1, shell.clientHeight || shell.offsetHeight || 1);
-  const dpr = Math.max(1, Math.min(window.devicePixelRatio || 1, 2));
+  let dpr = Math.max(1, Math.min(window.devicePixelRatio || 1, 1.5));
+  const maxCanvasPixels = 3200000;
+  dpr = Math.max(1, Math.min(dpr, Math.sqrt(maxCanvasPixels / Math.max(1, width * height))));
   canvas.style.width = `${width}px`;
   canvas.style.height = `${height}px`;
-  canvas.width = Math.floor(width * dpr);
-  canvas.height = Math.floor(height * dpr);
+  canvas.width = Math.max(1, Math.floor(width * dpr));
+  canvas.height = Math.max(1, Math.floor(height * dpr));
   shell.appendChild(canvas);
-  const gl = canvas.getContext('webgl', { alpha: true, antialias: true, premultipliedAlpha: true })
-    || canvas.getContext('experimental-webgl', { alpha: true, antialias: true, premultipliedAlpha: true });
+  const contextOptions = { alpha: true, antialias: true, premultipliedAlpha: true, powerPreference: 'high-performance', preserveDrawingBuffer: false };
+  const gl = canvas.getContext('webgl', contextOptions)
+    || canvas.getContext('experimental-webgl', contextOptions);
   if (!gl) {
     canvas.remove();
     return null;
@@ -21022,6 +21369,276 @@ function readerCreateWebGlPageCurlCanvas(shell) {
   gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
   gl.clearColor(0, 0, 0, 0);
   return { canvas, gl, width, height };
+}
+
+function readerCreateContainedPageTextureSource(imageInfo, geometry, align = 'center') {
+  if (!imageInfo || !geometry) return imageInfo;
+  const ratio = Math.max(.2, geometry.width / Math.max(1, geometry.height));
+  const dpr = Math.max(1, Math.min(window.devicePixelRatio || 1, 1.5));
+  let width = Math.max(8, Math.round(geometry.width * dpr));
+  let height = Math.max(8, Math.round(width / ratio));
+  const maxDimension = 2048;
+  const shrink = Math.min(1, maxDimension / Math.max(width, height));
+  width = Math.max(8, Math.round(width * shrink));
+  height = Math.max(8, Math.round(height * shrink));
+
+  const canvas = document.createElement('canvas');
+  canvas.width = width;
+  canvas.height = height;
+  const ctx = canvas.getContext('2d');
+  if (!ctx) return imageInfo;
+  ctx.clearRect(0, 0, width, height);
+  ctx.imageSmoothingEnabled = true;
+  ctx.imageSmoothingQuality = 'high';
+
+  const naturalW = imageInfo.naturalWidth || imageInfo.width || 1;
+  const naturalH = imageInfo.naturalHeight || imageInfo.height || 1;
+  const scale = Math.min(width / naturalW, height / naturalH);
+  const drawW = Math.max(1, naturalW * scale);
+  const drawH = Math.max(1, naturalH * scale);
+  const spareX = Math.max(0, width - drawW);
+  const x = align === 'right' ? spareX : align === 'left' ? 0 : spareX / 2;
+  const y = Math.max(0, (height - drawH) / 2);
+  ctx.drawImage(imageInfo, x, y, drawW, drawH);
+  return canvas;
+}
+
+function readerPrepareFixedSlotCurl(shell, geometry, frontImg, backImg) {
+  if (!shell || !geometry || !frontImg || !backImg) return null;
+  const webgl = readerCreateWebGlPageCurlCanvas(shell);
+  if (!webgl) return null;
+  const { gl, width, height } = webgl;
+  const program = readerCreateWebGlProgram(gl);
+  const buffers = {
+    position: gl.createBuffer(),
+    texCoord: gl.createBuffer(),
+    aPosition: gl.getAttribLocation(program, 'a_position'),
+    aTexCoord: gl.getAttribLocation(program, 'a_texCoord'),
+    uTexture: gl.getUniformLocation(program, 'u_texture'),
+    uAlpha: gl.getUniformLocation(program, 'u_alpha'),
+    uShadow: gl.getUniformLocation(program, 'u_shadow')
+  };
+  // Each face is first letterboxed into the same physical page slot. This lets the
+  // mesh bend one sheet without stretching scans that have different aspect ratios.
+  const frontSource = readerCreateContainedPageTextureSource(frontImg, geometry, 'left');
+  const backSource = readerCreateContainedPageTextureSource(backImg, geometry, 'right');
+  const frontTexture = readerCreateWebGlTexture(gl, frontSource);
+  const backTexture = readerCreateWebGlTexture(gl, backSource);
+
+  const drawFrame = progress => {
+    const p = Math.max(0, Math.min(1, Number(progress) || 0));
+    gl.viewport(0, 0, webgl.canvas.width, webgl.canvas.height);
+    gl.clear(gl.COLOR_BUFFER_BIT);
+    // Shading peaks while the sheet is curved and returns to neutral when flat,
+    // which keeps both the opening-spread and final-page handoffs from popping.
+    const shadow = Math.sin(Math.PI * p) * 1.35;
+    // Switch faces tightly at the edge-on point. Letting the front texture linger
+    // into the second half is what made the cover appear mirrored before page two
+    // arrived on the backside.
+    const frontAlpha = p < .49 ? 1 : Math.max(0, 1 - (p - .49) / .025);
+    const backAlpha = p > .495 ? Math.min(1, (p - .495) / .025) : 0;
+    if (frontAlpha > .01) {
+      const mesh = readerBuildWebGlCurlMesh({
+        geometry,
+        dir: 'next',
+        progress: p,
+        shellWidth: width,
+        shellHeight: height,
+        backside: false
+      });
+      readerDrawWebGlMesh(gl, program, buffers, frontTexture, mesh, frontAlpha, shadow);
+    }
+    if (backAlpha > .01) {
+      const mesh = readerBuildWebGlCurlMesh({
+        geometry,
+        dir: 'next',
+        progress: p,
+        shellWidth: width,
+        shellHeight: height,
+        backside: true
+      });
+      readerDrawWebGlMesh(gl, program, buffers, backTexture, mesh, backAlpha, shadow);
+    }
+  };
+
+  return { webgl, gl, program, buffers, textures: [frontTexture, backTexture], drawFrame };
+}
+
+async function readerAnimatePreparedFixedSlotCurl(curl, duration = 960, onFrame = null) {
+  if (!curl?.drawFrame) return;
+  const start = performance.now();
+  await new Promise(resolve => {
+    const draw = now => {
+      const raw = Math.min(1, Math.max(0, (now - start) / Math.max(1, duration)));
+      const eased = raw < .5
+        ? 4 * raw * raw * raw
+        : 1 - Math.pow(-2 * raw + 2, 3) / 2;
+      curl.drawFrame(eased);
+      if (typeof onFrame === 'function') onFrame(eased, raw);
+      if (raw < 1) requestAnimationFrame(draw);
+      else resolve();
+    };
+    requestAnimationFrame(draw);
+  });
+}
+
+function readerDisposePreparedFixedSlotCurl(curl) {
+  if (!curl) return;
+  if (curl.gl) {
+    (curl.textures || []).forEach(texture => { try { curl.gl.deleteTexture(texture); } catch {} });
+    try { if (curl.program) curl.gl.deleteProgram(curl.program); } catch {}
+  }
+  if (curl.webgl?.canvas) curl.webgl.canvas.remove();
+}
+
+async function performReaderCoverOpenFixedTransition(nextIndex) {
+  const shell = $('pageShell');
+  const book = $('book');
+  const coverImage = $('pageRightImage');
+  const leftImage = $('pageLeftImage');
+  const destination = spreadForIndex(nextIndex);
+  if (!shell || !book || !coverImage?.src || !destination || destination.isSingle || destination.isAdaptiveSpread) {
+    renderSpread(nextIndex, { preserveSize: true });
+    return;
+  }
+
+  const coverUrl = coverImage.src;
+  const pageTwoUrl = destination.leftUrl || '';
+  const pageThreeUrl = destination.rightUrl || '';
+  const previousRightVisibility = coverImage.style.visibility || '';
+  const previousLeftVisibility = leftImage?.style?.visibility || '';
+  let slideOverlay = null;
+  let turnSheet = null;
+  let curl = null;
+
+  try {
+    const [coverImg, pageTwoImg, pageThreeImg] = await Promise.all([
+      readerLoadImageForTexture(coverUrl),
+      readerLoadImageForTexture(pageTwoUrl),
+      readerLoadImageForTexture(pageThreeUrl)
+    ]);
+    const coverStart = readerPageGeometry($('pageRight'), coverImage, 'right', shell);
+    if (!coverStart) throw new Error('Missing centered cover geometry');
+
+    lockExperimentalTurnFootprint(book, shell);
+    book.classList.add('reader-fixed-edge-turning', 'reader-fixed-cover-opening');
+
+    slideOverlay = makeReaderTurnImageLayer(
+      'reader-fixed-cover-slide-overlay',
+      coverUrl,
+      coverStart,
+      'left top'
+    );
+    slideOverlay.style.transform = 'translate3d(0,0,0) scale(1)';
+    shell.appendChild(slideOverlay);
+    if (coverImage?.style) coverImage.style.visibility = 'hidden';
+    if (leftImage?.style) leftImage.style.visibility = 'hidden';
+
+    // Paint and decode the first real spread underneath, but keep both pages
+    // hidden until their physical sheet is actually exposed by the turn.
+    renderSpread(nextIndex, { preserveSize: true });
+    const destinationRight = $('pageRightImage');
+    const destinationLeft = $('pageLeftImage');
+    if (destinationRight?.style) destinationRight.style.visibility = 'hidden';
+    if (destinationLeft?.style) destinationLeft.style.visibility = 'hidden';
+    if (typeof destinationRight?.decode === 'function') await destinationRight.decode().catch(() => {});
+    if (typeof destinationLeft?.decode === 'function') await destinationLeft.decode().catch(() => {});
+    await waitForReaderPaint();
+
+    const rightSlot = readerPageSlotGeometry($('pageRight'));
+    const coverTarget = readerContainGeometryForImage($('pageRight'), coverImg, 'left');
+    if (!rightSlot || !coverTarget) throw new Error('Missing right-page cover target');
+
+    // Cover and target share one natural aspect ratio. A single uniform scale
+    // preserves the scan instead of the previous independent X/Y stretch.
+    const scale = coverTarget.width / Math.max(1, coverStart.width);
+    const moveX = coverTarget.left - coverStart.left;
+    const moveY = coverTarget.top - coverStart.top;
+    const slideTransform = `translate3d(${moveX.toFixed(2)}px,${moveY.toFixed(2)}px,0) scale(${scale.toFixed(5)})`;
+    await slideOverlay.animate([
+      { transform: 'translate3d(0,0,0) scale(1)', offset: 0 },
+      { transform: slideTransform, offset: 1 }
+    ], {
+      duration: 560,
+      easing: 'cubic-bezier(.22,.72,.18,1)',
+      fill: 'forwards'
+    }).finished.catch(() => {});
+
+    curl = readerPrepareFixedSlotCurl(shell, rightSlot, coverImg, pageTwoImg);
+    if (curl) {
+      curl.drawFrame(0);
+      await waitForReaderPaint();
+      if (slideOverlay) { slideOverlay.remove(); slideOverlay = null; }
+      curl.drawFrame(.002);
+      await waitForReaderPaint();
+      let pageThreeRevealed = false;
+      await readerAnimatePreparedFixedSlotCurl(curl, 980, eased => {
+        // The right-hand third page is the under-page. It appears only after the
+        // cover has developed a visible bend; page two remains exclusively on the
+        // true backside until the curl settles on the left.
+        if (!pageThreeRevealed && eased >= .22) {
+          pageThreeRevealed = true;
+          if (destinationRight?.style) destinationRight.style.visibility = previousRightVisibility;
+        }
+      });
+      if (!pageThreeRevealed && destinationRight?.style) destinationRight.style.visibility = previousRightVisibility;
+    } else {
+      // WebGL-less fallback preserves the corrected page order, even though it is
+      // intentionally flatter than the curved primary path.
+      turnSheet = makeReaderFixedTurnSheet(
+        'reader-fixed-cover-turn-sheet',
+        rightSlot,
+        coverUrl,
+        pageTwoUrl
+      );
+      if (!turnSheet) throw new Error('Unable to create cover turn sheet');
+      shell.appendChild(turnSheet);
+      const turnImages = [...turnSheet.querySelectorAll('img')];
+      await Promise.all(turnImages.map(img => typeof img.decode === 'function' ? img.decode().catch(() => {}) : Promise.resolve()));
+      await waitForReaderPaint();
+      if (slideOverlay) { slideOverlay.remove(); slideOverlay = null; }
+      const turnAnimation = turnSheet.animate([
+        { transform: 'perspective(2400px) rotateY(0deg)', filter: 'brightness(1)', offset: 0 },
+        { transform: 'perspective(2400px) rotateY(-78deg)', filter: 'brightness(.87)', offset: .48 },
+        { transform: 'perspective(2400px) rotateY(-180deg)', filter: 'brightness(1)', offset: 1 }
+      ], { duration: 920, easing: 'cubic-bezier(.24,.64,.20,1)', fill: 'forwards' });
+      await wait(390);
+      if (destinationRight?.style) destinationRight.style.visibility = previousRightVisibility;
+      await turnAnimation.finished.catch(() => {});
+    }
+
+    if (destinationLeft?.style) destinationLeft.style.visibility = previousLeftVisibility;
+    if (destinationRight?.style) destinationRight.style.visibility = previousRightVisibility;
+    await waitForReaderPaint();
+    if (turnSheet) { turnSheet.remove(); turnSheet = null; }
+    if (curl?.webgl?.canvas) {
+      curl.webgl.canvas.style.setProperty('transition', 'opacity 150ms ease-out', 'important');
+      curl.webgl.canvas.style.setProperty('opacity', '0', 'important');
+      await wait(160);
+      readerDisposePreparedFixedSlotCurl(curl);
+      curl = null;
+    }
+    book.classList.remove('reader-fixed-edge-turning', 'reader-fixed-cover-opening');
+    applyReaderShadingSettings();
+    updateReaderPageStackEffect(spreadForIndex(nextIndex));
+    updateReaderPageEdgeShadingBounds();
+  } catch (err) {
+    console.warn('Guidevault fixed-geometry cover turn unavailable; using stable spread reveal.', err);
+    renderSpread(nextIndex, { preserveSize: true });
+    const destinationRight = $('pageRightImage');
+    const destinationLeft = $('pageLeftImage');
+    if (destinationRight?.style) destinationRight.style.visibility = previousRightVisibility;
+    if (destinationLeft?.style) destinationLeft.style.visibility = previousLeftVisibility;
+    applyReaderShadingSettings();
+    updateReaderPageStackEffect(spreadForIndex(nextIndex));
+    updateReaderPageEdgeShadingBounds();
+  } finally {
+    if (slideOverlay) slideOverlay.remove();
+    if (turnSheet) turnSheet.remove();
+    if (curl) readerDisposePreparedFixedSlotCurl(curl);
+    book.classList.remove('reader-fixed-edge-turning', 'reader-fixed-cover-opening');
+    unlockExperimentalTurnFootprint(book, shell);
+  }
 }
 
 
@@ -21037,7 +21654,7 @@ async function performReaderCoverOpenTransition(nextIndex) {
 
   const toSpread = spreadForIndex(nextIndex);
   const pageTwoUrl = toSpread?.leftUrl || readerPageUrlAt(1) || '';
-  const pageThreeUrl = toSpread?.rightUrl || readerPageUrlAt(2) || pageTwoUrl || '';
+  const pageThreeUrl = toSpread?.rightUrl || '';
   const coverUrl = coverImage.src;
   let overlay = null;
   let webgl = null;
@@ -21051,11 +21668,13 @@ async function performReaderCoverOpenTransition(nextIndex) {
     // handoff. That keeps the page-3 corner and the right-side page stack from
     // sitting in one place during WebGL and then snapping to another place when
     // the real DOM spread is revealed.
-    const [coverImg, pageTwoImg, pageThreeImg] = await Promise.all([
+    const [coverImg, pageTwoImg] = await Promise.all([
       readerLoadImageForTexture(coverUrl),
-      readerLoadImageForTexture(pageTwoUrl || coverUrl),
-      readerLoadImageForTexture(pageThreeUrl || pageTwoUrl || coverUrl)
+      readerLoadImageForTexture(pageTwoUrl || coverUrl)
     ]);
+    const pageThreeImg = pageThreeUrl
+      ? await readerLoadImageForTexture(pageThreeUrl)
+      : readerCreateBlankPageTextureSource(pageTwoImg);
 
     const containInRect = (rect, naturalW, naturalH, objectPosition = 'center') => {
       const ratio = naturalW > 0 && naturalH > 0 ? naturalW / naturalH : 0.735;
@@ -21222,7 +21841,10 @@ async function performReaderCoverOpenTransition(nextIndex) {
       gl.clear(gl.COLOR_BUFFER_BIT);
       const shadow = 0.62 + Math.sin(Math.PI * p) * 1.10;
 
-      const pageThreeAlpha = p > 0.075 ? Math.min(1, (p - 0.075) / 0.15) : 0;
+      // Keep the first interior spread covered through the initial lift. Revealing
+      // it almost immediately made pages two/three appear before the cover had
+      // visibly started turning, so the under-page now follows the curl instead.
+      const pageThreeAlpha = p > 0.22 ? Math.min(1, (p - 0.22) / 0.20) : 0;
       const frontAlpha = p < 0.63 ? 1 : Math.max(0, 1 - (p - 0.63) / 0.14);
       const backAlpha = p > 0.56 ? Math.min(1, (p - 0.56) / 0.22) : 0;
 
@@ -21243,7 +21865,9 @@ async function performReaderCoverOpenTransition(nextIndex) {
     };
 
     drawCoverCurlFrame(0);
+    await waitForReaderPaint();
     if (overlay) { overlay.remove(); overlay = null; }
+    drawCoverCurlFrame(.002);
     await waitForReaderPaint();
 
     const duration = 1250;
@@ -21275,8 +21899,8 @@ async function performReaderCoverOpenTransition(nextIndex) {
 
     book.classList.remove('reader-cover-stack-hidden', 'reader-cover-opening-stage');
     if (webgl?.canvas) {
-      webgl.canvas.style.transition = 'opacity 220ms ease-out';
-      webgl.canvas.style.opacity = '0';
+      webgl.canvas.style.setProperty('transition', 'opacity 220ms ease-out', 'important');
+      webgl.canvas.style.setProperty('opacity', '0', 'important');
       await wait(230);
     }
   } catch (err) {
@@ -21464,14 +22088,14 @@ async function performReaderCoverOpenAdaptiveTransition(nextIndex) {
       // the start of the first adaptive turn, which made it look unchanged from the
       // earlier broken state. Let the adaptive spread fade/reveal underneath only as
       // the cover begins to actually curl away.
-      const revealAlpha = p > 0.18 ? Math.min(1, (p - 0.18) / 0.34) : 0;
+      const revealAlpha = p > 0.28 ? Math.min(1, (p - 0.28) / 0.32) : 0;
       if (revealAlpha > 0.01) {
         readerDrawWebGlMesh(gl, program, buffers, adaptiveTexture, adaptiveMesh, revealAlpha, 0.18);
       }
 
       const curlProgress = Math.min(1, Math.max(0, p));
       const frontAlpha = p < 0.58 ? 1 : Math.max(0, 1 - (p - 0.58) / 0.20);
-      const backAlpha = p > 0.36 ? Math.min(1, (p - 0.36) / 0.30) : 0;
+      const backAlpha = p > 0.48 ? Math.min(1, (p - 0.48) / 0.26) : 0;
       if (frontAlpha > 0.01) {
         const frontMesh = readerBuildWebGlCurlMesh({ geometry: coverTargetGeometry, dir: 'next', progress: curlProgress, shellWidth: width, shellHeight: height, backside: false });
         readerDrawWebGlMesh(gl, program, buffers, coverTexture, frontMesh, frontAlpha, shadow);
@@ -21483,7 +22107,9 @@ async function performReaderCoverOpenAdaptiveTransition(nextIndex) {
     };
 
     drawCoverAdaptiveFrame(0);
+    await waitForReaderPaint();
     if (overlay) { overlay.remove(); overlay = null; }
+    drawCoverAdaptiveFrame(.002);
     await waitForReaderPaint();
 
     const duration = 1320;
@@ -21514,8 +22140,8 @@ async function performReaderCoverOpenAdaptiveTransition(nextIndex) {
 
     book.classList.remove('reader-cover-stack-hidden', 'reader-cover-opening-stage');
     if (webgl?.canvas) {
-      webgl.canvas.style.transition = 'opacity 220ms ease-out';
-      webgl.canvas.style.opacity = '0';
+      webgl.canvas.style.setProperty('transition', 'opacity 220ms ease-out', 'important');
+      webgl.canvas.style.setProperty('opacity', '0', 'important');
       await wait(230);
     }
   } catch (err) {
@@ -21701,8 +22327,10 @@ async function performReaderCoverCloseTransition(nextIndex) {
 
     // Draw the closing book state first so there is no empty frame before the DOM spread is hidden.
     drawCoverCloseFrame(1);
+    await waitForReaderPaint();
     if (leftImage?.style) leftImage.style.visibility = 'hidden';
     if (rightImage?.style) rightImage.style.visibility = 'hidden';
+    drawCoverCloseFrame(.998);
     await waitForReaderPaint();
 
     const duration = 1250;
@@ -21767,8 +22395,8 @@ async function performReaderCoverCloseTransition(nextIndex) {
     };
 
     if (webgl?.canvas) {
-      webgl.canvas.style.transition = 'opacity 120ms linear';
-      webgl.canvas.style.opacity = '0';
+      webgl.canvas.style.setProperty('transition', 'opacity 120ms linear', 'important');
+      webgl.canvas.style.setProperty('opacity', '0', 'important');
       await wait(130);
     }
     if (webgl?.canvas) {
@@ -21933,6 +22561,7 @@ async function performReaderAdaptiveSpreadTurn(nextIndex, dir) {
     const targetTexture = readerCreateWebGlTexture(gl, targetImg);
     textures = [frontTexture, targetTexture];
     const targetMesh = readerBuildWebGlQuad(sourceGeometry, width, height, false);
+    const sourceHoldMesh = readerBuildWebGlQuad(sourceGeometry, width, height, false);
     const staticSourceMesh = readerBuildWebGlQuadRange(staticGeometry, width, height, staticTexRange);
 
     const drawAdaptiveFrame = p => {
@@ -21943,6 +22572,10 @@ async function performReaderAdaptiveSpreadTurn(nextIndex, dir) {
       // Destination spread stays underneath, but the non-turning half of the current
       // scan is redrawn above it so the whole scan does not appear to change/turn.
       readerDrawWebGlMesh(gl, program, buffers, targetTexture, targetMesh, 1, 0.18);
+      const initialSourceHoldAlpha = p < 0.08 ? 1 : (p < 0.20 ? Math.max(0, 1 - (p - 0.08) / 0.12) : 0);
+      if (initialSourceHoldAlpha > 0.01) {
+        readerDrawWebGlMesh(gl, program, buffers, frontTexture, sourceHoldMesh, initialSourceHoldAlpha, 0.08);
+      }
       const staticHoldAlpha = p < 0.88 ? 1 : Math.max(0, 1 - (p - 0.88) / 0.10);
       if (staticHoldAlpha > 0.01) {
         readerDrawWebGlMesh(gl, program, buffers, frontTexture, staticSourceMesh, staticHoldAlpha, 0.12);
@@ -21981,6 +22614,8 @@ async function performReaderAdaptiveSpreadTurn(nextIndex, dir) {
     drawAdaptiveFrame(0.012);
     await waitForReaderPaint();
     if (sourceImage?.style) sourceImage.style.visibility = 'hidden';
+    drawAdaptiveFrame(0.014);
+    await waitForReaderPaint();
 
     const duration = 1180;
     const start = performance.now();
@@ -22008,8 +22643,8 @@ async function performReaderAdaptiveSpreadTurn(nextIndex, dir) {
     await waitForReaderPaint();
     await waitForReaderPaint();
     if (webgl?.canvas) {
-      webgl.canvas.style.transition = 'opacity 140ms ease-out';
-      webgl.canvas.style.opacity = '0';
+      webgl.canvas.style.setProperty('transition', 'opacity 140ms ease-out', 'important');
+      webgl.canvas.style.setProperty('opacity', '0', 'important');
       await wait(150);
     }
     if (webgl?.gl) {
@@ -22134,6 +22769,234 @@ async function performReaderCoverCloseAdaptiveTransition(nextIndex) {
   }
 }
 
+async function performReaderFinalPageFixedTransition(nextIndex) {
+  const shell = $('pageShell');
+  const book = $('book');
+  const sourceRight = $('pageRightImage');
+  const sourceLeft = $('pageLeftImage');
+  const destination = spreadForIndex(nextIndex);
+  if (!shell || !book || !sourceRight?.src || !destination?.isEndPage) {
+    renderSpread(nextIndex, { preserveSize: true });
+    return;
+  }
+
+  const sourceUrl = sourceRight.src;
+  const finalUrl = destination.rightUrl || readerPageUrlAt(nextIndex) || '';
+  const sourceRightVisibility = sourceRight.style.visibility || '';
+  const sourceLeftVisibility = sourceLeft?.style?.visibility || '';
+  let turnSheet = null;
+  let landingOverlay = null;
+  let curl = null;
+
+  try {
+    const [sourceImg, finalImg] = await Promise.all([
+      readerLoadImageForTexture(sourceUrl),
+      readerLoadImageForTexture(finalUrl)
+    ]);
+    const rightSlot = readerPageSlotGeometry($('pageRight'));
+    const finalLeftGeometry = readerContainGeometryForImage($('pageLeft'), finalImg, 'right');
+    if (!rightSlot || !finalLeftGeometry) throw new Error('Missing final-page landing geometry');
+
+    lockExperimentalTurnFootprint(book, shell);
+    book.classList.add('reader-fixed-edge-turning', 'reader-fixed-final-turning');
+
+    curl = readerPrepareFixedSlotCurl(shell, rightSlot, sourceImg, finalImg);
+    if (curl) {
+      curl.drawFrame(0);
+      await waitForReaderPaint();
+      if (sourceRight?.style) sourceRight.style.visibility = 'hidden';
+      curl.drawFrame(.002);
+      await waitForReaderPaint();
+      await readerAnimatePreparedFixedSlotCurl(curl, 960);
+    } else {
+      turnSheet = makeReaderFixedTurnSheet(
+        'reader-fixed-final-turn-sheet',
+        rightSlot,
+        sourceUrl,
+        finalUrl
+      );
+      if (!turnSheet) throw new Error('Unable to create final turn sheet');
+      shell.appendChild(turnSheet);
+      const turnImages = [...turnSheet.querySelectorAll('img')];
+      await Promise.all(turnImages.map(img => typeof img.decode === 'function' ? img.decode().catch(() => {}) : Promise.resolve()));
+      await waitForReaderPaint();
+      if (sourceRight?.style) sourceRight.style.visibility = 'hidden';
+      const turnAnimation = turnSheet.animate([
+        { transform: 'perspective(2400px) rotateY(0deg)', filter: 'brightness(1)', offset: 0 },
+        { transform: 'perspective(2400px) rotateY(-78deg)', filter: 'brightness(.87)', offset: .49 },
+        { transform: 'perspective(2400px) rotateY(-180deg)', filter: 'brightness(1)', offset: 1 }
+      ], { duration: 900, easing: 'cubic-bezier(.24,.64,.20,1)', fill: 'forwards' });
+      await turnAnimation.finished.catch(() => {});
+    }
+
+    // Hand the fully landed backside to a flat image on the left before changing
+    // the reader into its end-page layout. There is deliberately no right-side
+    // paper underlay: after the last sheet lifts, the reader background is exposed.
+    landingOverlay = makeReaderTurnImageLayer(
+      'reader-fixed-final-landing-overlay',
+      finalUrl,
+      finalLeftGeometry,
+      'left top'
+    );
+    landingOverlay.style.transform = 'translate3d(0,0,0)';
+    shell.appendChild(landingOverlay);
+    const landingImage = landingOverlay.querySelector('img');
+    if (typeof landingImage?.decode === 'function') await landingImage.decode().catch(() => {});
+    await waitForReaderPaint();
+    if (turnSheet) { turnSheet.remove(); turnSheet = null; }
+    if (curl?.webgl?.canvas) {
+      curl.webgl.canvas.style.setProperty('transition', 'opacity 110ms ease-out', 'important');
+      curl.webgl.canvas.style.setProperty('opacity', '0', 'important');
+      await wait(120);
+      readerDisposePreparedFixedSlotCurl(curl);
+      curl = null;
+    }
+
+    renderSpread(nextIndex, { preserveSize: true });
+    const finalDomImage = $('pageRightImage');
+    if (finalDomImage?.style) finalDomImage.style.visibility = 'hidden';
+    if (typeof finalDomImage?.decode === 'function') await finalDomImage.decode().catch(() => {});
+    await waitForReaderPaint();
+
+    const shellWidth = shell.clientWidth || shell.offsetWidth || 0;
+    const centeredLeft = Math.max(0, (shellWidth - finalLeftGeometry.width) / 2);
+    const moveX = centeredLeft - finalLeftGeometry.left;
+    await landingOverlay.animate([
+      { transform: 'translate3d(0,0,0)', offset: 0 },
+      { transform: `translate3d(${(moveX * .26).toFixed(2)}px,0,0)`, offset: .34 },
+      { transform: `translate3d(${moveX.toFixed(2)}px,0,0)`, offset: 1 }
+    ], {
+      duration: 660,
+      easing: 'cubic-bezier(.20,.74,.16,1)',
+      fill: 'forwards'
+    }).finished.catch(() => {});
+
+    if (finalDomImage?.style) finalDomImage.style.visibility = sourceRightVisibility;
+    await waitForReaderPaint();
+    if (landingOverlay) { landingOverlay.remove(); landingOverlay = null; }
+    book.classList.remove('reader-fixed-edge-turning', 'reader-fixed-final-turning');
+    applyReaderShadingSettings();
+    updateReaderPageStackEffect(spreadForIndex(nextIndex));
+    updateReaderPageEdgeShadingBounds();
+  } catch (err) {
+    console.warn('Guidevault fixed final-page close unavailable; using centered end state.', err);
+    renderSpread(nextIndex, { preserveSize: true });
+    const finalDomImage = $('pageRightImage');
+    if (finalDomImage?.style) finalDomImage.style.visibility = sourceRightVisibility;
+    applyReaderShadingSettings();
+    updateReaderPageStackEffect(spreadForIndex(nextIndex));
+    updateReaderPageEdgeShadingBounds();
+  } finally {
+    if (sourceRight?.style) sourceRight.style.visibility = sourceRightVisibility;
+    if (sourceLeft?.style) sourceLeft.style.visibility = sourceLeftVisibility;
+    const finalDomImage = $('pageRightImage');
+    if (finalDomImage?.style) finalDomImage.style.visibility = sourceRightVisibility;
+    if (turnSheet) turnSheet.remove();
+    if (landingOverlay) landingOverlay.remove();
+    if (curl) readerDisposePreparedFixedSlotCurl(curl);
+    book.classList.remove('reader-fixed-edge-turning', 'reader-fixed-final-turning');
+    unlockExperimentalTurnFootprint(book, shell);
+  }
+}
+
+async function settleReaderFinalPageAfterTurn(nextIndex, context = {}) {
+  const {
+    shell,
+    book,
+    webgl,
+    finalPageImg,
+    sourceGeometry,
+    blankUnderlay,
+    sourceImage,
+    sourceOriginalVisibility = ''
+  } = context;
+  if (!shell || !book || !finalPageImg || !sourceGeometry) throw new Error('Missing final-page settle geometry');
+
+  const finalUrl = readerPageUrlAt(nextIndex) || '';
+  const startGeometry = {
+    left: sourceGeometry.left - sourceGeometry.width,
+    top: sourceGeometry.top,
+    width: sourceGeometry.width,
+    height: sourceGeometry.height
+  };
+  let overlay = null;
+  let finalDomImage = null;
+
+  try {
+    // At progress 1 the forward curl is flat on the left side of the binding.
+    // Put an ordinary image at that exact geometry before changing the DOM layout,
+    // then use it as the visual bridge into the centered, single-page end state.
+    overlay = makeReaderTurnImageLayer(
+      'reader-final-page-slide-overlay',
+      finalUrl,
+      startGeometry,
+      'left top'
+    );
+    overlay.style.transform = 'translate3d(0,0,0) scale(1,1)';
+    shell.appendChild(overlay);
+    const overlayImage = overlay.querySelector('img');
+    if (overlayImage && (!overlayImage.complete || !(overlayImage.naturalWidth > 0))) {
+      await new Promise((resolve, reject) => {
+        overlayImage.addEventListener('load', resolve, { once: true });
+        overlayImage.addEventListener('error', () => reject(new Error('Final-page overlay failed to load')), { once: true });
+      });
+    }
+    if (typeof overlayImage?.decode === 'function') await overlayImage.decode().catch(() => {});
+    book.classList.add('reader-final-page-settling');
+    await waitForReaderPaint();
+
+    renderSpread(nextIndex, { preserveSize: true });
+    finalDomImage = $('pageRightImage');
+    if (finalDomImage?.style) finalDomImage.style.visibility = 'hidden';
+    if (typeof finalDomImage?.decode === 'function') await finalDomImage.decode().catch(() => {});
+    if (blankUnderlay) blankUnderlay.remove();
+    await waitForReaderPaint();
+    await waitForReaderPaint();
+
+    const targetGeometry = readerCenteredContainGeometry($('pageRight'), finalPageImg);
+    if (!targetGeometry) throw new Error('Missing centered final-page geometry');
+
+    // The overlay now fully covers the final WebGL frame, so the canvas can leave
+    // before the page travels to center without exposing the old blank right leaf.
+    if (webgl?.canvas) {
+      webgl.canvas.style.setProperty('transition', 'opacity 110ms ease-out', 'important');
+      webgl.canvas.style.setProperty('opacity', '0', 'important');
+      await wait(120);
+    }
+
+    const moveX = targetGeometry.left - startGeometry.left;
+    const moveY = targetGeometry.top - startGeometry.top;
+    const scaleX = targetGeometry.width / Math.max(1, startGeometry.width);
+    const scaleY = targetGeometry.height / Math.max(1, startGeometry.height);
+    const transformAt = amount => {
+      const sx = 1 + (scaleX - 1) * amount;
+      const sy = 1 + (scaleY - 1) * amount;
+      return `translate3d(${(moveX * amount).toFixed(2)}px,${(moveY * amount).toFixed(2)}px,0) scale(${sx.toFixed(5)},${sy.toFixed(5)})`;
+    };
+
+    await overlay.animate([
+      { transform: transformAt(0), filter: 'brightness(.98)', offset: 0 },
+      { transform: transformAt(.28), filter: 'brightness(.995)', offset: .36 },
+      { transform: transformAt(1), filter: 'brightness(1)', offset: 1 }
+    ], {
+      duration: 720,
+      easing: 'cubic-bezier(.20,.74,.16,1)',
+      fill: 'forwards'
+    }).finished.catch(() => {});
+
+    if (finalDomImage?.style) finalDomImage.style.visibility = sourceOriginalVisibility;
+    applyReaderShadingSettings();
+    updateReaderPageStackEffect(spreadForIndex(nextIndex));
+    updateReaderPageEdgeShadingBounds();
+    await waitForReaderPaint();
+  } finally {
+    if (sourceImage?.style) sourceImage.style.visibility = sourceOriginalVisibility;
+    if (finalDomImage?.style) finalDomImage.style.visibility = sourceOriginalVisibility;
+    if (overlay) overlay.remove();
+    book.classList.remove('reader-final-page-settling');
+  }
+}
+
 async function performReaderPageTurnExperimental(nextIndex, dir) {
   const shell = $('pageShell');
   const book = $('book');
@@ -22148,6 +23011,7 @@ async function performReaderPageTurnExperimental(nextIndex, dir) {
   const isCoverOpenTurn = !!fromSpread?.isCover && dir === 'next' && state.reader.displayMode !== 1 && !adaptiveMode;
   const isCoverCloseTurn = !!toSpread?.isCover && dir === 'prev' && !fromSpread?.isSingle && !fromSpread?.isAdaptiveSpread && state.reader.displayMode !== 1;
   const isTwoPageSpreadTurn = !adaptiveMode && !fromSpread?.isSingle && !toSpread?.isSingle && !fromSpread?.isCover && !toSpread?.isCover && state.reader.displayMode !== 1;
+  const isFinalPageTurn = !adaptiveMode && !fromSpread?.isSingle && !!toSpread?.isEndPage && dir === 'next' && state.reader.displayMode !== 1;
   if (isAdaptiveCoverOpenTurn) {
     await performReaderCoverOpenAdaptiveTransition(nextIndex);
     return;
@@ -22157,7 +23021,7 @@ async function performReaderPageTurnExperimental(nextIndex, dir) {
     return;
   }
   if (isCoverOpenTurn) {
-    await performReaderCoverOpenTransition(nextIndex);
+    await performReaderCoverOpenFixedTransition(nextIndex);
     return;
   }
   if (isCoverCloseTurn) {
@@ -22168,7 +23032,11 @@ async function performReaderPageTurnExperimental(nextIndex, dir) {
     await performReaderAdaptiveSpreadTurn(nextIndex, dir);
     return;
   }
-  if (!isTwoPageSpreadTurn) {
+  if (isFinalPageTurn) {
+    await performReaderFinalPageFixedTransition(nextIndex);
+    return;
+  }
+  if (!isTwoPageSpreadTurn && !isFinalPageTurn) {
     renderSpread(nextIndex, { preserveSize: true });
     return;
   }
@@ -22186,7 +23054,9 @@ async function performReaderPageTurnExperimental(nextIndex, dir) {
   let sourceHidden = false;
   const hideTarget = source?.image || source?.page || null;
   let webgl = null;
+  let blankUnderlay = null;
   let textures = [];
+  let finalPageImg = null;
 
   try {
     // Preload images before touching the visible reader. This prevents the brief flash
@@ -22196,9 +23066,15 @@ async function performReaderPageTurnExperimental(nextIndex, dir) {
       readerLoadImageForTexture(backUrl),
       underlayUrl ? readerLoadImageForTexture(underlayUrl).catch(() => null) : Promise.resolve(null)
     ]);
+    if (isFinalPageTurn) finalPageImg = backImg;
 
     lockExperimentalTurnFootprint(book, shell);
     shell.classList.add('reader-page-turn-active', 'reader-page-turn-webgl-active');
+
+    if (!underlayUrl) {
+      blankUnderlay = makeReaderTurnShadowLayer('reader-page-turn-blank-underlay', sourceGeometry);
+      if (blankUnderlay) shell.appendChild(blankUnderlay);
+    }
 
     webgl = readerCreateWebGlPageCurlCanvas(shell);
     if (!webgl) throw new Error('WebGL unavailable');
@@ -22221,7 +23097,6 @@ async function performReaderPageTurnExperimental(nextIndex, dir) {
 
     const underlayMesh = underlayTexture ? readerBuildWebGlQuad(sourceGeometry, width, height, false) : null;
     const sourceHoldMesh = readerBuildWebGlQuad(sourceGeometry, width, height, false);
-    const duration = 980;
 
     const drawCurlFrame = p => {
       gl.viewport(0, 0, webgl.canvas.width, webgl.canvas.height);
@@ -22260,11 +23135,14 @@ async function performReaderPageTurnExperimental(nextIndex, dir) {
 
     // Draw the first WebGL frame before hiding the DOM page so there is no empty/flash frame.
     drawCurlFrame(0);
+    await waitForReaderPaint();
     sourceOriginalVisibility = hideTarget?.style?.visibility || '';
     if (hideTarget?.style) hideTarget.style.visibility = 'hidden';
     sourceHidden = true;
+    drawCurlFrame(.002);
     await waitForReaderPaint();
 
+    const duration = 980;
     const start = performance.now();
     await new Promise(resolve => {
       const draw = now => {
@@ -22284,22 +23162,46 @@ async function performReaderPageTurnExperimental(nextIndex, dir) {
     // Keep the WebGL canvas covering the reader while the final spread is painted,
     // then fade the canvas away after the normal binding/page-edge shadows have been
     // recalculated. This prevents the end-of-turn shadow pop.
-    renderSpread(nextIndex, { preserveSize: true });
-    if (sourceHidden && hideTarget?.style) hideTarget.style.visibility = sourceOriginalVisibility;
-    applyReaderShadingSettings();
-    updateReaderPageStackEffect(spreadForIndex(nextIndex));
-    updateReaderPageEdgeShadingBounds();
-    shell.classList.add('reader-webgl-shadow-settle');
-    await waitForReaderPaint();
-    await waitForReaderPaint();
-    if (webgl?.canvas) {
-      webgl.canvas.style.transition = 'opacity 140ms ease-out';
-      webgl.canvas.style.opacity = '0';
-      await wait(150);
+    let finalPageSettled = false;
+    if (isFinalPageTurn && webgl?.canvas && finalPageImg) {
+      try {
+        await settleReaderFinalPageAfterTurn(nextIndex, {
+          shell,
+          book,
+          webgl,
+          finalPageImg,
+          sourceGeometry,
+          blankUnderlay,
+          sourceImage: hideTarget,
+          sourceOriginalVisibility
+        });
+        finalPageSettled = true;
+        sourceHidden = false;
+        blankUnderlay = null;
+      } catch (err) {
+        console.warn('Guidevault final-page center settle unavailable; using centered end state.', err);
+      }
+    }
+
+    if (!finalPageSettled) {
+      renderSpread(nextIndex, { preserveSize: true });
+      if (sourceHidden && hideTarget?.style) hideTarget.style.visibility = sourceOriginalVisibility;
+      applyReaderShadingSettings();
+      updateReaderPageStackEffect(spreadForIndex(nextIndex));
+      updateReaderPageEdgeShadingBounds();
+      shell.classList.add('reader-webgl-shadow-settle');
+      await waitForReaderPaint();
+      await waitForReaderPaint();
+      if (webgl?.canvas) {
+        webgl.canvas.style.setProperty('transition', 'opacity 140ms ease-out', 'important');
+        webgl.canvas.style.setProperty('opacity', '0', 'important');
+        await wait(150);
+      }
     }
     if (webgl?.gl) {
       textures.forEach(texture => { try { webgl.gl.deleteTexture(texture); } catch {} });
     }
+    if (blankUnderlay) blankUnderlay.remove();
     if (webgl?.canvas) webgl.canvas.remove();
     shell.classList.remove('reader-page-turn-active', 'reader-page-turn-webgl-active', 'reader-page-turn-mesh-active', 'reader-page-turn-single-curl-active', 'reader-webgl-shadow-settle');
     unlockExperimentalTurnFootprint(book, shell);
@@ -22401,19 +23303,7 @@ async function performReaderTransition(nextIndex, dir, mode) {
 
 function preloadReaderImage(url) {
   if (!url) return Promise.resolve();
-  return new Promise(resolve => {
-    const img = new Image();
-    const finish = () => {
-      if (img.decode) {
-        img.decode().then(resolve).catch(resolve);
-      } else {
-        resolve();
-      }
-    };
-    img.onload = finish;
-    img.onerror = () => resolve();
-    img.src = url;
-  });
+  return readerLoadImageForTexture(url).then(() => undefined).catch(() => undefined);
 }
 
 function setSnapshotSpread(spread) {
@@ -22430,15 +23320,15 @@ function setSnapshotSpread(spread) {
   if (prevRight) prevRight.classList.remove('blank-page');
 
   if (spread.isCover) {
-    if (prevRightImage) prevRightImage.src = spread.rightUrl || '';
-    if (prevLeftImage) prevLeftImage.src = '';
+    setReaderImageSource(prevRightImage, spread.rightUrl || '');
+    setReaderImageSource(prevLeftImage, '');
     snapshot.classList.add('cover-snapshot');
     return;
   }
 
   snapshot.classList.remove('cover-snapshot');
-  if (prevLeftImage) prevLeftImage.src = spread.leftUrl || '';
-  if (prevRightImage) prevRightImage.src = spread.rightUrl || '';
+  setReaderImageSource(prevLeftImage, spread.leftUrl || '');
+  setReaderImageSource(prevRightImage, spread.rightUrl || '');
   if (prevRight) prevRight.classList.toggle('blank-page', !!spread.isBlankRight);
 }
 
@@ -22953,7 +23843,7 @@ function statCoverageGauge(percent = 0, label = 'Coverage') {
     <text x="60" y="73" text-anchor="middle" class="launchbox-stat-gauge-label">${escapeHtml(label)}</text>
   </svg>`;
 }
-function launchBoxStatKpi(label, value, sub = '', icon = '◆') {
+function launchBoxStatKpi(label, value, sub = '', icon = 'â—†') {
   return `<div class="launchbox-stat-kpi"><i>${escapeHtml(icon)}</i><strong>${escapeHtml(value)}</strong><span>${escapeHtml(label)}</span>${sub ? `<em>${escapeHtml(sub)}</em>` : ''}</div>`;
 }
 function launchBoxStatLane(label, value, total, tone = 'blue') {
@@ -22972,7 +23862,7 @@ function launchBoxPlatformSpark(row = {}, maxGames = 1) {
   const rowWidth = Math.max(8, Math.min(100, (games / Math.max(1, maxGames)) * 100));
   const matchedPct = games > 0 ? Math.max(0, Math.min(100, (matched / games) * 100)) : 0;
   return `<div class="launchbox-platform-spark">
-    <div class="launchbox-platform-spark-name"><strong>${escapeHtml(row.platform || 'Unknown')}</strong><span>${launchBoxNumber(games)} games · ${launchBoxPercent(row.coveragePercent)} covered</span></div>
+    <div class="launchbox-platform-spark-name"><strong>${escapeHtml(row.platform || 'Unknown')}</strong><span>${launchBoxNumber(games)} games Â· ${launchBoxPercent(row.coveragePercent)} covered</span></div>
     <div class="launchbox-platform-spark-track" style="width:${rowWidth.toFixed(2)}%"><b style="width:${matchedPct.toFixed(2)}%"></b><i style="width:${Math.max(0, 100 - matchedPct).toFixed(2)}%"></i></div>
     <em>${launchBoxNumber(matched)} matched / ${launchBoxNumber(missing)} missing</em>
   </div>`;
@@ -23017,13 +23907,13 @@ function renderStatisticsLaunchBoxManagement() {
   const rejectedDeg = Math.max(0, 360 - ambiguousDeg - confirmedDeg);
   host.innerHTML = `
     <div class="statistics-launchbox-hero">
-      <div class="launchbox-stat-gauge-card">${statCoverageGauge(coverage.coveragePercent, 'covered')}<div><h3>${launchBoxNumber(total)} LaunchBox games</h3><p>${launchBoxNumber(matched)} matched · ${launchBoxNumber(missing)} missing</p></div></div>
+      <div class="launchbox-stat-gauge-card">${statCoverageGauge(coverage.coveragePercent, 'covered')}<div><h3>${launchBoxNumber(total)} LaunchBox games</h3><p>${launchBoxNumber(matched)} matched Â· ${launchBoxNumber(missing)} missing</p></div></div>
       <div class="launchbox-stat-kpi-grid">
-        ${launchBoxStatKpi('Matched Games', launchBoxNumber(matched), `${launchBoxNumber(missing)} missing`, '✓')}
-        ${launchBoxStatKpi('Manual Matches', launchBoxNumber(manual), `${launchBoxPercent(coverage.manualCoveragePercent)} manual coverage`, '📘')}
-        ${launchBoxStatKpi('Strategy Guide Matches', launchBoxNumber(guide), `${launchBoxPercent(coverage.strategyGuideCoveragePercent)} guide coverage`, '🧭')}
-        ${launchBoxStatKpi('Magazine Matches', launchBoxNumber(magazine), `${launchBoxPercent(coverage.magazineCoveragePercent)} magazine coverage`, '📰')}
-        ${launchBoxStatKpi('Ambiguous', launchBoxNumber(ambiguous), 'needs review', '⚠')}
+        ${launchBoxStatKpi('Matched Games', launchBoxNumber(matched), `${launchBoxNumber(missing)} missing`, 'âœ“')}
+        ${launchBoxStatKpi('Manual Matches', launchBoxNumber(manual), `${launchBoxPercent(coverage.manualCoveragePercent)} manual coverage`, 'ðŸ“˜')}
+        ${launchBoxStatKpi('Strategy Guide Matches', launchBoxNumber(guide), `${launchBoxPercent(coverage.strategyGuideCoveragePercent)} guide coverage`, 'ðŸ§­')}
+        ${launchBoxStatKpi('Magazine Matches', launchBoxNumber(magazine), `${launchBoxPercent(coverage.magazineCoveragePercent)} magazine coverage`, 'ðŸ“°')}
+        ${launchBoxStatKpi('Ambiguous', launchBoxNumber(ambiguous), 'needs review', 'âš ')}
       </div>
     </div>
     <div class="statistics-launchbox-chart-grid">
@@ -23541,7 +24431,7 @@ if ($('deleteBtn')) $('deleteBtn').addEventListener('click', async e => {
       }
     });
 });
-if ($('closeReader')) $('closeReader').addEventListener('click', () => { saveCurrentReaderSettingsToEntryProfile('reader-close'); setReaderOverlayVisible(false); $('readerView').classList.add('hidden'); $('libraryView').classList.remove('hidden'); });
+if ($('closeReader')) $('closeReader').addEventListener('click', () => { setReaderOverlayVisible(false); $('readerView').classList.add('hidden'); $('libraryView').classList.remove('hidden'); });
 if ($('nextPage')) $('nextPage').addEventListener('click', () => showPage(state.reader.index, 'next'));
 if ($('prevPage')) $('prevPage').addEventListener('click', () => showPage(state.reader.index, 'prev'));
 if ($('rightHit')) $('rightHit').addEventListener('click', e => { if (consumeReaderLongPressClick()) { e.preventDefault(); return; } showPage(state.reader.index, 'next'); });
@@ -24838,7 +25728,7 @@ function serverFilesSyncTemplateEditor(kind = serverFilesCurrentTemplateKind()) 
     return item.kind === 'Strategy Guide';
   }).length;
   const scope = $('serverFilesRuleScopeSummary');
-  if (scope) scope.textContent = `Editing ${defs[normalizedKind].label}${selectedCount ? ` · ${selectedCount} selected` : ''}.`;
+  if (scope) scope.textContent = `Editing ${defs[normalizedKind].label}${selectedCount ? ` Â· ${selectedCount} selected` : ''}.`;
   serverFilesUpdateTemplateBreakdown();
 }
 
@@ -25247,7 +26137,7 @@ function serverFilesConvertRowsHtml(rows = []) {
       <td><span class="conversion-type-pill">${escapeHtml(row.kind || '')}</span></td>
       <td><strong class="conversion-title">${escapeHtml(row.title || '')}</strong></td>
       <td><b>${escapeHtml(row.sourceFormat || '')}</b><small>${escapeHtml(row.sourceFileName || row.fileName || '')}</small></td>
-      <td><b>${escapeHtml(row.targetFormat || '')}</b><small>${escapeHtml(row.outputFileName || '—')}</small></td>
+      <td><b>${escapeHtml(row.targetFormat || '')}</b><small>${escapeHtml(row.outputFileName || 'â€”')}</small></td>
       <td><span class="conversion-size-text">${serverFilesFormatBytes(row.sourceBytes)} &rarr; ${serverFilesFormatBytes(row.outputBytes)}</span></td>
       <td><b>${escapeHtml(row.success ? 'Created' : 'Failed')}</b>${row.message ? `<small>${escapeHtml(row.message)}</small>` : ''}</td>
     </tr>`).join('')}</tbody></table>`;

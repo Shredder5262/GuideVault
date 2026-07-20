@@ -1,4 +1,4 @@
-<!doctype html>
+﻿<!doctype html>
 <html lang="en">
 <head>
   <meta charset="utf-8" />
@@ -6,7 +6,7 @@
   <title>Guidevault</title>
   <link rel="icon" type="image/x-icon" href="/assets/favicon.ico?v=0.9.228" />
   <link rel="shortcut icon" type="image/x-icon" href="/assets/favicon.ico?v=0.9.228" />
-  <link rel="stylesheet" href="/styles.css?v=1.2.10" />
+  <link rel="stylesheet" href="/styles.css?v=1.3.1" />
 </head>
 <body class="right-collapsed auth-locked">
   <section id="loginView" class="login-view" aria-labelledby="loginTitle">
@@ -142,7 +142,16 @@
 
       <section id="libraryView" class="library-view">
         <div id="libraryGridScroll" class="library-grid-scroll">
-        <div class="heading-row"><div><h1 id="pageTitle">Home</h1><span id="itemCount" class="pill">0 items</span></div><div class="library-heading-controls"><label class="cover-size-control" for="coverSizeSlider"><span>Cover size</span><input id="coverSizeSlider" type="range" min="75" max="140" step="5" value="100" /><em id="coverSizeValue">100%</em></label><label class="library-sort-control" for="sort"><span>Sort by</span><select id="sort" aria-label="Sort library"><option value="recent">Date Added</option><option value="title">Title A-Z</option><option value="issue">Issue #</option><option value="kind">Library Type</option><option value="category">Platform/Series</option></select></label></div></div>
+        <div id="libraryHeader" class="heading-row library-header-banner">
+          <div class="library-heading-copy">
+            <span id="libraryContextLabel" class="library-context-label">GUIDEVAULT LIBRARY</span>
+            <div class="library-title-line"><h1 id="pageTitle">Home</h1><span id="itemCount" class="pill">0 items</span></div>
+          </div>
+          <div class="library-heading-controls">
+            <label class="cover-size-control" for="coverSizeSlider"><span>Cover size</span><input id="coverSizeSlider" type="range" min="75" max="140" step="5" value="100" /><em id="coverSizeValue">100%</em></label>
+            <label class="library-sort-control" for="sort"><span>Sort by</span><select id="sort" aria-label="Sort library"><option value="recent">Date Added</option><option value="title">Title A-Z</option><option value="issue">Issue #</option><option value="kind">Library Type</option><option value="category">Platform/Series</option></select></label>
+          </div>
+        </div>
         <div id="homeShelves" class="home-shelves"></div>
         <section id="homeCollections" class="home-collections hidden" aria-label="User collections"></section>
         <h2 class="section-recent-title hidden">Recently Added</h2>
@@ -700,12 +709,12 @@
               <div class="reading-profile-card-header">
                 <div>
                   <h3>Background Library</h3>
-                  <p class="sub">Upload custom reader backgrounds here. Uploaded images are normalized to 1920 × 1080 and appear in the Background Type list for every reading profile.</p>
+                  <p class="sub">Upload custom reader backgrounds here. Uploaded images are normalized to 1920 Ã— 1080 and appear in the Background Type list for every reading profile.</p>
                 </div>
                 <button id="readerBackgroundRefreshUploads" class="ghost" type="button">Refresh</button>
               </div>
               <div class="reader-background-upload-grid">
-                <label for="readerBackgroundUploadFile">Background Image <span class="field-hint">1920 × 1080 output</span>
+                <label for="readerBackgroundUploadFile">Background Image <span class="field-hint">1920 Ã— 1080 output</span>
                   <input id="readerBackgroundUploadFile" type="file" accept="image/png,image/jpeg,image/webp,image/gif,image/bmp" />
                 </label>
                 <label for="readerBackgroundUploadName">Display Name
@@ -2003,31 +2012,31 @@
                   <div class="task-card-title-row"><div><span>Library Scan</span><em>Finds changed files and refreshes the active library index.</em></div><button class="task-mini-run" type="button" data-task-run="libraryScan">Run now</button></div>
                   <label>Schedule<select id="taskLibraryScan" data-task-schedule="libraryScan"></select></label>
                   <label class="task-custom-cron hidden" for="taskLibraryScanCustom">Custom cron<input id="taskLibraryScanCustom" data-task-cron="libraryScan" type="text" placeholder="0 2 * * *" /></label>
-                  <small class="task-next-run" data-task-next="libraryScan">Next run: —</small>
+                  <small class="task-next-run" data-task-next="libraryScan">Next run: â€”</small>
                 </div>
                 <div class="task-setting-card enhanced-task-setting-card" data-task-card="metadataCheck">
                   <div class="task-card-title-row"><div><span>Metadata Checks</span><em>Runs the fast GuideVault JSON metadata reconciliation pass.</em></div><button class="task-mini-run" type="button" data-task-run="metadataCheck">Run now</button></div>
                   <label>Schedule<select id="taskMetadataCheck" data-task-schedule="metadataCheck"></select></label>
                   <label class="task-custom-cron hidden" for="taskMetadataCheckCustom">Custom cron<input id="taskMetadataCheckCustom" data-task-cron="metadataCheck" type="text" placeholder="0 3 * * *" /></label>
-                  <small class="task-next-run" data-task-next="metadataCheck">Next run: —</small>
+                  <small class="task-next-run" data-task-next="metadataCheck">Next run: â€”</small>
                 </div>
                 <div class="task-setting-card enhanced-task-setting-card" data-task-card="libraryUpkeep">
                   <div class="task-card-title-row"><div><span>Library Upkeep</span><em>Runs safe cleanup/reconciliation for stale library entries.</em></div><button class="task-mini-run" type="button" data-task-run="libraryUpkeep">Run now</button></div>
                   <label>Schedule<select id="taskLibraryUpkeep" data-task-schedule="libraryUpkeep"></select></label>
                   <label class="task-custom-cron hidden" for="taskLibraryUpkeepCustom">Custom cron<input id="taskLibraryUpkeepCustom" data-task-cron="libraryUpkeep" type="text" placeholder="0 3 * * 0" /></label>
-                  <small class="task-next-run" data-task-next="libraryUpkeep">Next run: —</small>
+                  <small class="task-next-run" data-task-next="libraryUpkeep">Next run: â€”</small>
                 </div>
                 <div class="task-setting-card enhanced-task-setting-card" data-task-card="cacheCleanup">
                   <div class="task-card-title-row"><div><span>Cache Cleanup</span><em>Clears archive/cover memory caches and compacts app memory.</em></div><button class="task-mini-run" type="button" data-task-run="cacheCleanup">Run now</button></div>
                   <label>Schedule<select id="taskCacheCleanup" data-task-schedule="cacheCleanup"></select></label>
                   <label class="task-custom-cron hidden" for="taskCacheCleanupCustom">Custom cron<input id="taskCacheCleanupCustom" data-task-cron="cacheCleanup" type="text" placeholder="0 * * * *" /></label>
-                  <small class="task-next-run" data-task-next="cacheCleanup">Next run: —</small>
+                  <small class="task-next-run" data-task-next="cacheCleanup">Next run: â€”</small>
                 </div>
                 <div class="task-setting-card enhanced-task-setting-card" data-task-card="guidevaultBackup">
                   <div class="task-card-title-row"><div><span>GuideVault Backup</span><em>Backs up config, index, metadata overrides, user settings, and email history.</em></div><button class="task-mini-run" type="button" data-task-run="guidevaultBackup">Run now</button></div>
                   <label>Schedule<select id="taskGuidevaultBackup" data-task-schedule="guidevaultBackup"></select></label>
                   <label class="task-custom-cron hidden" for="taskGuidevaultBackupCustom">Custom cron<input id="taskGuidevaultBackupCustom" data-task-cron="guidevaultBackup" type="text" placeholder="0 4 * * 0" /></label>
-                  <small class="task-next-run" data-task-next="guidevaultBackup">Next run: —</small>
+                  <small class="task-next-run" data-task-next="guidevaultBackup">Next run: â€”</small>
                 </div>
               </div>
               <div class="settings-actions inline-actions"><button id="tasksSaveSettings" class="primary" type="button">Save Task Schedule</button></div>
@@ -2201,6 +2210,35 @@
             <div id="systemUpdateHistoryList" class="system-update-list">
               <details class="system-update-entry" open>
                 <summary>
+                  <span>GuideVault 1.3.0 - Reader + Library Interaction Update</span>
+                </summary>
+                <div class="system-update-body">
+                  <h3><b>1</b> Cleaner Manual Libraries</h3>
+                  <ul>
+                    <li>Groups the active manual system, item count, cover-size control, and sorting control into a unified library header.</li>
+                    <li>Tightens manual cards, removes the CBZ Pages badge, and displays the favorite indicator only on items that are actually favorited.</li>
+                    <li>Adds a three-dot item menu for opening, favoriting, refreshing one item, and adding content to collections or dossiers.</li>
+                  </ul>
+                  <h3><b>2</b> Dossier + Reading Profile Reliability</h3>
+                  <ul>
+                    <li>Polishes dossier background scrolling and restores the dossier artwork layer without the previous sticky-background artifact.</li>
+                    <li>Keeps one-off reader setting changes session-specific instead of automatically creating a separate reading profile for every edited book.</li>
+                  </ul>
+                  <h3><b>3</b> Rebuilt Reader Edge Turns</h3>
+                  <ul>
+                    <li>Prevents duplicated or missing final pages in two-page reading and centers an unpaired last page after it turns onto the left.</li>
+                    <li>Uses separate, aspect-preserving front and backside textures so opening and closing page curls reveal the correct pages without mirrored or stretched scans.</li>
+                    <li>Delays the first interior spread until the cover is visibly turning and suppresses page-stack artifacts throughout the first- and last-page handoffs.</li>
+                  </ul>
+                  <h3><b>4</b> Page-Turn Performance + Handoffs</h3>
+                  <ul>
+                    <li>Caps curl texture and canvas work, reduces mesh overhead, caches decoded page textures, and keeps transitions on the GPU when available.</li>
+                    <li>Coordinates decoded-image, DOM, and WebGL handoffs to reduce blank frames, duplicate flashes, and end-of-turn shadow pops.</li>
+                  </ul>
+                </div>
+              </details>
+              <details class="system-update-entry">
+                <summary>
                   <span>GuideVault 1.2.9 - Dossier Manage Mode</span>
                 </summary>
                 <div class="system-update-body">
@@ -2234,7 +2272,7 @@
                   </ul>
                   <h3><b>3</b> Platform + Website Refinements</h3>
                   <ul>
-                    <li>Fetches IGDB platform logos and lets an administrator choose the dossier’s primary platform.</li>
+                    <li>Fetches IGDB platform logos and lets an administrator choose the dossierâ€™s primary platform.</li>
                     <li>Labels Wikipedia and Nintendo support links clearly instead of showing repeated generic Website buttons.</li>
                     <li>Refreshes IGDB media, platform details, and GuideVault matches together from the dossier controls.</li>
                   </ul>
@@ -2247,12 +2285,12 @@
                 <div class="system-update-body">
                   <h3><b>1</b> Custom Shortcut Visibility</h3>
                   <ul>
-                    <li>Correctly identifies entries such as “silent hill” as saved custom sidebar shortcuts rather than Collections.</li>
+                    <li>Correctly identifies entries such as â€œsilent hillâ€ as saved custom sidebar shortcuts rather than Collections.</li>
                     <li>Hides custom shortcuts with zero matching library items so empty rows no longer remain beneath the primary navigation.</li>
                   </ul>
                   <h3><b>2</b> Settings Access Preserved</h3>
                   <ul>
-                    <li>Keeps hidden shortcuts in Settings → Account → Customize → Side Nav so they can be adjusted or removed.</li>
+                    <li>Keeps hidden shortcuts in Settings â†’ Account â†’ Customize â†’ Side Nav so they can be adjusted or removed.</li>
                   </ul>
                 </div>
               </details>
@@ -2296,7 +2334,7 @@
                 <div class="system-update-body">
                   <h3><b>1</b> Larger Dashboard Typography</h3>
                   <ul>
-                    <li>Increases supporting Dossier text from the previous compact 9–11px sizing into a more readable 12–15px desktop range while leaving the game title unchanged.</li>
+                    <li>Increases supporting Dossier text from the previous compact 9â€“11px sizing into a more readable 12â€“15px desktop range while leaving the game title unchanged.</li>
                     <li>Enlarges metadata pills, field labels and values, identifiers, card headings, document rows, related games, platforms, Quick Facts, actions, and activity text.</li>
                   </ul>
                   <h3><b>2</b> Spacing Balance</h3>
@@ -2306,8 +2344,8 @@
                   <h3><b>3</b> Settings-based Creation Wizard</h3>
                   <ul>
                     <li>Removes the Game Dossier tab and quick action from individual item details.</li>
-                    <li>Turns Account → Game Dossiers → Choose a Manual or Guide into a three-step popup wizard with searchable library selection, IGDB matching, and explicit dossier creation.</li>
-                    <li>Keeps the item Metadata → IGDB workflow focused on metadata imports rather than dossier creation.</li>
+                    <li>Turns Account â†’ Game Dossiers â†’ Choose a Manual or Guide into a three-step popup wizard with searchable library selection, IGDB matching, and explicit dossier creation.</li>
+                    <li>Keeps the item Metadata â†’ IGDB workflow focused on metadata imports rather than dossier creation.</li>
                   </ul>
                 </div>
               </details>
@@ -3601,7 +3639,7 @@
     <div class="dossier-item-picker-card">
       <header class="dossier-item-picker-head">
         <div>
-          <span>GAME DOSSIER WIZARD · STEP 1 OF 3</span>
+          <span>GAME DOSSIER WIZARD Â· STEP 1 OF 3</span>
           <h2>Choose a Manual or Strategy Guide</h2>
           <p>Search the accessible GuideVault library and select the document that belongs to the game dossier.</p>
         </div>
@@ -3670,7 +3708,7 @@
   </dialog>
 
 
-  <script src="/app.js?v=1.2.10"></script>
+  <script src="/app.js?v=1.3.1"></script>
 </body>
 </html>
 

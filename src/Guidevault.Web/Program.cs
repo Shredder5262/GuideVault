@@ -1,4 +1,4 @@
-using System.Collections.Concurrent;
+﻿using System.Collections.Concurrent;
 using System.IO.Compression;
 using System.Security.Cryptography;
 using System.Text;
@@ -31,7 +31,7 @@ builder.Services.AddResponseCompression(responseCompression =>
         "image/svg+xml"
     });
 });
-const string GuidevaultVersion = "1.2.10";
+const string GuidevaultVersion = "1.3.1";
 var app = builder.Build();
 var metadataJsonOptions = new JsonSerializerOptions(JsonSerializerDefaults.Web) { PropertyNameCaseInsensitive = true };
 var options = app.Configuration.GetSection("Guidevault").Get<GuidevaultOptions>() ?? new GuidevaultOptions();
@@ -1927,6 +1927,42 @@ app.MapGet("/api/items/{id}", async (HttpRequest request, string id) =>
     return item is null ? Results.NotFound() : Results.Ok(item);
 });
 
+app.MapPost("/api/items/{id}/refresh", async (HttpRequest request, string id) =>
+{
+    var visible = VisibleLibraryItems(request, cache.GetItemsSnapshot())
+        .Any(item => string.Equals(item.Id, id, StringComparison.OrdinalIgnoreCase));
+    if (!visible) return Results.NotFound(new { error = "Library item not found." });
+
+    var task = taskMonitor.Start("item-refresh", "Refresh library item", "Item refresh queued.");
+    try
+    {
+        var item = await cache.RefreshItemAsync(id, task.Id);
+        if (item is null)
+        {
+            taskMonitor.Fail(task.Id, "Item refresh failed: the indexed item no longer exists.");
+            return Results.NotFound(new { error = "Library item not found." });
+        }
+
+        taskMonitor.Complete(task.Id, $"Refreshed {item.Title} without scanning the rest of the library.", 100);
+        return Results.Ok(new
+        {
+            item,
+            taskId = task.Id,
+            message = "Item refreshed without running a full library scan."
+        });
+    }
+    catch (FileNotFoundException ex)
+    {
+        taskMonitor.Fail(task.Id, $"Item refresh failed: {ex.Message}");
+        return Results.NotFound(new { error = ex.Message });
+    }
+    catch (Exception ex)
+    {
+        taskMonitor.Fail(task.Id, $"Item refresh failed: {ex.Message}");
+        return Results.BadRequest(new { error = $"Item refresh failed: {ex.Message}" });
+    }
+});
+
 app.MapGet("/api/items/{id}/reviews", (string id) =>
 {
     if (string.IsNullOrWhiteSpace(id))
@@ -2146,6 +2182,25 @@ app.MapPatch("/api/dossiers/{id}", (HttpRequest request, string id, [FromBody] J
     var dossier = gameDossierStore.SetPrimaryPlatform(id, primaryPlatform);
     if (dossier is null) return Results.NotFound(new { error = "Dossier or platform not found." });
     RecordSystemEvent("Dossier", "Primary platform changed", $"Set {dossier.PrimaryPlatform} as the primary platform for {dossier.GameTitle}.", "api");
+    return Results.Ok(new { dossier, dossiers = gameDossierStore.GetAll() });
+});
+
+app.MapPost("/api/dossiers/{id}/library-items", (HttpRequest request, string id, [FromBody] JsonElement payload) =>
+{
+    if (CurrentGuidevaultUser(request) is null) return Results.Unauthorized();
+    if (!VisibleGameDossiers(request).Any(dossier => string.Equals(dossier.Id, id, StringComparison.OrdinalIgnoreCase)))
+        return Results.NotFound(new { error = "Game dossier not found." });
+    var itemId = payload.ValueKind == JsonValueKind.Object
+        && payload.TryGetProperty("itemId", out var itemIdValue)
+        && itemIdValue.ValueKind == JsonValueKind.String
+            ? itemIdValue.GetString() ?? string.Empty
+            : string.Empty;
+    if (string.IsNullOrWhiteSpace(itemId)) return Results.BadRequest(new { error = "A library item ID is required." });
+    if (!VisibleLibraryItems(request, cache.GetItemsSnapshot()).Any(item => string.Equals(item.Id, itemId, StringComparison.OrdinalIgnoreCase)))
+        return Results.NotFound(new { error = "Library item not found." });
+    var dossier = gameDossierStore.AddLibraryItem(id, itemId);
+    if (dossier is null) return Results.NotFound(new { error = "Game dossier not found." });
+    RecordSystemEvent("Dossier", "Document linked", $"Added a GuideVault document link to {dossier.GameTitle}.", "api");
     return Results.Ok(new { dossier, dossiers = gameDossierStore.GetAll() });
 });
 
@@ -6886,11 +6941,6 @@ public static class GuidevaultReadingProfileResolver
             return BuildResult(item, "Default profile", string.IsNullOrWhiteSpace(defaultProfileId) ? "default" : defaultProfileId, string.Empty, defaultProfile, candidateGroupKeys, defaultProfileId, true, "Configured global default profile from server preferences.");
         }
 
-        if (entryProfile.HasValue && entryIsAuto)
-        {
-            return BuildResult(item, "Manual reader override", entryProfileId, entryKey, entryProfile.Value, candidateGroupKeys, defaultProfileId, true, "Auto-generated reader override; used only because no server profile assignment/default matched.");
-        }
-
         return BuildResult(item, "Built-in default", "default", string.Empty, defaultProfile, candidateGroupKeys, defaultProfileId, false, "No server reading profile assignment matched this item.");
     }
 
@@ -7393,6 +7443,27 @@ public sealed class GuidevaultGameDossierStore
             var excluded = CleanArray(dossier.ExcludedLibraryItemIds).ToHashSet(StringComparer.OrdinalIgnoreCase);
             dossier.LibraryItemIds = MatchLibraryItemIds(dossier, libraryItems)
                 .Where(itemId => !excluded.Contains(itemId))
+                .ToArray();
+            var libraryCollection = BuildLibraryCollection(dossier.LibraryItemIds);
+            dossier.Collections = new[] { libraryCollection }
+                .Concat((dossier.Collections ?? Array.Empty<GuidevaultDossierCollection>()).Where(collection => !string.Equals(collection.Kind, "library", StringComparison.OrdinalIgnoreCase)))
+                .ToArray();
+            dossier.UpdatedAt = DateTimeOffset.UtcNow;
+            Save();
+            return Clone(dossier);
+        }
+    }
+
+    public GuidevaultGameDossier? AddLibraryItem(string id, string itemId)
+    {
+        lock (_gate)
+        {
+            var dossier = _data.Dossiers.FirstOrDefault(candidate => string.Equals(candidate.Id, id, StringComparison.OrdinalIgnoreCase));
+            var cleanItemId = Clean(itemId);
+            if (dossier is null || string.IsNullOrWhiteSpace(cleanItemId)) return null;
+            dossier.LibraryItemIds = CleanArray((dossier.LibraryItemIds ?? Array.Empty<string>()).Append(cleanItemId));
+            dossier.ExcludedLibraryItemIds = CleanArray(dossier.ExcludedLibraryItemIds)
+                .Where(candidate => !string.Equals(candidate, cleanItemId, StringComparison.OrdinalIgnoreCase))
                 .ToArray();
             var libraryCollection = BuildLibraryCollection(dossier.LibraryItemIds);
             dossier.Collections = new[] { libraryCollection }
@@ -10199,7 +10270,7 @@ public static class GuidevaultLaunchBoxMatcher
         var issue = Clean(item.IssueNumber);
         if (!string.IsNullOrWhiteSpace(volume)) parts.Add(HasPrefix(volume, "vol", "volume") ? volume : $"Vol. {volume}");
         if (!string.IsNullOrWhiteSpace(issue)) parts.Add(HasPrefix(issue, "issue", "#", "no") ? issue : $"Issue #{issue}");
-        return string.Join(" • ", parts);
+        return string.Join(" â€¢ ", parts);
     }
 
     private static bool HasPrefix(string value, params string[] prefixes)
@@ -14556,6 +14627,46 @@ public sealed class LibraryCache
         }
     }
 
+    public async Task<LibraryItem?> RefreshItemAsync(string id, string taskId)
+    {
+        if (string.IsNullOrWhiteSpace(id)) return null;
+        if (_lock.CurrentCount == 0)
+            _taskMonitor.Update(taskId, "Waiting for the current library operation to finish...", 1);
+
+        await _lock.WaitAsync();
+        try
+        {
+            var currentItems = (_items ?? LoadPersistedCache() ?? Array.Empty<LibraryItem>()).ToList();
+            var existing = currentItems.FirstOrDefault(item => string.Equals(item.Id, id, StringComparison.OrdinalIgnoreCase));
+            if (existing is null) return null;
+            if (string.IsNullOrWhiteSpace(existing.Path) || !File.Exists(existing.Path))
+                throw new FileNotFoundException("The source file for this library item is missing.", existing.Path);
+
+            if (GuidevaultLibraryIoGate.IsBusy)
+                _taskMonitor.Update(taskId, "Waiting for the current file operation to finish before refreshing this item...", 1);
+
+            using var libraryIoLease = await GuidevaultLibraryIoGate.BeginLibraryScanAsync();
+            _taskMonitor.Update(taskId, $"Refreshing {existing.Title}...", 5);
+            ArchiveReader.ClearCacheForPath(existing.Path);
+            var refreshedItems = await ScanAsync(taskId, "item-refresh", existing.Path);
+            var refreshed = refreshedItems.FirstOrDefault(item => string.Equals(item.Id, existing.Id, StringComparison.OrdinalIgnoreCase))
+                ?? refreshedItems.FirstOrDefault(item => PathsEqual(item.Path, existing.Path));
+            if (refreshed is null)
+                throw new InvalidDataException("The source file could not be refreshed. Confirm that it is readable and still belongs to a configured library.");
+
+            _items = currentItems
+                .Select(item => string.Equals(item.Id, existing.Id, StringComparison.OrdinalIgnoreCase) ? refreshed : item)
+                .ToList();
+            RebuildItemIndex();
+            SavePersistedCache(_items);
+            return refreshed;
+        }
+        finally
+        {
+            _lock.Release();
+        }
+    }
+
     private IReadOnlyList<LibraryItem>? LoadPersistedCache()
     {
         try
@@ -14750,11 +14861,13 @@ public sealed class LibraryCache
         return false;
     }
 
-    private async Task<IReadOnlyList<LibraryItem>> ScanAsync(string? taskId = null, string activity = "scan")
+    private async Task<IReadOnlyList<LibraryItem>> ScanAsync(string? taskId = null, string activity = "scan", string? targetPath = null)
     {
         var scanTimer = Stopwatch.StartNew();
         var scanStartedAt = DateTimeOffset.UtcNow;
-        var guidevaultJsonMetadataActivity = activity.Equals("metadata", StringComparison.OrdinalIgnoreCase);
+        var targetedItemRefresh = !string.IsNullOrWhiteSpace(targetPath);
+        var guidevaultJsonMetadataActivity = activity.Equals("metadata", StringComparison.OrdinalIgnoreCase)
+            || activity.Equals("item-refresh", StringComparison.OrdinalIgnoreCase);
         var legacyComicInfoActivity = activity.Equals("comicinfo", StringComparison.OrdinalIgnoreCase)
             || activity.Equals("legacy-comicinfo", StringComparison.OrdinalIgnoreCase)
             || activity.Equals("enrichment", StringComparison.OrdinalIgnoreCase)
@@ -14766,32 +14879,59 @@ public sealed class LibraryCache
 
         var candidates = new List<(LibraryDefinition Library, string Root, string File)>();
         var discoveredRoots = 0;
-        foreach (var root in scanRoots)
+        if (targetedItemRefresh)
         {
-            discoveredRoots++;
-            if (!Directory.Exists(root.Folder))
+            var fullTargetPath = Path.GetFullPath(targetPath!);
+            var owner = scanRoots
+                .Where(root =>
+                {
+                    try
+                    {
+                        var fullRoot = Path.GetFullPath(root.Folder).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+                        return string.Equals(fullTargetPath, fullRoot, StringComparison.OrdinalIgnoreCase)
+                            || fullTargetPath.StartsWith(fullRoot + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase)
+                            || fullTargetPath.StartsWith(fullRoot + Path.AltDirectorySeparatorChar, StringComparison.OrdinalIgnoreCase);
+                    }
+                    catch { return false; }
+                })
+                .OrderByDescending(root => Path.GetFullPath(root.Folder).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar).Length)
+                .ThenByDescending(root => LibraryTypeSpecificity(root.Library.Type))
+                .ThenBy(root => root.Library.Name, StringComparer.OrdinalIgnoreCase)
+                .FirstOrDefault();
+            if (owner is not null
+                && File.Exists(fullTargetPath)
+                && ArchiveReader.SupportedExtensions.Contains(Path.GetExtension(fullTargetPath).ToLowerInvariant()))
+                candidates.Add((owner.Library, owner.Folder, fullTargetPath));
+        }
+        else
+        {
+            foreach (var root in scanRoots)
             {
+                discoveredRoots++;
+                if (!Directory.Exists(root.Folder))
+                {
+                    if (!string.IsNullOrWhiteSpace(taskId))
+                        _taskMonitor.Update(taskId, $"Skipping missing library folder: {root.Folder}", Math.Min(4, discoveredRoots));
+                    continue;
+                }
+
                 if (!string.IsNullOrWhiteSpace(taskId))
-                    _taskMonitor.Update(taskId, $"Skipping missing library folder: {root.Folder}", Math.Min(4, discoveredRoots));
-                continue;
+                    _taskMonitor.Update(taskId, $"Discovering files in {root.Library.Name}...", 3);
+
+                var before = candidates.Count;
+                // Keep discovery streaming. Sorting by LastWriteTime calls into the
+                // filesystem for every candidate and is especially expensive on network
+                // shares, so sort only after FileInfo metadata is already collected.
+                var files = SafeEnumerateFiles(root.Folder)
+                    .Where(f => !f.Replace('\\', '/').Contains("/.guidevault_deleted/", StringComparison.OrdinalIgnoreCase))
+                    .Where(f => ArchiveReader.SupportedExtensions.Contains(Path.GetExtension(f).ToLowerInvariant()));
+
+                foreach (var file in files)
+                    candidates.Add((root.Library, root.Folder, file));
+
+                if (!string.IsNullOrWhiteSpace(taskId))
+                    _taskMonitor.Update(taskId, $"Discovered {candidates.Count - before} supported file(s) in {root.Library.Name}.", Math.Min(4, 2 + discoveredRoots));
             }
-
-            if (!string.IsNullOrWhiteSpace(taskId))
-                _taskMonitor.Update(taskId, $"Discovering files in {root.Library.Name}...", 3);
-
-            var before = candidates.Count;
-            // Keep discovery streaming. Sorting by LastWriteTime calls into the
-            // filesystem for every candidate and is especially expensive on network
-            // shares, so sort only after FileInfo metadata is already collected.
-            var files = SafeEnumerateFiles(root.Folder)
-                .Where(f => !f.Replace('\\', '/').Contains("/.guidevault_deleted/", StringComparison.OrdinalIgnoreCase))
-                .Where(f => ArchiveReader.SupportedExtensions.Contains(Path.GetExtension(f).ToLowerInvariant()));
-
-            foreach (var file in files)
-                candidates.Add((root.Library, root.Folder, file));
-
-            if (!string.IsNullOrWhiteSpace(taskId))
-                _taskMonitor.Update(taskId, $"Discovered {candidates.Count - before} supported file(s) in {root.Library.Name}.", Math.Min(4, 2 + discoveredRoots));
         }
 
         // A file can be discovered by more than one configured library when roots overlap
@@ -14900,7 +15040,7 @@ public sealed class LibraryCache
                     if (hasMovedMatchingCache) _identityStore.RememberRename(cached.Path, info.FullName, cached.Id);
                     var refreshed = RefreshCachedItemForLibrary(cached, info, relativePath, candidate.Library);
                     var needsValidation = cleanupActivity && ShouldDeepValidateCachedItem(refreshed, candidate.Library.Type);
-                    var needsMetadataEnrichment = metadataActivity && ShouldEnrichMetadata(refreshed, legacyComicInfoActivity);
+                    var needsMetadataEnrichment = targetedItemRefresh || (metadataActivity && ShouldEnrichMetadata(refreshed, legacyComicInfoActivity));
                     // Platform detection improvements need a chance to repair already-cached
                     // Unsorted items even when the underlying CBZ/CBR file has not changed.
                     var needsPathInferenceRefresh = !metadataActivity && !cleanupActivity && ShouldRefreshPathInference(refreshed, candidate.Library.Type);
@@ -14946,7 +15086,7 @@ public sealed class LibraryCache
                 // Use the Metadata Enrichment action when deeper ComicInfo import is wanted.
                 ComicInfoMetadata? comicInfo = null;
                 var canReadComicInfo = format != "PDF" && ext.Equals(".cbz", StringComparison.OrdinalIgnoreCase);
-                var shouldReadComicInfo = canReadComicInfo && legacyComicInfoActivity && guidevaultMetadata is null;
+                var shouldReadComicInfo = canReadComicInfo && (legacyComicInfoActivity || targetedItemRefresh) && guidevaultMetadata is null;
                 if (shouldReadComicInfo)
                 {
                     try
@@ -14970,10 +15110,11 @@ public sealed class LibraryCache
                 var validationMessage = cached?.ValidationMessage ?? string.Empty;
                 var hasReadablePages = cached?.HasReadablePages ?? true;
 
-                var shouldValidateArchive = cleanupActivity
-                    && format != "PDF"
-                    && (string.Equals(merged.Kind, "Magazine", StringComparison.OrdinalIgnoreCase)
-                        || string.Equals(candidate.Library.Type, "Magazines", StringComparison.OrdinalIgnoreCase));
+                var shouldValidateArchive = format != "PDF"
+                    && (targetedItemRefresh
+                        || (cleanupActivity
+                            && (string.Equals(merged.Kind, "Magazine", StringComparison.OrdinalIgnoreCase)
+                                || string.Equals(candidate.Library.Type, "Magazines", StringComparison.OrdinalIgnoreCase))));
                 if (shouldValidateArchive)
                 {
                     ArchiveValidationResult validation;
@@ -15013,7 +15154,7 @@ public sealed class LibraryCache
                     RelativePath: relativePath,
                     FileName: info.Name,
                     SizeBytes: info.Length,
-                    Added: info.CreationTimeUtc,
+                    Added: cached?.Added ?? info.CreationTimeUtc,
                     Modified: info.LastWriteTimeUtc,
                     PageCount: pageCount,
                     System: merged.System,
@@ -20802,6 +20943,6 @@ static class GuidevaultLibraryIoGate
 
 static class GuidevaultBuildInfo
 {
-    public const string Version = "1.2.10";
+    public const string Version = "1.3.1";
 }
 

@@ -7057,6 +7057,68 @@ body.left-collapsed .category-body{
   mix-blend-mode:normal!important;
   background:transparent!important;
 }
+.reader-page-turn-blank-underlay{
+  position:absolute!important;
+  z-index:40!important;
+  pointer-events:none!important;
+  contain:paint!important;
+  background:linear-gradient(90deg,#eee8dc,#d5ccbd)!important;
+  box-shadow:inset 18px 0 30px rgba(0,0,0,.16)!important;
+}
+.book.reader-sized .right-page.blank-page{
+  background:linear-gradient(90deg,#eee8dc,#d5ccbd)!important;
+}
+.book.reader-sized .right-page.blank-page .reader-page-image-empty{
+  display:none!important;
+  visibility:hidden!important;
+}
+.book.reader-sized .right-page.blank-page::after{
+  content:""!important;
+  display:block!important;
+  position:absolute!important;
+  inset:0!important;
+  z-index:2!important;
+  opacity:1!important;
+  background:linear-gradient(90deg,#eee8dc,#d5ccbd)!important;
+  box-shadow:inset 18px 0 30px rgba(0,0,0,.16)!important;
+}
+
+/* The unpaired final page finishes its physical curl on the left, then this
+   transient layer carries that exact page into the centered single-page state. */
+.reader-final-page-slide-overlay{
+  position:absolute!important;
+  z-index:96!important;
+  pointer-events:none!important;
+  overflow:hidden!important;
+  contain:layout paint!important;
+  background:transparent!important;
+  border:0!important;
+  border-radius:2px!important;
+  box-shadow:0 18px 44px rgba(0,0,0,.34)!important;
+  transform-style:preserve-3d!important;
+  backface-visibility:hidden!important;
+  will-change:transform,filter!important;
+}
+.reader-final-page-slide-overlay img{
+  display:block!important;
+  width:100%!important;
+  height:100%!important;
+  max-width:none!important;
+  max-height:none!important;
+  object-fit:fill!important;
+  background:transparent!important;
+  border:0!important;
+  box-shadow:none!important;
+}
+.book.reader-sized.reader-final-page-settling::before,
+.book.reader-sized.reader-final-page-settling::after,
+.reader-final-page-settling .page-shell::before,
+.reader-final-page-settling .page-shell::after,
+.reader-final-page-settling .left-page::before,
+.reader-final-page-settling .right-page::before{
+  opacity:0!important;
+  visibility:hidden!important;
+}
 
 /* v1.5.x: adaptive two-page spread mode.
    After the cover, one scanned image can occupy the full open-book footprint while
@@ -17468,6 +17530,238 @@ body.left-collapsed #mainLibraryNav .nav{
   --account-line-strong:rgba(91,188,255,.38);
   --account-muted:#9fb3c9;
 }
+
+/* GuideVault library header and per-item action menu */
+.library-header-banner{
+  position:relative;
+  isolation:isolate;
+  overflow:hidden;
+  min-height:92px;
+  margin:0 0 22px;
+  padding:18px 20px;
+  gap:22px;
+  border:1px solid rgba(116,169,222,.22);
+  border-radius:18px;
+  background:
+    radial-gradient(circle at 8% 0%,rgba(70,143,218,.16),transparent 38%),
+    linear-gradient(135deg,rgba(16,31,46,.96),rgba(8,18,28,.94));
+  box-shadow:0 18px 48px rgba(0,0,0,.22),inset 0 1px 0 rgba(255,255,255,.04);
+}
+.library-view.manual-system-mode .library-header-banner{
+  border-color:rgba(91,177,255,.34);
+  background:
+    radial-gradient(circle at 7% 10%,rgba(51,139,226,.28),transparent 38%),
+    radial-gradient(circle at 88% 0%,rgba(49,94,151,.18),transparent 42%),
+    linear-gradient(135deg,rgba(15,33,51,.98),rgba(7,17,27,.96));
+  box-shadow:0 22px 60px rgba(0,0,0,.27),inset 0 1px 0 rgba(255,255,255,.06);
+}
+.library-header-banner::after{
+  content:"";
+  position:absolute;
+  inset:0;
+  z-index:-1;
+  background:linear-gradient(105deg,transparent 0 62%,rgba(255,255,255,.025) 62% 63%,transparent 63%);
+  pointer-events:none;
+}
+.library-heading-copy{min-width:0;}
+.library-context-label{
+  display:block;
+  margin:0 0 5px;
+  color:#83bceb;
+  font-size:10px;
+  font-weight:850;
+  letter-spacing:.16em;
+  text-transform:uppercase;
+}
+.library-title-line{
+  display:flex;
+  align-items:center;
+  gap:10px;
+  min-width:0;
+}
+.library-title-line h1,
+.heading-row .library-title-line h1{
+  display:block;
+  min-width:0;
+  margin:0!important;
+  overflow:hidden;
+  color:#f1f7ff;
+  font-size:clamp(24px,2vw,32px);
+  line-height:1.15;
+  text-overflow:ellipsis;
+  white-space:nowrap;
+}
+.library-title-line #itemCount{
+  flex:0 0 auto;
+  padding:5px 9px;
+  border:1px solid rgba(130,181,229,.18);
+  border-radius:999px;
+  background:rgba(113,160,206,.12);
+  color:#c8def2;
+  font-weight:750;
+}
+.library-header-banner .library-heading-controls{
+  flex:0 0 auto;
+  align-self:center;
+}
+.library-header-banner .cover-size-control,
+.library-header-banner .library-sort-control{
+  min-height:38px;
+  padding:5px 10px;
+  border-color:rgba(113,177,235,.28);
+  background:rgba(5,15,24,.58);
+  box-shadow:inset 0 1px 0 rgba(255,255,255,.035);
+}
+.library-view.category-mode #gridTitle{display:none!important;}
+.library-view.category-mode #grid{margin-top:0!important;}
+
+.card .card-body{
+  min-height:0;
+  padding-bottom:10px;
+}
+.card .badge-line{
+  min-height:31px;
+  align-items:center;
+  margin-top:6px;
+  padding-right:38px;
+}
+.card-menu-trigger{
+  position:absolute;
+  right:8px;
+  bottom:8px;
+  z-index:3;
+  width:29px;
+  height:29px;
+  display:grid;
+  place-items:center;
+  padding:0;
+  border:1px solid rgba(150,183,214,.2);
+  border-radius:9px;
+  background:rgba(5,13,21,.68);
+  color:#a9bdd1;
+  cursor:pointer;
+  font:800 20px/1 system-ui,sans-serif;
+  transition:color .14s ease,border-color .14s ease,background .14s ease,transform .14s ease;
+}
+.card-menu-trigger span{transform:translateY(-1px);}
+.card-menu-trigger:hover,
+.card-menu-trigger[aria-expanded="true"]{
+  border-color:rgba(89,165,237,.58);
+  background:#13283b;
+  color:#e7f4ff;
+  transform:translateY(-1px);
+}
+.card-menu-trigger:focus-visible{
+  outline:2px solid rgba(91,188,255,.68);
+  outline-offset:2px;
+}
+.card-action-popover{
+  position:fixed;
+  z-index:2400;
+  width:min(304px,calc(100vw - 24px));
+  max-height:min(580px,calc(100vh - 24px));
+  overflow:auto;
+  padding:7px;
+  border:1px solid rgba(96,154,207,.38);
+  border-radius:14px;
+  background:linear-gradient(180deg,rgba(15,29,43,.99),rgba(7,16,25,.99));
+  color:var(--text);
+  box-shadow:0 24px 70px rgba(0,0,0,.58),inset 0 1px 0 rgba(255,255,255,.055);
+  scrollbar-width:thin;
+  scrollbar-color:#36536c transparent;
+}
+.card-action-popover-head{
+  display:flex;
+  flex-direction:column;
+  gap:2px;
+  padding:9px 10px 10px;
+  border-bottom:1px solid rgba(130,169,205,.16);
+}
+.card-action-popover-head strong{
+  overflow:hidden;
+  font-size:13px;
+  text-overflow:ellipsis;
+  white-space:nowrap;
+}
+.card-action-popover-head span{
+  color:#829ab1;
+  font-size:10px;
+  font-weight:750;
+  letter-spacing:.08em;
+  text-transform:uppercase;
+}
+.card-action-list{padding-top:5px;}
+.card-action-list>button,
+.card-action-submenu>summary,
+.card-action-submenu-list button{
+  width:100%;
+  min-height:38px;
+  display:grid;
+  grid-template-columns:24px minmax(0,1fr) auto;
+  align-items:center;
+  gap:8px;
+  margin:0;
+  padding:8px 9px;
+  border:0;
+  border-radius:8px;
+  background:transparent;
+  color:#dce9f6;
+  cursor:pointer;
+  font:650 12px/1.25 Inter,Segoe UI,system-ui,sans-serif;
+  text-align:left;
+}
+.card-action-list>button:hover,
+.card-action-list>button:focus-visible,
+.card-action-submenu>summary:hover,
+.card-action-submenu>summary:focus-visible,
+.card-action-submenu-list button:hover:not(:disabled),
+.card-action-submenu-list button:focus-visible:not(:disabled){
+  outline:0;
+  background:rgba(63,143,216,.17);
+  color:#f2f8ff;
+}
+.card-action-icon{
+  width:22px;
+  display:grid;
+  place-items:center;
+  color:#7fbae9;
+  font-size:15px;
+}
+.card-action-submenu{margin:0;}
+.card-action-submenu>summary{list-style:none;}
+.card-action-submenu>summary::-webkit-details-marker{display:none;}
+.card-action-caret{color:#7690a7;font-size:18px;transition:transform .14s ease;}
+.card-action-submenu[open] .card-action-caret{transform:rotate(90deg);}
+.card-action-submenu-list{
+  margin:2px 0 4px 24px;
+  padding:3px;
+  border-left:1px solid rgba(103,156,204,.22);
+}
+.card-action-submenu-list button{
+  grid-template-columns:20px minmax(0,1fr);
+  min-height:34px;
+  color:#bfd2e4;
+  font-size:11.5px;
+}
+.card-action-submenu-list button span:last-child{
+  overflow:hidden;
+  text-overflow:ellipsis;
+  white-space:nowrap;
+}
+.card-action-list button:disabled{
+  color:#708295;
+  cursor:default;
+  opacity:.72;
+}
+.card-action-list button.working .card-action-icon{animation:guidevault-card-action-spin .8s linear infinite;}
+@keyframes guidevault-card-action-spin{to{transform:rotate(360deg);}}
+
+@media(max-width:900px){
+  .library-header-banner{align-items:flex-start;flex-direction:column;min-height:0;padding:16px;}
+  .library-header-banner .library-heading-controls{width:100%;justify-content:flex-start;}
+  .library-title-line{align-items:flex-start;flex-direction:column;gap:7px;}
+  .library-title-line h1,.heading-row .library-title-line h1{white-space:normal;}
+}
 #settingsPreferencesPanel .settings-title-row,
 #settingsKeybindsPanel .settings-title-row,
 #settingsReadingProfilesPanel .settings-title-row,
@@ -21523,7 +21817,7 @@ body.dossier-page-mode .main{min-width:0;overflow:hidden!important;}
 .dossier-page-toolbar-actions{display:flex;align-items:center;justify-content:flex-end;gap:8px;}
 .dossier-page-toolbar span{color:#66b6ff;font-size:10px;font-weight:900;letter-spacing:.14em;white-space:nowrap;}
 .dossier-page-toolbar strong{min-width:0;color:#dcecff;font-size:14px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
-.dossier-page-content{flex:1 1 auto;min-height:0;overflow-y:auto;overflow-x:hidden;padding:0 4px 28px 0;scrollbar-width:thin;scrollbar-color:#38516b #0b1520;}
+.dossier-page-content{flex:1 1 auto;min-height:0;overflow-y:auto;overflow-x:hidden;overscroll-behavior:contain;padding:0 4px 28px 0;scrollbar-width:thin;scrollbar-color:#38516b #0b1520;}
 .dossier-page-content::-webkit-scrollbar{width:10px;}
 .dossier-page-content::-webkit-scrollbar-track{background:#0b1520;}
 .dossier-page-content::-webkit-scrollbar-thumb{background:#38516b;border:2px solid #0b1520;border-radius:999px;}
@@ -21580,10 +21874,8 @@ body.dossier-page-mode .main{min-width:0;overflow:hidden!important;}
 .dossier-dashboard-breadcrumb span{color:#69b7ff;font-weight:800;}
 .dossier-dashboard-breadcrumb i{color:#57708d;font-style:normal;font-size:18px;}
 .dossier-dashboard-breadcrumb strong{min-width:0;color:#dfeafa;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
-.dossier-dashboard-hero{position:relative;isolation:isolate;display:grid;grid-template-columns:minmax(280px,360px) minmax(0,1fr) minmax(220px,280px);gap:26px;min-height:270px;padding:22px;border:1px solid rgba(93,165,241,.23);border-radius:15px;overflow:hidden;background:linear-gradient(135deg,#0d2035,#091727 68%,#0a1a2c);box-shadow:0 18px 48px rgba(0,0,0,.28);}
+.dossier-dashboard-hero{position:relative;isolation:isolate;contain:paint;display:grid;grid-template-columns:minmax(280px,360px) minmax(0,1fr) minmax(220px,280px);gap:26px;min-height:270px;padding:22px;border:1px solid rgba(93,165,241,.23);border-radius:15px;overflow:hidden;background:linear-gradient(135deg,#0d2035,#091727 68%,#0a1a2c);box-shadow:0 18px 48px rgba(0,0,0,.28);}
 .dossier-dashboard-hero:before{content:'';position:absolute;z-index:1;inset:0;background:linear-gradient(90deg,rgba(5,14,25,.28),rgba(5,15,27,.70) 42%,rgba(6,16,28,.90)),linear-gradient(0deg,rgba(5,14,24,.62),transparent 62%);pointer-events:none;}
-.dossier-dashboard-hero-backdrop{position:absolute;z-index:0;inset:-28px;overflow:hidden;background:#091726;}
-.dossier-dashboard-hero-backdrop img{width:100%;height:100%;object-fit:cover;opacity:.42;filter:blur(13px) saturate(.92) brightness(.72);transform:scale(1.08);}
 .dossier-dashboard-hero-art,.dossier-dashboard-hero-main,.dossier-dashboard-identifiers{position:relative;z-index:2;}
 .dossier-dashboard-hero-art{height:232px;align-self:start;display:grid;place-items:center;overflow:hidden;border:1px solid rgba(153,203,255,.22);border-radius:12px;background:rgba(5,14,24,.72);box-shadow:0 16px 38px rgba(0,0,0,.38);}
 .dossier-dashboard-hero-art img{width:100%;height:100%;display:block;object-fit:cover;}
@@ -21736,7 +22028,6 @@ body.dossier-page-mode .main{min-width:0;overflow:hidden!important;}
 .dossier-dashboard-hero{grid-template-columns:minmax(210px,260px) minmax(0,1fr) minmax(220px,280px);min-height:370px;}
 .dossier-dashboard-hero-art{height:330px;background:rgba(4,12,22,.82);}
 .dossier-dashboard-hero-art.is-cover img{object-fit:contain;padding:7px;background:linear-gradient(145deg,rgba(16,39,63,.76),rgba(4,12,22,.92));}
-.dossier-dashboard-hero-backdrop img{opacity:.34;filter:blur(15px) saturate(.92) brightness(.62);}
 .dossier-dashboard-document-actions{display:flex;align-items:center;gap:6px;}
 .dossier-dashboard-document-actions .danger{padding:8px 10px;font-size:11px;}
 .dossier-document-overflow{display:none;}
@@ -21777,13 +22068,21 @@ body.dossier-page-mode .main{min-width:0;overflow:hidden!important;}
 /* Game dossier visual pass: stable actions, Colorscape, ratings, and compact reviews */
 .dossier-dashboard-hero.has-artwork{
   border-color:#173653;
-  background-color:#091726;
-  background-image:var(--dossier-hero-artwork)!important;
-  background-clip:padding-box!important;
-  background-position:center 35%!important;
-  background-repeat:no-repeat!important;
-  background-size:cover!important;
+  background:#091726!important;
   box-shadow:0 18px 48px rgba(0,0,0,.28),inset 0 0 0 1px rgba(4,12,22,.52);
+}
+.dossier-dashboard-hero.has-artwork:after{
+  content:'';
+  position:absolute;
+  z-index:0;
+  inset:-2px;
+  border-radius:inherit;
+  background-image:var(--dossier-hero-artwork);
+  background-position:center 35%;
+  background-repeat:no-repeat;
+  background-size:cover;
+  pointer-events:none;
+  transform:translateZ(0);
 }
 .dossier-dashboard-hero.has-artwork:before{
   inset:-2px;
@@ -21791,7 +22090,7 @@ body.dossier-page-mode .main{min-width:0;overflow:hidden!important;}
   background:
     linear-gradient(90deg,rgba(4,12,22,.18),rgba(5,15,27,.60) 43%,rgba(6,16,28,.86)),
     linear-gradient(0deg,rgba(5,14,24,.82) 0%,rgba(5,14,24,.68) 14%,rgba(5,14,24,.14) 72%);
-  backdrop-filter:saturate(.82) brightness(.76);
+  backdrop-filter:none;
 }
 .dossier-dashboard-pair{
   display:grid;
@@ -22032,4 +22331,105 @@ body.dossier-page-mode .main{min-width:0;overflow:hidden!important;}
 @media(max-width:620px){
   .server-files-template-breakdown,.server-files-plan-metrics{grid-template-columns:1fr;}
   .server-files-template-breakdown p{grid-column:auto;}
+}
+
+/* Fixed-geometry reader edge turns.
+   Covers and final sheets rotate inside a stable half-book slot. Their images use
+   contain sizing on both faces, so dissimilar scan ratios never stretch. */
+.reader-fixed-turn-sheet{
+  position:absolute!important;
+  z-index:98!important;
+  pointer-events:none!important;
+  overflow:visible!important;
+  transform-origin:left center!important;
+  transform-style:preserve-3d!important;
+  backface-visibility:visible!important;
+  will-change:transform,filter!important;
+}
+.reader-fixed-turn-face{
+  position:absolute!important;
+  inset:0!important;
+  width:100%!important;
+  height:100%!important;
+  overflow:visible!important;
+  background:transparent!important;
+  border:0!important;
+  transform-style:preserve-3d!important;
+  backface-visibility:hidden!important;
+  -webkit-backface-visibility:hidden!important;
+}
+.reader-fixed-turn-front{transform:rotateY(0deg)!important;}
+.reader-fixed-turn-back{transform:rotateY(180deg)!important;}
+.reader-fixed-turn-face img{
+  display:block!important;
+  width:100%!important;
+  height:100%!important;
+  max-width:100%!important;
+  max-height:100%!important;
+  object-fit:contain!important;
+  background:transparent!important;
+  border:0!important;
+  box-shadow:none!important;
+  transform:none!important;
+}
+.reader-fixed-turn-front img{object-position:left center!important;}
+.reader-fixed-turn-back img{object-position:right center!important;}
+.reader-fixed-turn-front::after,
+.reader-fixed-turn-back::after{display:none!important;content:none!important;}
+.reader-fixed-cover-slide-overlay,
+.reader-fixed-final-landing-overlay{
+  position:absolute!important;
+  z-index:100!important;
+  pointer-events:none!important;
+  overflow:hidden!important;
+  background:transparent!important;
+  border:0!important;
+  box-shadow:0 18px 44px rgba(0,0,0,.30)!important;
+  will-change:transform!important;
+}
+.reader-fixed-cover-slide-overlay img,
+.reader-fixed-final-landing-overlay img{
+  display:block!important;
+  width:100%!important;
+  height:100%!important;
+  max-width:none!important;
+  max-height:none!important;
+  object-fit:fill!important;
+  background:transparent!important;
+  border:0!important;
+  box-shadow:none!important;
+}
+
+/* No stack/binding layers are allowed to sit above a cover or final-sheet handoff. */
+.book.reader-sized.reader-fixed-edge-turning::before,
+.book.reader-sized.reader-fixed-edge-turning::after,
+.reader-fixed-edge-turning .page-shell::before,
+.reader-fixed-edge-turning .page-shell::after,
+.reader-fixed-edge-turning .left-page::before,
+.reader-fixed-edge-turning .left-page::after,
+.reader-fixed-edge-turning .right-page::before,
+.reader-fixed-edge-turning .right-page::after{
+  display:none!important;
+  content:none!important;
+  opacity:0!important;
+  visibility:hidden!important;
+}
+
+/* The last real page retains its half-book dimensions after landing and moves by
+   translation alone into the middle of the wide reader frame. */
+.book.reader-sized.single-page-mode.end-page-mode .right-page img,
+.fullscreen-reader .book.reader-sized.single-page-mode.end-page-mode .right-page img,
+.reader-stage:fullscreen .book.reader-sized.single-page-mode.end-page-mode .right-page img{
+  width:50%!important;
+  height:100%!important;
+  margin:0 auto!important;
+  object-fit:contain!important;
+  object-position:center center!important;
+}
+.book.reader-sized.single-page-mode.end-page-mode::before,
+.book.reader-sized.single-page-mode.end-page-mode::after{
+  display:none!important;
+  width:0!important;
+  opacity:0!important;
+  visibility:hidden!important;
 }
