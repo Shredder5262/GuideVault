@@ -12931,7 +12931,7 @@ const METADATA_FIELD_HELP = {
   editCoverSubject: 'Main cover game, character, hardware, or feature subject.',
   editYear: {
     default: 'General item year. For books/guides this is usually the publication year; for magazines it is the issue year.',
-    Manual: 'Manuals do not use the generic Year field. Use Game Release Year for the associated game instead.'
+    Manual: 'For manuals, Year mirrors Game Release Year because the manual is assumed to have shipped with the game.'
   },
   editPublicationDateGuide: 'Publication date for a strategy guide or book. Manuals normally do not use this field.',
   editPageCount: 'User-entered page count for the item. Use the real page count when known; archive page counts may be unreliable.',
@@ -12942,7 +12942,7 @@ const METADATA_FIELD_HELP = {
   },
   editDeveloper: 'Developer of the associated game.',
   editGamePublisher: 'Publisher of the associated game, separate from the physical book/manual publisher when needed.',
-  editGameReleaseYear: 'Release year of the associated game. For manuals, this is valid because the manual is tied to the game release.',
+  editGameReleaseYear: 'Release year of the associated game. For manuals, saving this field also sets Year to the same value.',
   editGenre: 'Game genre or broad content genre, such as RPG, Fighting, Action Adventure, Racing, or Puzzle.',
   editFeaturedGames: 'Comma-separated games featured in a magazine issue.',
   editFeaturedPlatforms: 'Comma-separated platforms featured in a magazine issue.',
@@ -13526,7 +13526,13 @@ function buildCurrentMetadataPayloadFromForm(extra = {}) {
     series: $('editSeries')?.value || '',
     issueNumber: selectedKind === 'Magazine' ? ($('editIssue')?.value || '') : '',
     publisher: $('editPublisher')?.value || '',
-    year: selectedKind === 'Manual' || selectedKind === 'Strategy Guide' ? '' : (selectedKind === 'Magazine' ? (yearFromText($('editCoverDate')?.value || $('editPublicationDate')?.value || $('editYear')?.value || '') || $('editYear')?.value || '') : ($('editYear')?.value || '')),
+    year: selectedKind === 'Manual'
+      ? ($('editGameReleaseYear')?.value || '')
+      : (selectedKind === 'Strategy Guide'
+        ? ''
+        : (selectedKind === 'Magazine'
+          ? (yearFromText($('editCoverDate')?.value || $('editPublicationDate')?.value || $('editYear')?.value || '') || $('editYear')?.value || '')
+          : ($('editYear')?.value || ''))),
     pageCount: numericInput('editPageCount'),
     metadataPageCount: numericInput('editPageCount'),
     writer: $('editWriter')?.value || '',
@@ -15926,12 +15932,18 @@ function writeClientMetadataOverrides(map) {
   try { localStorage.setItem(GUIDEVAULT_METADATA_OVERRIDES_KEY, JSON.stringify(map || {})); } catch {}
 }
 
-function normalizeClientMetadataPayload(payload) {
+function normalizeClientMetadataPayload(payload, kindHint = '') {
   const clone = { ...(payload || {}) };
   if (clone.metadataStatus !== undefined) clone.metadataStatus = normalizeMetadataStatus(clone.metadataStatus);
   ['tags','associatedPlatforms','featuredGames','featuredPlatforms','specialFeatures','includedExtras','coveredGames','coveredPlatforms','guideTopics','charactersCovered','locationsCovered','includedSections','itemsCovered'].forEach(key => {
     if (clone[key] !== undefined && !Array.isArray(clone[key])) clone[key] = itemArray(clone[key]);
   });
+
+  const effectiveKind = String(clone.kind || kindHint || '').trim().toLowerCase();
+  if (effectiveKind === 'manual' && clone.gameReleaseYear !== undefined) {
+    clone.year = String(clone.gameReleaseYear ?? '').trim();
+  }
+
   return clone;
 }
 
@@ -17241,7 +17253,7 @@ async function metadataManagerPersistBulk(entries) {
     if (!id) return;
     const item = entry.item || stateIndex.get(id)?.item || null;
     const lockFiltered = filterLockedMetadataPayload(item, entry.payload || {});
-    const safePayload = normalizeClientMetadataPayload(lockFiltered.payload);
+    const safePayload = normalizeClientMetadataPayload(lockFiltered.payload, item?.kind || item?.Kind || '');
     const hasChanges = Object.keys(safePayload || {}).length > 0;
     skippedLockedFields += lockFiltered.skipped?.length || 0;
     if (!hasChanges) return;
@@ -18972,11 +18984,47 @@ async function loadCoverPickerForSelected(force = false, showAll = false) {
   }
 }
 
+let detailCoverRetryTimer = 0;
+
+function setDetailCoverPreview(item, retryAttempt = 0) {
+  const image = $('detailCover');
+  if (!image || !item) return;
+  window.clearTimeout(detailCoverRetryTimer);
+
+  const itemId = String(itemIdOf(item) || '');
+  const baseUrl = coverUrl(item, { width: 560 }) || '/assets/missing-cover.svg';
+  const retryUrl = retryAttempt > 0
+    ? `${baseUrl}${baseUrl.includes('?') ? '&' : '?'}retry=${Date.now()}`
+    : baseUrl;
+
+  image.dataset.coverItemId = itemId;
+  image.onload = () => {
+    if (image.dataset.coverItemId !== itemId) return;
+    window.clearTimeout(detailCoverRetryTimer);
+    image.onload = null;
+    image.onerror = null;
+  };
+  image.onerror = () => {
+    if (image.dataset.coverItemId !== itemId) return;
+    if (retryAttempt >= 4) {
+      image.onload = null;
+      image.onerror = null;
+      image.src = '/assets/missing-cover.svg';
+      return;
+    }
+    detailCoverRetryTimer = window.setTimeout(() => {
+      const selectedId = String(itemIdOf(state.selected) || '');
+      if (selectedId !== itemId) return;
+      setDetailCoverPreview(state.selected || item, retryAttempt + 1);
+    }, 1200 + (retryAttempt * 600));
+  };
+  image.src = retryUrl;
+}
+
 function refreshSelectedCoverImages() {
   const item = state.selected;
   if (!item) return;
-  const newDetailCover = $('detailCover');
-  if (newDetailCover) newDetailCover.src = coverUrl(item, { width: 560 });
+  setDetailCoverPreview(item);
   document.querySelectorAll(`img[data-cover-src]`).forEach(img => {
     const card = img.closest?.('[data-id]');
     const cardId = card?.dataset?.id || '';
@@ -19475,7 +19523,7 @@ function renderDetails(item) {
   document.body.classList.toggle('strategy-detail-mode', item.kind === 'Strategy Guide');
   document.body.classList.toggle('magazine-detail-mode', item.kind === 'Magazine');
   document.body.classList.toggle('manual-detail-mode', item.kind === 'Manual');
-  $('detailCover').src = coverUrl(item, { width: 560 });
+  setDetailCoverPreview(item);
   applyColorscapeToDetail(item);
   if ($('readBtn')) $('readBtn').dataset.itemId = item.id || '';
   $('detailCover').classList.toggle('nes-detail-cover', specialCardClass(item).includes('nes-manual-card'));
@@ -19709,7 +19757,9 @@ async function saveSelectedMetadata(extra = {}, options = {}) {
       series: $('editSeries').value,
       issueNumber: selectedKind === 'Magazine' ? $('editIssue').value : '',
       publisher: $('editPublisher').value,
-      year: (selectedKind === 'Manual' || selectedKind === 'Strategy Guide') ? '' : $('editYear').value,
+      year: selectedKind === 'Manual'
+        ? ($('editGameReleaseYear')?.value || '')
+        : (selectedKind === 'Strategy Guide' ? '' : $('editYear').value),
       pageCount: numericInput('editPageCount'),
       metadataPageCount: numericInput('editPageCount'),
       writer: $('editWriter').value,
@@ -22794,9 +22844,16 @@ async function performReaderAdaptiveSpreadTurn(nextIndex, dir) {
     renderSpread(nextIndex, { preserveSize: true });
     await waitForRenderedReaderSpread(spreadForIndex(nextIndex));
     if (sourceImage?.style) sourceImage.style.visibility = sourceOriginalVisibility;
+    // The adaptive-turn class hides the real page image while WebGL owns the
+    // animation. Remove it as soon as the destination image has decoded, then
+    // give the browser a paint before fading the WebGL canvas. Previously the
+    // canvas reached opacity 0 while this class still hid the destination image,
+    // producing a very noticeable blank flash at the end of every turn.
+    book.classList.remove('reader-adaptive-spread-turning');
     applyReaderShadingSettings();
     updateReaderPageStackEffect(spreadForIndex(nextIndex));
     updateReaderPageEdgeShadingBounds();
+    await waitForReaderPaint();
     shell.classList.add('reader-webgl-shadow-settle');
     await waitForReaderPaint();
     await waitForReaderPaint();

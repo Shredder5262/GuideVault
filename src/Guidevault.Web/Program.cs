@@ -2295,14 +2295,14 @@ app.MapPut("/api/items/{id}/metadata", (string id, JsonElement payload) =>
     // Metadata save must be a lightweight text write. Do not call GetItemsAsync()
     // here: that can wait behind a scan/cleanup task or trigger a cold library
     // rebuild, making a simple metadata save feel like it is hanging.
+    var cached = cache.TryGetCachedItem(id);
     var update = ItemMetadataJsonReader.Read(payload);
-    var effectiveUpdate = metadataStore.PrepareIncomingOverride(id, update, MetadataPayloadOptions.OverwriteLockedFields(payload));
+    var effectiveUpdate = metadataStore.PrepareIncomingOverride(id, update, MetadataPayloadOptions.OverwriteLockedFields(payload), cached?.Kind);
     metadataStore.MergeOverride(id, effectiveUpdate);
 
     // If the item is already loaded, update the active/persisted cache immediately
     // and return the full updated item. If it is not loaded, still return success;
     // the saved override will be applied the next time the item is indexed/loaded.
-    var cached = cache.TryGetCachedItem(id);
     RecordSystemEvent("Metadata", "Metadata updated", cached is not null ? $"Updated metadata for {cached.Title}." : $"Updated metadata override for item {id}.", "api", id, cached?.Title);
     if (cached is not null)
     {
@@ -2330,10 +2330,15 @@ app.MapPost("/api/items/metadata/bulk", (JsonElement payload) =>
 
         var effectiveUpdates = requests
             .Where(request => !string.IsNullOrWhiteSpace(request.Id))
-            .Select(request => new BulkMetadataUpdateRequest(
-                request.Id.Trim(),
-                metadataStore.PrepareIncomingOverride(request.Id.Trim(), request.Update, request.OverwriteLockedFields),
-                request.OverwriteLockedFields))
+            .Select(request =>
+            {
+                var itemId = request.Id.Trim();
+                var cachedItem = cache.TryGetCachedItem(itemId);
+                return new BulkMetadataUpdateRequest(
+                    itemId,
+                    metadataStore.PrepareIncomingOverride(itemId, request.Update, request.OverwriteLockedFields, cachedItem?.Kind),
+                    request.OverwriteLockedFields);
+            })
             .ToArray();
 
         if (effectiveUpdates.Length == 0)
@@ -2742,7 +2747,11 @@ app.MapPost("/api/items/files/convert", (JsonElement payload) =>
                 taskMonitor.Update(task.Id, $"Preparing {targetLabel} conversion for {ids.Count} file(s)...", 2);
                 fileConversionJobs.Update(task.Id, "running", $"Preparing {targetLabel} conversion...", ids.Count, converted, failed, results);
 
-                if (!GuidevaultLibraryIoGate.TryBeginArchiveWrite(out var archiveWriteLease, out var busyMessage) || archiveWriteLease is null)
+                // Format conversion is copy-first: it reads the indexed source and writes
+                // a new sibling file without modifying the source archive. Keep the global
+                // library-write exclusion in place, but allow cover/page preview reads to
+                // continue while this task runs so the details view does not lose its cover.
+                if (!GuidevaultLibraryIoGate.TryBeginArchiveWrite(out var archiveWriteLease, out var busyMessage, allowConcurrentArchiveReads: true) || archiveWriteLease is null)
                 {
                     taskMonitor.Fail(task.Id, busyMessage);
                     fileConversionJobs.Update(task.Id, "failed", busyMessage, ids.Count, converted, ids.Count, results);
@@ -3093,7 +3102,7 @@ app.MapGet("/api/items/{id}/cover", async (string id, HttpResponse response) =>
     var image = await ArchiveReader.GetCachedCoverImageAsync(item.Path, coverOverride?.EntryKey);
     if (image is null)
     {
-        if (GuidevaultLibraryIoGate.IsBusy)
+        if (GuidevaultLibraryIoGate.ShouldDeferArchiveReads)
         {
             response.Headers.CacheControl = "no-store";
             response.Headers["Retry-After"] = "15";
@@ -3130,7 +3139,7 @@ app.MapGet("/api/items/{id}/cover-thumb", async (string id, int? w, HttpResponse
     var image = await ArchiveReader.GetCachedCoverThumbnailAsync(item.Path, width, coverOverride?.EntryKey);
     if (image is null)
     {
-        if (GuidevaultLibraryIoGate.IsBusy)
+        if (GuidevaultLibraryIoGate.ShouldDeferArchiveReads)
         {
             response.Headers.CacheControl = "no-store";
             response.Headers["Retry-After"] = "15";
@@ -3207,7 +3216,7 @@ app.MapGet("/api/items/{id}/page/{page:int}/thumb", async (string id, int page, 
     var item = cache.TryGetCachedItem(id) ?? (await cache.GetItemsAsync()).FirstOrDefault(i => i.Id == id);
     if (item is null) return Results.NotFound();
     if (item.Format == "PDF") return Results.BadRequest(new { error = "PDF pages are handled through the browser PDF viewer in this prototype." });
-    if (GuidevaultLibraryIoGate.IsBusy)
+    if (GuidevaultLibraryIoGate.ShouldDeferArchiveReads)
     {
         response.Headers.CacheControl = "no-store";
         response.Headers["Retry-After"] = "15";
@@ -3230,7 +3239,7 @@ app.MapGet("/api/items/{id}/cover-options", async (string id) =>
     var item = cache.TryGetCachedItem(id) ?? (await cache.GetItemsAsync()).FirstOrDefault(i => i.Id == id);
     if (item is null) return Results.NotFound(new { error = "Item not found." });
     if (item.Format == "PDF") return Results.BadRequest(new { error = "PDF covers use the browser/PDF cover placeholder and do not expose archive image pages." });
-    if (GuidevaultLibraryIoGate.IsBusy) return Results.Conflict(new { error = "A library scan or file operation is currently running. Load cover pages after that task finishes so the archive reader does not compete with the scan." });
+    if (GuidevaultLibraryIoGate.ShouldDeferArchiveReads) return Results.Conflict(new { error = "A library scan or source-file rewrite is currently running. Load cover pages after that task finishes so the archive reader does not compete with it." });
 
     var entries = ArchiveReader.GetImageEntryKeys(item.Path);
     var selected = coverOverrideStore.Get(item.Id);
@@ -3619,7 +3628,7 @@ app.MapGet("/opds/items/{id}/cover", async (HttpRequest request, string id) =>
     var image = await ArchiveReader.GetCachedCoverImageAsync(item.Path, coverOverride?.EntryKey);
     if (image is null)
     {
-        if (GuidevaultLibraryIoGate.IsBusy) return Results.StatusCode(503);
+        if (GuidevaultLibraryIoGate.ShouldDeferArchiveReads) return Results.StatusCode(503);
         image = await ArchiveReader.GetCoverImageAsync(item.Path, coverOverride?.EntryKey);
     }
     return image is null
@@ -13240,14 +13249,19 @@ public static class ItemMetadataJsonReader
         var developer = FirstText(GetString(payload, "developer"), GetString(payload, "gameDeveloper"));
         var coverSubject = FirstText(GetString(payload, "coverSubject"), GetString(payload, "coverStory"));
         var issueNumber = FirstText(GetString(payload, "issueNumber"), GetString(payload, "issue"));
+        var kind = GetString(payload, "kind");
+        var gameReleaseYear = GetString(payload, "gameReleaseYear");
+        var year = GetString(payload, "year");
+        if (kind?.Equals("Manual", StringComparison.OrdinalIgnoreCase) == true && gameReleaseYear is not null)
+            year = gameReleaseYear;
 
         return new ItemMetadataUpdate(
             Title: title,
-            Kind: GetString(payload, "kind"),
+            Kind: kind,
             System: GetString(payload, "system"),
             Category: GetString(payload, "category"),
             Publisher: GetString(payload, "publisher"),
-            Year: GetString(payload, "year"),
+            Year: year,
             Tags: GetStringArray(payload, "tags"),
             Summary: GetString(payload, "summary"),
             Series: GetString(payload, "series"),
@@ -13283,7 +13297,7 @@ public static class ItemMetadataJsonReader
             Franchise: franchise,
             Developer: developer,
             GamePublisher: GetString(payload, "gamePublisher"),
-            GameReleaseYear: GetString(payload, "gameReleaseYear"),
+            GameReleaseYear: gameReleaseYear,
             Genre: GetString(payload, "genre"),
             CoveredGames: GetStringArray(payload, "coveredGames"),
             CoveredPlatforms: GetStringArray(payload, "coveredPlatforms"),
@@ -13971,10 +13985,23 @@ public sealed class MetadataStore
     {
         lock (_gate)
         {
-            if (!_overrides.TryGetValue(item.Id, out var o)) return item;
+            if (!_overrides.TryGetValue(item.Id, out var o))
+            {
+                if (item.Kind.Equals("Manual", StringComparison.OrdinalIgnoreCase)
+                    && !string.IsNullOrWhiteSpace(item.GameReleaseYear)
+                    && !string.Equals(item.Year, item.GameReleaseYear, StringComparison.OrdinalIgnoreCase))
+                {
+                    return item with { Year = item.GameReleaseYear.Trim() };
+                }
+                return item;
+            }
             var kind = First(o.Kind, item.Kind);
             var category = First(o.Category, item.Category);
             var system = First(o.System, item.System);
+            var gameReleaseYear = (kind == "Strategy Guide" || kind == "Manual") ? First(o.GameReleaseYear, item.GameReleaseYear) : string.Empty;
+            var year = kind.Equals("Manual", StringComparison.OrdinalIgnoreCase) && !string.IsNullOrWhiteSpace(gameReleaseYear)
+                ? gameReleaseYear
+                : First(o.Year, item.Year);
             return item with
             {
                 Title = First(o.Title, item.Title),
@@ -13982,7 +14009,7 @@ public sealed class MetadataStore
                 System = system,
                 Category = category,
                 Publisher = First(o.Publisher, item.Publisher),
-                Year = First(o.Year, item.Year),
+                Year = year,
                 Tags = o.Tags is { Length: > 0 } ? o.Tags.Where(t => !string.IsNullOrWhiteSpace(t)).Select(t => t.Trim()).Distinct(StringComparer.OrdinalIgnoreCase).ToArray() : item.Tags,
                 Summary = First(o.Summary, item.Summary),
                 Series = First(o.Series, item.Series),
@@ -14018,7 +14045,7 @@ public sealed class MetadataStore
                 Franchise = (kind == "Strategy Guide" || kind == "Manual") ? First(o.Franchise, item.Franchise) : string.Empty,
                 Developer = (kind == "Strategy Guide" || kind == "Manual") ? First(o.Developer, item.Developer) : string.Empty,
                 GamePublisher = (kind == "Strategy Guide" || kind == "Manual") ? First(o.GamePublisher, item.GamePublisher) : string.Empty,
-                GameReleaseYear = (kind == "Strategy Guide" || kind == "Manual") ? First(o.GameReleaseYear, item.GameReleaseYear) : string.Empty,
+                GameReleaseYear = gameReleaseYear,
                 Genre = (kind == "Strategy Guide" || kind == "Manual") ? First(o.Genre, item.Genre) : string.Empty,
                 CoveredGames = kind == "Strategy Guide" && o.CoveredGames is not null ? CleanDistinct(o.CoveredGames) : (item.CoveredGames ?? []),
                 CoveredPlatforms = kind == "Strategy Guide" && o.CoveredPlatforms is not null ? CleanDistinct(o.CoveredPlatforms) : (item.CoveredPlatforms ?? []),
@@ -14053,6 +14080,10 @@ public sealed class MetadataStore
         var kind = string.IsNullOrWhiteSpace(update.Kind) ? item.Kind : update.Kind.Trim();
         var category = string.IsNullOrWhiteSpace(update.Category) ? item.Category : update.Category.Trim();
         var system = string.IsNullOrWhiteSpace(update.System) ? item.System : update.System.Trim();
+        var gameReleaseYear = (kind == "Strategy Guide" || kind == "Manual") ? Keep(update.GameReleaseYear, item.GameReleaseYear) : item.GameReleaseYear;
+        var year = kind.Equals("Manual", StringComparison.OrdinalIgnoreCase) && !string.IsNullOrWhiteSpace(gameReleaseYear)
+            ? gameReleaseYear
+            : Keep(update.Year, item.Year);
         return item with
         {
             Title = Keep(update.Title, item.Title),
@@ -14060,7 +14091,7 @@ public sealed class MetadataStore
             System = system,
             Category = category,
             Publisher = Keep(update.Publisher, item.Publisher),
-            Year = Keep(update.Year, item.Year),
+            Year = year,
             Tags = update.Tags is not null ? CleanDistinct(update.Tags) : item.Tags,
             Summary = Keep(update.Summary, item.Summary),
             Series = Keep(update.Series, item.Series),
@@ -14096,7 +14127,7 @@ public sealed class MetadataStore
             Franchise = (kind == "Strategy Guide" || kind == "Manual") ? Keep(update.Franchise, item.Franchise) : item.Franchise,
             Developer = (kind == "Strategy Guide" || kind == "Manual") ? Keep(update.Developer, item.Developer) : item.Developer,
             GamePublisher = (kind == "Strategy Guide" || kind == "Manual") ? Keep(update.GamePublisher, item.GamePublisher) : item.GamePublisher,
-            GameReleaseYear = (kind == "Strategy Guide" || kind == "Manual") ? Keep(update.GameReleaseYear, item.GameReleaseYear) : item.GameReleaseYear,
+            GameReleaseYear = gameReleaseYear,
             Genre = (kind == "Strategy Guide" || kind == "Manual") ? Keep(update.Genre, item.Genre) : item.Genre,
             CoveredGames = kind == "Strategy Guide" && update.CoveredGames is not null ? CleanDistinct(update.CoveredGames) : item.CoveredGames,
             CoveredPlatforms = kind == "Strategy Guide" && update.CoveredPlatforms is not null ? CleanDistinct(update.CoveredPlatforms) : item.CoveredPlatforms,
@@ -14125,15 +14156,27 @@ public sealed class MetadataStore
         };
     }
 
-    public ItemMetadataUpdate PrepareIncomingOverride(string id, ItemMetadataUpdate update, bool overwriteLockedFields = false)
+    public ItemMetadataUpdate PrepareIncomingOverride(string id, ItemMetadataUpdate update, bool overwriteLockedFields = false, string? kindHint = null)
     {
         lock (_gate)
         {
             _overrides.TryGetValue(id, out var existing);
+            var effectiveKind = First(update.Kind, First(existing?.Kind, kindHint ?? string.Empty));
+            update = ApplyManualYearRule(update, effectiveKind);
             if (!overwriteLockedFields && MetadataLockHelper.ShouldRespectLocks(update))
-                return MetadataLockHelper.FilterLockedFields(update, existing?.MetadataLocks);
+            {
+                update = MetadataLockHelper.FilterLockedFields(update, existing?.MetadataLocks);
+                update = ApplyManualYearRule(update, effectiveKind);
+            }
             return update;
         }
+    }
+
+    private static ItemMetadataUpdate ApplyManualYearRule(ItemMetadataUpdate update, string? kind)
+    {
+        if (!string.Equals(kind, "Manual", StringComparison.OrdinalIgnoreCase) || update.GameReleaseYear is null)
+            return update;
+        return update with { Year = update.GameReleaseYear };
     }
 
     private static string Keep(string? candidate, string fallback) => string.IsNullOrWhiteSpace(candidate) ? fallback : candidate.Trim();
@@ -14217,13 +14260,19 @@ public sealed class MetadataStore
     }
 
     private static ItemMetadataUpdate MergeMetadataUpdate(ItemMetadataUpdate? existing, ItemMetadataUpdate update)
-        => new(
+    {
+        var effectiveKind = First(update.Kind, existing?.Kind ?? string.Empty);
+        var effectiveYear = effectiveKind.Equals("Manual", StringComparison.OrdinalIgnoreCase) && update.GameReleaseYear is not null
+            ? update.GameReleaseYear
+            : update.Year ?? existing?.Year;
+
+        return new ItemMetadataUpdate(
             Title: update.Title ?? existing?.Title,
             Kind: update.Kind ?? existing?.Kind,
             System: update.System ?? existing?.System,
             Category: update.Category ?? existing?.Category,
             Publisher: update.Publisher ?? existing?.Publisher,
-            Year: update.Year ?? existing?.Year,
+            Year: effectiveYear,
             Tags: update.Tags ?? existing?.Tags,
             Summary: update.Summary ?? existing?.Summary,
             Series: update.Series ?? existing?.Series,
@@ -14286,6 +14335,7 @@ public sealed class MetadataStore
             LaunchBoxMatchSource: update.LaunchBoxMatchSource ?? existing?.LaunchBoxMatchSource,
             LaunchBoxMatchedAt: update.LaunchBoxMatchedAt ?? existing?.LaunchBoxMatchedAt,
             MetadataLocks: MetadataLockHelper.MergeLocks(existing?.MetadataLocks, update.MetadataLocks));
+    }
 }
 
 
@@ -16618,6 +16668,12 @@ public static class GuidevaultNativeMetadata
         if (submittedMetadata.HasValue && submittedMetadata.Value.ValueKind == JsonValueKind.Object)
             return BuildExportFromSubmittedMetadata(item, update, submittedMetadata.Value, launchBoxData);
 
+        var kind = First(update.Kind, item.Kind);
+        var gameReleaseYear = First(update.GameReleaseYear, item.GameReleaseYear);
+        var year = kind.Equals("Manual", StringComparison.OrdinalIgnoreCase) && !string.IsNullOrWhiteSpace(gameReleaseYear)
+            ? gameReleaseYear
+            : First(update.Year, item.Year);
+
         var metadata = new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase)
         {
             ["title"] = First(update.Title, item.Title),
@@ -16629,7 +16685,7 @@ public static class GuidevaultNativeMetadata
             ["series"] = First(update.Series, item.Series),
             ["issueNumber"] = First(update.IssueNumber, item.IssueNumber),
             ["publisher"] = First(update.Publisher, item.Publisher),
-            ["year"] = First(update.Year, item.Year),
+            ["year"] = year,
             ["pageCount"] = update.PageCount.HasValue && update.PageCount.Value > 0 ? update.PageCount.Value : item.PageCount,
             ["metadataPageCount"] = update.PageCount.HasValue && update.PageCount.Value > 0 ? update.PageCount.Value : item.PageCount,
             ["writer"] = First(update.Writer, item.Writer),
@@ -16646,7 +16702,6 @@ public static class GuidevaultNativeMetadata
         if (exportLocks is not null && exportLocks.Count > 0)
             metadata["metadataLocks"] = exportLocks;
 
-        var kind = First(update.Kind, item.Kind);
         if (kind.Equals("Magazine", StringComparison.OrdinalIgnoreCase))
         {
             Put(metadata, "magazineTitle", First(update.MagazineTitle, item.MagazineTitle));
@@ -16755,13 +16810,17 @@ public static class GuidevaultNativeMetadata
 
         var kind = First(update.Kind, item.Kind);
         var pageCount = update.PageCount.HasValue && update.PageCount.Value > 0 ? update.PageCount.Value : item.PageCount;
+        var gameReleaseYear = First(update.GameReleaseYear, item.GameReleaseYear);
         PutIfMissing("title", First(update.Title, item.Title));
         PutIfMissing("kind", kind);
         PutIfMissing("category", First(update.Category, item.Category));
         PutIfMissing("preferredPlatform", First(update.Category, item.Category));
         PutIfMissing("system", First(update.System, item.System));
         PutIfMissing("publisher", First(update.Publisher, item.Publisher));
-        PutIfMissing("year", First(update.Year, item.Year));
+        if (kind.Equals("Manual", StringComparison.OrdinalIgnoreCase) && !string.IsNullOrWhiteSpace(gameReleaseYear))
+            metadata["year"] = gameReleaseYear;
+        else
+            PutIfMissing("year", First(update.Year, item.Year));
         PutIfMissing("languageTag", First(update.LanguageTag, item.LanguageTag));
         PutIfMissing("metadataStatus", MetadataStatusHelper.Normalize(update.MetadataStatus, item.MetadataStatus));
         PutIfMissing("tags", update.Tags ?? item.Tags);
@@ -18466,11 +18525,11 @@ public static class ArchiveReader
             cached = await TryReadCoverFromDiskAsync(key);
             if (cached is not null) return cached;
 
-            // Do not open large archives for new cover extraction while a scan or
-            // archive write is already walking the same mounted library files.
-            // Endpoint handlers return 503 during this window so the browser retries
-            // instead of permanently caching a missing-cover placeholder.
-            if (GuidevaultLibraryIoGate.IsBusy) return null;
+            // Do not open large archives for new cover extraction while a scan or a
+            // source-file rewrite is walking the same mounted library files. Copy-first
+            // conversion jobs explicitly allow these reads because they never modify
+            // the indexed source archive.
+            if (GuidevaultLibraryIoGate.ShouldDeferArchiveReads) return null;
 
             var image = await GetCoverImageFromArchiveAsync(archivePath, preferredEntryKey);
             if (image is null)
@@ -20915,8 +20974,15 @@ static class GuidevaultAtomicFile
 static class GuidevaultLibraryIoGate
 {
     private static readonly SemaphoreSlim Gate = new(1, 1);
+    private static int ArchiveReadSafeLeaseCount;
 
     public static bool IsBusy => Gate.CurrentCount == 0;
+
+    // Some exclusive jobs, such as copy-first format conversion, write only a new
+    // sibling output and never alter the indexed source archive. Those jobs can keep
+    // cover/page reads available even though other library writers and scans remain
+    // excluded by the main gate.
+    public static bool ShouldDeferArchiveReads => IsBusy && Volatile.Read(ref ArchiveReadSafeLeaseCount) <= 0;
 
     public static string BusyMessage =>
         "A library scan, cleanup, metadata enrichment, metadata export, or file rename is already working with the library files. Wait for that task to finish before exporting metadata or renaming files. Running these at the same time can make large or mounted libraries extremely slow.";
@@ -20927,11 +20993,13 @@ static class GuidevaultLibraryIoGate
         return new Releaser();
     }
 
-    public static bool TryBeginArchiveWrite(out IDisposable? lease, out string message)
+    public static bool TryBeginArchiveWrite(out IDisposable? lease, out string message, bool allowConcurrentArchiveReads = false)
     {
         if (Gate.Wait(0))
         {
-            lease = new Releaser();
+            if (allowConcurrentArchiveReads)
+                Interlocked.Increment(ref ArchiveReadSafeLeaseCount);
+            lease = new Releaser(allowConcurrentArchiveReads);
             message = string.Empty;
             return true;
         }
@@ -20943,12 +21011,22 @@ static class GuidevaultLibraryIoGate
 
     private sealed class Releaser : IDisposable
     {
+        private readonly bool _allowedConcurrentArchiveReads;
         private int _released;
+
+        public Releaser(bool allowedConcurrentArchiveReads = false)
+        {
+            _allowedConcurrentArchiveReads = allowedConcurrentArchiveReads;
+        }
 
         public void Dispose()
         {
             if (Interlocked.Exchange(ref _released, 1) == 0)
+            {
+                if (_allowedConcurrentArchiveReads)
+                    Interlocked.Decrement(ref ArchiveReadSafeLeaseCount);
                 Gate.Release();
+            }
         }
     }
 }
