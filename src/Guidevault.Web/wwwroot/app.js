@@ -25312,14 +25312,19 @@ function renderServerFilesModeChrome() {
   document.querySelectorAll('[data-server-files-action-card]').forEach(card => {
     card.classList.toggle('hidden', (card.dataset.serverFilesActionCard || '') !== mode);
   });
+  document.querySelectorAll('.server-files-format-column').forEach(cell => {
+    cell.classList.toggle('hidden', mode !== 'convert');
+  });
 }
 
 function serverFilesEnsureState() {
-  state.serverFiles = state.serverFiles || { selectedIds: [], kindFilters: [], search: '', renderLimit: METADATA_MANAGER_DEFAULT_RENDER_LIMIT, templateKind: 'manual', templateTargetId: 'serverFilesManualTemplate', mode: 'organize' };
+  state.serverFiles = state.serverFiles || { selectedIds: [], kindFilters: [], search: '', renderLimit: METADATA_MANAGER_DEFAULT_RENDER_LIMIT, templateKind: 'manual', templateTargetId: 'serverFilesManualTemplate', mode: 'organize', sortKey: '', sortDirection: 'asc' };
   if (!Array.isArray(state.serverFiles.selectedIds)) state.serverFiles.selectedIds = [];
   if (!Array.isArray(state.serverFiles.kindFilters)) state.serverFiles.kindFilters = [];
   if (!Number.isFinite(Number(state.serverFiles.renderLimit)) || Number(state.serverFiles.renderLimit) <= 0) state.serverFiles.renderLimit = METADATA_MANAGER_DEFAULT_RENDER_LIMIT;
   if (!SERVER_FILES_MODES[state.serverFiles.mode]) state.serverFiles.mode = serverFilesModeFromTab(state.settingsActiveTab || 'files-organize');
+  if (state.serverFiles.sortKey !== 'format') state.serverFiles.sortKey = '';
+  if (state.serverFiles.sortDirection !== 'desc') state.serverFiles.sortDirection = 'asc';
   return state.serverFiles;
 }
 
@@ -25350,6 +25355,38 @@ function serverFilesBaseName(path = '') {
   const normalized = String(path || '').replace(/\\/g, '/');
   const parts = normalized.split('/').filter(Boolean);
   return parts.length ? parts[parts.length - 1] : String(path || '');
+}
+
+function serverFilesFileFormat(item) {
+  const candidate = String(item?.fileName || item?.filename || serverFilesBaseName(serverFilesItemPath(item)) || '').trim();
+  const match = candidate.match(/\.([a-z0-9]{1,12})$/i);
+  return match ? match[1].toUpperCase() : 'Unknown';
+}
+
+function serverFilesSortByFormat() {
+  const files = serverFilesEnsureState();
+  if (files.sortKey === 'format') files.sortDirection = files.sortDirection === 'asc' ? 'desc' : 'asc';
+  else {
+    files.sortKey = 'format';
+    files.sortDirection = 'asc';
+  }
+  files.renderLimit = metadataManagerDefaultRenderLimit();
+  renderServerFilesWorkspace();
+}
+
+function serverFilesSyncSortHeader() {
+  const files = serverFilesEnsureState();
+  const header = $('serverFilesFormatSort');
+  const indicator = $('serverFilesFormatSortIndicator');
+  const active = files.sortKey === 'format';
+  if (header) {
+    header.classList.toggle('is-sorted', active);
+    header.setAttribute('aria-sort', active ? (files.sortDirection === 'desc' ? 'descending' : 'ascending') : 'none');
+    header.title = active
+      ? `Sorted by file format ${files.sortDirection === 'desc' ? 'Z to A' : 'A to Z'}. Click to reverse.`
+      : 'Sort the Format Conversion list by source file format.';
+  }
+  if (indicator) indicator.textContent = active ? (files.sortDirection === 'desc' ? '\u2193' : '\u2191') : '\u2195';
 }
 
 function serverFilesPathCodeHtml(path = '', emptyText = '\u2014') {
@@ -25393,6 +25430,11 @@ function serverFilesMatchingItems() {
     if (q && !serverFilesSearchText(item).includes(q)) return false;
     return true;
   }).slice().sort((a, b) => {
+    if (files.mode === 'convert' && files.sortKey === 'format') {
+      const direction = files.sortDirection === 'desc' ? -1 : 1;
+      const formatCompare = serverFilesFileFormat(a).localeCompare(serverFilesFileFormat(b), undefined, { numeric: true, sensitivity: 'base' });
+      if (formatCompare) return formatCompare * direction;
+    }
     const kindCompare = String(a.kind || '').localeCompare(String(b.kind || ''), undefined, { sensitivity: 'base' });
     if (kindCompare) return kindCompare;
     const categoryCompare = String(metadataManagerCategoryValue(a) || metadataManagerSeriesValue(a) || '').localeCompare(String(metadataManagerCategoryValue(b) || metadataManagerSeriesValue(b) || ''), undefined, { numeric: true, sensitivity: 'base' });
@@ -25489,19 +25531,22 @@ function serverFilesRefreshSummary() {
 
 function serverFilesRowsHtml(items = []) {
   const selected = new Set(serverFilesCurrentSelectedIds());
-  if (!items.length) return '<tr><td colspan="7" class="metadata-manager-empty">No files match the current target file filter.</td></tr>';
+  if (!items.length) return '<tr><td colspan="8" class="metadata-manager-empty">No files match the current target file filter.</td></tr>';
+  const showFormat = serverFilesCurrentMode() === 'convert';
   return items.map(item => {
     const id = metadataManagerItemId(item);
     const name = metadataManagerItemName(item) || item.title || item.fileName || 'Untitled';
     const category = item.kind === 'Magazine' ? (metadataManagerSeriesValue(item) || item.magazineTitle || '') : (metadataManagerCategoryValue(item) || platformListText(item) || '');
     const path = serverFilesItemPath(item) || item.fileName || '';
     const fileName = item.fileName || serverFilesBaseName(path) || '';
+    const fileFormat = serverFilesFileFormat(item);
     const metadataStatus = metadataStatusOf(item) || '';
     return `<tr>
       <td><input class="server-files-row-check" type="checkbox" data-server-file-id="${escapeForAttribute(id)}" ${selected.has(id) ? 'checked' : ''} /></td>
       <td><span class="metadata-kind-pill metadata-kind-preview-trigger" data-metadata-preview-id="${escapeForAttribute(id)}" title="Click and hold to preview cover">${escapeHtml(item.kind || '')}</span></td>
       <td><strong>${escapeHtml(name)}</strong><br><small>${escapeHtml(metadataStatus || '\u2014')}</small></td>
       <td>${escapeHtml(category || '\u2014')}</td>
+      <td class="server-files-format-column ${showFormat ? '' : 'hidden'}"><span class="server-files-format-pill">${escapeHtml(fileFormat)}</span></td>
       <td><code class="server-files-file-name" title="${escapeForAttribute(fileName)}">${escapeHtml(fileName || '\u2014')}</code></td>
       <td>${serverFilesPathCodeHtml(path)}</td>
       <td>${escapeHtml(String(item.year || item.coverDate || item.publicationDate || '').trim() || '\u2014')}</td>
@@ -25523,7 +25568,7 @@ function renderServerFilesWorkspace() {
   const rendered = allItems.slice(0, limit);
   const hidden = Math.max(0, allItems.length - rendered.length);
   const body = $('serverFilesTableBody');
-  if (body) body.innerHTML = serverFilesRowsHtml(rendered) + (hidden ? `<tr><td colspan="7" class="metadata-manager-empty metadata-manager-hidden-note">${hidden} more matching file${hidden === 1 ? ' is' : 's are'} hidden by the display limit.</td></tr>` : '');
+  if (body) body.innerHTML = serverFilesRowsHtml(rendered) + (hidden ? `<tr><td colspan="8" class="metadata-manager-empty metadata-manager-hidden-note">${hidden} more matching file${hidden === 1 ? ' is' : 's are'} hidden by the display limit.</td></tr>` : '');
   const selected = new Set(serverFilesCurrentSelectedIds());
   const renderedIds = rendered.map(metadataManagerItemId).filter(Boolean);
   const header = $('serverFilesHeaderCheck');
@@ -25549,6 +25594,7 @@ function renderServerFilesWorkspace() {
     showAll.textContent = hidden ? `Show All ${allItems.length}` : 'Show All';
   }
   serverFilesRefreshSummary();
+  serverFilesSyncSortHeader();
   renderServerFilesFormatTools();
 }
 
@@ -26507,6 +26553,7 @@ if ($('serverFilesSaveTemplatePreset')) $('serverFilesSaveTemplatePreset').addEv
 if ($('serverFilesUpdateTemplatePreset')) $('serverFilesUpdateTemplatePreset').addEventListener('click', e => { e.preventDefault(); serverFilesUpdateTemplatePreset(); });
 if ($('serverFilesDeleteTemplatePreset')) $('serverFilesDeleteTemplatePreset').addEventListener('click', e => { e.preventDefault(); serverFilesDeleteTemplatePreset(); });
 if ($('serverFilesHeaderCheck')) $('serverFilesHeaderCheck').addEventListener('change', e => serverFilesSelectRendered(!!e.currentTarget.checked));
+if ($('serverFilesFormatSort')) $('serverFilesFormatSort').addEventListener('click', e => { e.preventDefault(); serverFilesSortByFormat(); });
 if ($('serverFilesTableBody')) $('serverFilesTableBody').addEventListener('change', e => {
   const check = e.target.closest?.('.server-files-row-check');
   if (!check) return;
