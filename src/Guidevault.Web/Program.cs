@@ -16800,6 +16800,9 @@ public static class GuidevaultNativeMetadata
         var metadata = JsonSerializer.Deserialize<Dictionary<string, object?>>(submittedMetadata.GetRawText(), JsonOptions)
             ?? new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase);
         metadata = new Dictionary<string, object?>(metadata, StringComparer.OrdinalIgnoreCase);
+        // Remove values that identify or depend on one Guidevault/LaunchBox installation.
+        // Embedded metadata must remain portable between libraries and machines.
+        RemoveNonPortableSetupMetadata(metadata);
 
         void PutIfMissing(string key, object? value)
         {
@@ -17175,21 +17178,15 @@ public static class GuidevaultNativeMetadata
 
         var gameTitle = First(match.LaunchBoxGameTitle, game?.Title ?? string.Empty);
         var platform = First(match.LaunchBoxPlatform, game?.Platform ?? string.Empty);
-        var databaseId = game?.DatabaseId ?? string.Empty;
-        var matchedAt = match.UpdatedAt != default ? match.UpdatedAt : match.MatchedAt;
-
         var launchBoxGame = new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase)
         {
-            ["id"] = gameId,
             ["title"] = gameTitle,
             ["platform"] = platform,
-            ["databaseId"] = databaseId,
             ["sortTitle"] = game?.SortTitle ?? string.Empty,
             ["releaseYear"] = game?.ReleaseYear ?? string.Empty,
             ["developer"] = game?.Developer ?? string.Empty,
             ["publisher"] = game?.Publisher ?? string.Empty,
-            ["series"] = game?.Series ?? string.Empty,
-            ["applicationPath"] = game?.ApplicationPath ?? string.Empty
+            ["series"] = game?.Series ?? string.Empty
         };
 
         return new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase)
@@ -17199,7 +17196,6 @@ public static class GuidevaultNativeMetadata
             ["source"] = string.IsNullOrWhiteSpace(match.Source) ? "GuideVault" : match.Source,
             ["confidenceScore"] = match.ConfidenceScore,
             ["matchReason"] = match.MatchReason,
-            ["matchedAt"] = matchedAt == default ? string.Empty : matchedAt.ToString("O"),
             ["launchBoxGame"] = launchBoxGame
         };
     }
@@ -17228,23 +17224,34 @@ public static class GuidevaultNativeMetadata
         if (metadata is null || launchBoxMatch is null) return;
         if (!launchBoxMatch.TryGetValue("launchBoxGame", out var gameObject) || gameObject is not IDictionary<string, object?> game) return;
 
-        var gameId = DictionaryValue(game, "id");
         var gameTitle = DictionaryValue(game, "title");
         var platform = DictionaryValue(game, "platform");
-        var databaseId = DictionaryValue(game, "databaseId");
         var matchType = DictionaryValue(launchBoxMatch, "matchType");
         var status = DictionaryValue(launchBoxMatch, "matchStatus");
         var source = DictionaryValue(launchBoxMatch, "source");
-        var matchedAt = DictionaryValue(launchBoxMatch, "matchedAt");
 
-        if (!string.IsNullOrWhiteSpace(gameId)) metadata["launchBoxGameId"] = gameId;
         if (!string.IsNullOrWhiteSpace(gameTitle)) metadata["launchBoxGameTitle"] = gameTitle;
         if (!string.IsNullOrWhiteSpace(platform)) metadata["launchBoxPlatform"] = platform;
-        if (!string.IsNullOrWhiteSpace(databaseId)) metadata["launchBoxDatabaseId"] = databaseId;
         if (!string.IsNullOrWhiteSpace(matchType)) metadata["launchBoxMatchType"] = matchType;
         if (!string.IsNullOrWhiteSpace(status)) metadata["launchBoxMatchStatus"] = status;
         if (!string.IsNullOrWhiteSpace(source)) metadata["launchBoxMatchSource"] = source;
-        if (!string.IsNullOrWhiteSpace(matchedAt)) metadata["launchBoxMatchedAt"] = matchedAt;
+    }
+
+    private static void RemoveNonPortableSetupMetadata(Dictionary<string, object?> metadata)
+    {
+        if (metadata is null) return;
+        foreach (var key in new[]
+        {
+            "applicationPath",
+            "manualPath",
+            "launchBoxRoot",
+            "launchBoxGameId",
+            "launchBoxDatabaseId",
+            "launchBoxMatchedAt"
+        })
+        {
+            metadata.Remove(key);
+        }
     }
 
     private static bool IsLaunchBoxExportMatchType(string matchType)
