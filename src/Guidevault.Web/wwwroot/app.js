@@ -92,6 +92,8 @@ let guidevaultStartupDeepLinkHandled = false;
 const GUIDEVAULT_READING_ACTIVITY_KEY = 'guidevault.readingActivity.v1';
 const GUIDEVAULT_READING_ACTIVITY_LIMIT = 1000;
 let guidevaultReadingProfilesSaveTimer = 0;
+let guidevaultReadingProfilesPendingSave = null;
+let guidevaultReadingProfilesSaveInFlight = null;
 let guidevaultReadingProfilesRemoteSyncInFlight = null;
 const GUIDEVAULT_READER_TEXTURE_IMAGE_CACHE_LIMIT = 8;
 const guidevaultReaderTextureImageCache = new Map();
@@ -807,14 +809,59 @@ async function saveReadingProfilesToServer(profiles = state.readingProfiles) {
   return normalizeReaderPreferencesPayload(await res.json());
 }
 
+function queueReadingProfilesServerSave(profiles = state.readingProfiles) {
+  if (!currentUserIsAdmin()) return Promise.resolve(null);
+  guidevaultReadingProfilesPendingSave = normalizeReadingProfiles(profiles || {});
+  if (guidevaultReadingProfilesSaveInFlight) return guidevaultReadingProfilesSaveInFlight;
+
+  guidevaultReadingProfilesSaveInFlight = (async () => {
+    let lastSavedPayload = null;
+    while (guidevaultReadingProfilesPendingSave) {
+      const pending = guidevaultReadingProfilesPendingSave;
+      guidevaultReadingProfilesPendingSave = null;
+      lastSavedPayload = await saveReadingProfilesToServer(pending);
+    }
+    if (lastSavedPayload?.readingProfiles) persistReadingProfilesLocal(lastSavedPayload.readingProfiles);
+    return lastSavedPayload;
+  })().finally(() => {
+    guidevaultReadingProfilesSaveInFlight = null;
+  });
+
+  return guidevaultReadingProfilesSaveInFlight;
+}
+
 function scheduleReadingProfilesServerSave(profiles = state.readingProfiles) {
   if (!currentUserIsAdmin()) return;
+  guidevaultReadingProfilesPendingSave = normalizeReadingProfiles(profiles || {});
   if (guidevaultReadingProfilesSaveTimer) clearTimeout(guidevaultReadingProfilesSaveTimer);
-  guidevaultReadingProfilesSaveTimer = window.setTimeout(async () => {
+  guidevaultReadingProfilesSaveTimer = window.setTimeout(() => {
     guidevaultReadingProfilesSaveTimer = 0;
-    try { await saveReadingProfilesToServer(profiles); }
-    catch (err) { console.debug('Guidevault reader preferences were not saved to the server yet.', err); }
+    queueReadingProfilesServerSave(guidevaultReadingProfilesPendingSave || state.readingProfiles)
+      .catch(err => console.debug('Guidevault reader preferences were not saved to the server yet.', err));
   }, 150);
+}
+
+async function flushReadingProfilesServerSave() {
+  if (!currentUserIsAdmin()) return null;
+  if (guidevaultReadingProfilesSaveTimer) {
+    clearTimeout(guidevaultReadingProfilesSaveTimer);
+    guidevaultReadingProfilesSaveTimer = 0;
+  }
+  if (guidevaultReadingProfilesPendingSave) {
+    return await queueReadingProfilesServerSave(guidevaultReadingProfilesPendingSave);
+  }
+  if (guidevaultReadingProfilesSaveInFlight) return await guidevaultReadingProfilesSaveInFlight;
+  return null;
+}
+
+async function saveReadingProfilesImmediately(profiles = state.readingProfiles) {
+  const normalized = persistReadingProfilesLocal(profiles || {});
+  if (!currentUserIsAdmin()) return { readingProfiles: normalized };
+  if (guidevaultReadingProfilesSaveTimer) {
+    clearTimeout(guidevaultReadingProfilesSaveTimer);
+    guidevaultReadingProfilesSaveTimer = 0;
+  }
+  return await queueReadingProfilesServerSave(normalized);
 }
 
 async function syncReadingProfilesFromServer(options = {}) {
@@ -1024,8 +1071,9 @@ function profilePresetOptionsHtml(selectedId = '', options = {}) {
   if (options.includeClear) chunks.push(`<option value="">${escapeHtml(options.clearLabel || 'Inherit')}</option>`);
   presets.forEach(preset => {
     const defaultBadge = preset.id === profiles.defaultPresetId ? ' \u2014 Default' : '';
+    const settingsBadge = options.showSettings ? ` \u2014 ${displayModeLabel(preset.displayMode)} / ${transitionLabel(preset.transitionMode)}` : '';
     const selected = String(preset.id) === String(selectedId || '') ? ' selected' : '';
-    chunks.push(`<option value="${escapeHtml(preset.id)}"${selected}>${escapeHtml(preset.name || 'Reading Profile')}${escapeHtml(defaultBadge)}</option>`);
+    chunks.push(`<option value="${escapeHtml(preset.id)}"${selected}>${escapeHtml(preset.name || 'Reading Profile')}${escapeHtml(settingsBadge)}${escapeHtml(defaultBadge)}</option>`);
   });
   return chunks.join('');
 }
@@ -1380,7 +1428,7 @@ function duplicateReadingProfilePreset() {
   setReadingProfileStatus(`Duplicated ${sourceName}. Rename it and save when ready.`, 'success');
 }
 
-function saveReadingProfilePreset() {
+async function saveReadingProfilePreset() {
   const profiles = loadReadingProfiles();
   const ids = readingProfilePresetFormIds();
   const selectedId = $(ids.selector)?.value || 'default';
@@ -1395,10 +1443,18 @@ function saveReadingProfilePreset() {
     builtIn: selectedId === 'default' || !!existing.builtIn,
     updatedAt: new Date().toISOString()
   };
-  saveReadingProfiles(profiles);
+  persistReadingProfilesLocal(profiles);
   renderReadingProfileSettings(selectedId);
   if (state.selected) renderDetailReadingProfilePanel(state.selected);
-  setReadingProfileStatus('Reading profile preset saved.', 'success');
+  setReadingProfileStatus('Saving reading profile preset...', 'info');
+  try {
+    await saveReadingProfilesImmediately(profiles);
+    renderReadingProfileSettings(selectedId);
+    if (state.selected) renderDetailReadingProfilePanel(state.selected);
+    setReadingProfileStatus('Reading profile preset saved.', 'success');
+  } catch (err) {
+    setReadingProfileStatus(`The preset was saved in this browser, but the server save failed: ${err?.message || err}`, 'error');
+  }
 }
 
 function deleteReadingProfilePreset() {
@@ -1439,9 +1495,9 @@ function renderDetailReadingProfilePanel(item) {
     const typeLabel = group?.type === 'series' ? 'Series' : 'Category';
     $('detailReadingProfileGroupLabel').textContent = `${typeLabel}: ${group?.label || 'Unsorted'}`;
   }
-  if ($('detailGroupProfileSelect')) $('detailGroupProfileSelect').innerHTML = profilePresetOptionsHtml(groupProfileId, { includeClear: true, clearLabel: 'Use global default profile' });
+  if ($('detailGroupProfileSelect')) $('detailGroupProfileSelect').innerHTML = profilePresetOptionsHtml(groupProfileId, { includeClear: true, clearLabel: 'Use global default profile', showSettings: true });
   if ($('detailGroupProfileSelect')) $('detailGroupProfileSelect').value = groupProfileId;
-  if ($('detailEntryProfileSelect')) $('detailEntryProfileSelect').innerHTML = profilePresetOptionsHtml(entryProfileId, { includeClear: true, clearLabel: 'Inherit from series/category/default' });
+  if ($('detailEntryProfileSelect')) $('detailEntryProfileSelect').innerHTML = profilePresetOptionsHtml(entryProfileId, { includeClear: true, clearLabel: 'Inherit from series/category/default', showSettings: true });
   if ($('detailEntryProfileSelect')) $('detailEntryProfileSelect').value = entryProfileId;
   updateDetailReadingProfileEffectivePreview(item);
 }
@@ -1482,7 +1538,7 @@ function updateDetailReadingProfileEffectivePreview(item = state.selected) {
   summary.textContent = `${resolved.source}: ${readingProfilePresetSummary(resolved.profile)}. ${inheritedFrom}${maskedText}${unsavedText}`;
 }
 
-function saveDetailReadingProfileAssignment(scope) {
+async function saveDetailReadingProfileAssignment(scope) {
   if (!state.selected) return;
   const profiles = loadReadingProfiles();
   const item = state.selected;
@@ -1502,10 +1558,18 @@ function saveDetailReadingProfileAssignment(scope) {
     else delete profiles.entryAssignments[entryKey];
   }
 
-  saveReadingProfiles(profiles);
+  persistReadingProfilesLocal(profiles);
   renderDetailReadingProfilePanel(item);
+  const scopeLabel = scope === 'group' ? 'Series/category' : 'Entry';
   const savedPreset = profileId ? (profiles.presets[profileId]?.name || 'selected preset') : 'inheritance/default';
-  setDetailReadingProfileStatus(`${scope === 'group' ? 'Series/category' : 'Entry'} reading profile assignment saved: ${savedPreset}.`, 'success');
+  setDetailReadingProfileStatus(`Saving ${scopeLabel.toLowerCase()} reading profile assignment...`, 'info');
+  try {
+    await saveReadingProfilesImmediately(profiles);
+    renderDetailReadingProfilePanel(item);
+    setDetailReadingProfileStatus(`${scopeLabel} reading profile assignment saved: ${savedPreset}.`, 'success');
+  } catch (err) {
+    setDetailReadingProfileStatus(`${scopeLabel} assignment was saved in this browser, but the server save failed: ${err?.message || err}`, 'error');
+  }
 }
 
 function clearDetailReadingProfileAssignment(scope) {
@@ -20023,8 +20087,10 @@ async function openReader(item) {
   document.body.classList.remove('detail-page-mode', 'settings-sidebar-mode', 'profile-page-mode', 'strategy-detail-mode', 'magazine-detail-mode', 'manual-detail-mode');
   document.body.classList.add('reader-page-mode');
   state.reader.item = liveItem; state.reader.pages = pages; state.reader.index = 0;
-  if (currentUserIsAdmin()) await syncReadingProfilesFromServer({ migrateLocal: false, preferRemote: true });
-  else loadReadingProfiles();
+  if (currentUserIsAdmin()) {
+    await flushReadingProfilesServerSave();
+    await syncReadingProfilesFromServer({ migrateLocal: false, preferRemote: true });
+  } else loadReadingProfiles();
   const serverResolvedProfile = currentUserIsAdmin() ? await fetchResolvedReadingProfileForItem(liveItem) : null;
   if (!applyResolvedReadingProfileToReader(serverResolvedProfile, liveItem)) {
     applyReadingProfileToReader(liveItem);
