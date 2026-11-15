@@ -780,6 +780,105 @@ app.MapGet("/api/integrations/launchbox/game/{launchBoxGameId}/matches", (string
     return Results.Ok(details);
 });
 
+// DreamPause and other reader clients use this small, authenticated document index.
+// Keep the actual document and page contents on demand, and preserve GuideVault's
+// original document kind. Magazines are displayed under Guides ONLY if their
+// Featured Games metadata identifies this game, or the user confirmed a match.
+app.MapGet("/api/client/launchbox/game/{launchBoxGameId}/literature", (HttpRequest request, string launchBoxGameId) =>
+{
+    var snapshot = launchBoxIntegrationStore.GetSnapshot();
+    var game = snapshot.Games.FirstOrDefault(g =>
+        string.Equals(g.Id, launchBoxGameId, StringComparison.OrdinalIgnoreCase));
+    if (game is null) return Results.NotFound(new { error = "LaunchBox game was not found in the last GuideVault sync." });
+
+    // This endpoint must respect the authenticated user's library permissions.
+    var availableItems = VisibleLibraryItems(request, cache.GetItemsSnapshot());
+    var byId = availableItems
+        .Where(item => !string.IsNullOrWhiteSpace(item.Id))
+        .GroupBy(item => item.Id, StringComparer.OrdinalIgnoreCase)
+        .ToDictionary(group => group.Key, group => group.First(), StringComparer.OrdinalIgnoreCase);
+
+    var gameMatches = snapshot.Matches
+        .Where(match => string.Equals(match.LaunchBoxGameId, launchBoxGameId, StringComparison.OrdinalIgnoreCase))
+        .ToArray();
+    var rejectedIds = gameMatches
+        .Where(match => string.Equals(match.MatchStatus, "Rejected", StringComparison.OrdinalIgnoreCase))
+        .Select(match => match.GuideVaultItemId)
+        .ToHashSet(StringComparer.OrdinalIgnoreCase);
+    var selected = new Dictionary<string, (LibraryItem Item, string Source, string Reason)>(StringComparer.OrdinalIgnoreCase);
+
+    foreach (var match in gameMatches.Where(match => GuidevaultLaunchBoxMatcher.IsActiveMatchStatus(match.MatchStatus)))
+    {
+        if (rejectedIds.Contains(match.GuideVaultItemId) ||
+            !byId.TryGetValue(match.GuideVaultItemId, out var item)) continue;
+
+        // A magazine belongs in the game-specific Guides area through its explicit
+        // Featured Games tag, or through a manually confirmed relationship.
+        if (string.Equals(item.Kind, "Magazine", StringComparison.OrdinalIgnoreCase) &&
+            !GuidevaultLaunchBoxMatcher.MagazineFeaturesGame(game, item) &&
+            !string.Equals(match.MatchStatus, "Confirmed", StringComparison.OrdinalIgnoreCase)) continue;
+
+        var source = string.Equals(match.MatchStatus, "Confirmed", StringComparison.OrdinalIgnoreCase)
+            ? "confirmed" : "matched";
+        selected[item.Id] = (item, source, match.MatchReason ?? string.Empty);
+    }
+
+    // React to Featured Games edits immediately, without requiring the user to
+    // launch a full LaunchBox sync/rematch job. This is not title-only matching.
+    foreach (var item in availableItems.Where(item =>
+        string.Equals(item.Kind, "Magazine", StringComparison.OrdinalIgnoreCase) &&
+        !rejectedIds.Contains(item.Id) &&
+        GuidevaultLaunchBoxMatcher.MagazineFeaturesGame(game, item)))
+    {
+        if (!selected.ContainsKey(item.Id))
+            selected.Add(item.Id, (item, "featuredGames", "Magazine Featured Games tag matched the LaunchBox game title."));
+    }
+
+    var documents = selected.Values
+        .Select(entry =>
+        {
+            var item = entry.Item;
+            var isManual = string.Equals(item.Kind, "Manual", StringComparison.OrdinalIgnoreCase);
+            var isMagazine = string.Equals(item.Kind, "Magazine", StringComparison.OrdinalIgnoreCase);
+            var id = Uri.EscapeDataString(item.Id);
+            return new
+            {
+                itemId = item.Id,
+                title = item.Title,
+                kind = item.Kind, // remains "Magazine", NOT reclassified as "Strategy Guide"
+                section = isManual ? "Manual" : "Guides",
+                format = item.Format,
+                pageCount = item.PageCount,
+                magazineTitle = isMagazine ? item.MagazineTitle : string.Empty,
+                issueNumber = isMagazine ? item.IssueNumber : string.Empty,
+                volume = isMagazine ? item.Volume : string.Empty,
+                coverDate = isMagazine ? item.CoverDate : string.Empty,
+                featuredGame = isMagazine && GuidevaultLaunchBoxMatcher.MagazineFeaturesGame(game, item),
+                matchSource = entry.Source,
+                matchReason = entry.Reason,
+                coverThumbUrl = $"/api/items/{id}/cover-thumb?w=480",
+                // Stable destination: never put a short-lived auth/login token in a cached URL.
+                readerUrl = $"/?read={id}",
+                detailsUrl = $"/?detail={id}"
+            };
+        })
+        .OrderBy(document => document.section == "Manual" ? 0 : 1)
+        .ThenBy(document => document.kind == "Strategy Guide" ? 0 : document.kind == "Magazine" ? 1 : 2)
+        .ThenBy(document => document.title, StringComparer.OrdinalIgnoreCase)
+        .ToArray();
+    request.HttpContext.Response.Headers.CacheControl = "private, max-age=30";
+    return Results.Ok(new
+    {
+        launchBoxGameId = game.Id,
+        gameTitle = game.Title,
+        platform = game.Platform,
+        total = documents.Length,
+        manuals = documents.Count(d => d.section == "Manual"),
+        guides = documents.Count(d => d.section == "Guides"),
+        documents
+    });
+});
+
 app.MapGet("/api/integrations/launchbox/item/{guideVaultItemId}/links", (string guideVaultItemId) =>
 {
     var snapshot = launchBoxIntegrationStore.GetSnapshot();
@@ -9981,6 +10080,15 @@ public static class GuidevaultLaunchBoxMatcher
         };
     }
 
+    // Featured Games must be a true game-title association, not simply the name
+    // of a magazine, a shared platform, or a broad series/category match.
+    public static bool MagazineFeaturesGame(GuidevaultLaunchBoxGame game, LibraryItem magazine)
+    {
+        if (!string.Equals(magazine.Kind, "Magazine", StringComparison.OrdinalIgnoreCase)) return false;
+        var titles = new[] { game.Title, game.SortTitle }.Concat(game.AlternateNames ?? new List<string>());
+        return TitleListContainsGameTitle(titles, magazine.FeaturedGames);
+    }
+
     public static bool IsActiveMatchStatus(string? status) => string.Equals(status, "AutoMatched", StringComparison.OrdinalIgnoreCase) || string.Equals(status, "Confirmed", StringComparison.OrdinalIgnoreCase);
     public static string MatchTypeFromItem(LibraryItem item) => KindEquals(item, "Magazine") ? "Magazine" : KindEquals(item, "Strategy Guide") ? "Strategy Guide" : "Manual";
     public static string NormalizeMatchType(string? value)
@@ -11745,6 +11853,8 @@ public static class GuidevaultAuthorization
                 || path.Equals("/api/tasks", StringComparison.OrdinalIgnoreCase)) return true;
             if (AdministrativeGetPrefixes.Any(prefix => path.StartsWith(prefix, StringComparison.OrdinalIgnoreCase)))
                 return Denied("Administrator access is required.", out message);
+            if (path.StartsWith("/api/client/", StringComparison.OrdinalIgnoreCase))
+                return user.HasPermission("Read Only") || Denied("Read Only permission is required.", out message);
             if (path.StartsWith("/api/library", StringComparison.OrdinalIgnoreCase)
                 || path.StartsWith("/api/startup", StringComparison.OrdinalIgnoreCase)
                 || path.StartsWith("/api/items/", StringComparison.OrdinalIgnoreCase)
