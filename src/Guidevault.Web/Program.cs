@@ -10253,6 +10253,7 @@ public static class GuidevaultLaunchBoxMatcher
     private static bool TitleListContainsGameTitle(IEnumerable<string> gameTitles, IEnumerable<string>? itemGameTitles)
     {
         var normalizedGameTitles = (gameTitles ?? Array.Empty<string>())
+            .Select(NormalizeTitle)
             .Where(t => !string.IsNullOrWhiteSpace(t))
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .ToList();
