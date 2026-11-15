@@ -59,3 +59,17 @@ scripts/release/
 *.sqlite
 *.sqlite3
 cache/
+# Local update packages and installer artifacts
+/Payload/
+/ThemeBackups/
+/SourceBackups/
+/GuideVault-*.patch
+/Install-GuideVault-*.ps1
+/BUILD_REQUIRED.txt
+
+# Generated package manifests
+/manifest.json
+
+
+# Local patch staging and installer outputs (not project source)
+/Cleanup-GuideVault-Local-Artifacts.ps1
