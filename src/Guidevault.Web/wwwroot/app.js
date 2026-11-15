@@ -60,6 +60,14 @@ const state = {
   esrb: { results: [], selectedResult: null, resolvedResult: null, step: 'search' }
 };
 const $ = id => document.getElementById(id);
+// Reader deep links should never expose the library while a requested document opens.
+// Set this on initial script evaluation; authentication remains the normal prerequisite.
+try {
+  const directLinkParams = new URLSearchParams(window.location.search || '');
+  if ((directLinkParams.get('read') || directLinkParams.get('reader') || '').trim()) {
+    document.body.classList.add('guidevault-direct-reader-pending');
+  }
+} catch {}
 function setText(id, value) {
   const el = $(id);
   if (el) el.textContent = repairMojibakeText(value || '\u2014');
@@ -2799,6 +2807,9 @@ function showAuthenticatedApp() {
     stopHomeAssistantCommandPolling();
   }
   resetGuidevaultLandingToHome({ render: false });
+  // Start direct document navigation immediately after authentication, rather
+  // than waiting for cached or network library results to populate state.items.
+  handleGuidevaultStartupDeepLink();
   if (!state.auth.appStarted) {
     state.auth.appStarted = true;
     renderCachedLibraryImmediately();
@@ -8398,24 +8409,52 @@ function requestLaunchBoxWebViewWindowClose(reason = 'escape') {
   return false;
 }
 
+function setGuidevaultDirectReaderPending(pending) {
+  const loaderId = 'guidevaultDirectReaderLoading';
+  document.body.classList.toggle('guidevault-direct-reader-pending', !!pending);
+  let loader = $(loaderId);
+  if (pending && !loader) {
+    loader = document.createElement('div');
+    loader.id = loaderId;
+    loader.setAttribute('role', 'status');
+    loader.setAttribute('aria-live', 'polite');
+    loader.innerHTML = '<span class="guidevault-direct-reader-spinner" aria-hidden="true"></span><span>Opening selected document…</span>';
+    document.body.appendChild(loader);
+  }
+  if (!pending) loader?.remove();
+}
+
 function handleGuidevaultStartupDeepLink() {
-  if (guidevaultStartupDeepLinkHandled || !Array.isArray(state.items) || !state.items.length) return false;
+  if (guidevaultStartupDeepLinkHandled) return false;
   const link = getGuidevaultStartupDeepLink();
   if (!link?.id) return false;
+  // Detail links retain their existing cache-backed behavior. Reader links bypass
+  // the library index and fetch only the requested document by its stable ID.
+  const isDirectReader = link.action === 'read';
+  if (!isDirectReader && (!Array.isArray(state.items) || !state.items.length)) return false;
   const wanted = String(link.id || '').trim();
   const wantedLower = wanted.toLowerCase();
-  const cachedItem = state.items.find(i => itemIdOf(i).toLowerCase() === wantedLower);
-  if (!cachedItem) return false;
+  const cachedItem = (state.items || []).find(i => itemIdOf(i).toLowerCase() === wantedLower);
+  if (!isDirectReader && !cachedItem) return false;
   guidevaultStartupDeepLinkHandled = true;
-  clearGuidevaultStartupDeepLinkUrl();
+  if (isDirectReader) setGuidevaultDirectReaderPending(true);
   (async () => {
-    const item = await fetchGuidevaultItemById(wanted) || cachedItem;
-    if (link.action === 'read') {
-      await openReader(item);
+    const fetchedItem = await fetchGuidevaultItemById(wanted);
+    const item = fetchedItem || cachedItem;
+    if (!item) throw new Error('The requested document was not found or is not accessible.');
+    if (isDirectReader) {
+      // The fresh item has already been fetched. Do not make a duplicate item GET.
+      await openReader(item, { skipItemRefresh: !!fetchedItem });
     } else {
       showDetailScreen(item);
     }
-  })().catch(err => console.warn('Unable to open GuideVault startup deep link.', err));
+    clearGuidevaultStartupDeepLinkUrl();
+  })().catch(err => {
+    console.warn('Unable to open GuideVault startup deep link.', err);
+    setStatus(`Unable to open requested document: ${err?.message || err}`);
+  }).finally(() => {
+    if (isDirectReader) setGuidevaultDirectReaderPending(false);
+  });
   return true;
 }
 
@@ -20062,9 +20101,9 @@ function cleanupInactiveViewsForNavigation(nextView = '') {
   }
 }
 
-async function openReader(item) {
+async function openReader(item, options = {}) {
   if (!item) return;
-  const liveItem = await fetchGuidevaultItemById(itemIdOf(item)) || item;
+  const liveItem = options.skipItemRefresh ? item : (await fetchGuidevaultItemById(itemIdOf(item)) || item);
   cleanupReaderResources();
   const format = String(liveItem.format || liveItem.Format || '').toUpperCase();
   if (format === 'PDF') { recordReadingActivity(liveItem, 'read'); window.open(`/api/items/${encodeURIComponent(itemIdOf(liveItem))}/file`, '_blank'); return; }
