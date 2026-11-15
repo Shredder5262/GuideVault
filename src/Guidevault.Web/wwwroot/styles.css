@@ -22515,3 +22515,25 @@ body.dossier-page-mode .main{min-width:0;overflow:hidden!important;}
   opacity:0!important;
   pointer-events:none!important;
 }
+
+
+/* Direct reader deep link: do not flash the library/home page while loading a book.
+   Display this only after normal authentication succeeds. No extra browser or
+   library request is required by this overlay. */
+#guidevaultDirectReaderLoading { display:none; }
+body.guidevault-direct-reader-pending:not(.auth-locked) #guidevaultDirectReaderLoading {
+  position:fixed; inset:0; z-index:25000;
+  display:flex; flex-direction:column; gap:16px;
+  align-items:center; justify-content:center;
+  background:#05090d; color:#dceaff;
+  font:600 16px/1.5 Inter,Segoe UI,system-ui,sans-serif;
+}
+.guidevault-direct-reader-spinner {
+  width:34px; height:34px; border-radius:50%;
+  border:3px solid #334b63; border-top-color:#68afff;
+  animation:guidevaultDirectReaderSpin .85s linear infinite;
+}
+@keyframes guidevaultDirectReaderSpin { to { transform:rotate(360deg); } }
+@media (prefers-reduced-motion:reduce) {
+  .guidevault-direct-reader-spinner { animation:none; border-top-color:#68afff; }
+}
