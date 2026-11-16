@@ -5,10 +5,14 @@ WORKDIR /src
 
 COPY . .
 RUN dotnet restore "src/Guidevault.Web/Guidevault.Web.csproj"
-RUN dotnet publish "src/Guidevault.Web/Guidevault.Web.csproj" \
-    -c Release \
-    -o /app/publish \
-    /p:UseAppHost=false
+RUN --mount=type=secret,id=sixlabors_license_b64,required=true \
+    base64 -d /run/secrets/sixlabors_license_b64 > /tmp/sixlabors.lic && \
+    SixLaborsLicenseFile=/tmp/sixlabors.lic \
+    dotnet publish "src/Guidevault.Web/Guidevault.Web.csproj" \
+        -c Release \
+        -o /app/publish \
+        /p:UseAppHost=false && \
+    rm -f /tmp/sixlabors.lic
 
 FROM mcr.microsoft.com/dotnet/aspnet:8.0 AS runtime
 WORKDIR /app

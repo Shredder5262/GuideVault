@@ -67,6 +67,8 @@ jobs:
         with:
           context: .
           file: ./Dockerfile
+          secrets: |
+            sixlabors_license_b64=${{ secrets.SIXLABORS_LICENSE_B64 }}
           platforms: linux/amd64
           push: true
           tags: ${{ steps.vars.outputs.tags }}
