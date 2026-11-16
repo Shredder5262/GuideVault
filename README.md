@@ -1,198 +1,37 @@
-# GuideVault
+# DreamPause — GuideVault Manual & Embedded Reader Polish v1.8
 
-Self-hosted web reader and library manager for video game manuals, strategy guides, and gaming magazines.
+**Source patch test candidate**, based on the exact delivered DreamPause GuideVault Literature Client v1.7 module files. It modifies only two C# files, never shell artwork, server code, LaunchBox XML, or actual documents.
 
-GuideVault is built for people who keep local collections of scanned game literature and want a clean browser-based way to organize, browse, read, and preserve them.
+## Changes
 
-## Current Release
+- Manual cover preview: 854 × 342 canvas at x318, y250 (replacing 834 × 401 at x306, y266); centered aspect-preserving image fully above the lower chrome edge. Preserves actual `/cover-thumb` caching and lazy WebView2 startup.
+- Manual preview: removes the sentence "Preview uses no live reader; full reader starts only when opened". Replaces provider-forward `GUIDEVAULT` heading with `BOOKLET`. Keeps Retry and Open in GuideVault buttons **only in GuideVault primary Manual reader mode** (BuiltIn and External retain their own existing screens/actions). The large **Open Full Screen** button remains available for a found manual.
+- Embedded GuideVault reader: top bar displays the **game title only**. Removes DreamPause zoom (+/−), percentage, and Fit/Reset toolbar controls (does not interfere with the web reader's own reading options).
+- Bottom toolbar: **BACK** at left (no redundant Close button); **PREV PAGE** and **NEXT PAGE** centered regardless of other controls; **AUTO: OFF/ON** and 3 / 5 / 10 / 15 SEC options at right.
+- Auto turns via GuideVault's native `#nextPage` button and pauses automatically when the native reader is unavailable, the page count reaches the end, a new navigation occurs, or the window closes. It starts **off** each time and never runs on the lightweight Manual preview.
 
-**Version:** v1.0.0
+## Install
 
-GuideVault is now in its first public release stage. The application is intended for local and self-hosted use with user-managed library files.
+1. **Close LaunchBox and Big Box**. Unzip this release without separating `Payload/`, `manifest.json`, or the installer.
+2. Inside the extracted package, preview against the current DreamPause source:
+   ```powershell
+   .\Install-DreamPause-GuideVault-Reader-Polish-v1.8.ps1
+   ```
+3. Apply the source replacement if preflight passes:
+   ```powershell
+   .\Install-DreamPause-GuideVault-Reader-Polish-v1.8.ps1 -Apply
+   ```
+4. From `C:\Users\Andrew\Documents\VSCode\ShredderPauseNext`, build AND deploy:
+   ```powershell
+   .\Build-Deploy.ps1 -Deploy
+   ```
+5. Restart LaunchBox and open *Super Mario Bros. 2* → Manual → Open Full Screen; verify both short and long covers, centered page buttons, Back, and auto turn at 3/5/10/15 seconds. Also open Nintendo Power from Guides and check its reader controls.
+6. Toggle Manual Reader between BuiltIn/External/GuideVault in Settings and verify the provider-specific footer buttons do not appear in other modes.
 
-## What GuideVault Does
+## Safety and compatibility
 
-GuideVault helps organize and read video game literature collections, including:
-
-* Game manuals
-* Strategy guides
-* Gaming magazines
-* Reference books
-* Inserts, maps, posters, and related scanned material
-
-## Core Features
-
-* Self-hosted web interface
-* Browser-based reader
-* Manual, strategy guide, and magazine library sections
-* CBZ and CBR support
-* Local folder scanning
-* Metadata editing and cleanup tools
-* Details pages for library items
-* Associated platform metadata
-* Single-page, two-page, and adaptive reader layouts
-* Book-style reader visuals
-* Page transitions, fullscreen reading, zoom, and magnifier controls
-* User accounts and reading profiles
-* Customizable home shelves and navigation
-* OPDS support for compatible readers
-* Docker deployment support
-* PDF-to-CBZ conversion with Poppler included in the published Docker image
-
-## Supported File Types
-
-GuideVault is currently focused on scanned reading formats:
-
-```text
-.cbz
-.cbr
-.pdf
-```
-
-The published Docker image includes Poppler so PDF-to-CBZ conversion works without manually installing `pdftoppm` or `pdftocairo` inside the container.
-
-## Suggested Library Layout
-
-GuideVault can scan a configured library folder. A structure like this keeps larger collections easier to manage:
-
-```text
-GuideVault Library/
-  Manuals/
-    Nintendo Entertainment System/
-    Super Nintendo Entertainment System/
-    Sega Genesis/
-
-  Strategy Guides/
-    Nintendo/
-    Sega/
-    Sony PlayStation/
-
-  Magazines/
-    Nintendo Power/
-    Electronic Gaming Monthly/
-    GamePro/
-```
-
-## Quick Start with Docker
-
-Create a folder for GuideVault data and mount your existing library folder into the container.
-
-```yaml
-services:
-  guidevault:
-    image: ghcr.io/shredder5262/guidevault:latest
-    container_name: guidevault
-    restart: unless-stopped
-    ports:
-      - "5478:5478"
-    environment:
-      ASPNETCORE_URLS: "http://+:5478"
-      GUIDEVAULT_DATA: "/data"
-      GUIDEVAULT_LIBRARY_PATH: "/library"
-    volumes:
-      - ./guidevault-data:/data
-      - D:/GameLibrary/Guides:/library:ro
-```
-
-Start the container:
-
-```bash
-docker compose pull
-docker compose up -d
-```
-
-Then open:
-
-```text
-http://localhost:5478
-```
-
-GuideVault uses port `5478` by default so it can coexist with other self-hosted readers that commonly use port `5000`.
-
-## First Run
-
-On first launch, GuideVault creates the initial local user account.
-
-First-run setup asks for:
-
-* Username
-* Email address
-* Password
-
-After the first account exists, users can sign in with either their username or email address.
-
-## Library Scanning
-
-GuideVault scans and indexes local files. Your original manuals, guides, and magazines remain in the library folder you choose.
-
-GuideVault stores app data, generated cache, metadata, profile data, and settings separately under the configured data path.
-
-## Metadata
-
-GuideVault includes editable metadata designed around video game literature.
-
-Metadata may include:
-
-* Title
-* Series
-* Preferred platform
-* Associated platforms
-* Publisher
-* Year
-* Region
-* Language
-* Issue number
-* Volume / number
-* Guide type
-* Edition type
-* ISBN / ASIN
-* Summary
-* Tags
-* Notes
-
-Legacy `ComicInfo.xml` import support is included where applicable. GuideVault-native metadata is the preferred direction for richer manual, strategy guide, and magazine data.
-
-## Reader
-
-The reader supports book-focused reading behavior, including:
-
-* Cover-first reading
-* Single-page mode
-* Two-page spreads
-* Adaptive two-page handling
-* Fullscreen reading
-* Page transitions
-* Bookmark support
-* Zoom and magnifier controls
-* Background and shading preferences
-* Per-item and per-series reading profiles
-
-## OPDS
-
-GuideVault includes OPDS support for compatible reading clients.
-
-Default local address:
-
-```text
-http://localhost:5478
-```
-
-## Releases
-
-Releases are published through the GitHub Releases page.
-
-The current public release is:
-
-```text
-v1.0.0
-```
-
-## Contributing and Feature Requests
-
-Use GitHub Issues for bug reports, feature requests, and enhancement discussions.
-
-Planned or future work should be tracked through GitHub Issues and Milestones instead of being listed directly in this README.
-
-## License
-
-See `LICENSE`.
+- Manifest SHA256 preflight validates the precise **v1.7** source module inputs; it will **refuse unknown local edits** rather than overwrite your ongoing project work. No files change without `-Apply`. Idempotent when already installed. Modified files are backed up under `ThemeBackups/` before replacement, with rollback on a write/hash failure.
+- This environment lacks Windows/.NET WPF build and a running DreamPause. Static source checks pass; live build, visual fit, WebView2 page-turning, and timing **have not been runtime-verified**. Treat as a test candidate and review build output.
+- GuideVault's DOM reader controls `#nextPage`, `#prevPage`, `#readerPagePosition`, and `#readerView` were corroborated against the supplied GuideVault source snapshot, but may differ from its latest deployed build. If they differ, this patch safely stops auto-turning instead of navigating unrelated pages.
+- The native reader owns progress and flip animation. The auto-timer does not download full manuals or scan images. Closing the window stops the timer.
+- For rollback: restore the two files from the backup directory printed by installer, then rebuild/deploy.
