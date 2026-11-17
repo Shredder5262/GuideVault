@@ -20015,6 +20015,7 @@ function cleanupReaderResources(options = {}) {
   window.clearTimeout(state.reader?.longPressTimer);
   state.reader.transitionToken = (Number(state.reader.transitionToken) || 0) + 1;
   state.reader.animating = false;
+  state.reader.pendingDirection = '';
   state.reader.overlayVisible = false;
   state.reader.advancedVisible = false;
   state.reader.bookmarkMenuOpen = false;
@@ -20618,7 +20619,8 @@ function toggleReaderBookmarkMenu() {
 
 function jumpReaderToBookmarkedPage(page) {
   setReaderBookmarkMenuVisible(false);
-  jumpReaderToPage(page);
+  jumpReaderToPage(page, { showOverlay: false });
+  setReaderOverlayVisible(false);
 }
 
 function setReaderBookmarkNoteEditor(page) {
@@ -21509,7 +21511,7 @@ function readerLoadImageForTexture(url) {
     pageImageLoad,
     new Promise((_, reject) => {
       pageImageTimeoutId = window.setTimeout(
-        () => reject(new Error('Page image load exceeded 4500 ms')), 4500);
+        () => reject(new Error('Page image load exceeded 2500 ms')), 2500);
     })
   ]).finally(() => window.clearTimeout(pageImageTimeoutId));
   guidevaultReaderTextureImageCache.set(key, pending);
@@ -21855,6 +21857,24 @@ function readerPrepareFixedSlotCurl(shell, geometry, frontImg, backImg) {
   return { webgl, gl, program, buffers, textures: [frontTexture, backTexture], drawFrame };
 }
 
+// A browser may throttle requestAnimationFrame while decoding scanned pages.
+// Continue the animated transition on a bounded timer rather than leaving
+// reader.animating locked indefinitely. At most one callback executes.
+function guidevaultScheduleTurnFrame(callback) {
+  let fired = false;
+  const timer = window.setTimeout(() => {
+    if (fired) return;
+    fired = true;
+    callback(performance.now());
+  }, 85);
+  requestAnimationFrame(now => {
+    if (fired) return;
+    fired = true;
+    window.clearTimeout(timer);
+    callback(now);
+  });
+}
+
 async function readerAnimatePreparedFixedSlotCurl(curl, duration = 960, onFrame = null) {
   if (!curl?.drawFrame) return;
   const start = performance.now();
@@ -21866,10 +21886,10 @@ async function readerAnimatePreparedFixedSlotCurl(curl, duration = 960, onFrame 
         : 1 - Math.pow(-2 * raw + 2, 3) / 2;
       curl.drawFrame(eased);
       if (typeof onFrame === 'function') onFrame(eased, raw);
-      if (raw < 1) requestAnimationFrame(draw);
+      if (raw < 1) guidevaultScheduleTurnFrame(draw);
       else resolve();
     };
-    requestAnimationFrame(draw);
+    guidevaultScheduleTurnFrame(draw);
   });
 }
 
@@ -21958,8 +21978,8 @@ async function performReaderCoverOpenFixedTransition(nextIndex, transitionToken 
     if (destinationRight?.style) destinationRight.style.visibility = 'hidden';
     if (destinationLeft?.style) destinationLeft.style.visibility = 'hidden';
     await Promise.all([
-      typeof destinationRight?.decode === 'function' ? destinationRight.decode().catch(() => {}) : Promise.resolve(),
-      typeof destinationLeft?.decode === 'function' ? destinationLeft.decode().catch(() => {}) : Promise.resolve()
+      waitForReaderImageDecode(destinationRight),
+      waitForReaderImageDecode(destinationLeft)
     ]);
     if (!transitionIsCurrent()) return;
     await waitForReaderPaint();
@@ -22002,7 +22022,7 @@ async function performReaderCoverOpenFixedTransition(nextIndex, transitionToken 
       if (!turnSheet) throw new Error('Unable to create cover turn sheet');
       shell.appendChild(turnSheet);
       const turnImages = [...turnSheet.querySelectorAll('img')];
-      await Promise.all(turnImages.map(img => typeof img.decode === 'function' ? img.decode().catch(() => {}) : Promise.resolve()));
+      await Promise.all(turnImages.map(waitForReaderImageDecode));
       await waitForReaderPaint();
       if (slideOverlay) { slideOverlay.remove(); slideOverlay = null; }
       const turnAnimation = turnSheet.animate([
@@ -22012,7 +22032,7 @@ async function performReaderCoverOpenFixedTransition(nextIndex, transitionToken 
       ], { duration: 920, easing: 'cubic-bezier(.24,.64,.20,1)', fill: 'forwards' });
       await wait(390);
       if (destinationRight?.style) destinationRight.style.visibility = previousRightVisibility;
-      await turnAnimation.finished.catch(() => {});
+      await Promise.race([turnAnimation.finished.catch(() => {}), wait(1500)]);
     }
 
     if (!transitionIsCurrent()) return;
@@ -22289,10 +22309,10 @@ async function performReaderCoverOpenTransition(nextIndex) {
           ? 4 * raw * raw * raw
           : 1 - Math.pow(-2 * raw + 2, 3) / 2;
         drawCoverCurlFrame(eased);
-        if (raw < 1) requestAnimationFrame(draw);
+        if (raw < 1) guidevaultScheduleTurnFrame(draw);
         else resolve();
       };
-      requestAnimationFrame(draw);
+      guidevaultScheduleTurnFrame(draw);
     });
 
     // Stage 3: the true page 2/page 3 DOM spread is already in the final footprint.
@@ -22525,10 +22545,10 @@ async function performReaderCoverOpenAdaptiveTransition(nextIndex) {
           ? 4 * raw * raw * raw
           : 1 - Math.pow(-2 * raw + 2, 3) / 2;
         drawCoverAdaptiveFrame(eased);
-        if (raw < 1) requestAnimationFrame(draw);
+        if (raw < 1) guidevaultScheduleTurnFrame(draw);
         else resolve();
       };
-      requestAnimationFrame(draw);
+      guidevaultScheduleTurnFrame(draw);
     });
 
     renderSpread(nextIndex, { preserveSize: true });
@@ -22747,10 +22767,10 @@ async function performReaderCoverCloseTransition(nextIndex) {
           ? 4 * raw * raw * raw
           : 1 - Math.pow(-2 * raw + 2, 3) / 2;
         drawCoverCloseFrame(1 - eased);
-        if (raw < 1) requestAnimationFrame(draw);
+        if (raw < 1) guidevaultScheduleTurnFrame(draw);
         else resolve();
       };
-      requestAnimationFrame(draw);
+      guidevaultScheduleTurnFrame(draw);
     });
 
     // Switch the real DOM back to the centered cover, but keep it hidden while the
@@ -23031,10 +23051,10 @@ async function performReaderAdaptiveSpreadTurn(nextIndex, dir) {
           ? 4 * raw * raw * raw
           : 1 - Math.pow(-2 * raw + 2, 3) / 2;
         drawAdaptiveFrame(eased);
-        if (raw < 1) requestAnimationFrame(draw);
+        if (raw < 1) guidevaultScheduleTurnFrame(draw);
         else resolve();
       };
-      requestAnimationFrame(draw);
+      guidevaultScheduleTurnFrame(draw);
     });
   } catch (err) {
     console.warn('Guidevault adaptive spread half-page curl unavailable; falling back to stable adaptive swap.', err);
@@ -23231,7 +23251,7 @@ async function performReaderFinalPageFixedTransition(nextIndex) {
       if (!turnSheet) throw new Error('Unable to create final turn sheet');
       shell.appendChild(turnSheet);
       const turnImages = [...turnSheet.querySelectorAll('img')];
-      await Promise.all(turnImages.map(img => typeof img.decode === 'function' ? img.decode().catch(() => {}) : Promise.resolve()));
+      await Promise.all(turnImages.map(waitForReaderImageDecode));
       await waitForReaderPaint();
       if (sourceRight?.style) sourceRight.style.visibility = 'hidden';
       const turnAnimation = turnSheet.animate([
@@ -23239,7 +23259,7 @@ async function performReaderFinalPageFixedTransition(nextIndex) {
         { transform: 'perspective(2400px) rotateY(-78deg)', filter: 'brightness(.87)', offset: .49 },
         { transform: 'perspective(2400px) rotateY(-180deg)', filter: 'brightness(1)', offset: 1 }
       ], { duration: 900, easing: 'cubic-bezier(.24,.64,.20,1)', fill: 'forwards' });
-      await turnAnimation.finished.catch(() => {});
+      await Promise.race([turnAnimation.finished.catch(() => {}), wait(1500)]);
     }
 
     // Hand the fully landed backside to a flat image on the left before changing
@@ -23254,7 +23274,7 @@ async function performReaderFinalPageFixedTransition(nextIndex) {
     landingOverlay.style.transform = 'translate3d(0,0,0)';
     shell.appendChild(landingOverlay);
     const landingImage = landingOverlay.querySelector('img');
-    if (typeof landingImage?.decode === 'function') await landingImage.decode().catch(() => {});
+    await waitForReaderImageDecode(landingImage);
     await waitForReaderPaint();
     if (turnSheet) { turnSheet.remove(); turnSheet = null; }
     if (curl?.webgl?.canvas) {
@@ -23268,7 +23288,7 @@ async function performReaderFinalPageFixedTransition(nextIndex) {
     renderSpread(nextIndex, { preserveSize: true });
     const finalDomImage = $('pageRightImage');
     if (finalDomImage?.style) finalDomImage.style.visibility = 'hidden';
-    if (typeof finalDomImage?.decode === 'function') await finalDomImage.decode().catch(() => {});
+    await waitForReaderImageDecode(finalDomImage);
     await waitForReaderPaint();
 
     const shellWidth = shell.clientWidth || shell.offsetWidth || 0;
@@ -23348,20 +23368,17 @@ async function settleReaderFinalPageAfterTurn(nextIndex, context = {}) {
     overlay.style.transform = 'translate3d(0,0,0) scale(1,1)';
     shell.appendChild(overlay);
     const overlayImage = overlay.querySelector('img');
-    if (overlayImage && (!overlayImage.complete || !(overlayImage.naturalWidth > 0))) {
-      await new Promise((resolve, reject) => {
-        overlayImage.addEventListener('load', resolve, { once: true });
-        overlayImage.addEventListener('error', () => reject(new Error('Final-page overlay failed to load')), { once: true });
-      });
-    }
-    if (typeof overlayImage?.decode === 'function') await overlayImage.decode().catch(() => {});
+    // Avoid an unbounded image load listener for the last scanned page.
+    await waitForReaderImageDecode(overlayImage);
+    if (overlayImage && !(overlayImage.naturalWidth > 0))
+      throw new Error('Final-page overlay failed to load before timeout');
     book.classList.add('reader-final-page-settling');
     await waitForReaderPaint();
 
     renderSpread(nextIndex, { preserveSize: true });
     finalDomImage = $('pageRightImage');
     if (finalDomImage?.style) finalDomImage.style.visibility = 'hidden';
-    if (typeof finalDomImage?.decode === 'function') await finalDomImage.decode().catch(() => {});
+    await waitForReaderImageDecode(finalDomImage);
     if (blankUnderlay) blankUnderlay.remove();
     await waitForReaderPaint();
     await waitForReaderPaint();
@@ -23564,10 +23581,10 @@ async function performReaderPageTurnExperimental(nextIndex, dir) {
           ? 4 * raw * raw * raw
           : 1 - Math.pow(-2 * raw + 2, 3) / 2;
         drawCurlFrame(eased);
-        if (raw < 1) requestAnimationFrame(draw);
+        if (raw < 1) guidevaultScheduleTurnFrame(draw);
         else resolve();
       };
-      requestAnimationFrame(draw);
+      guidevaultScheduleTurnFrame(draw);
     });
   } catch (err) {
     console.warn('Guidevault WebGL page curl unavailable; falling back to stable swap.', err);
@@ -23772,6 +23789,19 @@ function unlockReaderFrame(book) {
   book.classList.remove('reader-frame-locked');
 }
 
+// Prevent dropped Next/Previous presses while a large-page animation is active.
+// Only a single pending direction is remembered; a new press replaces it.
+function queueReaderPageTurn(dir) {
+  if (!state.reader.item || !state.reader.pages?.length) return 'not-ready';
+  if (dir !== 'next' && dir !== 'prev') return 'invalid';
+  if (!state.reader.animating) {
+    void showPage(state.reader.index, dir);
+    return 'started';
+  }
+  state.reader.pendingDirection = dir;
+  return 'queued';
+}
+
 async function showPage(index, dir) {
   if (!state.reader.pages.length || state.reader.animating) return;
 
@@ -23794,6 +23824,8 @@ async function showPage(index, dir) {
   const transitionToken = (Number(state.reader.transitionToken) || 0) + 1;
   state.reader.transitionToken = transitionToken;
   state.reader.animating = true;
+  const transitionItem = state.reader.item;
+  const startedAt = performance.now();
 
   const book = $('book');
   const turning = $('turningPage');
@@ -23853,6 +23885,19 @@ async function showPage(index, dir) {
       // frame lock, which produced an intermittent flash/reflow.
       unlockReaderFrame(book);
       state.reader.animating = false;
+      const durationMs = Math.round(performance.now() - startedAt);
+      if (durationMs > 2500) console.warn('GuideVault slow page turn', {
+        durationMs, mode: state.reader.transitionMode, index: state.reader.index
+      });
+      const nextDirection = state.reader.pendingDirection;
+      state.reader.pendingDirection = '';
+      if ((nextDirection === 'next' || nextDirection === 'prev') &&
+          state.reader.item === transitionItem) {
+        window.setTimeout(() => {
+          if (state.reader.item === transitionItem && !state.reader.animating)
+            void showPage(state.reader.index, nextDirection);
+        }, 0);
+      }
     }
   }
 }
