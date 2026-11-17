@@ -1,0 +1,134 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>GuideVault | Related Game Editions</title>
+<style>
+:root{color-scheme:dark;font:15px system-ui,Segoe UI,sans-serif;background:#0f131a;color:#e9edf4}
+*{box-sizing:border-box}body{margin:0}main{max-width:1020px;margin:34px auto;padding:0 22px 60px}
+h1{font-size:29px;margin:12px 0 5px}h2{font-size:18px;margin:4px 0 16px}
+p{color:#aeb9c8;line-height:1.5}a{color:#8dbbed}header{display:flex;align-items:center;justify-content:space-between;gap:15px;flex-wrap:wrap}
+section{border:1px solid #354050;background:#171e29;padding:21px;margin-top:20px;border-radius:12px}
+label{display:block;font-weight:600;font-size:13px;margin:12px 0 6px;color:#cad6e5}
+input[type=text],input[type=search]{background:#0d141d;color:#fff;border:1px solid #506175;border-radius:7px;padding:10px;width:100%;font:inherit}
+button{border:1px solid #53657b;border-radius:8px;background:#243044;color:#edf3fd;padding:9px 13px;font:inherit;cursor:pointer}
+button:hover{background:#31435b}button.primary{background:#b8273e;border-color:#db4b63;color:#fff}button.primary:hover{background:#d03047}
+button:disabled{cursor:not-allowed;opacity:.45}.row{display:flex;align-items:center;gap:10px;flex-wrap:wrap}.row>*{flex:1}
+.search-results,.suggestions{max-height:300px;overflow:auto;border:1px solid #364355;border-radius:8px;margin-top:8px}
+.choice{padding:11px 13px;border-bottom:1px solid #303a49;display:flex;align-items:center;justify-content:space-between;gap:12px}
+.choice:last-child{border-bottom:0}.choice small{color:#a8b7c8;display:block;padding-top:3px}
+.option{display:flex;align-items:center;gap:11px}.option input{width:18px;height:18px;accent-color:#dc3b55}
+.muted{color:#a3b1c3;font-size:13px}.feedback{margin:12px 0;padding:10px 12px;border-left:3px solid #8aa5c7;background:#202b3a;min-height:20px;white-space:pre-wrap}
+.group{padding:14px 0;border-bottom:1px solid #3b4654}.group:last-child{border:0}
+@media(max-width:640px){.row>*{flex:1 1 100%}main{padding:0 14px}}
+</style></head>
+<body><main>
+<header><div><h1>Related game editions</h1><p>Confirm which LaunchBox records should share their GuideVault publications.</p></div><a href="/">Back to GuideVault</a></header>
+<div class="feedback" id="notice" role="status">Loading administrator session…</div>
+<section><h2>1. Find a LaunchBox game</h2>
+<div class="row"><input type="search" id="search" placeholder="e.g. Resident Evil 2" aria-label="Search synced LaunchBox games"><button id="find">Find games</button></div>
+<div class="search-results" id="games"><div class="choice muted">Search for a game to begin.</div></div>
+</section>
+<section><h2>2. Confirm related releases</h2>
+<div id="selected" class="muted">Choose a primary game above.</div>
+<div class="suggestions" id="candidates"><div class="choice muted">Potential variants will appear here. Suggestions are never automatically linked.</div></div>
+<label for="extra">Additional LaunchBox game IDs (comma-separated, optional)</label>
+<input id="extra" type="text" placeholder="For versions not shown in the suggested list">
+<label for="groupTitle">Group title</label><input id="groupTitle" type="text" placeholder="Name for the shared game identity">
+<label>Share these publication types</label>
+<div class="row" style="justify-content:flex-start">
+<label class="option" style="flex:0 0 auto"><input type="checkbox" id="guides" checked>Strategy guides</label>
+<label class="option" style="flex:0 0 auto"><input type="checkbox" id="magazines" checked>Magazines</label>
+<label class="option" style="flex:0 0 auto"><input type="checkbox" id="manuals">Manuals (opt-in)</label>
+</div>
+<p class="muted">Manuals remain release-specific by default. Cross-platform and ScummVM variants require deliberate confirmation. Existing rejected publication links are always honored.</p>
+<button class="primary" id="create" disabled>Confirm related editions</button>
+</section>
+<section><h2>Saved edition groups</h2><div id="groups" class="muted">Loading…</div></section>
+</main>
+<script>
+'use strict';
+const el=id=>document.getElementById(id);
+let primary=null, choices=[];
+function message(value){el('notice').textContent=value;}
+async function api(path,options={}){
+  const resp=await fetch(path,{credentials:'same-origin',...options});
+  let data=null;try{data=await resp.json();}catch{}
+  if(!resp.ok)throw new Error(data?.error||`HTTP ${resp.status}`);
+  return data;
+}
+function empty(node){node.replaceChildren();}
+function div(cls,text){const d=document.createElement('div');d.className=cls;d.textContent=text;return d;}
+async function search(){
+ const query=el('search').value.trim();if(query.length<2){message('Enter at least two characters.');return;}
+ const box=el('games');empty(box);message('Searching synced LaunchBox games…');
+ try{
+  const response=await api(`/api/integrations/launchbox/manual-match/games?q=${encodeURIComponent(query)}&limit=100`);
+  const games=response.items||[];
+  for(const game of games){
+    const row=div('choice','');const title=document.createElement('div');
+    title.textContent=game.title;title.append(div('muted',`${game.platform} · ${game.id}`));
+    const btn=document.createElement('button');btn.textContent='Choose';btn.addEventListener('click',()=>choose(game));
+    row.append(title,btn);box.append(row);
+  }
+  if(!games.length)box.append(div('choice muted','No synced games found. Check the LaunchBox sync.'));
+  message(`Found ${games.length} game record(s).`);
+ }catch(err){message(`Game lookup failed: ${err.message}`);}
+}
+async function choose(game){
+ primary=game;el('selected').textContent=`${game.title} — ${game.platform} [${game.id}]`;
+ el('groupTitle').value=game.title;el('extra').value='';el('create').disabled=true;
+ message('Finding potential editions…');const box=el('candidates');empty(box);
+ try{
+  const response=await api(`/api/integrations/launchbox/editions/candidates/${encodeURIComponent(game.id)}`);
+  choices=response.candidates||[];
+  for(const candidate of choices){
+    const row=div('choice','');const label=document.createElement('label');label.className='option';
+    const check=document.createElement('input');check.type='checkbox';check.value=candidate.gameId;
+    const identity=document.createElement('span');identity.textContent=candidate.title;
+    identity.append(div('muted',`${candidate.platform} · ${candidate.gameId} · ${candidate.reason}`));
+    label.append(check,identity);row.append(label);box.append(row);
+  }
+  if(!choices.length)box.append(div('choice muted','No suggested editions. You can enter exact game IDs manually.'));
+  if(response.activeGroup){message('This game already belongs to an edition group. Review Saved edition groups below.');}
+  else message('Review the suggestions and select only compatible editions.');
+  el('create').disabled=Boolean(response.activeGroup);
+ }catch(err){message(`Edition lookup failed: ${err.message}`);}
+}
+async function refreshGroups(){
+ const host=el('groups');empty(host);
+ try{
+  const result=await api('/api/integrations/launchbox/editions/groups');
+  const groups=result.groups||[];
+  for(const group of groups){
+   const row=div('group','');const title=document.createElement('strong');title.textContent=group.title;
+   const meta=div('muted',`${group.gameIds.length} game records · ${group.shareKinds.join(', ')} · ${group.gameIds.join(', ')}`);
+   const remove=document.createElement('button');remove.textContent='Remove group';
+   remove.addEventListener('click',async()=>{
+     if(!confirm(`Remove the group "${group.title}"? Direct document matches are preserved.`))return;
+     try{await api(`/api/integrations/launchbox/editions/groups/${encodeURIComponent(group.id)}`,{method:'DELETE'});message('Group removed.');await refreshGroups();}
+     catch(err){message(`Unable to remove group: ${err.message}`);}
+   });row.append(title,meta,remove);host.append(row);
+  }
+  if(!groups.length)host.append(div('muted','No shared edition groups yet.'));
+ }catch(err){message(`Unable to load groups: ${err.message}. Sign into GuideVault as an administrator.`);}
+}
+async function create(){
+ if(!primary)return;
+ const checks=[...el('candidates').querySelectorAll('input[type=checkbox]:checked')].map(node=>node.value);
+ const extra=el('extra').value.split(',').map(s=>s.trim()).filter(Boolean);
+ const related=[...new Set([...checks,...extra])].filter(id=>id!==primary.id);
+ if(!related.length){message('Choose at least one related game.');return;}
+ const kinds=[];if(el('guides').checked)kinds.push('Strategy Guide');
+ if(el('magazines').checked)kinds.push('Magazine');if(el('manuals').checked)kinds.push('Manual');
+ if(!kinds.length){message('Choose at least one publication type.');return;}
+ if(!confirm(`Confirm sharing ${kinds.join(', ')} across ${related.length+1} explicitly selected game records?`))return;
+ try{
+  const saved=await api('/api/integrations/launchbox/editions/groups',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({primaryGameId:primary.id,relatedGameIds:related,shareKinds:kinds,title:el('groupTitle').value.trim()})});
+  message(`Saved group ${saved.id}. DreamPause may need its affected per-game cache refreshed.`);
+  el('create').disabled=true;await refreshGroups();
+ }catch(err){message(`Unable to create group: ${err.message}`);}
+}
+el('find').addEventListener('click',search);
+el('search').addEventListener('keydown',event=>{if(event.key==='Enter')search();});
+el('create').addEventListener('click',create);
+refreshGroups();
+</script></body></html>

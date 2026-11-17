@@ -95,6 +95,9 @@ var deviceStore = new DeviceHistoryStore(deviceHistoryPath);
 var systemInfoStore = new SystemInfoStore(systemInfoPath, GuidevaultVersion);
 var systemEventStore = new GuidevaultSystemEventStore(systemEventsPath);
 var launchBoxIntegrationStore = new GuidevaultLaunchBoxIntegrationStore(launchBoxIntegrationPath);
+// Confirmed edition relationships survive LaunchBox resyncs and are backed up with /data/config.
+var launchBoxEditionGroupsStore = new GuidevaultLaunchBoxEditionGroupsStore(
+    Path.Combine(dataRoot, "config", "launchbox.edition-groups.json"));
 var launchBoxOpenSignalStore = new GuidevaultLaunchBoxOpenSignalStore();
 var launchBoxBrowserLoginStore = new GuidevaultLaunchBoxBrowserLoginStore();
 var indexCachePath = Path.Combine(dataRoot, "cache", "library-index.json");
@@ -800,6 +803,41 @@ app.MapGet("/api/integrations/launchbox/review", (string? status, string? platfo
 
 app.MapGet("/api/integrations/launchbox/platform-aliases", () => Results.Ok(GuidevaultLaunchBoxMatcher.GetPlatformAliasRows()));
 
+// GUIDEVAULT_EDITION_GROUPS_V1: opt-in, user-confirmed game/edition relationships.
+// GET suggestions never mutates match state; only an admin can create groups.
+app.MapGet("/api/integrations/launchbox/editions/groups", () =>
+    Results.Ok(new { groups = launchBoxEditionGroupsStore.All() }));
+
+app.MapGet("/api/integrations/launchbox/editions/candidates/{launchBoxGameId}", (string launchBoxGameId) =>
+{
+    var snapshot = launchBoxIntegrationStore.GetSnapshot();
+    var game = snapshot.Games.FirstOrDefault(g => string.Equals(g.Id, launchBoxGameId, StringComparison.OrdinalIgnoreCase));
+    if (game is null) return Results.NotFound(new { error = "Game ID was not found in the last LaunchBox sync." });
+    return Results.Ok(new
+    {
+        gameId = game.Id, title = game.Title, platform = game.Platform,
+        activeGroup = launchBoxEditionGroupsStore.ForGame(game.Id),
+        candidates = GuidevaultLaunchBoxEditionGroupsStore.Candidates(game, snapshot.Games)
+    });
+});
+
+app.MapPost("/api/integrations/launchbox/editions/groups", (GuidevaultLaunchBoxEditionGroupRequest request) =>
+{
+    var result = launchBoxEditionGroupsStore.Create(request, launchBoxIntegrationStore.GetSnapshot().Games);
+    if (!result.Success) return Results.BadRequest(new { error = result.Error });
+    RecordSystemEvent("Integration", "LaunchBox edition group confirmed",
+        $"Created shared-literature group {result.Group!.Id} for {result.Group.GameIds.Count} game records.", "launchbox");
+    return Results.Ok(result.Group);
+});
+
+app.MapDelete("/api/integrations/launchbox/editions/groups/{groupId}", (string groupId) =>
+{
+    if (!launchBoxEditionGroupsStore.Delete(groupId)) return Results.NotFound(new { error = "Edition group was not found." });
+    RecordSystemEvent("Integration", "LaunchBox edition group removed",
+        $"Removed shared-literature group {groupId}; existing direct publication matches were preserved.", "launchbox");
+    return Results.Ok(new { success = true, groupId });
+});
+
 app.MapGet("/api/integrations/launchbox/game/{launchBoxGameId}/matches", (string launchBoxGameId) =>
 {
     var snapshot = launchBoxIntegrationStore.GetSnapshot();
@@ -881,7 +919,43 @@ app.MapGet("/api/client/launchbox/game/{launchBoxGameId}/literature", (HttpReque
                 "GuideVault strategy guide metadata explicitly identifies this game and is platform-compatible."));
     }
 
-    var documents = selected.Values
+    // GUIDEVAULT_EDITION_INHERITANCE_V1: resolve explicitly confirmed sibling
+    // editions at read time, without duplicating PDFs or modifying match records.
+    // The active game's Rejected decisions always override group inheritance.
+    var editionGroup = launchBoxEditionGroupsStore.ForGame(game.Id);
+    if (editionGroup is not null)
+    {
+        var shareKinds = editionGroup.ShareKinds.ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var siblingIds = editionGroup.GameIds
+            .Where(id => !string.Equals(id, game.Id, StringComparison.OrdinalIgnoreCase))
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var gamesById = snapshot.Games
+            .Where(candidate => siblingIds.Contains(candidate.Id))
+            .GroupBy(candidate => candidate.Id, StringComparer.OrdinalIgnoreCase)
+            .ToDictionary(group => group.Key, group => group.First(), StringComparer.OrdinalIgnoreCase);
+
+        foreach (var match in snapshot.Matches.Where(m => siblingIds.Contains(m.LaunchBoxGameId) &&
+            GuidevaultLaunchBoxMatcher.IsActiveMatchStatus(m.MatchStatus)))
+        {
+            if (rejectedIds.Contains(match.GuideVaultItemId) ||
+                !byId.TryGetValue(match.GuideVaultItemId, out var item) ||
+                !gamesById.TryGetValue(match.LaunchBoxGameId, out var originGame)) continue;
+            var kind = GuidevaultLaunchBoxMatcher.MatchTypeFromItem(item);
+            if (!shareKinds.Contains(kind)) continue;
+            // Manuals vary widely by release: even an opted-in manual group must
+            // inherit only a deliberately confirmed source manual.
+            if (string.Equals(kind, "Manual", StringComparison.OrdinalIgnoreCase) &&
+                !string.Equals(match.MatchStatus, "Confirmed", StringComparison.OrdinalIgnoreCase)) continue;
+            // Magazines only propagate a confirmed editorial/game association,
+            // not broad magazine-title or platform similarity.
+            if (string.Equals(kind, "Magazine", StringComparison.OrdinalIgnoreCase) &&
+                !string.Equals(match.MatchStatus, "Confirmed", StringComparison.OrdinalIgnoreCase) &&
+                !GuidevaultLaunchBoxMatcher.MagazineFeaturesGame(originGame, item)) continue;
+            if (!selected.ContainsKey(item.Id))
+                selected.Add(item.Id, (item, "editionGroup",
+                    "Shared from a user-confirmed compatible edition (" + originGame.Title + ")."));
+        }
+    }    var documents = selected.Values
         .Select(entry =>
         {
             var item = entry.Item;
