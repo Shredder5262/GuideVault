@@ -10351,6 +10351,27 @@ public static class GuidevaultLaunchBoxMatcher
             .OrderByDescending(score => score.Score);
     }
 
+    // GUIDEVAULT_STRICT_MATCHING_V2: conservative automatic-association safeguards.
+    // Compare release qualifiers only when the publication supplies a specific game title.
+    // Already confirmed manual connections are not evaluated by candidate scoring.
+    private static bool HasExplicitEditionConflict(GuidevaultLaunchBoxGame game, LibraryItem item)
+    {
+        if (string.IsNullOrWhiteSpace(item.GameTitle)) return false;
+        static string Signature(string? value)
+        {
+            var text = " " + Regex.Replace((value ?? string.Empty).ToLowerInvariant(), @"[^a-z0-9]+", " ").Trim() + " ";
+            string[] qualifiers = { "dual shock", "directors cut", "director s cut", "remake",
+                "remastered", "remaster", "definitive edition", "enhanced edition",
+                "final mix", "game of the year", "goty", "anniversary edition",
+                "special edition", "scummvm" };
+            return string.Join("|", qualifiers.Where(q => text.Contains(" " + q + " ", StringComparison.OrdinalIgnoreCase)));
+        }
+        var gameEdition = Signature(game.Title);
+        var publicationEdition = Signature(item.GameTitle);
+        return !string.Equals(gameEdition, publicationEdition, StringComparison.OrdinalIgnoreCase) &&
+            (!string.IsNullOrEmpty(gameEdition) || !string.IsNullOrEmpty(publicationEdition));
+    }
+
     private static GuidevaultLaunchBoxCandidateScore ScoreCandidate(GuidevaultLaunchBoxGame game, LibraryItem item, string matchType)
     {
         var reasons = new List<string>();
@@ -10368,6 +10389,16 @@ public static class GuidevaultLaunchBoxMatcher
         }
         var gameTitles = GameTitleCandidates(game).Select(NormalizeTitle).Where(t => !string.IsNullOrWhiteSpace(t)).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
         var itemTitles = ItemTitleCandidates(item).Select(NormalizeTitle).Where(t => !string.IsNullOrWhiteSpace(t)).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+
+        if (HasExplicitEditionConflict(game, item))
+            return new GuidevaultLaunchBoxCandidateScore(item, 0,
+                "Explicit edition mismatch; manual confirmation required.");
+        // Magazines must specifically list this game in Featured Games. A shared
+        // series, publisher, release year, or similar issue title is not enough.
+        if (string.Equals(matchType, "Magazine", StringComparison.OrdinalIgnoreCase) &&
+            !TitleListContainsGameTitle(gameTitles, item.FeaturedGames))
+            return new GuidevaultLaunchBoxCandidateScore(item, 0,
+                "Magazine does not explicitly feature this game.");
 
         if (string.Equals(matchType, "Strategy Guide", StringComparison.OrdinalIgnoreCase) && TitleListContainsGameTitle(gameTitles, item.CoveredGames))
         {
@@ -10416,6 +10447,21 @@ public static class GuidevaultLaunchBoxMatcher
 
         if (TextMatches(game.Developer, item.Developer)) { score += 5; reasons.Add("developer"); }
         if (TextMatches(game.Publisher, item.GamePublisher, item.Publisher)) { score += 5; reasons.Add("publisher"); }
+        // Score >= 75 is persisted as AutoMatched by the existing integration.
+        // Treat mere similarity (even with same publisher/year/platform) as review-only.
+        bool exactCovered = string.Equals(matchType, "Strategy Guide", StringComparison.OrdinalIgnoreCase) &&
+            TitleListContainsGameTitle(gameTitles, item.CoveredGames);
+        bool exactFeatured = string.Equals(matchType, "Magazine", StringComparison.OrdinalIgnoreCase) &&
+            TitleListContainsGameTitle(gameTitles, item.FeaturedGames);
+        bool exactPath = !string.IsNullOrWhiteSpace(game.ManualPath) &&
+            PathsLikelyMatch(game.ManualPath, item.Path);
+        if (string.IsNullOrWhiteSpace(exactTitle) && !exactCovered && !exactFeatured && !exactPath)
+            score = Math.Min(score, 74);
+        // Manuals and strategy guides require platform confirmation for automatic
+        // linking, except when the existing full manual path is identical.
+        if (!string.Equals(matchType, "Magazine", StringComparison.OrdinalIgnoreCase) &&
+            platformScore <= 0 && !exactPath)
+            score = Math.Min(score, 74);
         if (score > 100) score = 100;
         return new GuidevaultLaunchBoxCandidateScore(item, score, reasons.Count == 0 ? "No strong match signals." : string.Join(" + ", reasons.Distinct(StringComparer.OrdinalIgnoreCase)));
     }
@@ -10474,7 +10520,6 @@ public static class GuidevaultLaunchBoxMatcher
             var normalized = NormalizeTitle(raw);
             if (string.IsNullOrWhiteSpace(normalized)) continue;
             if (normalizedGameTitles.Any(gameTitle => string.Equals(gameTitle, normalized, StringComparison.OrdinalIgnoreCase))) return true;
-            if (normalizedGameTitles.Any(gameTitle => TitleSimilarity(gameTitle, normalized) >= 0.92)) return true;
         }
         return false;
     }
@@ -10550,8 +10595,8 @@ public static class GuidevaultLaunchBoxMatcher
         if (string.IsNullOrWhiteSpace(left) || string.IsNullOrWhiteSpace(right)) return false;
         var a = left.Replace('\\', '/').Trim();
         var b = right.Replace('\\', '/').Trim();
-        if (string.Equals(a, b, StringComparison.OrdinalIgnoreCase)) return true;
-        return string.Equals(Path.GetFileName(a), Path.GetFileName(b), StringComparison.OrdinalIgnoreCase);
+        // Same basename ("manual.pdf") is not evidence of the same publication.
+        return string.Equals(a, b, StringComparison.OrdinalIgnoreCase);
     }
 
     // Normalization is intentionally conservative: keep sequel numbers,
