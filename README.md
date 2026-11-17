@@ -1,37 +1,100 @@
-# DreamPause — GuideVault Manual & Embedded Reader Polish v1.8
+# GuideVault
 
-**Source patch test candidate**, based on the exact delivered DreamPause GuideVault Literature Client v1.7 module files. It modifies only two C# files, never shell artwork, server code, LaunchBox XML, or actual documents.
+**A self-hosted library and reader for video game literature.**
 
-## Changes
+GuideVault organizes game **manuals**, **strategy guides**, **magazines**, and related reference documents in one searchable library. It scans existing files, builds an index, and provides a browser-based reader with metadata and collection-management tools. Your original library files remain in place during normal scanning.
 
-- Manual cover preview: 854 × 342 canvas at x318, y250 (replacing 834 × 401 at x306, y266); centered aspect-preserving image fully above the lower chrome edge. Preserves actual `/cover-thumb` caching and lazy WebView2 startup.
-- Manual preview: removes the sentence "Preview uses no live reader; full reader starts only when opened". Replaces provider-forward `GUIDEVAULT` heading with `BOOKLET`. Keeps Retry and Open in GuideVault buttons **only in GuideVault primary Manual reader mode** (BuiltIn and External retain their own existing screens/actions). The large **Open Full Screen** button remains available for a found manual.
-- Embedded GuideVault reader: top bar displays the **game title only**. Removes DreamPause zoom (+/−), percentage, and Fit/Reset toolbar controls (does not interfere with the web reader's own reading options).
-- Bottom toolbar: **BACK** at left (no redundant Close button); **PREV PAGE** and **NEXT PAGE** centered regardless of other controls; **AUTO: OFF/ON** and 3 / 5 / 10 / 15 SEC options at right.
-- Auto turns via GuideVault's native `#nextPage` button and pauses automatically when the native reader is unavailable, the page count reaches the end, a new navigation occurs, or the window closes. It starts **off** each time and never runs on the lightweight Manual preview.
+![GuideVault library interface](docs/images/guidevault-main.png)
 
-## Install
+## Features
 
-1. **Close LaunchBox and Big Box**. Unzip this release without separating `Payload/`, `manifest.json`, or the installer.
-2. Inside the extracted package, preview against the current DreamPause source:
+- **Game-literature library:** browse and search manuals, strategy guides, magazines, and other reference material. Supports `.pdf`, `.cbz`, and `.cbr` documents.
+- **Metadata:** maintain titles, publication details, game/platform associations, magazine issues and featured games, and other descriptive fields; selectively enrich metadata from supported lookup sources.
+- **Document reader:** single-page, two-page, and adaptive-spread modes with page navigation, fullscreen, zoom, bookmarks, display backgrounds, and reading preferences.
+- **Library indexing:** scan local or mounted folders, reuse unchanged indexed records during fast rescans, and run separate metadata-enrichment passes when needed.
+- **Integrations:** OPDS for compatible reading clients; GuideVault APIs for LaunchBox game associations, DreamPause document access, and other supported integrations.
+- **Self-hosting:** run as a Docker container with persistent application data and an existing document library.
+
+GuideVault is the **source of truth for document metadata, saved relationships, and server-managed bookmarks**. The optional GuideVault LaunchBox Connector helps link LaunchBox games with documents, while **DreamPause** can retrieve and read those linked documents from the pause menu. Those clients are separate projects; they do not replace GuideVault's library or server.
+
+## Quick start: Docker Compose
+
+Prerequisite: Docker with Compose support on the machine hosting GuideVault.
+
+1. Copy the repository's example Compose configuration:
+
    ```powershell
-   .\Install-DreamPause-GuideVault-Reader-Polish-v1.8.ps1
+   Copy-Item .\compose.example.yaml .\compose.yaml
    ```
-3. Apply the source replacement if preflight passes:
-   ```powershell
-   .\Install-DreamPause-GuideVault-Reader-Polish-v1.8.ps1 -Apply
-   ```
-4. From `C:\Users\Andrew\Documents\VSCode\ShredderPauseNext`, build AND deploy:
-   ```powershell
-   .\Build-Deploy.ps1 -Deploy
-   ```
-5. Restart LaunchBox and open *Super Mario Bros. 2* → Manual → Open Full Screen; verify both short and long covers, centered page buttons, Back, and auto turn at 3/5/10/15 seconds. Also open Nintendo Power from Guides and check its reader controls.
-6. Toggle Manual Reader between BuiltIn/External/GuideVault in Settings and verify the provider-specific footer buttons do not appear in other modes.
 
-## Safety and compatibility
+2. Create a folder for persistent application data and, if needed, an initial library:
 
-- Manifest SHA256 preflight validates the precise **v1.7** source module inputs; it will **refuse unknown local edits** rather than overwrite your ongoing project work. No files change without `-Apply`. Idempotent when already installed. Modified files are backed up under `ThemeBackups/` before replacement, with rollback on a write/hash failure.
-- This environment lacks Windows/.NET WPF build and a running DreamPause. Static source checks pass; live build, visual fit, WebView2 page-turning, and timing **have not been runtime-verified**. Treat as a test candidate and review build output.
-- GuideVault's DOM reader controls `#nextPage`, `#prevPage`, `#readerPagePosition`, and `#readerView` were corroborated against the supplied GuideVault source snapshot, but may differ from its latest deployed build. If they differ, this patch safely stops auto-turning instead of navigating unrelated pages.
-- The native reader owns progress and flip animation. The auto-timer does not download full manuals or scan images. Closing the window stops the timer.
-- For rollback: restore the two files from the backup directory printed by installer, then rebuild/deploy.
+   ```powershell
+   New-Item -ItemType Directory -Force .\guidevault-data\library | Out-Null
+   ```
+
+3. Start GuideVault:
+
+   ```powershell
+   docker compose up -d
+   ```
+
+4. Open **http://localhost:5478** on the Docker host, complete the initial sign-in setup, then scan the library path **`/data/library`**.
+
+The example maps `./guidevault-data` on the host to `/data` inside the container. To use an existing library elsewhere, add a volume mount in `compose.yaml`, for example:
+
+```yaml
+services:
+  guidevault:
+    volumes:
+      - "./guidevault-data:/data"
+      - "D:/Digital Literature:/data/library:ro"
+```
+
+This is a **volume-mapping example**, not a complete replacement for `compose.yaml`. Use the **container-side path** when configuring scans. Keep `guidevault-data` across container updates; it holds settings, metadata, generated state, and other persistent data.
+
+For full instructions, see [Docker installation](docs/INSTALL_DOCKER.md) and [library setup](docs/LIBRARY_SETUP.md).
+
+## Updating
+
+On the Docker host, from the Compose project folder:
+
+```powershell
+docker compose pull
+docker compose up -d --no-deps guidevault
+```
+
+Back up the persistent data directory before major upgrades. For logs:
+
+```powershell
+docker compose logs --tail=100 guidevault
+```
+
+Source-only changes to this repository, including README edits, do **not** update an already-running container until an updated image is published and deployed.
+
+## Development
+
+The web application is an **ASP.NET Core 8** project under `src/Guidevault.Web`, with its browser UI in `src/Guidevault.Web/wwwroot`. The repository contains a `Dockerfile` and GitHub Actions image-publishing workflows.
+
+```powershell
+dotnet build .\src\Guidevault.Web\Guidevault.Web.csproj -c Release
+```
+
+**ImageSharp licensing:** the project references SixLabors.ImageSharp 3.2.0, which requires an appropriate Six Labors license for Release builds. Supply a valid license through the project's supported license-file/property mechanism. Do not commit license files, keys, `.env` files, or runtime data. Docker builds use the `sixlabors_license_b64` BuildKit secret.
+
+The GuideVault LaunchBox Connector is a **separate plugin** with its own source and build/deployment requirements.
+
+## Documentation
+
+- [All documentation](docs/README.md)
+- [Library setup and supported formats](docs/LIBRARY_SETUP.md)
+- [Reader and bookmarks](docs/READER.md)
+- [Metadata fields](docs/METADATA.md) and [lookup sources](docs/METADATA_SOURCES.md)
+- [OPDS](docs/OPDS.md)
+- [Docker installation and updates](docs/INSTALL_DOCKER.md)
+- [Repository hygiene](docs/REPOSITORY_HYGIENE.md)
+- [Release notes](docs/releases/README.md)
+
+## License
+
+[MIT](LICENSE). See the license file for details. Third-party dependencies have their own licenses and terms.
