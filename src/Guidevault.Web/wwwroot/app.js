@@ -20126,6 +20126,7 @@ async function openReader(item, options = {}) {
   document.body.classList.remove('detail-page-mode', 'settings-sidebar-mode', 'profile-page-mode', 'strategy-detail-mode', 'magazine-detail-mode', 'manual-detail-mode');
   document.body.classList.add('reader-page-mode');
   state.reader.item = liveItem; state.reader.pages = pages; state.reader.index = 0;
+  void guidevaultSyncBookmarksFromServer();
   if (currentUserIsAdmin()) {
     await flushReadingProfilesServerSave();
     await syncReadingProfilesFromServer({ migrateLocal: false, preferRemote: true });
@@ -20435,6 +20436,77 @@ function saveReaderBookmarks(bookmarks) {
   try { localStorage.setItem(guidevaultUserStorageKey(READER_BOOKMARKS_KEY), JSON.stringify(bookmarks || {})); } catch {}
 }
 
+// DREAMPAUSE_GUIDEVAULT_BOOKMARKS_V1: GuideVault server is authoritative;
+// localStorage is retained only as a legacy import/cache for the existing UI.
+async function guidevaultSyncBookmarksFromServer() {
+  const itemId = String(state.reader?.item?.id || '');
+  if (!itemId) return;
+  const url = `/api/items/${encodeURIComponent(itemId)}/bookmarks`;
+  try {
+    let res = await fetch(url, { credentials: 'same-origin', cache: 'no-store' });
+    if (!res.ok) throw new Error('HTTP ' + res.status);
+    let remote = await res.json();
+    const records = loadReaderBookmarks();
+    const migrationKey = guidevaultUserStorageKey('guidevault.readerBookmarkMigration.v1.' + itemId);
+    const local = records[itemId];
+    // One-time merge of browser-only bookmarks into server records. If a user
+    // bookmarked from DreamPause first, still bring across OTHER local pages.
+    // After migration, old localStorage cannot resurrect intentionally deleted pages.
+    if (!localStorage.getItem(migrationKey) &&
+        Array.isArray(local?.pages) && local.pages.length) {
+      const onServer = new Set((Array.isArray(remote?.pages) ? remote.pages : [])
+        .map(entry => Number(entry?.page)));
+      let imported = false;
+      for (const entry of local.pages) {
+        const page = Number(entry?.page);
+        if (!Number.isInteger(page) || page < 1 || page > 100000 || onServer.has(page)) continue;
+        const upload = await fetch(url, { method: 'POST', credentials: 'same-origin',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ page, displayMode: Number(entry?.displayMode) || 2,
+            note: String(entry?.note || '').slice(0, 1000) }) });
+        if (!upload.ok) throw new Error('Migration HTTP ' + upload.status);
+        imported = true;
+      }
+      if (imported) {
+        res = await fetch(url, { credentials: 'same-origin', cache: 'no-store' });
+        if (!res.ok) throw new Error('HTTP ' + res.status);
+        remote = await res.json();
+      }
+    }
+    localStorage.setItem(migrationKey, '1');
+    // Protect against navigations while the network request was in flight.
+    if (String(state.reader?.item?.id || '') !== itemId) return;
+    if (remote?.pages?.length) records[itemId] = remote;
+    else delete records[itemId];
+    saveReaderBookmarks(records);
+    updateReaderBookmarksUi();
+  } catch (err) {
+    console.warn('GuideVault bookmark sync unavailable', err);
+  }
+}
+
+async function guidevaultPersistBookmarkMutation(method, page, entry = null) {
+  const itemId = String(state.reader?.item?.id || '');
+  const number = Number(page);
+  if (!itemId || !Number.isInteger(number) || number < 1 || number > 100000) return;
+  const url = `/api/items/${encodeURIComponent(itemId)}/bookmarks`;
+  try {
+    const result = await fetch(method === 'DELETE' ? url + '/' + number : url, {
+      method, credentials: 'same-origin',
+      headers: { 'Content-Type': 'application/json' },
+      ...(method === 'POST' ? { body: JSON.stringify({ page: number,
+        displayMode: Number(entry?.displayMode) || 2,
+        note: entry?.note === undefined ? null : String(entry.note).slice(0, 1000) }) } : {})
+    });
+    if (!result.ok) throw new Error('HTTP ' + result.status);
+    await guidevaultSyncBookmarksFromServer();
+  } catch (err) {
+    console.warn('GuideVault bookmark save failed', err);
+    try { setStatus('Bookmark was not saved to GuideVault. Please retry.'); } catch {}
+  }
+}
+// END DREAMPAUSE_GUIDEVAULT_BOOKMARKS_V1
+
 function readerBookmarkKey() {
   const item = state.reader.item || {};
   return String(item.id || item.filePath || item.path || item.title || '').trim();
@@ -20523,6 +20595,8 @@ function bookmarkCurrentReaderPage() {
   else delete bookmarks[key];
 
   saveReaderBookmarks(bookmarks);
+  void guidevaultPersistBookmarkMutation(existingIndex >= 0 ? 'DELETE' : 'POST', page,
+    record.pages.find(entry => Number(entry.page) === Number(page)) || null);
   updateReaderOverlay();
 }
 
@@ -20576,6 +20650,7 @@ function saveReaderBookmarkNote(page, note) {
   const existing = record.pages.find(entry => Number(entry.page) === Number(numeric));
   if (!existing) return;
   existing.note = normalizeReaderBookmarkNote(note);
+  void guidevaultPersistBookmarkMutation('POST', numeric, existing);
   existing.updatedAt = new Date().toISOString();
   record.updatedAt = existing.updatedAt;
   record.itemId = state.reader.item.id || record.itemId || '';
@@ -20595,6 +20670,7 @@ function deleteReaderBookmarkNote(page) {
   const existing = record.pages.find(entry => Number(entry.page) === Number(numeric));
   if (!existing) return;
   existing.note = '';
+  void guidevaultPersistBookmarkMutation('POST', numeric, existing);
   existing.updatedAt = new Date().toISOString();
   record.updatedAt = existing.updatedAt;
   record.itemId = state.reader.item.id || record.itemId || '';
@@ -20888,7 +20964,14 @@ function wait(ms) {
 }
 
 function waitForReaderPaint() {
-  return new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+  // WebView2 can throttle requestAnimationFrame while decoding large magazine
+  // scans. Never hold state.reader.animating indefinitely waiting for paint.
+  return new Promise(resolve => {
+    let settled = false;
+    const finish = () => { if (settled) return; settled = true; resolve(); };
+    window.setTimeout(finish, 250);
+    requestAnimationFrame(() => requestAnimationFrame(finish));
+  });
 }
 
 function clearReaderTransitionStyles(shell) {
@@ -21412,13 +21495,23 @@ function readerLoadImageForTexture(url) {
     if (typeof img?.decode !== 'function') return Promise.resolve(img);
     return img.decode().then(() => img).catch(() => img);
   };
-  const pending = liveImage ? finishDecode(liveImage) : new Promise((resolve, reject) => {
+  // DreamPause/GuideVault reader reliability: an unresponsive image fetch or
+  // decode must never leave state.reader.animating locked indefinitely.
+  const pageImageLoad = liveImage ? finishDecode(liveImage) : new Promise((resolve, reject) => {
     const img = new Image();
     img.decoding = 'async';
     img.onload = () => finishDecode(img).then(resolve);
     img.onerror = () => reject(new Error('Failed to load page texture'));
     img.src = key;
   });
+  let pageImageTimeoutId;
+  const pending = Promise.race([
+    pageImageLoad,
+    new Promise((_, reject) => {
+      pageImageTimeoutId = window.setTimeout(
+        () => reject(new Error('Page image load exceeded 4500 ms')), 4500);
+    })
+  ]).finally(() => window.clearTimeout(pageImageTimeoutId));
   guidevaultReaderTextureImageCache.set(key, pending);
   while (guidevaultReaderTextureImageCache.size > GUIDEVAULT_READER_TEXTURE_IMAGE_CACHE_LIMIT) {
     guidevaultReaderTextureImageCache.delete(guidevaultReaderTextureImageCache.keys().next().value);
@@ -23725,14 +23818,25 @@ async function showPage(index, dir) {
     lockReaderFrame(book);
 
     const preloadTargets = [toSpread.leftUrl, toSpread.rightUrl, toSpread.adaptiveUrl].filter(Boolean);
-    await Promise.all(preloadTargets.map(preloadReaderImage));
+    const selectedTransition = state.reader.transitionMode || 'stable';
+    // A stable page swap does not need decoded textures: drawing the next
+    // image immediately lets the browser load it in place. Animated modes get
+    // a bounded preload so they cannot hold navigation hostage on large scans.
+    if (selectedTransition !== 'stable' && preloadTargets.length) {
+      await Promise.race([
+        Promise.all(preloadTargets.map(preloadReaderImage)),
+        new Promise(resolve => window.setTimeout(resolve, 1600))
+      ]);
+    }
     if (!transitionIsCurrent()) return;
 
-    await performReaderTransition(nextIndex, dir, state.reader.transitionMode || 'stable');
+    await performReaderTransition(nextIndex, dir, selectedTransition);
     if (!transitionIsCurrent()) return;
 
     hideLegacyLayers();
-    await waitForReaderPaint();
+    // A stable swap already changed the active images. Do not block subsequent
+    // navigation on a WebView2 paint callback when decoding a large scan.
+    if (selectedTransition !== 'stable') await waitForReaderPaint();
     updateReaderOverlay();
   } catch (err) {
     console.warn('Guidevault reader transition failed; using a stable page swap.', err);

@@ -89,6 +89,7 @@ var itemReviewStore = new GuidevaultItemReviewStore(itemReviewsPath);
 var taskSettingsStore = new GuidevaultTaskSettingsStore(taskSettingsPath);
 var customizeSettingsStore = new GuidevaultCustomizeSettingsStore(customizeSettingsPath);
 var readerPreferencesStore = new GuidevaultReaderPreferencesStore(readerPreferencesPath);
+var pageBookmarksStore = new GuidevaultPageBookmarkStore(Path.Combine(dataRoot, "config", "reader.bookmarks.json"));
 var gameDossierStore = new GuidevaultGameDossierStore(gameDossiersPath);
 var deviceStore = new DeviceHistoryStore(deviceHistoryPath);
 var systemInfoStore = new SystemInfoStore(systemInfoPath, GuidevaultVersion);
@@ -673,6 +674,36 @@ app.MapPut("/api/server/settings", (GuidevaultServerSettings payload) =>
     return Results.Ok(saved);
 });
 
+// DREAMPAUSE_GUIDEVAULT_BOOKMARKS_V1: authenticated, per-user, per-publication records.
+app.MapGet("/api/items/{id}/bookmarks", (HttpRequest request, string id) =>
+{
+    var item = cache.TryGetCachedItem(id);
+    var user = CurrentGuidevaultUser(request);
+    if (item is null || user is null || !GuidevaultUserAccess.CanAccess(user, item)) return Results.NotFound();
+    return Results.Ok(pageBookmarksStore.Get(user.UserId, item.Id, item.Title));
+});
+
+app.MapPost("/api/items/{id}/bookmarks", (HttpRequest request, string id, GuidevaultPageBookmarkChange payload) =>
+{
+    var item = cache.TryGetCachedItem(id);
+    var user = CurrentGuidevaultUser(request);
+    if (item is null || user is null || !GuidevaultUserAccess.CanAccess(user, item)) return Results.NotFound();
+    if (payload is null || payload.Page is < 1 or > 100000)
+        return Results.BadRequest(new { error = "Page must be between 1 and 100000." });
+    return Results.Ok(pageBookmarksStore.Set(user.UserId, item.Id, item.Title, payload));
+});
+
+app.MapDelete("/api/items/{id}/bookmarks/{page:int}", (HttpRequest request, string id, int page) =>
+{
+    var item = cache.TryGetCachedItem(id);
+    var user = CurrentGuidevaultUser(request);
+    if (item is null || user is null || !GuidevaultUserAccess.CanAccess(user, item)) return Results.NotFound();
+    if (page is < 1 or > 100000)
+        return Results.BadRequest(new { error = "Invalid bookmark page." });
+    return Results.Ok(pageBookmarksStore.Remove(user.UserId, item.Id, item.Title, page));
+});
+// END DREAMPAUSE_GUIDEVAULT_BOOKMARKS_V1
+
 app.MapGet("/api/reader/preferences", () => Results.Ok(readerPreferencesStore.GetSnapshot()));
 
 app.MapGet("/api/reader/preferences/resolve/{id}", async (HttpRequest request, string id) =>
@@ -832,6 +863,22 @@ app.MapGet("/api/client/launchbox/game/{launchBoxGameId}/literature", (HttpReque
     {
         if (!selected.ContainsKey(item.Id))
             selected.Add(item.Id, (item, "featuredGames", "Magazine Featured Games tag matched the LaunchBox game title."));
+    }
+
+    // DREAMPAUSE_GUIDE_MATCH_FALLBACK_V1: GuideVault's active match table is
+    // authoritative. However, metadata edits to the GuideVault guide can
+    // legitimately occur AFTER the last LaunchBox rematch. For those items,
+    // include only explicitly associated strategy guides, or exact titled
+    // guides with a confirmed platform hint. Never surface rejected items.
+    // This does not write/confirm LaunchBox matches or affect magazines.
+    foreach (var item in availableItems.Where(item =>
+        string.Equals(item.Kind, "Strategy Guide", StringComparison.OrdinalIgnoreCase) &&
+        !rejectedIds.Contains(item.Id) &&
+        GuidevaultLaunchBoxMatcher.StrategyGuideExplicitlyBelongsToGame(game, item)))
+    {
+        if (!selected.ContainsKey(item.Id))
+            selected.Add(item.Id, (item, "explicitGuideMetadata",
+                "GuideVault strategy guide metadata explicitly identifies this game and is platform-compatible."));
     }
 
     var documents = selected.Values
@@ -1286,11 +1333,17 @@ static bool GuidevaultLaunchBoxTextMatches(IEnumerable<string?> parts, string? q
     if (string.IsNullOrWhiteSpace(text)) return true;
     var haystack = string.Join(" ", parts.Where(part => !string.IsNullOrWhiteSpace(part))).ToLowerInvariant();
     if (string.IsNullOrWhiteSpace(haystack)) return false;
-    foreach (var term in text.Split(' ', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
-    {
-        if (!haystack.Contains(term.ToLowerInvariant(), StringComparison.Ordinal)) return false;
-    }
-    return true;
+    var terms = text.Split(' ', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+    if (terms.All(term => haystack.Contains(term.ToLowerInvariant(), StringComparison.Ordinal))) return true;
+    // Search again using normalized names for punctuation, guide-title noise,
+    // and Roman numeral variants, e.g. Resident Evil II vs Resident Evil 2.
+    var queryNormalized = GuidevaultLaunchBoxMatcher.NormalizeLookupTitle(text);
+    var haystackNormalized = GuidevaultLaunchBoxMatcher.NormalizeLookupTitle(haystack);
+    if (!string.IsNullOrWhiteSpace(queryNormalized) &&
+        haystackNormalized.Contains(queryNormalized, StringComparison.OrdinalIgnoreCase)) return true;
+    return !string.IsNullOrWhiteSpace(queryNormalized) &&
+        queryNormalized.Split(' ', StringSplitOptions.RemoveEmptyEntries).All(
+            term => haystackNormalized.Contains(term, StringComparison.OrdinalIgnoreCase));
 }
 
 static bool GuidevaultLaunchBoxIsMatchableItem(LibraryItem item)
@@ -8991,7 +9044,9 @@ public sealed class GuidevaultLaunchBoxIntegrationStore
 public static class GuidevaultLaunchBoxMatcher
 {
     private static readonly Regex NonAlphaNumeric = new("[^a-z0-9]+", RegexOptions.Compiled | RegexOptions.IgnoreCase);
-    private static readonly Regex NoiseWords = new("\\b(the|a|an|manual|instruction|instructions|booklet|guide|strategy|official|prima|bradygames|brady|players|player|handbook|nintendo|sega|sony|microsoft|game|games|edition|version)\\b", RegexOptions.Compiled | RegexOptions.IgnoreCase);
+    // Only remove generic publication labels. Console names, sequel markers,
+    // series words, edition labels, and gameplay title words are meaningful.
+    private static readonly Regex NoiseWords = new("\\b(the|a|an|manual|instruction|instructions|booklet|guide|strategy|official|prima|bradygames|brady|players|player|handbook)\\b", RegexOptions.Compiled | RegexOptions.IgnoreCase);
     private static readonly Dictionary<string, string> PlatformAliases = new(StringComparer.OrdinalIgnoreCase)
     {
         ["nes"] = "nintendo entertainment system",
@@ -9033,10 +9088,17 @@ public static class GuidevaultLaunchBoxMatcher
         ["sega dreamcast"] = "sega dreamcast",
         ["psx"] = "sony playstation",
         ["ps1"] = "sony playstation",
+        ["sony ps1"] = "sony playstation",
+        ["sony psx"] = "sony playstation",
+        ["ps one"] = "sony playstation",
+        ["playstation one"] = "sony playstation",
+        ["playstation 1"] = "sony playstation",
+        ["sony playstation 1"] = "sony playstation",
         ["playstation"] = "sony playstation",
         ["sony playstation"] = "sony playstation",
         ["sony play station"] = "sony playstation",
         ["ps2"] = "sony playstation 2",
+        ["sony ps2"] = "sony playstation 2",
         ["playstation 2"] = "sony playstation 2",
         ["sony playstation 2"] = "sony playstation 2",
         ["sony play station 2"] = "sony playstation 2",
@@ -9095,7 +9157,7 @@ public static class GuidevaultLaunchBoxMatcher
     private static readonly HashSet<string> CommonTitleTokens = new(StringComparer.OrdinalIgnoreCase)
     {
         "game", "games", "manual", "guide", "official", "strategy", "edition", "version", "collection", "vol", "volume",
-        "super", "mega", "ultimate", "complete", "special", "nintendo", "sega", "sony", "microsoft", "playstation", "xbox"
+        "ultimate", "complete", "special", "nintendo", "sega", "sony", "microsoft", "playstation", "xbox"
     };
 
     public static GuidevaultLaunchBoxGame NormalizeGame(GuidevaultLaunchBoxGame? game)
@@ -9446,7 +9508,10 @@ public static class GuidevaultLaunchBoxMatcher
             list = new List<LibraryItem>();
             index[key] = list;
         }
-        if (!list.Any(i => string.Equals(i.Id, item.Id, StringComparison.OrdinalIgnoreCase))) list.Add(item);
+        // Items are indexed one-at-a-time; repeated keys for the same item
+        // are adjacent. Avoid O(n) scans through heavily shared token buckets.
+        if (list.Count == 0 || !string.Equals(list[^1].Id, item.Id, StringComparison.OrdinalIgnoreCase))
+            list.Add(item);
     }
 
     public static IReadOnlyList<object> GetPlatformAliasRows()
@@ -10090,6 +10155,56 @@ public static class GuidevaultLaunchBoxMatcher
         };
     }
 
+    // DREAMPAUSE_GUIDE_MATCH_FALLBACK_V1: This is intentionally stricter than
+    // the fuzzy/score-based match review. A game-specific guide may be shown
+    // without a rematch only when it names the exact game in Covered Games or
+    // Game Title, or when the guide title normalizes exactly to the game and
+    // carries a known compatible platform. Explicit incompatible platforms veto.
+    // For example, Resident Evil 2 is NOT Resident Evil 3 or RE2 Remake.
+    public static bool StrategyGuideExplicitlyBelongsToGame(GuidevaultLaunchBoxGame game, LibraryItem item)
+    {
+        if (!KindEquals(item, "Strategy Guide")) return false;
+        var titles = new[] { game.Title, game.SortTitle }
+            .Concat(game.AlternateNames ?? new List<string>())
+            .Select(NormalizeTitle)
+            .Where(title => title.Length >= 4)
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+        if (titles.Count == 0) return false;
+
+        // A guide explicitly tagged for a different release year (for example,
+        // Resident Evil 2's 2019 remake versus its original PlayStation game)
+        // is NOT an automatic match even if the base title is identical.
+        int sourceYear = ParseYear(game.ReleaseYear);
+        int guideGameYear = ParseYear(item.GameReleaseYear);
+        if (sourceYear > 0 && guideGameYear > 0 &&
+            Math.Abs(sourceYear - guideGameYear) > 1) return false;
+
+        string platform = NormalizePlatform(game.Platform);
+        var knownPlatforms = new[] { item.System, item.PrimarySystem, item.PlatformFocus,
+                item.PlatformMatchTitle }
+            .Concat(item.AssociatedPlatforms ?? Array.Empty<string>())
+            .Concat(item.CoveredPlatforms ?? Array.Empty<string>())
+            .Select(NormalizePlatform)
+            .Where(value => !string.IsNullOrWhiteSpace(value) &&
+                PlatformAliases.Values.Contains(value, StringComparer.OrdinalIgnoreCase))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+        if (knownPlatforms.Length > 0 && !knownPlatforms.Contains(platform, StringComparer.OrdinalIgnoreCase))
+            return false; // Do not attach a PS2-only guide to a PlayStation 1 game.
+
+        bool explicitlyNamed = (item.CoveredGames ?? Array.Empty<string>())
+            .Append(item.GameTitle)
+            .Where(value => !string.IsNullOrWhiteSpace(value))
+            .Select(NormalizeTitle)
+            .Any(titles.Contains);
+        if (explicitlyNamed) return true;
+
+        // Title-only matching is less authoritative; require a positive
+        // platform match and equality AFTER conservative title normalization.
+        return knownPlatforms.Contains(platform, StringComparer.OrdinalIgnoreCase) &&
+            titles.Contains(NormalizeTitle(item.Title));
+    }
+
     // Featured Games must be a true game-title association, not simply the name
     // of a magazine, a shared platform, or a broad series/category match.
     public static bool MagazineFeaturesGame(GuidevaultLaunchBoxGame game, LibraryItem magazine)
@@ -10166,6 +10281,17 @@ public static class GuidevaultLaunchBoxMatcher
     {
         var reasons = new List<string>();
         double score = 0;
+        // Candidate scoring only affects automatic suggestions. Explicitly
+        // confirmed associations remain stored and are never overridden here.
+        if (!string.Equals(matchType, "Magazine", StringComparison.OrdinalIgnoreCase))
+        {
+            if (HasExplicitPlatformConflict(game, item))
+                return new GuidevaultLaunchBoxCandidateScore(item, 0, "Explicit platform mismatch; manual review required.");
+            int gameYear = ParseYear(game.ReleaseYear);
+            int guideGameYear = ParseYear(item.GameReleaseYear);
+            if (gameYear > 0 && guideGameYear > 0 && Math.Abs(gameYear - guideGameYear) > 1)
+                return new GuidevaultLaunchBoxCandidateScore(item, 0, "Different game release year; manual review required.");
+        }
         var gameTitles = GameTitleCandidates(game).Select(NormalizeTitle).Where(t => !string.IsNullOrWhiteSpace(t)).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
         var itemTitles = ItemTitleCandidates(item).Select(NormalizeTitle).Where(t => !string.IsNullOrWhiteSpace(t)).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
 
@@ -10246,7 +10372,8 @@ public static class GuidevaultLaunchBoxMatcher
     {
         yield return game.Title;
         yield return game.SortTitle;
-        yield return game.Series;
+        // A shared series is not an alternate game title. Matching only by
+        // series previously linked unrelated sequels and remakes.
         foreach (var alt in game.AlternateNames ?? new List<string>()) yield return alt;
     }
 
@@ -10255,7 +10382,7 @@ public static class GuidevaultLaunchBoxMatcher
         yield return item.GameTitle;
         yield return item.Title;
         yield return item.ManualTitle;
-        yield return item.Series;
+        // A publication series is useful metadata but not a specific game title.
         foreach (var covered in item.CoveredGames ?? Array.Empty<string>()) yield return covered;
         foreach (var featured in item.FeaturedGames ?? Array.Empty<string>()) yield return featured;
     }
@@ -10278,6 +10405,27 @@ public static class GuidevaultLaunchBoxMatcher
         return false;
     }
 
+    // Only known, specifically declared platforms can veto an automatic
+    // manual/strategy-guide match. A broad folder/category label is ignored.
+    // An explicitly multi-platform guide remains eligible for every declared system.
+    private static HashSet<string> ExplicitItemPlatforms(LibraryItem item)
+    {
+        return new[] { item.System, item.PrimarySystem, item.PlatformFocus, item.PlatformMatchTitle }
+            .Concat(item.AssociatedPlatforms ?? Array.Empty<string>())
+            .Concat(item.CoveredPlatforms ?? Array.Empty<string>())
+            .Select(NormalizePlatform)
+            .Where(p => !string.IsNullOrWhiteSpace(p) &&
+                PlatformAliases.Values.Contains(p, StringComparer.OrdinalIgnoreCase))
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+    }
+
+    private static bool HasExplicitPlatformConflict(GuidevaultLaunchBoxGame game, LibraryItem item)
+    {
+        var platform = NormalizePlatform(game.Platform);
+        var known = ExplicitItemPlatforms(item);
+        return !string.IsNullOrWhiteSpace(platform) && known.Count > 0 && !known.Contains(platform);
+    }
+
     private static double PlatformScore(GuidevaultLaunchBoxGame game, LibraryItem item)
     {
         var gamePlatform = NormalizePlatform(game.Platform);
@@ -10287,9 +10435,9 @@ public static class GuidevaultLaunchBoxMatcher
             .Where(p => !string.IsNullOrWhiteSpace(p))
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .ToList();
-        if (itemPlatforms.Any(p => string.Equals(p, gamePlatform, StringComparison.OrdinalIgnoreCase))) return 20;
-        if (itemPlatforms.Any(p => p.Contains(gamePlatform, StringComparison.OrdinalIgnoreCase) || gamePlatform.Contains(p, StringComparison.OrdinalIgnoreCase))) return 10;
-        return 0;
+        // A substring is NOT cross-generation compatibility: PlayStation 1 is
+        // not PlayStation 2, Xbox is not Xbox 360, and Wii is not Wii U.
+        return itemPlatforms.Any(p => string.Equals(p, gamePlatform, StringComparison.OrdinalIgnoreCase)) ? 20 : 0;
     }
 
     private static double YearScore(params string[] years)
@@ -10332,17 +10480,31 @@ public static class GuidevaultLaunchBoxMatcher
         return string.Equals(Path.GetFileName(a), Path.GetFileName(b), StringComparison.OrdinalIgnoreCase);
     }
 
+    // Normalization is intentionally conservative: keep sequel numbers,
+    // remake/edition identifiers and meaningful parenthetical subtitles.
     private static string NormalizeTitle(string? value)
     {
         var text = Clean(value).ToLowerInvariant();
         if (string.IsNullOrWhiteSpace(text)) return string.Empty;
-        text = Regex.Replace(text, "\\([^)]*\\)", " ");
-        text = Regex.Replace(text, "\\[[^]]*\\]", " ");
-        text = NoiseWords.Replace(text, " ");
+        text = Regex.Replace(text,
+            @"[\(\[]\s*(?:usa|europe|japan|world|asia|australia|rev(?:ision)?\s*[a-z0-9]+|disc\s*\d+|disk\s*\d+|v\d+(?:\.\d+)*)\s*[\)\]]",
+            " ", RegexOptions.IgnoreCase);
         text = text.Replace("&", " and ");
+        text = NoiseWords.Replace(text, " ");
         text = NonAlphaNumeric.Replace(text, " ");
+        // Resident Evil II and Resident Evil 2 are the same numbered title.
+        // Avoid single-letter Roman numerals, which are ambiguous in game names.
+        text = Regex.Replace(text, @"\b(viii|vii|vi|iv|iii|ii|ix|v)\b", match =>
+            match.Value switch {
+                "ii" => "2", "iii" => "3", "iv" => "4", "v" => "5",
+                "vi" => "6", "vii" => "7", "viii" => "8", "ix" => "9", _ => match.Value
+            });
         return Regex.Replace(text, "\\s+", " ").Trim();
     }
+
+    // Used by manual lookup endpoints to find punctuation and Roman-numeral
+    // variants without requiring a broad background rematch.
+    public static string NormalizeLookupTitle(string? value) => NormalizeTitle(value);
 
     private static string NormalizePlatform(string? value)
     {
@@ -11880,6 +12042,13 @@ public static class GuidevaultAuthorization
             || path.Equals("/api/home-assistant/status", StringComparison.OrdinalIgnoreCase)) return true;
         if (path.Equals("/api/library/prewarm-covers", StringComparison.OrdinalIgnoreCase))
             return user.HasPermission("Read Only") || Denied("Read Only permission is required.", out message);
+
+        // DREAMPAUSE_GUIDEVAULT_BOOKMARKS_V1: a non-admin reader can modify only
+        // their own item bookmarks, not item metadata or other users' records.
+        if (path.StartsWith("/api/items/", StringComparison.OrdinalIgnoreCase) &&
+            path.Contains("/bookmarks", StringComparison.OrdinalIgnoreCase))
+            return (user.HasPermission("Read Only") && user.HasPermission("Bookmark"))
+                || Denied("Read Only and Bookmark permissions are required.", out message);
 
         if ((path.StartsWith("/api/items/", StringComparison.OrdinalIgnoreCase) && path.EndsWith("/reviews", StringComparison.OrdinalIgnoreCase))
             || path.StartsWith("/api/reviews/", StringComparison.OrdinalIgnoreCase))
