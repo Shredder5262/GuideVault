@@ -27084,8 +27084,10 @@ async function runLaunchBoxControlledScan() {
       `<strong>${Number(data.games || 0).toLocaleString()}</strong> games · ` +
       `<strong>${Number(data.candidatePairs || 0).toLocaleString()}</strong> proposed pairs · ` +
       `${Number(data.strongCandidates || 0)} strong · ${Number(data.needsReview || 0)} review · ` +
-      `${Number(data.conflicts || 0)} conflicts · ${Number(data.gamesWithNoExactTitleCandidate || 0)} no exact title candidate</div>` +
+      `${Number(data.excludedByPlatform || 0)} other-platform pairs excluded · ${Number(data.gamesWithNoEligibleCandidate || 0)} games without an eligible manual</div>` +
       `<p class="sub">No changes made. ${escapeHtml(data.note || '')}</p>` +
+      (Number(data.excludedByPlatform || 0) > 0 ? `<details class="launchbox-manual-exclusions"><summary>${Number(data.excludedByPlatform)} wrong-platform manual pairs skipped (show examples)</summary>` +
+        `<div class="launchbox-exclusions-list">` + (data.excludedExamples || []).map(r => `<div>${escapeHtml(r.gameTitle)} → ${escapeHtml(r.publicationTitle)} (${escapeHtml(r.publicationSystem || 'Unknown')})</div>`).join('') + `</div></details>` : '') +
       `<p class="sub launchbox-controlled-artwork-note">${escapeHtml(data.artworkNote || '')}</p>` +
       `<div class="launchbox-controlled-table">` +
       (data.rows || []).map(r => `<article class="launchbox-controlled-pair">` +

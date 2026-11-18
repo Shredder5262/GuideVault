@@ -174,22 +174,25 @@ public static class GuidevaultLaunchBoxCatalogReader
 
 public static class GuidevaultLaunchBoxControlledManualScanner
 {
-    // A strict read-only first pass, not a replacement for a complete identity/edition engine.
-    // Never auto-approves, persists or restores associations. Returns evidence to a human.
+    // GUIDEVAULT_MANUAL_PLATFORM_SCOPE_V12
+    // Read-only scanner for RELEASE-SPECIFIC MANUALS only. Cross-platform literature is
+    // deliberately out of scope; do not copy these rules to magazines or strategy guides.
     public static object Preview(string platform, string matchType,
         IReadOnlyList<GuidevaultLaunchBoxGame> games, IReadOnlyList<LibraryItem> documents,
         string? launchBoxRoot)
     {
         if (!string.Equals(matchType, "Manual", StringComparison.OrdinalIgnoreCase))
-            throw new ArgumentException("The first controlled scanner supports Manuals only. Guides and magazines require separate coverage rules.");
+            throw new ArgumentException("The controlled scanner currently supports Manuals only.");
         if (string.IsNullOrWhiteSpace(platform)) throw new ArgumentException("Select a LaunchBox platform.");
+
         var selectedGames = games.Where(g => string.Equals(g.Platform, platform, StringComparison.OrdinalIgnoreCase)).ToArray();
+        var targetPlatform = NormalizePlatform(platform);
+        if (targetPlatform.Length == 0) throw new ArgumentException("Select a specific LaunchBox platform, not an unknown or multi-platform category.");
         var manuals = documents.Where(i => string.Equals(i.Kind, "Manual", StringComparison.OrdinalIgnoreCase)).ToArray();
         var byName = new Dictionary<string, List<LibraryItem>>(StringComparer.OrdinalIgnoreCase);
         foreach (var item in manuals)
         {
-            // Explicit GameTitle is authoritative for discovering candidates; don't let a
-            // contradictory publication title override a populated GameTitle.
+            // GameTitle is more specific than a document's filename or display title.
             var rawName = !string.IsNullOrWhiteSpace(item.GameTitle)
                 ? item.GameTitle : !string.IsNullOrWhiteSpace(item.ManualTitle) ? item.ManualTitle : item.Title;
             var name = NormalizeGameName(rawName, publication: true);
@@ -197,8 +200,11 @@ public static class GuidevaultLaunchBoxControlledManualScanner
             if (!byName.TryGetValue(name, out var list)) byName[name] = list = new List<LibraryItem>();
             list.Add(item);
         }
-        var rows = new List<object>();
-        int strong = 0, review = 0, conflict = 0, unmatched = 0;
+
+        var strongRows = new List<object>();
+        var reviewRows = new List<object>();
+        var excludedExamples = new List<object>();
+        int strong = 0, review = 0, excluded = 0, withoutExactTitle = 0, withoutEligible = 0;
         foreach (var game in selectedGames.OrderBy(g => g.Title, StringComparer.OrdinalIgnoreCase))
         {
             var keys = new[] { game.Title, game.SortTitle }
@@ -207,58 +213,98 @@ public static class GuidevaultLaunchBoxControlledManualScanner
                 .Where(name => name.Length >= 2).Distinct(StringComparer.OrdinalIgnoreCase);
             var candidates = keys.Where(byName.ContainsKey).SelectMany(key => byName[key])
                 .GroupBy(i => i.Id, StringComparer.OrdinalIgnoreCase).Select(group => group.First()).ToArray();
-            if (candidates.Length == 0) { unmatched++; continue; }
+            if (candidates.Length == 0) { withoutExactTitle++; withoutEligible++; continue; }
+
+            bool eligible = false;
             foreach (var item in candidates)
             {
-                var namedPlatforms = new[] { item.System, item.PrimarySystem, item.PlatformFocus }
-                    .Concat(item.AssociatedPlatforms ?? Array.Empty<string>())
-                    .Concat(item.CoveredPlatforms ?? Array.Empty<string>())
-                    .Where(p => !string.IsNullOrWhiteSpace(p))
-                    .Select(NormalizePlatform).Where(p => !string.IsNullOrWhiteSpace(p))
-                    .Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
-                var gamePlatform = NormalizePlatform(game.Platform);
-                var hasPlatform = namedPlatforms.Contains(gamePlatform, StringComparer.OrdinalIgnoreCase);
-                var containsKnownOther = namedPlatforms.Any(p => !string.Equals(p, gamePlatform, StringComparison.OrdinalIgnoreCase));
+                // Primary manual fields describe *which physical/platform edition* this is.
+                // Other associated/covered platforms are weaker hints, never sufficient to
+                // override a contradictory primary manual system (e.g. an Arcade 1942 manual).
+                var primary = ManualPlatforms(new[] { item.System, item.PrimarySystem, item.PlatformFocus });
+                var associated = ManualPlatforms((item.AssociatedPlatforms ?? Array.Empty<string>())
+                    .Concat(item.CoveredPlatforms ?? Array.Empty<string>()));
+                var declared = primary.Concat(associated).Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
+                bool primaryIsTarget = primary.Contains(targetPlatform, StringComparer.OrdinalIgnoreCase);
+                bool associatedIsTarget = associated.Contains(targetPlatform, StringComparer.OrdinalIgnoreCase);
+
+                // Important: a manual explicitly for another platform is outside this scan,
+                // even if one of its general associated-platform tags names this platform.
+                // Do not present it as a conflict to be dispositioned.
+                bool explicitlyOther = primary.Length > 0 && !primaryIsTarget;
+                bool onlyOtherAssociated = primary.Length == 0 && associated.Length > 0 && !associatedIsTarget;
+                if (explicitlyOther || onlyOtherAssociated)
+                {
+                    excluded++;
+                    if (excludedExamples.Count < 12)
+                        excludedExamples.Add(new { gameTitle = game.Title, publicationTitle = item.Title,
+                            publicationSystem = string.Join(", ", declared),
+                            reason = explicitlyOther ? "Manual declares a different primary platform" : "Only other platforms are identified" });
+                    continue;
+                }
+                eligible = true;
+
                 var yearConflict = int.TryParse(game.ReleaseYear, out var gameYear) &&
                     int.TryParse(item.GameReleaseYear, out var itemYear) && Math.Abs(gameYear - itemYear) > 1;
-                var classification = yearConflict || (!hasPlatform && containsKnownOther)
-                    ? "Conflict" : hasPlatform ? "Strong candidate" : "Needs review";
-                var reason = yearConflict ? "Explicit game-release years conflict" :
-                    !hasPlatform && containsKnownOther ? "Publication names another platform; verify edition" :
-                    hasPlatform ? "Exact game-title identity and matching platform metadata" :
-                    "Exact game-title identity, but platform metadata is missing";
-                if (classification == "Conflict") conflict++;
-                else if (classification == "Strong candidate") strong++;
-                else review++;
-                rows.Add(new { gameId = game.Id, gameTitle = game.Title, gamePlatform = game.Platform,
+                var contradictoryPrimary = primaryIsTarget && primary.Any(p => !string.Equals(p, targetPlatform, StringComparison.OrdinalIgnoreCase));
+                // Broad associated-platform tags cannot prove a release-specific manual.
+                var verifiedPlatform = primaryIsTarget && !contradictoryPrimary;
+                var strongCandidate = verifiedPlatform && !yearConflict;
+                var classification = strongCandidate ? "Strong candidate" : "Needs review";
+                var reason = contradictoryPrimary
+                    ? "Conflicting primary manual platform fields; verify the edition"
+                    : yearConflict
+                        ? "Exact game title and target manual platform, but explicit game-release years differ"
+                        : verifiedPlatform
+                            ? "Exact game title and matching primary manual platform"
+                            : associatedIsTarget
+                                ? "Target platform appears only in associated/covered tags; verify manual's actual system"
+                                : "Manual platform missing; verify the edition before linking";
+                if (strongCandidate) strong++; else review++;
+                var row = new { gameId = game.Id, gameTitle = game.Title, gamePlatform = game.Platform,
                     gameBoxFrontUrl = "/api/integrations/launchbox/games/" + Uri.EscapeDataString(game.Id) + "/box-front",
                     publicationId = item.Id, publicationTitle = item.Title,
-                    publicationSystem = string.Join(", ", namedPlatforms),
-                    classification, reason,
-                    coverUrl = "/api/items/" + Uri.EscapeDataString(item.Id) + "/cover-thumb?w=360" });
+                    publicationSystem = string.Join(", ", declared), classification, reason,
+                    coverUrl = "/api/items/" + Uri.EscapeDataString(item.Id) + "/cover-thumb?w=360" };
+                if (strongCandidate) strongRows.Add(row); else reviewRows.Add(row);
             }
+            if (!eligible) withoutEligible++;
         }
+
+        var includedCount = strong + review;
         return new { platform, matchType = "Manual", dryRun = true, changedRecords = 0,
             games = selectedGames.Length, manualsInLibrary = manuals.Length,
-            candidatePairs = rows.Count, strongCandidates = strong, needsReview = review,
-            conflicts = conflict, gamesWithNoExactTitleCandidate = unmatched,
+            candidatePairs = includedCount, strongCandidates = strong, needsReview = review,
+            conflicts = 0, excludedByPlatform = excluded,
+            excludedExamples = excludedExamples.ToArray(),
+            gamesWithNoExactTitleCandidate = withoutExactTitle,
+            gamesWithNoEligibleCandidate = withoutEligible,
             artworkNote = GuidevaultLaunchBoxBoxFronts.AvailabilityNote(launchBoxRoot, platform),
-            truncated = rows.Count > 500, rows = rows.Take(500).ToArray(),
-            note = "Strict exact-title discovery. No links are written. Review platform/year conflicts and metadata gaps; approval is not enabled in this first update." };
+            truncated = includedCount > 500,
+            rows = strongRows.Concat(reviewRows).Take(500).ToArray(),
+            note = "Manuals only: wrong-platform editions excluded before review. Missing/contradictory platform evidence or release-year differences require review. No links are written; approval remains disabled." };
     }
+
+    private static string[] ManualPlatforms(IEnumerable<string?> values) => values
+        .Where(value => !string.IsNullOrWhiteSpace(value))
+        .SelectMany(value => Regex.Split(value!, @"[,;|]"))
+        .Select(NormalizePlatform)
+        .Where(value => value.Length > 0)
+        .Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
 
     private static string NormalizePlatform(string? value)
     {
         var text = Regex.Replace((value ?? "").ToLowerInvariant(), @"[^a-z0-9]+", " ").Trim();
         return text switch
         {
-            "nes" or "famicom" or "nintendo entertainment system" => "nintendo entertainment system",
+            "nes" or "nintendo entertainment system" or "nintendo entertainment system nes" or "nes nintendo entertainment system" => "nintendo entertainment system",
+            "famicom" or "family computer" or "nintendo family computer" => "nintendo family computer",
             "snes" or "super nes" or "super nintendo entertainment system" => "super nintendo entertainment system",
             "psx" or "ps1" or "sony playstation" or "playstation" => "sony playstation",
             "3do" or "3do interactive multiplayer" => "3do interactive multiplayer",
             "n64" or "nintendo 64" => "nintendo 64",
             "mega drive" or "sega mega drive" or "sega genesis" or "genesis" => "sega genesis",
-            "multi platform" or "multiplatform" or "mixed" or "unknown" or "unsorted" or "manuals" or "manual" => "",
+            "multi platform" or "multiplatform" or "mixed" or "unknown" or "unsorted" or "manuals" or "manual" or "nintendo" or "sega" or "sony" or "console" or "all platforms" => "",
             _ => text
         };
     }
