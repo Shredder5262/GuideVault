@@ -4290,7 +4290,7 @@ async function loadLaunchBoxCoverage(showStatus = false) {
     state.launchBox.status = await res.json();
     state.launchBox.coverage = state.launchBox.status?.coverage || null;
     renderLaunchBoxCoverage();
-    refreshLaunchBoxManualPlatformCounts();
+    refreshLaunchBoxCurrentPlatformCounts();
     if (showStatus) setLaunchBoxCoverageStatus('LaunchBox coverage loaded.', 'success');
     await loadLaunchBoxReview(false);
   } catch (err) {
@@ -4932,6 +4932,12 @@ function bindLaunchBoxCoverageActions() {
   if ($('launchBoxPreviewCatalog')) $('launchBoxPreviewCatalog').addEventListener('click', e => { e.preventDefault(); previewLaunchBoxCatalog(); });
   if ($('launchBoxImportCatalog')) $('launchBoxImportCatalog').addEventListener('click', e => { e.preventDefault(); importLaunchBoxCatalog(); });
   if ($('launchBoxRunControlledScan')) $('launchBoxRunControlledScan').addEventListener('click', e => { e.preventDefault(); runLaunchBoxControlledScan(); });
+  // Recalculate platform counts for the selected document type, never reuse manual counts for guides.
+  $('launchBoxScanKind')?.addEventListener('change', () => {
+    populateLaunchBoxScanPlatforms();
+    refreshLaunchBoxCurrentPlatformCounts();
+  });
+
   $('launchBoxCorrectionSearchManuals')?.addEventListener('click', searchLaunchBoxCorrectionManuals);
   $('launchBoxCorrectionSearchGames')?.addEventListener('click', searchLaunchBoxCorrectionGames);
   $('launchBoxCorrectionApprove')?.addEventListener('click', approveLaunchBoxCorrection);
@@ -27080,7 +27086,10 @@ function populateLaunchBoxScanPlatforms() {
   const previous = select.value;
   const rows = state.launchBox.status?.coverage?.byPlatform || [];
   const platforms = rows.map(r => r.platform).filter(Boolean).sort((a,b) => a.localeCompare(b));
-  const byPlatform = new Map((launchBoxManualPlatformCounts?.platforms || []).map(r => [r.platform, r]));
+  const kind = $('launchBoxScanKind')?.value || 'Manual';
+  const counts = kind === 'Strategy Guide' ? launchBoxStrategyPlatformCounts : launchBoxManualPlatformCounts;
+  const byPlatform = new Map((counts?.platforms || []).map(r => [r.platform, r]));
+
   select.innerHTML = '<option value="">Select synced platform</option>' +
     platforms.map(p => {
       const count = byPlatform.get(p);
@@ -27089,6 +27098,20 @@ function populateLaunchBoxScanPlatforms() {
     }).join('');
   if (platforms.includes(previous)) select.value = previous;
   else if (platforms.includes('Nintendo Entertainment System')) select.value = 'Nintendo Entertainment System';
+}
+// GUIDEVAULT_STRATEGY_PENDING_COUNTS_V23
+let launchBoxStrategyPlatformCounts = null;
+async function refreshLaunchBoxStrategyPlatformCounts() {
+  try {
+    const result = await launchBoxControlledApi('/api/integrations/launchbox/scans/strategy/pending-counts');
+    launchBoxStrategyPlatformCounts = result;
+    // A slow response from an earlier selection must never overwrite the current label source.
+    if ($('launchBoxScanKind')?.value === 'Strategy Guide') populateLaunchBoxScanPlatforms();
+  } catch (err) { console.warn('Strategy guide pending-count lookup failed', err); }
+}
+async function refreshLaunchBoxCurrentPlatformCounts() {
+  return $('launchBoxScanKind')?.value === 'Strategy Guide'
+    ? refreshLaunchBoxStrategyPlatformCounts() : refreshLaunchBoxManualPlatformCounts();
 }
 // GUIDEVAULT_MANUAL_IDENTITY_PAGINATION_V13
 // The scanner is read-only. Paging fetches the next slice, never creates matches.

@@ -32,6 +32,30 @@ public static class GuidevaultLaunchBoxStrategyScanner
             "", RegexOptions.IgnoreCase);
         return Key(text);
     }
+    // GUIDEVAULT_STRATEGY_PENDING_COUNTS_V23
+    // Use the identical scanner/proposal rules as a normal Pending scan. This is
+    // intentionally a read-only aggregate of game-to-guide pairs, NOT guidebooks.
+    public static object PendingByPlatform(
+        IReadOnlyList<GuidevaultLaunchBoxGame> games,
+        IReadOnlyList<LibraryItem> documents,
+        IReadOnlyList<GuidevaultLaunchBoxMatch> savedMatches)
+    {
+        var platforms = games.Select(g => g.Platform)
+            .Where(p => !string.IsNullOrWhiteSpace(p))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .OrderBy(p => p, StringComparer.OrdinalIgnoreCase).ToArray();
+        var rows = platforms.Select(platform =>
+        {
+            // Page one still returns the total across ALL pages.
+            // A guide covering six games contributes six pairs when pending.
+            var scan = System.Text.Json.JsonSerializer.SerializeToElement(
+                Preview(platform, games, documents, 1, 25, savedMatches, "pending"));
+            return new { platform, pendingPairs = scan.GetProperty("pendingPairs").GetInt32() };
+        }).ToArray();
+        return new { kind = "Strategy Guide", platforms = rows,
+            definition = "Pending game-to-strategy-guide relationships shown by the selected platform's Strategy Guides scan. Multiple covered games in one guide count as separate pending relationships." };
+    }
+
     public static object Preview(string platform,
         IReadOnlyList<GuidevaultLaunchBoxGame> games, IReadOnlyList<LibraryItem> documents,
         int page, int pageSize, IReadOnlyList<GuidevaultLaunchBoxMatch>? savedMatches,

@@ -893,6 +893,14 @@ app.MapPost("/api/integrations/launchbox/scans/preview", (GuidevaultLaunchBoxSco
     { return (IResult)Results.BadRequest(new { error = ex.Message }); }
 });
 
+// GUIDEVAULT_STRATEGY_PENDING_COUNTS_V23 — same pending-pair count as the guide scan.
+app.MapGet("/api/integrations/launchbox/scans/strategy/pending-counts", () =>
+{
+    var snapshot = launchBoxIntegrationStore.GetSnapshot();
+    return Results.Ok(GuidevaultLaunchBoxStrategyScanner.PendingByPlatform(
+        snapshot.Games, cache.GetItemsSnapshot(), snapshot.Matches));
+});
+
 // GUIDEVAULT_MANUAL_RECOVERY_V18 — distinct publications, not missing-game counts.
 app.MapGet("/api/integrations/launchbox/scans/manual/unmatched-counts", () =>
     Results.Ok(GuidevaultLaunchBoxManualRecovery.UnmatchedByPlatform(
