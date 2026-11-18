@@ -22770,3 +22770,12 @@ body.guidevault-direct-reader-pending:not(.auth-locked) #guidevaultDirectReaderL
 .launchbox-controlled-scan-card .launchbox-scan-bulkselect {display:flex;gap:6px;flex-wrap:wrap}
 .launchbox-controlled-scan-card .launchbox-scan-bulkselect button {font-size:.8rem;padding:7px 10px}
 .launchbox-strategy-pair {padding-left:16px;min-height:185px}
+
+/* GUIDEVAULT_STRATEGY_EVIDENCE_V20 — readable, source-specific match evidence */
+.launchbox-strategy-pair .launchbox-controlled-sourceinfo{min-width:0}
+.launchbox-strategy-proof{margin-top:7px;padding-top:6px;border-top:1px solid rgba(126,162,198,.18);display:flex;flex-wrap:wrap;gap:3px 8px;align-items:baseline;font-size:.78rem;line-height:1.35;color:#b9cfde;overflow-wrap:anywhere}
+.launchbox-strategy-proof b{color:#8fb9e0;font-size:.73rem;white-space:nowrap}
+.launchbox-strategy-proof span{color:#e0edf8}
+.launchbox-strategy-evidence-details{margin-top:8px;color:#abbfd0;font-size:.74rem}
+.launchbox-strategy-evidence-details summary{cursor:pointer;color:#85bbef}
+.launchbox-strategy-evidence-details div{padding:2px 0}

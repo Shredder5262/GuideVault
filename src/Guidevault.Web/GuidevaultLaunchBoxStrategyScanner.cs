@@ -1,4 +1,4 @@
-// GUIDEVAULT_STRATEGY_SCOPED_V19
+// GUIDEVAULT_STRATEGY_EVIDENCE_V20
 // Read-only proposals. A strategy guide is a publication, not a per-game file.
 // Explicit CoveredGames is game coverage, while platform lists describe applicability.
 using System;
@@ -52,7 +52,7 @@ public static class GuidevaultLaunchBoxStrategyScanner
 
         // One index entry per covered game. Guide titles alone are never treated as explicit coverage
         // for multi-game publications; GameTitle is allowed only if CoveredGames is absent.
-        var byGame = new Dictionary<string, List<(LibraryItem Item, string Evidence)>>(StringComparer.OrdinalIgnoreCase);
+        var byGame = new Dictionary<string, List<(LibraryItem Item, string Evidence, string RawTitle)>>(StringComparer.OrdinalIgnoreCase);
         foreach (var guide in guides)
         {
             var explicitTitles = (guide.CoveredGames ?? Array.Empty<string>())
@@ -66,7 +66,7 @@ public static class GuidevaultLaunchBoxStrategyScanner
                 var key = Key(raw);
                 if (key.Length < 2) continue;
                 if (!byGame.TryGetValue(key, out var list)) byGame[key] = list = new();
-                list.Add((guide, explicitTitles.Length > 0 ? "Covered Games" : titleOnly ? "Title only" : "Game Title"));
+                list.Add((guide, explicitTitles.Length > 0 ? "Covered Games" : titleOnly ? "Title only" : "Game Title", raw));
             }
         }
         var rows = new List<(int Priority, string GameTitle, string GuideTitle, object Row)>();
@@ -79,7 +79,7 @@ public static class GuidevaultLaunchBoxStrategyScanner
                 .Select(Key).Where(k => k.Length >= 2).Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
             var possibilities = names.Where(byGame.ContainsKey).SelectMany(k => byGame[k]);
             var found = false;
-            foreach (var (item, evidence) in possibilities)
+            foreach (var (item, evidence, rawMatchedValue) in possibilities)
             {
                 var pairKey = game.Id + "\u001f" + item.Id;
                 if (!seenPairs.Add(pairKey)) continue;
@@ -89,6 +89,25 @@ public static class GuidevaultLaunchBoxStrategyScanner
                     .Concat(item.CoveredPlatforms ?? Array.Empty<string>()));
                 var matchesPlatform = declared.Contains(platformKey, StringComparer.OrdinalIgnoreCase);
                 var isCrossPlatform = declared.Length > 1;
+                // The scanner's matching key may come from the LaunchBox primary name,
+                // sort name or an alternate name. Show the exact value used to join.
+                var nameSources = new List<(string Field, string Value)> { ("Title", game.Title) };
+                if (!string.IsNullOrWhiteSpace(game.SortTitle)) nameSources.Add(("Sort Title", game.SortTitle));
+                nameSources.AddRange((game.AlternateNames ?? new List<string>())
+                    .Where(n => !string.IsNullOrWhiteSpace(n)).Select(n => ("Alternate Name", n)));
+                var rawTitleKey = evidence == "Title only" ? TitleHint(item.Title) : Key(rawMatchedValue);
+                var matchedLaunchBox = nameSources.FirstOrDefault(n => Key(n.Value) == rawTitleKey);
+                var matchedLaunchBoxField = matchedLaunchBox.Field ?? "Unknown";
+                var matchedLaunchBoxValue = matchedLaunchBox.Value ?? game.Title;
+                // Different fields mean different things: the shelving System isn't
+                // automatically proof that a multi-platform guide covers that release.
+                var primaryPlatform = Platforms(new[] { item.System, item.PrimarySystem, item.PlatformFocus });
+                var associatedPlatform = Platforms(item.AssociatedPlatforms ?? Array.Empty<string>());
+                var coveredPlatform = Platforms(item.CoveredPlatforms ?? Array.Empty<string>());
+                var platformBasis = coveredPlatform.Contains(platformKey, StringComparer.OrdinalIgnoreCase) ? "Covered Platforms" :
+                    associatedPlatform.Contains(platformKey, StringComparer.OrdinalIgnoreCase) ? "Associated Platforms" :
+                    primaryPlatform.Contains(platformKey, StringComparer.OrdinalIgnoreCase) ? "System / Primary System / Platform Focus" :
+                    declared.Length == 0 ? "Not specified" : "No matching platform field";
                 var strictTitle = Key(game.Title);
                 var explicitGame = (item.CoveredGames ?? Array.Empty<string>())
                     .Any(t => Key(t) == strictTitle);
@@ -96,6 +115,11 @@ public static class GuidevaultLaunchBoxStrategyScanner
                 // single-game GameTitle without explicit coverage always need review.
                 bool isStrong = evidence == "Covered Games" && explicitGame && matchesPlatform
                     && !isCrossPlatform;
+                // A title/coverage hit with a known incompatible platform is only
+                // a candidate for review, never evidence of this particular release.
+                var platformCompatibility = declared.Length == 0 ? "Unknown" :
+                    matchesPlatform ? (isCrossPlatform ? "Multiple declared platforms" : "Target platform listed") :
+                    "Target platform not listed";
                 string classification = isStrong ? "Strong candidate" : "Needs review";
                 string reason = evidence is "Game Title" or "Title only"
                     ? "Game-specific title clue only; verify the guide's actual coverage"
@@ -129,6 +153,15 @@ public static class GuidevaultLaunchBoxStrategyScanner
                     gameBoxFrontUrl = "/api/integrations/launchbox/games/" + Uri.EscapeDataString(game.Id) + "/box-front",
                     publicationId = item.Id, publicationTitle = item.Title, publicationSystem = string.Join(", ", declared),
                     classification, reason, matchBasis = evidence,
+                    // Exact evidence on BOTH sides, not just "Covered Games".
+                    launchBoxMatchField = matchedLaunchBoxField, launchBoxMatchedValue = matchedLaunchBoxValue,
+                    guideMatchField = evidence, guideMatchedValue = rawMatchedValue,
+                    guideGameTitle = item.GameTitle ?? "",
+                    guidePrimaryPlatform = string.Join(", ", primaryPlatform),
+                    guideCoveredPlatforms = string.Join(", ", coveredPlatform),
+                    guideAssociatedPlatforms = string.Join(", ", associatedPlatform),
+                    platformBasis, platformCompatibility,
+                    evidenceProvenance = "GuideVault metadata (publication contents not verified)",
                     savedStatus, coverUrl = "/api/items/" + Uri.EscapeDataString(item.Id) + "/cover-thumb?w=360"
                 }));
             }

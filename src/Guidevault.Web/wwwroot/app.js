@@ -27465,10 +27465,15 @@ async function runLaunchBoxStrategyScan(page = 1) {
       `<div class="launchbox-controlled-table">` +
       (data.rows || []).map(r => `<article class="launchbox-controlled-pair launchbox-strategy-pair">` +
         `<div class="launchbox-controlled-sourcecard"><div class="launchbox-controlled-cover"><img data-launchbox-scan-image src="${escapeForAttribute(r.gameBoxFrontUrl || '')}" alt="${escapeForAttribute(r.gameTitle)}" loading="lazy"><span class="launchbox-controlled-no-cover">No box front</span></div>` +
-        `<div class="launchbox-controlled-sourceinfo"><small>LAUNCHBOX</small><strong>${escapeHtml(r.gameTitle)}</strong><span>${escapeHtml(r.gamePlatform)}</span></div></div>` +
+        `<div class="launchbox-controlled-sourceinfo"><small>LAUNCHBOX</small><strong>${escapeHtml(r.gameTitle)}</strong><span>${escapeHtml(r.gamePlatform)}</span>` +
+        `<div class="launchbox-strategy-proof"><b>${escapeHtml(r.launchBoxMatchField || 'Title')}</b><span>${escapeHtml(r.launchBoxMatchedValue || r.gameTitle)}</span></div></div></div>` +
         `<div class="launchbox-controlled-sourcecard"><div class="launchbox-controlled-cover"><img data-launchbox-scan-image src="${escapeForAttribute(r.coverUrl)}" alt="${escapeForAttribute(r.publicationTitle)}" loading="lazy"><span class="launchbox-controlled-no-cover">No guide cover</span></div>` +
-        `<div class="launchbox-controlled-sourceinfo"><small>STRATEGY GUIDE</small><strong>${escapeHtml(r.publicationTitle)}</strong><span>${escapeHtml(r.publicationSystem || 'Platform unknown')}</span></div></div>` +
-        `<div class="launchbox-controlled-evidence"><strong>${escapeHtml(r.classification)}</strong><span>${escapeHtml(r.reason)}</span><small>${escapeHtml(r.matchBasis)}</small></div>` +
+        `<div class="launchbox-controlled-sourceinfo"><small>STRATEGY GUIDE</small><strong>${escapeHtml(r.publicationTitle)}</strong><span>${escapeHtml(r.publicationSystem || 'Platform unknown')}</span>` +
+        `<div class="launchbox-strategy-proof"><b>${escapeHtml(r.guideMatchField || 'Coverage clue')}</b><span>${escapeHtml(r.guideMatchedValue || '')}</span></div>` +
+        `<div class="launchbox-strategy-proof"><b>Platform evidence</b><span>${escapeHtml(r.platformBasis || 'Not specified')}: ${escapeHtml(r.platformCompatibility || 'Unknown')}</span></div></div></div>` +
+        `<div class="launchbox-controlled-evidence"><strong>${escapeHtml(r.classification)}</strong><span>${escapeHtml(r.reason)}</span>` +
+        `<small>${escapeHtml(r.evidenceProvenance || 'Metadata-based proposal')}</small>` +
+        `<details class="launchbox-strategy-evidence-details"><summary>All platform fields</summary><div>Primary / shelf: ${escapeHtml(r.guidePrimaryPlatform || 'Unknown')}</div><div>Covered: ${escapeHtml(r.guideCoveredPlatforms || 'Not specified')}</div><div>Associated: ${escapeHtml(r.guideAssociatedPlatforms || 'Not specified')}</div>${r.guideGameTitle ? `<div>Game Title: ${escapeHtml(r.guideGameTitle)}</div>` : ''}</details></div>` +
         `</article>`).join('') + `</div>` + pager;
     host.querySelectorAll('[data-guide-page]').forEach(button => button.addEventListener('click', () => {
       const n = Number(button.dataset.guidePage); if (n >= 1 && n <= pages) runLaunchBoxStrategyScan(n);
