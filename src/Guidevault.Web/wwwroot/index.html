@@ -1817,7 +1817,7 @@
               <div>
                 <div class="settings-page-kicker">LIBRARY TOOLS</div>
                 <h1>LaunchBox Matching Workspace</h1>
-                <p class="sub">Controlled, read-only proposals by platform and publication type. Approvals remain disabled during migration.</p>
+                <p class="sub">Review and manage game-to-publication relationships by platform.</p>
               </div>
               <div class="launchbox-title-actions">
                 <button id="launchBoxReviewRefreshCoverage" class="ghost" type="button">Refresh Coverage</button>
@@ -1826,7 +1826,7 @@
             <p id="launchBoxMatchReviewStatus" class="sub account-status" aria-live="polite"></p>
             <article class="settings-card launchbox-controlled-scan-card">
               <div class="settings-card-heading-row compact-heading"><div><h3>Controlled Literature Scan</h3>
-                <p class="sub">Find likely literature for one platform. Manuals can be reviewed and linked; strategy guides are a read-only preview.</p></div></div>
+                <p class="sub">Select a platform and document type to review proposed relationships.</p></div></div>
               <div class="launchbox-controlled-form">
                 <label>LaunchBox platform
                   <select id="launchBoxScanPlatform"><option value="">Select a synced platform</option></select>
@@ -1837,24 +1837,27 @@
                 <button id="launchBoxRunControlledScan" class="primary" type="button">Run Dry Scan</button>
               </div>
               <details class="launchbox-manual-recovery" id="launchBoxManualRecoveryPanel">
-                <summary><strong>Link a manual to the correct game</strong><span class="sub">Search the document and game, select each, then save the link.</span></summary>
+                <summary><span class="launchbox-recovery-mark" aria-hidden="true">↔</span><span class="launchbox-recovery-summary"><strong>Correct a manual link</strong><small>Choose a manual and its actual game</small></span></summary>
                 <div class="launchbox-manual-recovery-body">
-                  <div class="launchbox-manual-recovery-search">
-                    <label>Find GuideVault manual <input id="launchBoxCorrectionManualQuery" type="search" placeholder="Manual title (2+ characters)"></label>
-                    <button id="launchBoxCorrectionSearchManuals" type="button">Find manuals</button>
-                    <label>Manual <select id="launchBoxCorrectionManual" aria-label="GuideVault manual to correct"><option value="">Find a manual first</option></select></label>
+                  <div class="launchbox-recovery-columns">
+                    <section class="launchbox-recovery-step"><h4><span>1</span> GuideVault manual</h4>
+                      <label for="launchBoxCorrectionManualQuery">Find document</label>
+                      <div class="launchbox-recovery-searchbox"><input id="launchBoxCorrectionManualQuery" type="search" placeholder="Search manual title"><button id="launchBoxCorrectionSearchManuals" type="button">Search</button></div>
+                      <label for="launchBoxCorrectionManual">Select manual</label>
+                      <select id="launchBoxCorrectionManual" aria-label="GuideVault manual to correct"><option value="">Search first</option></select>
+                    </section>
+                    <section class="launchbox-recovery-step"><h4><span>2</span> LaunchBox game</h4>
+                      <label for="launchBoxCorrectionGameQuery">Find correct game</label>
+                      <div class="launchbox-recovery-searchbox"><input id="launchBoxCorrectionGameQuery" type="search" placeholder="Search game title"><button id="launchBoxCorrectionSearchGames" type="button">Search</button></div>
+                      <label for="launchBoxCorrectionGame">Select game</label>
+                      <select id="launchBoxCorrectionGame" aria-label="Correct LaunchBox target"><option value="">Search first</option></select>
+                    </section>
                   </div>
-                  <div class="launchbox-manual-recovery-search">
-                    <label>Find correct LaunchBox game <input id="launchBoxCorrectionGameQuery" type="search" placeholder="Game title (2+ characters)"></label>
-                    <button id="launchBoxCorrectionSearchGames" type="button">Find games</button>
-                    <label>Game <select id="launchBoxCorrectionGame" aria-label="Correct LaunchBox target"><option value="">Find a game first</option></select></label>
+                  <div class="launchbox-recovery-footer">
+                    <label for="launchBoxCorrectionNote">Verification note</label>
+                    <textarea id="launchBoxCorrectionNote" maxlength="240" rows="2" placeholder="How did you verify this relationship? (8–240 characters)"></textarea>
+                    <div class="launchbox-recovery-actions"><button id="launchBoxCorrectionApprove" class="primary" type="button">Link selected manual</button><p class="sub" id="launchBoxCorrectionStatus" role="status" aria-live="polite"></p></div>
                   </div>
-                  <label>Verification note
-                    <textarea id="launchBoxCorrectionNote" maxlength="240" rows="2" placeholder="Brief verification note (8–240 characters), e.g. examined title page and screenshots"></textarea>
-                  </label>
-                  <button id="launchBoxCorrectionApprove" class="primary" type="button">Link manual to selected game</button>
-                  <p class="sub" id="launchBoxCorrectionStatus" aria-live="polite"></p>
-                  <p class="sub">Manual links require a compatible platform and game identity. Existing links and rejected history are preserved.</p>
                 </div>
               </details>
               <p class="sub account-status" id="launchBoxControlledScanStatus" aria-live="polite"></p>

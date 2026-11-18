@@ -206,7 +206,7 @@ public static class GuidevaultLaunchBoxStrategyScanner
             firstRow = ordered.Length == 0 ? 0 : first + 1,
             lastRow = Math.Min(ordered.Length, first + pageSize),
             rows = ordered.Skip(first).Take(pageSize).Select(r => r.Row).ToArray(),
-            note = "Strategy guides: explicit Covered Games can produce multiple game relationships. Platform compatibility is reviewed separately. No guide links are written."
+            note = ""
         };
     }
 }

@@ -22786,3 +22786,46 @@ body.guidevault-direct-reader-pending:not(.auth-locked) #guidevaultDirectReaderL
 .launchbox-strategy-evidence-details{margin-top:8px;color:#abbfd0;font-size:.74rem}
 .launchbox-strategy-evidence-details summary{cursor:pointer;color:#85bbef}
 .launchbox-strategy-evidence-details div{padding:2px 0}
+
+/* GUIDEVAULT_STRATEGY_DISPOSITIONS_V24: clear pending/history queues and compact actions. */
+.launchbox-strategy-pair.is-pending{padding-left:49px}
+.launchbox-strategy-actions{display:flex;flex-wrap:wrap;align-items:center;gap:7px;margin-top:11px}
+.launchbox-strategy-actions>small{font-weight:700;color:#b6d0e8;margin-right:7px}
+.launchbox-strategy-actions button,.launchbox-strategy-bulkbar button{padding:7px 11px;border:1px solid rgba(120,172,228,.4);border-radius:7px;background:rgba(26,62,99,.45);color:#e8f3ff;cursor:pointer;font-size:.79rem}
+.launchbox-strategy-actions button:hover:not(:disabled),.launchbox-strategy-bulkbar button:hover:not(:disabled){border-color:rgba(137,199,255,.85);background:rgba(38,88,138,.6)}
+.launchbox-strategy-actions button:disabled,.launchbox-strategy-bulkbar button:disabled{opacity:.43;cursor:not-allowed}
+.launchbox-strategy-actions .guide-approve,.launchbox-strategy-bulkbar .guide-approve{border-color:rgba(63,195,145,.53);background:rgba(26,132,97,.26)}
+.launchbox-strategy-override{width:100%;max-width:380px;border:1px solid rgba(115,164,218,.37);padding:8px 10px;border-radius:9px}
+.launchbox-strategy-override>summary{cursor:pointer;font-weight:600;color:#b4d8ff;font-size:.8rem}
+.launchbox-strategy-override label{display:grid;gap:4px;margin:8px 0;font-size:.77rem;color:#c6d8ed}
+.launchbox-strategy-override input,.launchbox-strategy-override select,.launchbox-strategy-bulkbar input,.launchbox-strategy-bulkbar select{width:100%;min-width:0;background:#0b1929;color:#edf6ff;border:1px solid rgba(118,170,217,.44);border-radius:7px;padding:8px;box-sizing:border-box}
+.launchbox-strategy-bulkbar{padding:12px 14px;margin:10px 0 14px;border-radius:11px;border:1px solid rgba(111,162,207,.35);background:rgba(19,41,68,.48);display:grid;gap:10px}
+.launchbox-strategy-bulkbar .launchbox-scan-bulkselect,.launchbox-strategy-bulk-actions,.launchbox-strategy-bulk-review{display:flex;align-items:center;flex-wrap:wrap;gap:9px}
+.launchbox-strategy-bulk-actions span{color:#bcd5eb;font-size:.85rem;margin-right:6px}
+.launchbox-strategy-bulk-review{padding-top:10px;border-top:1px solid rgba(115,166,211,.2)}
+.launchbox-strategy-bulk-review label{min-width:170px;display:grid;gap:5px;color:#c4d6eb;font-size:.79rem}
+.launchbox-strategy-bulk-review label:nth-child(2){flex:1 1 260px}
+
+/* Manual correction only in Manual mode; fewer scattered inputs and instructions. */
+.launchbox-manual-recovery[hidden]{display:none!important}
+.launchbox-manual-recovery>summary{display:flex;align-items:center;gap:12px;list-style:none}
+.launchbox-manual-recovery>summary::-webkit-details-marker{display:none}
+.launchbox-manual-recovery>summary:after{content:'▾';color:#a9c9ec;margin-left:auto;transition:transform .16s}
+.launchbox-manual-recovery[open]>summary:after{transform:rotate(180deg)}
+.launchbox-recovery-mark{width:34px;height:34px;display:grid;place-items:center;border:1px solid rgba(110,177,236,.45);border-radius:9px;font-size:1.2rem;color:#b8dbff;background:rgba(32,72,110,.35)}
+.launchbox-recovery-summary{display:grid;gap:3px}
+.launchbox-recovery-summary small{color:#9fbad2;font-size:.78rem}
+.launchbox-controlled-scan-card .launchbox-manual-recovery{padding:0;margin:12px 0}
+.launchbox-manual-recovery-body{padding:3px 17px 16px;gap:14px}
+.launchbox-recovery-columns{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:15px}
+.launchbox-recovery-step{min-width:0;border:1px solid rgba(112,166,219,.25);border-radius:10px;background:rgba(13,32,53,.32);padding:15px;display:grid;gap:9px;align-content:start}
+.launchbox-recovery-step h4{display:flex;align-items:center;gap:9px;margin:0 0 3px;font-size:.97rem}
+.launchbox-recovery-step h4 span{width:24px;height:24px;display:grid;place-items:center;border-radius:50%;background:rgba(48,125,207,.4);color:#ecf5ff;font-size:.78rem}
+.launchbox-recovery-searchbox{display:flex;align-items:stretch;gap:7px}
+.launchbox-recovery-searchbox input{flex:1;min-width:0}
+.launchbox-recovery-searchbox button{flex-shrink:0}
+.launchbox-recovery-footer{display:grid;gap:8px}
+.launchbox-recovery-footer textarea{max-width:100%}
+.launchbox-recovery-actions{display:flex;flex-wrap:wrap;gap:12px;align-items:center}
+.launchbox-recovery-actions .sub{margin:0;flex:1 1 280px;font-size:.85rem}
+@media(max-width:920px){.launchbox-recovery-columns{grid-template-columns:1fr}.launchbox-recovery-searchbox button{justify-self:start}.launchbox-strategy-bulk-review{align-items:stretch}}

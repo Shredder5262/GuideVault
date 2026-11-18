@@ -901,6 +901,90 @@ app.MapGet("/api/integrations/launchbox/scans/strategy/pending-counts", () =>
         snapshot.Games, cache.GetItemsSnapshot(), snapshot.Matches));
 });
 
+// GUIDEVAULT_STRATEGY_DISPOSITIONS_V24 — validated, page-scoped, atomic strategy-guide decisions.
+// One guide can be independently approved for many games and platforms.
+app.MapPost("/api/integrations/launchbox/scans/strategy/decisions/batch", (GuidevaultStrategyDecisionRequest payload) =>
+{
+    var action = (payload.Action ?? string.Empty).Trim().ToLowerInvariant();
+    if (action is not ("approve" or "approve-reviewed" or "reject" or "needs-metadata" or "undo"))
+        return (IResult)Results.BadRequest(new { error = "Invalid strategy-guide disposition." });
+    var statusFilter = (payload.StatusFilter ?? "pending").Trim().ToLowerInvariant();
+    if (action == "undo" ? statusFilter is not ("approved" or "rejected" or "metadata") : statusFilter != "pending")
+        return (IResult)Results.BadRequest(new { error = "Refresh the correct review queue before saving a decision." });
+    if (string.IsNullOrWhiteSpace(payload.Platform) || payload.Page < 1 ||
+        payload.PageSize is not (25 or 50 or 100 or 250 or 500) ||
+        payload.Pairs is null || payload.Pairs.Count is < 1 or > 100)
+        return (IResult)Results.BadRequest(new { error = "Select 1–100 guide relationships from one review page." });
+    var reviewReason = (payload.ReviewReason ?? "").Trim().ToLowerInvariant();
+    var reviewNote = (payload.ReviewNote ?? "").Trim();
+    if (action == "approve-reviewed" &&
+        (reviewReason is not ("same-game" or "cross-platform" or "edition-verified" or "coverage-inspected" or "other-verified") ||
+         reviewNote.Length > 240 ||
+         ((reviewReason is "cross-platform" or "other-verified") && reviewNote.Length < 8)))
+        return (IResult)Results.BadRequest(new { error = "Choose a review reason; cross-platform and Other approvals also require a note (8–240 characters)." });
+    if (action != "approve-reviewed" && (reviewReason.Length > 0 || reviewNote.Length > 0))
+        return (IResult)Results.BadRequest(new { error = "Review notes are only accepted for reviewed approvals." });
+    var keys = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+    foreach (var pair in payload.Pairs)
+        if (pair is null || string.IsNullOrWhiteSpace(pair.GameId) || string.IsNullOrWhiteSpace(pair.PublicationId) ||
+            !keys.Add(pair.GameId.Trim() + "\u001F" + pair.PublicationId.Trim()))
+            return (IResult)Results.BadRequest(new { error = "Select unique, nonempty game/guide pairs." });
+    try
+    {
+        var snapshot = launchBoxIntegrationStore.GetSnapshot();
+        var items = cache.GetItemsSnapshot();
+        using var scan = JsonDocument.Parse(JsonSerializer.Serialize(
+            GuidevaultLaunchBoxStrategyScanner.Preview(payload.Platform, snapshot.Games, items,
+                payload.Page, payload.PageSize, snapshot.Matches, statusFilter)));
+        if (scan.RootElement.GetProperty("page").GetInt32() != payload.Page)
+            return (IResult)Results.BadRequest(new { error = "The scan page changed; refresh and reselect." });
+        var eligible = new Dictionary<string, (string Classification, string SavedStatus, string Evidence, string PlatformCompatibility)>(StringComparer.OrdinalIgnoreCase);
+        foreach (var row in scan.RootElement.GetProperty("rows").EnumerateArray())
+        {
+            var key = row.GetProperty("gameId").GetString() + "\u001F" + row.GetProperty("publicationId").GetString();
+            eligible[key] = (row.GetProperty("classification").GetString() ?? "",
+                row.GetProperty("savedStatus").GetString() ?? "",
+                row.GetProperty("reason").GetString() ?? "",
+                row.GetProperty("platformCompatibility").GetString() ?? "");
+        }
+        foreach (var key in keys)
+        {
+            if (!eligible.TryGetValue(key, out var evidence))
+                return (IResult)Results.BadRequest(new { error = "A selected relationship is no longer on this page. Refresh the scan." });
+            if (action == "undo")
+            {
+                if (statusFilter == "approved" && evidence.SavedStatus is not ("Confirmed" or "AutoMatched") ||
+                    statusFilter == "rejected" && evidence.SavedStatus != "Rejected" ||
+                    statusFilter == "metadata" && evidence.SavedStatus != "NeedsMetadata")
+                    return (IResult)Results.BadRequest(new { error = "The decision changed. Refresh the history queue." });
+            }
+            else
+            {
+                if (!string.IsNullOrWhiteSpace(evidence.SavedStatus))
+                    return (IResult)Results.BadRequest(new { error = "A selected guide already has a saved decision. Refresh the queue." });
+                if (action == "approve" && evidence.Classification != "Strong candidate")
+                    return (IResult)Results.BadRequest(new { error = "Standard approval requires Strong candidates only." });
+                if (action == "approve-reviewed" && evidence.Classification != "Needs review")
+                    return (IResult)Results.BadRequest(new { error = "Choose Needs Review pairs for reviewed approval." });
+                if (action == "approve-reviewed" && evidence.PlatformCompatibility == "Target platform not listed" &&
+                    (reviewReason is not ("cross-platform" or "coverage-inspected" or "other-verified") || reviewNote.Length < 8))
+                    return (IResult)Results.BadRequest(new { error = "For a guide that does not list this platform, choose cross-platform/content verification and explain the evidence (at least 8 characters)." });
+            }
+        }
+        var proof = keys.ToDictionary(k => k, k => eligible[k].Evidence, StringComparer.OrdinalIgnoreCase);
+        var result = launchBoxIntegrationStore.ApplyScopedStrategyBatchDecision(
+            payload.Platform, action, payload.Pairs, items, reviewReason, reviewNote, proof);
+        if (!result.Success) return (IResult)Results.BadRequest(new { error = result.Message });
+        RecordSystemEvent("Integration", $"Scoped strategy-guide review: {action}",
+            $"{payload.Platform}: {result.Applied} pairs; reason={reviewReason}; note={reviewNote}; " +
+            string.Join(", ", payload.Pairs.Take(100).Select(x => $"{x.GameId}/{x.PublicationId}")),
+            "launchbox-strategy-review", string.Empty, string.Empty);
+        return (IResult)Results.Ok(new { success = true, applied = result.Applied, message = result.Message });
+    }
+    catch (Exception ex) when (ex is ArgumentException or InvalidOperationException)
+    { return (IResult)Results.BadRequest(new { error = ex.Message }); }
+});
+
 // GUIDEVAULT_MANUAL_RECOVERY_V18 — distinct publications, not missing-game counts.
 app.MapGet("/api/integrations/launchbox/scans/manual/unmatched-counts", () =>
     Results.Ok(GuidevaultLaunchBoxManualRecovery.UnmatchedByPlatform(
@@ -9452,6 +9536,111 @@ public sealed class GuidevaultLaunchBoxIntegrationStore
         }
     }
 
+    // GUIDEVAULT_STRATEGY_DISPOSITIONS_V24 — all-or-none, pair-scoped decisions.
+    // A guide may appear for many different games: never delete or replace other pairs.
+    public (bool Success, int Applied, string Message) ApplyScopedStrategyBatchDecision(
+        string platform, string action, IReadOnlyList<GuidevaultManualReviewPair> pairs,
+        IReadOnlyList<LibraryItem> items, string reviewReason, string reviewNote,
+        IReadOnlyDictionary<string, string> proof)
+    {
+        if (action is not ("approve" or "approve-reviewed" or "reject" or "needs-metadata" or "undo") ||
+            pairs.Count is < 1 or > 100)
+            return (false, 0, "Invalid strategy-guide batch.");
+        var note = (reviewNote ?? "").Trim().Replace('\r', ' ').Replace('\n', ' ');
+        var reasonLabel = reviewReason switch
+        {
+            "same-game" => "Same game, verified alternate release",
+            "cross-platform" => "Cross-platform applicability verified",
+            "edition-verified" => "Edition compatibility verified",
+            "coverage-inspected" => "Publication coverage inspected",
+            "other-verified" => "Other verified evidence",
+            _ => string.Empty
+        };
+        if (action == "approve-reviewed" &&
+            (reasonLabel.Length == 0 || note.Length > 240 ||
+             ((reviewReason is "cross-platform" or "other-verified") && note.Length < 8)))
+            return (false, 0, "Reviewed guide approvals require a valid reason and verification note when applicable.");
+        var itemsById = items.Where(i => !string.IsNullOrWhiteSpace(i.Id))
+            .GroupBy(i => i.Id, StringComparer.OrdinalIgnoreCase)
+            .ToDictionary(g => g.Key, g => g.First(), StringComparer.OrdinalIgnoreCase);
+        lock (_gate)
+        {
+            var changes = new List<(GuidevaultLaunchBoxGame Game, LibraryItem Item, GuidevaultLaunchBoxMatch? Prior)>();
+            var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            foreach (var pair in pairs)
+            {
+                if (pair is null || string.IsNullOrWhiteSpace(pair.GameId) || string.IsNullOrWhiteSpace(pair.PublicationId))
+                    return (false, 0, "Missing relationship identity.");
+                var key = pair.GameId.Trim() + "\u001F" + pair.PublicationId.Trim();
+                if (!seen.Add(key)) return (false, 0, "Duplicate relationship in batch.");
+                var game = _data.Games.FirstOrDefault(g =>
+                    string.Equals(g.Id, pair.GameId, StringComparison.OrdinalIgnoreCase) &&
+                    string.Equals(g.Platform, platform, StringComparison.OrdinalIgnoreCase));
+                if (game is null || !itemsById.TryGetValue(pair.PublicationId, out var item) ||
+                    !string.Equals(item.Kind, "Strategy Guide", StringComparison.OrdinalIgnoreCase))
+                    return (false, 0, "Game or strategy guide is no longer available; refresh the scan.");
+                var existing = _data.Matches.Where(m =>
+                    string.Equals(m.LaunchBoxGameId, game.Id, StringComparison.OrdinalIgnoreCase) &&
+                    string.Equals(m.GuideVaultItemId, item.Id, StringComparison.OrdinalIgnoreCase) &&
+                    string.Equals(m.MatchType, "Strategy Guide", StringComparison.OrdinalIgnoreCase)).ToArray();
+                if (existing.Length > 1) return (false, 0, "Duplicate stored guide decisions exist; investigate before proceeding.");
+                if (action == "undo")
+                {
+                    if (existing.Length != 1 || existing[0].MatchStatus is not ("Confirmed" or "AutoMatched" or "Rejected" or "NeedsMetadata"))
+                        return (false, 0, "A selected guide decision cannot be undone; refresh the queue.");
+                }
+                else if (existing.Length != 0)
+                    return (false, 0, "One selected guide already has a decision. Refresh the queue.");
+                changes.Add((game, item, existing.FirstOrDefault()));
+            }
+            var before = _data.Matches.Select(GuidevaultLaunchBoxMatcher.CloneMatch).ToList();
+            try
+            {
+                foreach (var (game, item, prior) in changes)
+                {
+                    if (action == "undo")
+                    {
+                        _data.Matches.Remove(prior!);
+                        continue;
+                    }
+                    var status = action switch
+                    {
+                        "reject" => "Rejected",
+                        "needs-metadata" => "NeedsMetadata",
+                        _ => "Confirmed"
+                    };
+                    var key = game.Id + "\u001F" + item.Id;
+                    var scanEvidence = proof.TryGetValue(key, out var scanReason) ? scanReason : "Coverage proposal";
+                    var explanation = action == "approve-reviewed"
+                        ? $"Human-reviewed strategy-guide association ({reasonLabel}). Scan: {scanEvidence}." +
+                          (note.Length > 0 ? $" Reviewer note: {note}" : "")
+                        : action == "approve"
+                            ? $"Approved Strong strategy-guide proposal. Scan: {scanEvidence}."
+                            : action == "reject"
+                                ? $"Reviewer rejected this particular game/guide relationship. Scan: {scanEvidence}."
+                                : $"Needs publication metadata verification. Scan: {scanEvidence}.";
+                    var match = GuidevaultLaunchBoxMatcher.CreateMatch(game, item, "Strategy Guide", status, 0, explanation);
+                    match.PreviousMatchStatus = "Missing";
+                    match.Source = "StrategyReviewed";
+                    _data.Matches.Add(match);
+                }
+                Save();
+            }
+            catch
+            {
+                _data.Matches = before;
+                throw;
+            }
+            return (true, changes.Count, action switch
+            {
+                "undo" => $"Undid {changes.Count} strategy-guide decisions.",
+                "reject" => $"Rejected {changes.Count} game/guide pairs.",
+                "needs-metadata" => $"Flagged {changes.Count} pairs for metadata review.",
+                _ => $"Approved {changes.Count} game/guide pairs."
+            });
+        }
+    }
+
     // GUIDEVAULT_MANUAL_RECOVERY_V18: reviewer-directed repair bypasses fuzzy discovery
     // but not primary-platform and numbered-sequel safety checks.
     public GuidevaultLaunchBoxDecisionResult ConfirmCorrectedManual(
@@ -11479,6 +11668,19 @@ public sealed class GuidevaultManualBatchReviewRequest
     public int PageSize { get; set; } = 100;
     public List<GuidevaultManualReviewPair> Pairs { get; set; } = new();
     // GUIDEVAULT_MANUAL_BATCH_REVIEW_V17: one reviewer reason/note for selected Needs Review pairs.
+    public string ReviewReason { get; set; } = string.Empty;
+    public string ReviewNote { get; set; } = string.Empty;
+}
+
+// GUIDEVAULT_STRATEGY_DISPOSITIONS_V24
+public sealed class GuidevaultStrategyDecisionRequest
+{
+    public string Platform { get; set; } = string.Empty;
+    public string Action { get; set; } = string.Empty;
+    public string StatusFilter { get; set; } = "pending";
+    public int Page { get; set; } = 1;
+    public int PageSize { get; set; } = 100;
+    public List<GuidevaultManualReviewPair> Pairs { get; set; } = new();
     public string ReviewReason { get; set; } = string.Empty;
     public string ReviewNote { get; set; } = string.Empty;
 }

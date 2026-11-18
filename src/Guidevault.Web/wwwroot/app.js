@@ -4934,10 +4934,12 @@ function bindLaunchBoxCoverageActions() {
   if ($('launchBoxRunControlledScan')) $('launchBoxRunControlledScan').addEventListener('click', e => { e.preventDefault(); runLaunchBoxControlledScan(); });
   // Recalculate platform counts for the selected document type, never reuse manual counts for guides.
   $('launchBoxScanKind')?.addEventListener('change', () => {
+    updateLaunchBoxMatchingDocumentTypeUI();
     populateLaunchBoxScanPlatforms();
     refreshLaunchBoxCurrentPlatformCounts();
   });
 
+  updateLaunchBoxMatchingDocumentTypeUI();
   $('launchBoxCorrectionSearchManuals')?.addEventListener('click', searchLaunchBoxCorrectionManuals);
   $('launchBoxCorrectionSearchGames')?.addEventListener('click', searchLaunchBoxCorrectionGames);
   $('launchBoxCorrectionApprove')?.addEventListener('click', approveLaunchBoxCorrection);
@@ -27390,6 +27392,15 @@ async function submitLaunchBoxManualBatch(action, platform) {
 }
 
 
+// GUIDEVAULT_STRATEGY_DISPOSITIONS_V24: manual recovery belongs only to Manuals.
+function updateLaunchBoxMatchingDocumentTypeUI() {
+  const isManual = ($('launchBoxScanKind')?.value || 'Manual') === 'Manual';
+  const panel = $('launchBoxManualRecoveryPanel');
+  if (panel) { panel.hidden = !isManual; if (!isManual) panel.open = false; }
+  const run = $('launchBoxRunControlledScan');
+  if (run) run.textContent = isManual ? 'Scan manuals' : 'Scan strategy guides';
+}
+
 // GUIDEVAULT_MANUAL_RECOVERY_V18: a manual can be corrected even when it has
 // no auto-generated candidate for its actual game. Only explicit user action saves.
 let launchBoxCorrectionBusy = false;
@@ -27463,49 +27474,207 @@ async function approveLaunchBoxCorrection() {
 }
 
 
-// GUIDEVAULT_STRATEGY_SCOPED_V19 — read-only coverage scan; no strategy guide approvals in this release.
+// GUIDEVAULT_STRATEGY_DISPOSITIONS_V24 — page-scoped guide review, all write actions server-validated.
+let launchBoxStrategyStatusFilter = 'pending';
+let launchBoxStrategyCurrentPage = 1;
+let launchBoxStrategyPageSize = 100;
+let launchBoxStrategyBusy = false;
+const launchBoxStrategyReviewReasons = [
+  ['same-game','Same game / verified release'],
+  ['cross-platform','Cross-platform coverage verified'],
+  ['edition-verified','Edition compatibility verified'],
+  ['coverage-inspected','Guide contents inspected'],
+  ['other-verified','Other verified evidence']
+];
+function launchBoxStrategyReasonOptions() {
+  return '<option value="">Choose verification reason</option>' +
+    launchBoxStrategyReviewReasons.map(([v, label]) => `<option value="${v}">${label}</option>`).join('');
+}
+function launchBoxStrategyReviewValid(reason, note, unlisted = false) {
+  return !!reason && note.length <= 240 &&
+    (!['cross-platform', 'other-verified'].includes(reason) || note.length >= 8) &&
+    (!unlisted || (['cross-platform', 'coverage-inspected', 'other-verified'].includes(reason) && note.length >= 8));
+}
+function launchBoxStrategyRowActions(r) {
+  const id = `data-game-id="${escapeForAttribute(r.gameId)}" data-guide-id="${escapeForAttribute(r.publicationId)}"`;
+  if (launchBoxStrategyStatusFilter === 'all') return `<div class="launchbox-strategy-actions"><small>Use Pending or a history filter to decide or Undo</small></div>`;
+  if (r.savedStatus) return `<div class="launchbox-strategy-actions">` +
+    `<small>${escapeHtml(r.savedStatus === 'NeedsMetadata' ? 'Needs Metadata' : r.savedStatus === 'Rejected' ? 'Not a Match' : 'Approved')}</small>` +
+    `<button type="button" data-guide-action="undo" ${id}>Undo</button></div>`;
+  return `<div class="launchbox-strategy-actions">` +
+    (r.classification === 'Strong candidate' ?
+      `<button type="button" class="guide-approve" data-guide-action="approve" ${id}>Approve</button>` :
+      `<details class="launchbox-strategy-override"><summary>Approve after review</summary>` +
+        `<label>Why is this guide applicable?<select class="guide-review-reason">${launchBoxStrategyReasonOptions()}</select></label>` +
+        `<label>Verification note<input class="guide-review-note" type="text" maxlength="240" placeholder="Required for cross-platform approvals"></label>` +
+        `<button type="button" class="guide-approve" data-guide-action="approve-reviewed" ${id} disabled>Approve reviewed guide</button>` +
+      `</details>`) +
+    `<button type="button" data-guide-action="reject" ${id}>Not a Match</button>` +
+    `<button type="button" data-guide-action="needs-metadata" ${id}>Needs Metadata</button></div>`;
+}
+function launchBoxStrategySelected() {
+  return [...($('launchBoxControlledScanResults')?.querySelectorAll('.launchbox-strategy-select:checked') || [])];
+}
+function launchBoxStrategyUpdateBulk() {
+  const host = $('launchBoxControlledScanResults');
+  if (!host) return;
+  const selected = launchBoxStrategySelected();
+  const allStrong = selected.length && selected.every(x => x.dataset.classification === 'Strong candidate');
+  const allReview = selected.length && selected.every(x => x.dataset.classification === 'Needs review');
+  const reason = host.querySelector('#launchBoxStrategyBulkReason')?.value || '';
+  const note = (host.querySelector('#launchBoxStrategyBulkNote')?.value || '').trim();
+  const hasUnlisted = selected.some(x => x.dataset.unlisted === 'true');
+  const count = host.querySelector('#launchBoxStrategySelectedCount');
+  if (count) count.textContent = `${selected.length} selected on this page`;
+  const approve = host.querySelector('#launchBoxStrategyBulkApprove');
+  const reviewed = host.querySelector('#launchBoxStrategyBulkReviewed');
+  const reject = host.querySelector('#launchBoxStrategyBulkReject');
+  const metadata = host.querySelector('#launchBoxStrategyBulkMetadata');
+  if (approve) approve.disabled = launchBoxStrategyBusy || !allStrong;
+  if (reviewed) reviewed.disabled = launchBoxStrategyBusy || !allReview || !launchBoxStrategyReviewValid(reason,note,hasUnlisted);
+  if (reject) reject.disabled = launchBoxStrategyBusy || !selected.length;
+  if (metadata) metadata.disabled = launchBoxStrategyBusy || !selected.length;
+  host.querySelectorAll('.launchbox-strategy-select').forEach(x =>
+    x.closest('.launchbox-strategy-pair')?.classList.toggle('is-selected', x.checked));
+}
+function launchBoxStrategySelectPage(mode) {
+  if (launchBoxStrategyBusy) return;
+  const host = $('launchBoxControlledScanResults');
+  host?.querySelectorAll('.launchbox-strategy-select').forEach(box => {
+    box.checked = mode === 'all' || (mode === 'strong' && box.dataset.classification === 'Strong candidate') ||
+      (mode === 'review' && box.dataset.classification === 'Needs review');
+  });
+  launchBoxStrategyUpdateBulk();
+}
+async function launchBoxStrategySubmit(action, pairs, reviewReason = '', reviewNote = '') {
+  if (launchBoxStrategyBusy || !pairs.length) return;
+  const platform = $('launchBoxScanPlatform')?.value || '';
+  launchBoxStrategyBusy = true;
+  launchBoxStrategyUpdateBulk();
+  launchBoxControlledMessage('launchBoxControlledScanStatus', `Saving ${pairs.length} guide relationship${pairs.length === 1 ? '' : 's'}...`);
+  try {
+    const result = await launchBoxControlledApi('/api/integrations/launchbox/scans/strategy/decisions/batch', {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({platform, action, statusFilter:launchBoxStrategyStatusFilter,
+        page:launchBoxStrategyCurrentPage, pageSize:launchBoxStrategyPageSize,
+        pairs, reviewReason, reviewNote})
+    });
+    launchBoxStrategyBusy = false;
+    await loadLaunchBoxCoverage(false);
+    await refreshLaunchBoxStrategyPlatformCounts();
+    await runLaunchBoxStrategyScan(launchBoxStrategyCurrentPage);
+    launchBoxControlledMessage('launchBoxControlledScanStatus', result.message || 'Guide decisions saved.', true);
+  } catch (err) {
+    launchBoxStrategyBusy = false;
+    launchBoxControlledMessage('launchBoxControlledScanStatus', err.message || 'Unable to save guide decisions.');
+    launchBoxStrategyUpdateBulk();
+  }
+}
+async function launchBoxStrategyRowDecision(button) {
+  if (button.disabled || launchBoxStrategyBusy) return;
+  const action = button.dataset.guideAction;
+  const row = button.closest('.launchbox-strategy-pair');
+  const group = row?.querySelector('.launchbox-strategy-override');
+  const reason = action === 'approve-reviewed' ? group?.querySelector('.guide-review-reason')?.value || '' : '';
+  const note = action === 'approve-reviewed' ? (group?.querySelector('.guide-review-note')?.value || '').trim() : '';
+  const unlisted = row?.dataset.guideUnlisted === 'true';
+  if (action === 'approve-reviewed' && !launchBoxStrategyReviewValid(reason,note,unlisted))
+    return launchBoxControlledMessage('launchBoxControlledScanStatus', 'Verify platform applicability and provide a note when the guide does not list this platform.');
+  await launchBoxStrategySubmit(action, [{gameId:button.dataset.gameId,publicationId:button.dataset.guideId}],reason,note);
+}
+function launchBoxStrategySubmitSelection(action) {
+  const host = $('launchBoxControlledScanResults');
+  const boxes = launchBoxStrategySelected();
+  if (!boxes.length) return;
+  if (action === 'approve' && boxes.some(b => b.dataset.classification !== 'Strong candidate'))
+    return launchBoxControlledMessage('launchBoxControlledScanStatus', 'Select only Strong guide candidates for standard approval.');
+  if (action === 'approve-reviewed' && boxes.some(b => b.dataset.classification !== 'Needs review'))
+    return launchBoxControlledMessage('launchBoxControlledScanStatus', 'Select only Needs Review guide candidates for shared reviewed approval.');
+  const reason = action === 'approve-reviewed' ? host.querySelector('#launchBoxStrategyBulkReason')?.value || '' : '';
+  const note = action === 'approve-reviewed' ? (host.querySelector('#launchBoxStrategyBulkNote')?.value || '').trim() : '';
+  const hasUnlisted = boxes.some(x => x.dataset.unlisted === 'true');
+  if (action === 'approve-reviewed' && !launchBoxStrategyReviewValid(reason,note,hasUnlisted))
+    return launchBoxControlledMessage('launchBoxControlledScanStatus', 'Select a verification reason and document applicability for unlisted platforms.');
+  return launchBoxStrategySubmit(action,boxes.map(x=>({gameId:x.dataset.gameId,publicationId:x.dataset.guideId})),reason,note);
+}
 async function runLaunchBoxStrategyScan(page = 1) {
+  updateLaunchBoxMatchingDocumentTypeUI();
   const platform = $('launchBoxScanPlatform')?.value || '';
   const host = $('launchBoxControlledScanResults');
   if (!host || !platform) return;
   const requestId = ++launchBoxManualScanRequestId;
   host.innerHTML = '';
-  launchBoxControlledMessage('launchBoxControlledScanStatus', `Scanning ${platform} → Strategy Guides (read-only)...`);
+  launchBoxControlledMessage('launchBoxControlledScanStatus', `Loading ${platform} strategy guides...`);
   try {
     const data = await launchBoxControlledApi('/api/integrations/launchbox/scans/preview', {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ platform, matchType: 'Strategy Guide', page,
-        pageSize: launchBoxManualScanPageSize, statusFilter: 'pending' })
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({ platform, matchType:'Strategy Guide', page,
+        pageSize:launchBoxStrategyPageSize, statusFilter:launchBoxStrategyStatusFilter })
     });
     if (requestId !== launchBoxManualScanRequestId) return;
-    const currentPage = Number(data.page || 1), pages = Number(data.pageCount || 1);
-    launchBoxManualScanCurrentPage = currentPage;
-    const pager = `<nav class="launchbox-scan-pagination"><span>${Number(data.firstRow || 0)}–${Number(data.lastRow || 0)} of ${Number(data.candidatePairs || 0)} · Page ${currentPage} of ${pages}</span>` +
-      `<div class="launchbox-scan-page-actions"><button type="button" data-guide-page="${currentPage - 1}" ${currentPage <= 1 ? 'disabled' : ''}>Previous</button>` +
-      `<button type="button" data-guide-page="${currentPage + 1}" ${currentPage >= pages ? 'disabled' : ''}>Next</button></div></nav>`;
-    host.innerHTML = `<div class="launchbox-controlled-summary"><strong>${Number(data.pendingPairs || 0)} pending relationships</strong> · ` +
-      `${Number(data.strongCandidates || 0)} strong · ${Number(data.needsReview || 0)} need review · ` +
-      `${Number(data.strategyGuidesInLibrary || 0)} strategy guides in library</div>` +
-      `<p class="sub">${escapeHtml(data.note || '')}</p>` + pager +
-      `<div class="launchbox-controlled-table">` +
-      (data.rows || []).map(r => `<article class="launchbox-controlled-pair launchbox-strategy-pair">` +
-        `<div class="launchbox-controlled-sourcecard"><div class="launchbox-controlled-cover"><img data-launchbox-scan-image src="${escapeForAttribute(r.gameBoxFrontUrl || '')}" alt="${escapeForAttribute(r.gameTitle)}" loading="lazy"><span class="launchbox-controlled-no-cover">No box front</span></div>` +
+    const current = Number(data.page || 1), pages = Number(data.pageCount || 1);
+    launchBoxStrategyCurrentPage = current;
+    const count = Number(data.candidatePairs || 0);
+    const pager = `<nav class="launchbox-scan-pagination" aria-label="Strategy guide results pages"><span>${Number(data.firstRow || 0)}–${Number(data.lastRow || 0)} of ${count} · Page ${current} of ${pages}</span>` +
+      `<div class="launchbox-scan-page-actions"><button type="button" data-guide-page="${current-1}" ${current<=1?'disabled':''}>Previous</button>` +
+      `<button type="button" data-guide-page="${current+1}" ${current>=pages?'disabled':''}>Next</button></div></nav>`;
+    const filters = [['pending','Pending'],['approved','Approved'],['rejected','Not a Match'],['metadata','Needs Metadata'],['all','All']]
+      .map(([value,label])=>`<option value="${value}"${value===launchBoxStrategyStatusFilter?' selected':''}>${label}</option>`).join('');
+    const pending = launchBoxStrategyStatusFilter === 'pending';
+    const toolbar = `<div class="launchbox-scan-queuebar"><label>Show <select id="launchBoxStrategyStatus">${filters}</select></label>` +
+      `<span>${Number(data.pendingPairs||0)} pending · ${Number(data.approvedPairs||0)} approved · ${Number(data.rejectedPairs||0)} rejected · ${Number(data.metadataPairs||0)} need metadata</span></div>`;
+    const bulk = pending ? `<div class="launchbox-strategy-bulkbar">` +
+      `<div class="launchbox-scan-bulkselect"><button type="button" data-guide-select="all">Select page</button><button type="button" data-guide-select="strong">Select strong</button>` +
+      `<button type="button" data-guide-select="review">Select needs review</button><button type="button" data-guide-select="none">Clear</button></div>` +
+      `<div class="launchbox-strategy-bulk-actions"><span id="launchBoxStrategySelectedCount">0 selected on this page</span>` +
+      `<button type="button" class="guide-approve" id="launchBoxStrategyBulkApprove" disabled>Approve selected</button>` +
+      `<button type="button" id="launchBoxStrategyBulkReject" disabled>Not a Match</button>` +
+      `<button type="button" id="launchBoxStrategyBulkMetadata" disabled>Needs Metadata</button></div>` +
+      `<div class="launchbox-strategy-bulk-review"><label>Shared review reason<select id="launchBoxStrategyBulkReason">${launchBoxStrategyReasonOptions()}</select></label>` +
+      `<label>Shared note<input id="launchBoxStrategyBulkNote" type="text" maxlength="240" placeholder="Required for cross-platform approvals"></label>` +
+      `<button type="button" class="guide-approve" id="launchBoxStrategyBulkReviewed" disabled>Approve reviewed selection</button></div></div>` : '';
+    host.innerHTML = toolbar + `<div class="launchbox-controlled-summary"><strong>${Number(data.candidatePairs||0)} ${escapeHtml(launchBoxStrategyStatusFilter)} relationships</strong> · ` +
+      `${Number(data.strongCandidates||0)} strong · ${Number(data.needsReview||0)} need review · ${Number(data.strategyGuidesInLibrary||0)} guides in library</div>` +
+      bulk + pager + `<div class="launchbox-controlled-table">` +
+      (data.rows || []).map(r => `<article class="launchbox-controlled-pair launchbox-strategy-pair ${pending?'is-pending':''}" data-guide-unlisted="${r.platformCompatibility==='Target platform not listed'?'true':'false'}">` +
+        (pending ? `<label class="launchbox-scan-row-selector"><input type="checkbox" class="launchbox-scan-select launchbox-strategy-select" data-game-id="${escapeForAttribute(r.gameId)}" data-guide-id="${escapeForAttribute(r.publicationId)}" data-classification="${escapeForAttribute(r.classification)}" data-unlisted="${r.platformCompatibility==='Target platform not listed'?'true':'false'}" aria-label="Select ${escapeForAttribute(r.gameTitle)} and ${escapeForAttribute(r.publicationTitle)}"></label>` : '') +
+        `<div class="launchbox-controlled-sourcecard"><div class="launchbox-controlled-cover"><img data-launchbox-scan-image src="${escapeForAttribute(r.gameBoxFrontUrl||'')}" alt="${escapeForAttribute(r.gameTitle)}" loading="lazy"><span class="launchbox-controlled-no-cover">No box front</span></div>` +
         `<div class="launchbox-controlled-sourceinfo"><small>LAUNCHBOX</small><strong>${escapeHtml(r.gameTitle)}</strong><span>${escapeHtml(r.gamePlatform)}</span>` +
-        `<div class="launchbox-strategy-proof"><b>${escapeHtml(r.launchBoxMatchField || 'Title')}</b><span>${escapeHtml(r.launchBoxMatchedValue || r.gameTitle)}</span></div></div></div>` +
+        `<div class="launchbox-strategy-proof"><b>${escapeHtml(r.launchBoxMatchField||'Title')}</b><span>${escapeHtml(r.launchBoxMatchedValue||r.gameTitle)}</span></div></div></div>` +
         `<div class="launchbox-controlled-sourcecard"><a class="launchbox-publication-cover-link" href="/?detail=${encodeURIComponent(r.publicationId)}" target="_blank" rel="noopener noreferrer" aria-label="Open GuideVault strategy guide details: ${escapeForAttribute(r.publicationTitle)}"><div class="launchbox-controlled-cover"><img data-launchbox-scan-image src="${escapeForAttribute(r.coverUrl)}" alt="${escapeForAttribute(r.publicationTitle)}" loading="lazy"><span class="launchbox-controlled-no-cover">No guide cover</span></div></a>` +
-        `<div class="launchbox-controlled-sourceinfo"><small>STRATEGY GUIDE</small><a class="launchbox-publication-title-link" href="/?detail=${encodeURIComponent(r.publicationId)}" target="_blank" rel="noopener noreferrer" aria-label="Open GuideVault strategy guide details: ${escapeForAttribute(r.publicationTitle)}"><strong>${escapeHtml(r.publicationTitle)}</strong></a><span>${escapeHtml(r.publicationSystem || 'Platform unknown')}</span>` +
-        `<div class="launchbox-strategy-proof"><b>${escapeHtml(r.guideMatchField || 'Coverage clue')}</b><span>${escapeHtml(r.guideMatchedValue || '')}</span></div>` +
-        `<div class="launchbox-strategy-proof"><b>Platform evidence</b><span>${escapeHtml(r.platformBasis || 'Not specified')}: ${escapeHtml(r.platformCompatibility || 'Unknown')}</span></div></div></div>` +
+        `<div class="launchbox-controlled-sourceinfo"><small>STRATEGY GUIDE</small><a class="launchbox-publication-title-link" href="/?detail=${encodeURIComponent(r.publicationId)}" target="_blank" rel="noopener noreferrer"><strong>${escapeHtml(r.publicationTitle)}</strong></a><span>${escapeHtml(r.publicationSystem||'Platform unknown')}</span>` +
+        `<div class="launchbox-strategy-proof"><b>${escapeHtml(r.guideMatchField||'Coverage clue')}</b><span>${escapeHtml(r.guideMatchedValue||'')}</span></div>` +
+        `<div class="launchbox-strategy-proof"><b>Platform evidence</b><span>${escapeHtml(r.platformBasis||'Not specified')}: ${escapeHtml(r.platformCompatibility||'Unknown')}</span></div></div></div>` +
         `<div class="launchbox-controlled-evidence"><strong>${escapeHtml(r.classification)}</strong><span>${escapeHtml(r.reason)}</span>` +
-        `<small>${escapeHtml(r.evidenceProvenance || 'Metadata-based proposal')}</small>` +
-        `<details class="launchbox-strategy-evidence-details"><summary>All platform fields</summary><div>Primary / shelf: ${escapeHtml(r.guidePrimaryPlatform || 'Unknown')}</div><div>Covered: ${escapeHtml(r.guideCoveredPlatforms || 'Not specified')}</div><div>Associated: ${escapeHtml(r.guideAssociatedPlatforms || 'Not specified')}</div>${r.guideGameTitle ? `<div>Game Title: ${escapeHtml(r.guideGameTitle)}</div>` : ''}</details></div>` +
-        `</article>`).join('') + `</div>` + pager;
-    host.querySelectorAll('[data-guide-page]').forEach(button => button.addEventListener('click', () => {
-      const n = Number(button.dataset.guidePage); if (n >= 1 && n <= pages) runLaunchBoxStrategyScan(n);
+        `<small>${escapeHtml(r.evidenceProvenance||'Metadata-based proposal')}</small>` +
+        `<details class="launchbox-strategy-evidence-details"><summary>All platform fields</summary><div>Primary / shelf: ${escapeHtml(r.guidePrimaryPlatform||'Unknown')}</div><div>Covered: ${escapeHtml(r.guideCoveredPlatforms||'Not specified')}</div><div>Associated: ${escapeHtml(r.guideAssociatedPlatforms||'Not specified')}</div>${r.guideGameTitle?`<div>Game Title: ${escapeHtml(r.guideGameTitle)}</div>`:''}</details>` +
+        launchBoxStrategyRowActions(r) + `</div></article>`).join('') + `</div>` + pager;
+    host.querySelector('#launchBoxStrategyStatus')?.addEventListener('change',e=>{
+      launchBoxStrategyStatusFilter=e.target.value;runLaunchBoxStrategyScan(1);
+    });
+    host.querySelectorAll('[data-guide-page]').forEach(b=>b.addEventListener('click',()=>{
+      const next=Number(b.dataset.guidePage);if(next>=1&&next<=pages)runLaunchBoxStrategyScan(next);
     }));
-    host.querySelectorAll('img[data-launchbox-scan-image]').forEach(img => img.addEventListener('error', () => {
-      img.closest('.launchbox-controlled-cover')?.classList.add('is-missing'); img.remove();
-    }, { once: true }));
-    launchBoxControlledMessage('launchBoxControlledScanStatus', 'Strategy guide preview complete — 0 links created.', true);
-  } catch (err) { if (requestId === launchBoxManualScanRequestId) launchBoxControlledMessage('launchBoxControlledScanStatus', err.message); }
+    host.querySelectorAll('[data-guide-action]').forEach(b=>b.addEventListener('click',()=>launchBoxStrategyRowDecision(b)));
+    host.querySelectorAll('.launchbox-strategy-override').forEach(box=>{
+      const reason=box.querySelector('.guide-review-reason');
+      const note=box.querySelector('.guide-review-note');
+      const button=box.querySelector('[data-guide-action="approve-reviewed"]');
+      const check=()=>{if(button)button.disabled=!launchBoxStrategyReviewValid(reason?.value||'',(note?.value||'').trim(),box.closest('.launchbox-strategy-pair')?.dataset.guideUnlisted==='true');};
+      reason?.addEventListener('change',check);note?.addEventListener('input',check);check();
+    });
+    host.querySelectorAll('.launchbox-strategy-select').forEach(box=>box.addEventListener('change',launchBoxStrategyUpdateBulk));
+    host.querySelectorAll('[data-guide-select]').forEach(button=>button.addEventListener('click',()=>launchBoxStrategySelectPage(button.dataset.guideSelect)));
+    host.querySelector('#launchBoxStrategyBulkReason')?.addEventListener('change',launchBoxStrategyUpdateBulk);
+    host.querySelector('#launchBoxStrategyBulkNote')?.addEventListener('input',launchBoxStrategyUpdateBulk);
+    host.querySelector('#launchBoxStrategyBulkApprove')?.addEventListener('click',()=>launchBoxStrategySubmitSelection('approve'));
+    host.querySelector('#launchBoxStrategyBulkReviewed')?.addEventListener('click',()=>launchBoxStrategySubmitSelection('approve-reviewed'));
+    host.querySelector('#launchBoxStrategyBulkReject')?.addEventListener('click',()=>launchBoxStrategySubmitSelection('reject'));
+    host.querySelector('#launchBoxStrategyBulkMetadata')?.addEventListener('click',()=>launchBoxStrategySubmitSelection('needs-metadata'));
+    launchBoxStrategyUpdateBulk();
+    host.querySelectorAll('img[data-launchbox-scan-image]').forEach(img=>img.addEventListener('error',()=>{
+      img.closest('.launchbox-controlled-cover')?.classList.add('is-missing');img.remove();
+    },{once:true}));
+    launchBoxControlledMessage('launchBoxControlledScanStatus','Strategy guide review loaded. No decisions changed by scanning.',true);
+  }catch(err){if(requestId===launchBoxManualScanRequestId)launchBoxControlledMessage('launchBoxControlledScanStatus',err.message);}
 }
