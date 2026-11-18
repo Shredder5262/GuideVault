@@ -65,6 +65,8 @@ public sealed class GuidevaultLaunchBoxScopedRequest
     public string Platform { get; set; } = string.Empty;
     public string MatchType { get; set; } = "Manual";
     public string ExpectedSha256 { get; set; } = string.Empty;
+    public int Page { get; set; } = 1;
+    public int PageSize { get; set; } = 100;
 }
 
 public static class GuidevaultLaunchBoxCatalogReader
@@ -174,16 +176,20 @@ public static class GuidevaultLaunchBoxCatalogReader
 
 public static class GuidevaultLaunchBoxControlledManualScanner
 {
-    // GUIDEVAULT_MANUAL_PLATFORM_SCOPE_V12
+    // GUIDEVAULT_MANUAL_IDENTITY_PAGINATION_V13
+    // Manual-only dry run. Strong requires matching primary game/title identity AND
+    // primary platform; metadata aliases cannot override different numbered games.
     // Read-only scanner for RELEASE-SPECIFIC MANUALS only. Cross-platform literature is
     // deliberately out of scope; do not copy these rules to magazines or strategy guides.
     public static object Preview(string platform, string matchType,
         IReadOnlyList<GuidevaultLaunchBoxGame> games, IReadOnlyList<LibraryItem> documents,
-        string? launchBoxRoot)
+        string? launchBoxRoot, int page = 1, int pageSize = 100)
     {
         if (!string.Equals(matchType, "Manual", StringComparison.OrdinalIgnoreCase))
             throw new ArgumentException("The controlled scanner currently supports Manuals only.");
         if (string.IsNullOrWhiteSpace(platform)) throw new ArgumentException("Select a LaunchBox platform.");
+        if (page < 1 || pageSize < 25 || pageSize > 500)
+            throw new ArgumentException("Page must be at least 1 and page size between 25 and 500.");
 
         var selectedGames = games.Where(g => string.Equals(g.Platform, platform, StringComparison.OrdinalIgnoreCase)).ToArray();
         var targetPlatform = NormalizePlatform(platform);
@@ -204,13 +210,15 @@ public static class GuidevaultLaunchBoxControlledManualScanner
         var strongRows = new List<object>();
         var reviewRows = new List<object>();
         var excludedExamples = new List<object>();
-        int strong = 0, review = 0, excluded = 0, withoutExactTitle = 0, withoutEligible = 0;
+        var identityExclusions = new List<object>();
+        int strong = 0, review = 0, excluded = 0, excludedByIdentity = 0, withoutExactTitle = 0, withoutEligible = 0;
         foreach (var game in selectedGames.OrderBy(g => g.Title, StringComparer.OrdinalIgnoreCase))
         {
             var keys = new[] { game.Title, game.SortTitle }
                 .Concat(game.AlternateNames ?? new List<string>())
                 .Select(title => NormalizeGameName(title, publication: false))
                 .Where(name => name.Length >= 2).Distinct(StringComparer.OrdinalIgnoreCase);
+            var primaryGameName = NormalizeGameName(game.Title, publication: false);
             var candidates = keys.Where(byName.ContainsKey).SelectMany(key => byName[key])
                 .GroupBy(i => i.Id, StringComparer.OrdinalIgnoreCase).Select(group => group.First()).ToArray();
             if (candidates.Length == 0) { withoutExactTitle++; withoutEligible++; continue; }
@@ -218,6 +226,31 @@ public static class GuidevaultLaunchBoxControlledManualScanner
             bool eligible = false;
             foreach (var item in candidates)
             {
+                var rawManualGameName = !string.IsNullOrWhiteSpace(item.GameTitle)
+                    ? item.GameTitle : !string.IsNullOrWhiteSpace(item.ManualTitle) ? item.ManualTitle : item.Title;
+                var primaryManualName = NormalizeGameName(rawManualGameName, publication: true);
+                var displayedManualName = NormalizeGameName(item.Title, publication: true);
+                var manualTitleName = NormalizeGameName(item.ManualTitle, publication: true);
+                // A normalized key may have come from a stale AlternateNames/SortTitle or
+                // inaccurate document GameTitle field. Neither may silently turn a sequel
+                // into the same game. Also compare the *displayed* publication title.
+                bool contradictorySequel = DifferentNumberedGame(primaryGameName, primaryManualName)
+                    || DifferentNumberedGame(primaryGameName, displayedManualName)
+                    || DifferentNumberedGame(primaryManualName, displayedManualName)
+                    || DifferentNumberedGame(primaryGameName, manualTitleName)
+                    || DifferentNumberedGame(primaryManualName, manualTitleName);
+                if (contradictorySequel)
+                {
+                    excludedByIdentity++;
+                    if (identityExclusions.Count < 20)
+                        identityExclusions.Add(new { gameTitle = game.Title, publicationTitle = item.Title,
+                            publicationGameTitle = rawManualGameName, reason = "Conflicting numbered game or manual title" });
+                    continue;
+                }
+                bool samePrimaryGame = string.Equals(primaryGameName, primaryManualName,
+                    StringComparison.OrdinalIgnoreCase);
+                // Primary title must match to become Strong. Sort/alternate-name matches
+                // remain visible, but require human verification.
                 // Primary manual fields describe *which physical/platform edition* this is.
                 // Other associated/covered platforms are weaker hints, never sufficient to
                 // override a contradictory primary manual system (e.g. an Arcade 1942 manual).
@@ -249,9 +282,11 @@ public static class GuidevaultLaunchBoxControlledManualScanner
                 var contradictoryPrimary = primaryIsTarget && primary.Any(p => !string.Equals(p, targetPlatform, StringComparison.OrdinalIgnoreCase));
                 // Broad associated-platform tags cannot prove a release-specific manual.
                 var verifiedPlatform = primaryIsTarget && !contradictoryPrimary;
-                var strongCandidate = verifiedPlatform && !yearConflict;
+                var strongCandidate = verifiedPlatform && !yearConflict && samePrimaryGame;
                 var classification = strongCandidate ? "Strong candidate" : "Needs review";
-                var reason = contradictoryPrimary
+                var reason = !samePrimaryGame
+                    ? "Matched through LaunchBox sort/alternate name, not primary game title; verify the alias"
+                    : contradictoryPrimary
                     ? "Conflicting primary manual platform fields; verify the edition"
                     : yearConflict
                         ? "Exact game title and target manual platform, but explicit game-release years differ"
@@ -265,6 +300,8 @@ public static class GuidevaultLaunchBoxControlledManualScanner
                     gameBoxFrontUrl = "/api/integrations/launchbox/games/" + Uri.EscapeDataString(game.Id) + "/box-front",
                     publicationId = item.Id, publicationTitle = item.Title,
                     publicationSystem = string.Join(", ", declared), classification, reason,
+                    matchBasis = samePrimaryGame ? "Primary game title" : "Sort/alternate name",
+                    manualGameTitle = rawManualGameName,
                     coverUrl = "/api/items/" + Uri.EscapeDataString(item.Id) + "/cover-thumb?w=360" };
                 if (strongCandidate) strongRows.Add(row); else reviewRows.Add(row);
             }
@@ -272,17 +309,48 @@ public static class GuidevaultLaunchBoxControlledManualScanner
         }
 
         var includedCount = strong + review;
+        var pageCount = Math.Max(1, (int)Math.Ceiling(includedCount / (double)pageSize));
+        var actualPage = Math.Min(page, pageCount);
+        var offset = (actualPage - 1) * pageSize;
         return new { platform, matchType = "Manual", dryRun = true, changedRecords = 0,
             games = selectedGames.Length, manualsInLibrary = manuals.Length,
             candidatePairs = includedCount, strongCandidates = strong, needsReview = review,
-            conflicts = 0, excludedByPlatform = excluded,
-            excludedExamples = excludedExamples.ToArray(),
+            conflicts = 0, excludedByPlatform = excluded, excludedByIdentity,
+            excludedExamples = excludedExamples.ToArray(), identityExclusions = identityExclusions.ToArray(),
             gamesWithNoExactTitleCandidate = withoutExactTitle,
             gamesWithNoEligibleCandidate = withoutEligible,
             artworkNote = GuidevaultLaunchBoxBoxFronts.AvailabilityNote(launchBoxRoot, platform),
-            truncated = includedCount > 500,
-            rows = strongRows.Concat(reviewRows).Take(500).ToArray(),
-            note = "Manuals only: wrong-platform editions excluded before review. Missing/contradictory platform evidence or release-year differences require review. No links are written; approval remains disabled." };
+            page = actualPage, pageSize, pageCount,
+            firstRow = includedCount == 0 ? 0 : offset + 1,
+            lastRow = Math.Min(includedCount, offset + pageSize),
+            rows = strongRows.Concat(reviewRows).Skip(offset).Take(pageSize).ToArray(),
+            note = "Manuals only: other platforms and conflicting numbered games excluded. Sort/alternate-name hits and missing platform evidence require review. No links are written; approval remains disabled." };
+    }
+
+    // A sequel number is part of a game's identity, not a fuzzy alias.
+    // Compare a numbered title against the same series with a different number
+    // or against the base title lacking a number. Do not confuse 1942 and 1943:
+    // those titles are pure numbers and do not have an identifiable series stem.
+    private static bool DifferentNumberedGame(string left, string right)
+    {
+        if (string.IsNullOrWhiteSpace(left) || string.IsNullOrWhiteSpace(right)
+            || string.Equals(left, right, StringComparison.OrdinalIgnoreCase)) return false;
+        static (string Stem, string Number)? NumberedTitle(string title)
+        {
+            var match = Regex.Match(title, @"^(?<stem>.+?)\s+(?<number>[1-9][0-9]{0,2})(?:\s|$)",
+                RegexOptions.CultureInvariant);
+            return match.Success
+                ? (match.Groups["stem"].Value.Trim(), match.Groups["number"].Value)
+                : null;
+        }
+        var a = NumberedTitle(left);
+        var b = NumberedTitle(right);
+        if (a is not null && b is not null
+            && string.Equals(a.Value.Stem, b.Value.Stem, StringComparison.OrdinalIgnoreCase)
+            && !string.Equals(a.Value.Number, b.Value.Number, StringComparison.Ordinal)) return true;
+        if (a is not null && string.Equals(a.Value.Stem, right, StringComparison.OrdinalIgnoreCase)) return true;
+        if (b is not null && string.Equals(b.Value.Stem, left, StringComparison.OrdinalIgnoreCase)) return true;
+        return false;
     }
 
     private static string[] ManualPlatforms(IEnumerable<string?> values) => values

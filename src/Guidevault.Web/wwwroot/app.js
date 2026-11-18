@@ -27068,27 +27068,50 @@ function populateLaunchBoxScanPlatforms() {
   if (platforms.includes(previous)) select.value = previous;
   else if (platforms.includes('Nintendo Entertainment System')) select.value = 'Nintendo Entertainment System';
 }
-async function runLaunchBoxControlledScan() {
+// GUIDEVAULT_MANUAL_IDENTITY_PAGINATION_V13
+// The scanner is read-only. Paging fetches the next slice, never creates matches.
+let launchBoxManualScanPageSize = 100;
+let launchBoxManualScanRequestId = 0;
+async function runLaunchBoxControlledScan(page = 1) {
   const platform = $('launchBoxScanPlatform')?.value || '';
   const kind = $('launchBoxScanKind')?.value || 'Manual';
   const host = $('launchBoxControlledScanResults');
   if (!platform) return launchBoxControlledMessage('launchBoxControlledScanStatus', 'Select a synced platform first.');
+  const requestId = ++launchBoxManualScanRequestId;
   if (host) host.innerHTML = '';
-  launchBoxControlledMessage('launchBoxControlledScanStatus', `Running read-only ${platform} → Manuals scan...`);
+  launchBoxControlledMessage('launchBoxControlledScanStatus', `Loading read-only ${platform} → Manuals proposals (page ${page})...`);
   try {
     const data = await launchBoxControlledApi('/api/integrations/launchbox/scans/preview', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ platform, matchType: kind })
+      body: JSON.stringify({ platform, matchType: kind, page, pageSize: launchBoxManualScanPageSize })
     });
+    if (requestId !== launchBoxManualScanRequestId) return;
+    const currentPage = Number(data.page || 1);
+    const pageCount = Number(data.pageCount || 1);
+    const total = Number(data.candidatePairs || 0);
+    const pageSize = Number(data.pageSize || launchBoxManualScanPageSize);
+    const pageSizeOptions = [100, 250, 500].map(n => `<option value="${n}"${n === pageSize ? ' selected' : ''}>${n} per page</option>`).join('');
+    const pager = `<nav class="launchbox-scan-pagination" aria-label="Manual scan result pages">` +
+      `<span>Showing ${Number(data.firstRow || 0).toLocaleString()}–${Number(data.lastRow || 0).toLocaleString()} of ${total.toLocaleString()} proposals · Page ${currentPage} of ${pageCount}</span>` +
+      `<div class="launchbox-scan-page-actions">` +
+      `<button type="button" data-launchbox-scan-page="${currentPage - 1}" ${currentPage <= 1 ? 'disabled' : ''}>Previous</button>` +
+      `<button type="button" data-launchbox-scan-page="${currentPage + 1}" ${currentPage >= pageCount ? 'disabled' : ''}>Next</button>` +
+      `</div></nav>`;
     if (host) host.innerHTML = `<div class="launchbox-controlled-summary">` +
       `<strong>${Number(data.games || 0).toLocaleString()}</strong> games · ` +
-      `<strong>${Number(data.candidatePairs || 0).toLocaleString()}</strong> proposed pairs · ` +
-      `${Number(data.strongCandidates || 0)} strong · ${Number(data.needsReview || 0)} review · ` +
-      `${Number(data.excludedByPlatform || 0)} other-platform pairs excluded · ${Number(data.gamesWithNoEligibleCandidate || 0)} games without an eligible manual</div>` +
+      `<strong>${total.toLocaleString()}</strong> proposed pairs · ` +
+      `${Number(data.strongCandidates || 0).toLocaleString()} strong · ${Number(data.needsReview || 0).toLocaleString()} needs review · ` +
+      `${Number(data.excludedByPlatform || 0).toLocaleString()} other-platform pairs excluded · ` +
+      `${Number(data.excludedByIdentity || 0).toLocaleString()} conflicting game identities excluded · ` +
+      `${Number(data.gamesWithNoEligibleCandidate || 0).toLocaleString()} games without an eligible manual</div>` +
       `<p class="sub">No changes made. ${escapeHtml(data.note || '')}</p>` +
       (Number(data.excludedByPlatform || 0) > 0 ? `<details class="launchbox-manual-exclusions"><summary>${Number(data.excludedByPlatform)} wrong-platform manual pairs skipped (show examples)</summary>` +
         `<div class="launchbox-exclusions-list">` + (data.excludedExamples || []).map(r => `<div>${escapeHtml(r.gameTitle)} → ${escapeHtml(r.publicationTitle)} (${escapeHtml(r.publicationSystem || 'Unknown')})</div>`).join('') + `</div></details>` : '') +
+      (Number(data.excludedByIdentity || 0) > 0 ? `<details class="launchbox-manual-exclusions"><summary>${Number(data.excludedByIdentity)} conflicting game identities skipped (show examples)</summary>` +
+        `<div class="launchbox-exclusions-list">` + (data.identityExclusions || []).map(r => `<div>${escapeHtml(r.gameTitle)} → ${escapeHtml(r.publicationTitle)} · ${escapeHtml(r.reason || '')}</div>`).join('') + `</div></details>` : '') +
       `<p class="sub launchbox-controlled-artwork-note">${escapeHtml(data.artworkNote || '')}</p>` +
+      `<div class="launchbox-scan-page-toolbar"><label>Results per page: <select id="launchBoxScanPageSize">${pageSizeOptions}</select></label></div>` +
+      pager +
       `<div class="launchbox-controlled-table">` +
       (data.rows || []).map(r => `<article class="launchbox-controlled-pair">` +
         `<div class="launchbox-controlled-sourcecard">` +
@@ -27103,15 +27126,26 @@ async function runLaunchBoxControlledScan() {
             `<span class="launchbox-controlled-no-cover">Manual cover unavailable</span></div>` +
           `<div class="launchbox-controlled-sourceinfo"><small>GUIDEVAULT MANUAL</small>` +
             `<strong>${escapeHtml(r.publicationTitle)}</strong><span>${escapeHtml(r.publicationSystem || 'Platform unknown')}</span></div></div>` +
-        `<div class="launchbox-controlled-evidence"><strong>${escapeHtml(r.classification)}</strong><span>${escapeHtml(r.reason)}</span></div>` +
-        `</article>`).join('') + `</div>` +
-      (data.truncated ? '<p class="sub">Showing first 500 proposals; this is a limited review preview, not an approval queue.</p>' : '');
-    if (host) host.querySelectorAll('img[data-launchbox-scan-image]').forEach(img => {
-      img.addEventListener('error', () => {
-        img.closest('.launchbox-controlled-cover')?.classList.add('is-missing');
-        img.remove();
-      }, { once: true });
-    });
-    launchBoxControlledMessage('launchBoxControlledScanStatus', `Dry scan complete — 0 links created.`, true);
-  } catch (err) { launchBoxControlledMessage('launchBoxControlledScanStatus', err.message); }
+        `<div class="launchbox-controlled-evidence"><strong>${escapeHtml(r.classification)}</strong><span>${escapeHtml(r.reason)}</span>` +
+        `<small>${escapeHtml(r.matchBasis || '')}</small></div>` +
+        `</article>`).join('') + `</div>` + pager +
+      `<p class="sub">All proposals are viewable using Previous/Next. This is a read-only preview, not an approval queue.</p>`;
+    if (host) {
+      host.querySelectorAll('button[data-launchbox-scan-page]').forEach(button => button.addEventListener('click', () => {
+        const next = Number(button.dataset.launchboxScanPage);
+        if (Number.isInteger(next) && next >= 1 && next <= pageCount) runLaunchBoxControlledScan(next);
+      }));
+      host.querySelector('#launchBoxScanPageSize')?.addEventListener('change', e => {
+        const nextSize = Number(e.target.value);
+        if ([100,250,500].includes(nextSize)) { launchBoxManualScanPageSize = nextSize; runLaunchBoxControlledScan(1); }
+      });
+      host.querySelectorAll('img[data-launchbox-scan-image]').forEach(img => img.addEventListener('error', () => {
+        img.closest('.launchbox-controlled-cover')?.classList.add('is-missing'); img.remove();
+      }, { once: true }));
+    }
+    launchBoxControlledMessage('launchBoxControlledScanStatus', `Dry scan complete — 0 links created. Page ${currentPage} of ${pageCount}.`, true);
+  } catch (err) {
+    if (requestId === launchBoxManualScanRequestId)
+      launchBoxControlledMessage('launchBoxControlledScanStatus', err.message);
+  }
 }

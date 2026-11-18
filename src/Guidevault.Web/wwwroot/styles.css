@@ -22696,3 +22696,12 @@ body.guidevault-direct-reader-pending:not(.auth-locked) #guidevaultDirectReaderL
   #settingsIntegrationsPanel .integration-accordion .integration-accordion-chevron {transition:none;}
 }
 
+
+/* GUIDEVAULT_MANUAL_IDENTITY_PAGINATION_V13 — read-only manual proposal pagination */
+.launchbox-scan-pagination { display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;margin:12px 0;padding:10px 12px;border:1px solid rgba(130,165,210,.20);border-radius:10px; }
+.launchbox-scan-page-actions { display:flex;gap:8px; }
+.launchbox-scan-page-actions button { padding:7px 12px; border:1px solid rgba(130,165,210,.45);border-radius:8px;background:transparent;color:inherit;cursor:pointer; }
+.launchbox-scan-page-actions button:disabled { cursor:not-allowed;opacity:.4; }
+.launchbox-scan-page-toolbar { display:flex;justify-content:flex-end;margin:10px 0; }
+.launchbox-scan-page-toolbar select { margin-left:8px; }
+.launchbox-controlled-evidence small { display:block; margin-top:6px; opacity:.7; }

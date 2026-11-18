@@ -882,7 +882,8 @@ app.MapPost("/api/integrations/launchbox/scans/preview", (GuidevaultLaunchBoxSco
         var snapshot = launchBoxIntegrationStore.GetSnapshot();
         return (IResult)Results.Ok(GuidevaultLaunchBoxControlledManualScanner.Preview(
             payload.Platform, payload.MatchType, snapshot.Games, cache.GetItemsSnapshot(),
-            launchBoxSourceSettingsStore.Get().RootPath));
+            launchBoxSourceSettingsStore.Get().RootPath, payload.Page, payload.PageSize));
+        // GUIDEVAULT_MANUAL_IDENTITY_PAGINATION_V13
     }
     catch (Exception ex) when (ex is ArgumentException or InvalidOperationException)
     { return (IResult)Results.BadRequest(new { error = ex.Message }); }
