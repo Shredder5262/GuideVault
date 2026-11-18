@@ -1836,6 +1836,27 @@
                 </label>
                 <button id="launchBoxRunControlledScan" class="primary" type="button">Run Dry Scan</button>
               </div>
+              <details class="launchbox-manual-recovery" id="launchBoxManualRecoveryPanel">
+                <summary><strong>Correct a manual linked to the wrong game</strong><span class="sub">Find the publication, choose its correct LaunchBox game, and save a verified link. Earlier rejections remain in history.</span></summary>
+                <div class="launchbox-manual-recovery-body">
+                  <div class="launchbox-manual-recovery-search">
+                    <label>Find GuideVault manual <input id="launchBoxCorrectionManualQuery" type="search" placeholder="Manual title (2+ characters)"></label>
+                    <button id="launchBoxCorrectionSearchManuals" type="button">Find manuals</button>
+                    <label>Manual <select id="launchBoxCorrectionManual" aria-label="GuideVault manual to correct"><option value="">Find a manual first</option></select></label>
+                  </div>
+                  <div class="launchbox-manual-recovery-search">
+                    <label>Find correct LaunchBox game <input id="launchBoxCorrectionGameQuery" type="search" placeholder="Game title (2+ characters)"></label>
+                    <button id="launchBoxCorrectionSearchGames" type="button">Find games</button>
+                    <label>Game <select id="launchBoxCorrectionGame" aria-label="Correct LaunchBox target"><option value="">Find a game first</option></select></label>
+                  </div>
+                  <label>How did you verify this is the correct manual?
+                    <textarea id="launchBoxCorrectionNote" maxlength="240" rows="2" placeholder="Brief verification note (8–240 characters), e.g. examined title page and screenshots"></textarea>
+                  </label>
+                  <button id="launchBoxCorrectionApprove" class="primary" type="button">Link manual to selected game</button>
+                  <p class="sub" id="launchBoxCorrectionStatus" aria-live="polite"></p>
+                  <p class="sub">For manuals, primary platform must match. Conflicting numbered sequels cannot be overridden here. Correction adds a separate reviewed link; it does not erase past rejections or replace another game's manuals.</p>
+                </div>
+              </details>
               <p class="sub account-status" id="launchBoxControlledScanStatus" aria-live="polite"></p>
               <div id="launchBoxControlledScanResults" class="launchbox-controlled-results"></div>
             </article>

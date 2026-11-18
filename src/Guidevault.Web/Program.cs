@@ -889,6 +889,30 @@ app.MapPost("/api/integrations/launchbox/scans/preview", (GuidevaultLaunchBoxSco
     { return (IResult)Results.BadRequest(new { error = ex.Message }); }
 });
 
+// GUIDEVAULT_MANUAL_RECOVERY_V18 — distinct publications, not missing-game counts.
+app.MapGet("/api/integrations/launchbox/scans/manual/unmatched-counts", () =>
+    Results.Ok(GuidevaultLaunchBoxManualRecovery.UnmatchedByPlatform(
+        launchBoxIntegrationStore.GetSnapshot(), cache.GetItemsSnapshot())));
+
+app.MapGet("/api/integrations/launchbox/scans/manual/correction/manuals", (string platform, string? q) =>
+{
+    try { return (IResult)Results.Ok(GuidevaultLaunchBoxManualRecovery.SearchManuals(platform, q, cache.GetItemsSnapshot())); }
+    catch (ArgumentException ex) { return (IResult)Results.BadRequest(new { error = ex.Message }); }
+});
+
+app.MapPost("/api/integrations/launchbox/scans/manual/correction", (GuidevaultManualCorrectionRequest payload) =>
+{
+    if (payload is null || string.IsNullOrWhiteSpace(payload.Platform) || string.IsNullOrWhiteSpace(payload.PublicationId)
+        || string.IsNullOrWhiteSpace(payload.GameId))
+        return (IResult)Results.BadRequest(new { error = "Select a platform, a GuideVault manual, and a LaunchBox game." });
+    var result = launchBoxIntegrationStore.ConfirmCorrectedManual(payload, cache.GetItemsSnapshot());
+    if (!result.Success) return (IResult)Results.BadRequest(new { error = result.Message });
+    RecordSystemEvent("Integration", "Reviewed manual association corrected",
+        $"{payload.Platform}: {payload.PublicationId} → {payload.GameId}; note: {payload.ReviewNote}",
+        "launchbox-manual-recovery", result.ItemId, result.ItemTitle);
+    return (IResult)Results.Ok(new { success = true, message = result.Message });
+});
+
 // GUIDEVAULT_MANUAL_REVIEW_V14 — scoped, individual decisions only.
 app.MapPost("/api/integrations/launchbox/scans/manual/decision", (GuidevaultManualReviewRequest payload) =>
 {
@@ -9413,6 +9437,44 @@ public sealed class GuidevaultLaunchBoxIntegrationStore
             }
             return (true, changes.Count,
                 $"{(action == "reject" ? "Marked Not a Match" : action == "approve-reviewed" ? "Reviewed and approved" : "Approved")} {changes.Count} manual pairs for {platform}.");
+        }
+    }
+
+    // GUIDEVAULT_MANUAL_RECOVERY_V18: reviewer-directed repair bypasses fuzzy discovery
+    // but not primary-platform and numbered-sequel safety checks.
+    public GuidevaultLaunchBoxDecisionResult ConfirmCorrectedManual(
+        GuidevaultManualCorrectionRequest request, IReadOnlyList<LibraryItem> items)
+    {
+        var note = (request.ReviewNote ?? string.Empty).Trim().Replace('\r', ' ').Replace('\n', ' ');
+        if (note.Length < 8 || note.Length > 240)
+            return new GuidevaultLaunchBoxDecisionResult { Message = "Add an 8–240 character note explaining how you verified the correct game." };
+        var item = items.FirstOrDefault(i => string.Equals(i.Id, request.PublicationId, StringComparison.OrdinalIgnoreCase)
+            && string.Equals(i.Kind, "Manual", StringComparison.OrdinalIgnoreCase));
+        if (item is null) return new GuidevaultLaunchBoxDecisionResult { Message = "The manual was not found in the current library." };
+        lock (_gate)
+        {
+            var game = _data.Games.FirstOrDefault(g => string.Equals(g.Id, request.GameId, StringComparison.OrdinalIgnoreCase)
+                && string.Equals(g.Platform, request.Platform, StringComparison.OrdinalIgnoreCase));
+            if (game is null) return new GuidevaultLaunchBoxDecisionResult { Message = "The selected LaunchBox game is not on this platform." };
+            var safety = GuidevaultLaunchBoxControlledManualScanner.CorrectionSafetyIssue(game, item);
+            if (safety is not null) return new GuidevaultLaunchBoxDecisionResult { Message = safety };
+            if (_data.Matches.Any(m => string.Equals(m.LaunchBoxGameId, game.Id, StringComparison.OrdinalIgnoreCase)
+                && string.Equals(m.GuideVaultItemId, item.Id, StringComparison.OrdinalIgnoreCase)
+                && string.Equals(m.MatchType, "Manual", StringComparison.OrdinalIgnoreCase)))
+                return new GuidevaultLaunchBoxDecisionResult { Message = "A decision already exists for this exact pair. Use its history/Undo action instead." };
+            var match = GuidevaultLaunchBoxMatcher.CreateMatch(game, item, "Manual", "Confirmed", 0,
+                "Reviewer corrected the target game after inspecting the manual. Evidence: " + note);
+            match.PreviousMatchStatus = "Missing";
+            match.Source = "ManualCorrection";
+            _data.Matches.Add(match);
+            try { Save(); }
+            catch { _data.Matches.Remove(match); throw; }
+            return new GuidevaultLaunchBoxDecisionResult
+            {
+                Success = true, LaunchBoxGameId = game.Id, GuideVaultItemId = item.Id,
+                ItemId = item.Id, ItemTitle = item.Title, MatchType = "Manual", MatchStatus = "Confirmed",
+                Message = $"Linked {item.Title} to {game.Title} after manual correction. Previous decisions remain unchanged."
+            };
         }
     }
 

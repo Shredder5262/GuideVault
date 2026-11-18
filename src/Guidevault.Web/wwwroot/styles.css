@@ -22747,3 +22747,15 @@ body.guidevault-direct-reader-pending:not(.auth-locked) #guidevaultDirectReaderL
 .launchbox-reviewed-bulk label{display:flex;flex-direction:column;gap:5px;font-size:.77rem;color:#c6d8ed}
 .launchbox-reviewed-bulk input{width:min(380px,80vw)}
 #launchBoxBulkApproveReviewed:not(:disabled){background:rgba(34,140,92,.25);border-color:rgba(67,210,145,.6)}
+
+
+/* GUIDEVAULT_MANUAL_RECOVERY_V18 — one compact, opt-in correction panel. */
+.launchbox-manual-recovery{border:1px solid rgba(102,150,206,.38);border-radius:12px;background:rgba(19,40,63,.55);margin:14px 0}
+.launchbox-manual-recovery>summary{cursor:pointer;padding:14px 16px;display:flex;flex-wrap:wrap;gap:8px 14px;align-items:center}
+.launchbox-manual-recovery>summary .sub{margin:0;font-size:.83rem}
+.launchbox-manual-recovery-body{display:grid;gap:13px;padding:4px 16px 16px}
+.launchbox-manual-recovery-search{display:grid;grid-template-columns:minmax(130px,2fr) auto minmax(160px,2fr);align-items:end;gap:10px}
+.launchbox-manual-recovery-body label{display:grid;gap:6px;font-size:.88rem;font-weight:600}
+.launchbox-manual-recovery-body input,.launchbox-manual-recovery-body select,.launchbox-manual-recovery-body textarea{width:100%;min-width:0;background:#0b1929;color:#e7eff9;border:1px solid rgba(110,160,210,.50);border-radius:8px;padding:9px}
+.launchbox-manual-recovery-body button{justify-self:start}
+@media(max-width:920px){.launchbox-manual-recovery-search{grid-template-columns:1fr}.launchbox-manual-recovery-body button{justify-self:stretch}}

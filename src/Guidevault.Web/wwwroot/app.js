@@ -4290,6 +4290,7 @@ async function loadLaunchBoxCoverage(showStatus = false) {
     state.launchBox.status = await res.json();
     state.launchBox.coverage = state.launchBox.status?.coverage || null;
     renderLaunchBoxCoverage();
+    refreshLaunchBoxManualPlatformCounts();
     if (showStatus) setLaunchBoxCoverageStatus('LaunchBox coverage loaded.', 'success');
     await loadLaunchBoxReview(false);
   } catch (err) {
@@ -4931,6 +4932,11 @@ function bindLaunchBoxCoverageActions() {
   if ($('launchBoxPreviewCatalog')) $('launchBoxPreviewCatalog').addEventListener('click', e => { e.preventDefault(); previewLaunchBoxCatalog(); });
   if ($('launchBoxImportCatalog')) $('launchBoxImportCatalog').addEventListener('click', e => { e.preventDefault(); importLaunchBoxCatalog(); });
   if ($('launchBoxRunControlledScan')) $('launchBoxRunControlledScan').addEventListener('click', e => { e.preventDefault(); runLaunchBoxControlledScan(); });
+  $('launchBoxCorrectionSearchManuals')?.addEventListener('click', searchLaunchBoxCorrectionManuals);
+  $('launchBoxCorrectionSearchGames')?.addEventListener('click', searchLaunchBoxCorrectionGames);
+  $('launchBoxCorrectionApprove')?.addEventListener('click', approveLaunchBoxCorrection);
+  $('launchBoxCorrectionManualQuery')?.addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); searchLaunchBoxCorrectionManuals(); } });
+  $('launchBoxCorrectionGameQuery')?.addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); searchLaunchBoxCorrectionGames(); } });
   if ($('launchBoxCancelSync')) $('launchBoxCancelSync').addEventListener('click', e => { e.preventDefault(); cancelLaunchBoxSync(); });
   if ($('launchBoxLoadReview')) $('launchBoxLoadReview').addEventListener('click', e => { e.preventDefault(); state.launchBox.reviewPlatform = ''; loadLaunchBoxReview(true); });
   if ($('launchBoxReviewStatus')) $('launchBoxReviewStatus').addEventListener('change', () => loadLaunchBoxReview(true));
@@ -27057,14 +27063,29 @@ async function importLaunchBoxCatalog() {
     populateLaunchBoxScanPlatforms();
   } catch (err) { launchBoxControlledMessage('launchBoxSourceStatus', err.message); }
 }
+// GUIDEVAULT_MANUAL_RECOVERY_V18 — counts represent unlinked manual publications,
+// never the number of LaunchBox games missing documents.
+let launchBoxManualPlatformCounts = null;
+async function refreshLaunchBoxManualPlatformCounts() {
+  try {
+    const result = await launchBoxControlledApi('/api/integrations/launchbox/scans/manual/unmatched-counts');
+    launchBoxManualPlatformCounts = result;
+    populateLaunchBoxScanPlatforms();
+  } catch (err) { console.warn('Manual unmatched-count lookup failed', err); }
+}
 function populateLaunchBoxScanPlatforms() {
   const select = $('launchBoxScanPlatform');
   if (!select) return;
   const previous = select.value;
   const rows = state.launchBox.status?.coverage?.byPlatform || [];
   const platforms = rows.map(r => r.platform).filter(Boolean).sort((a,b) => a.localeCompare(b));
+  const byPlatform = new Map((launchBoxManualPlatformCounts?.platforms || []).map(r => [r.platform, r]));
   select.innerHTML = '<option value="">Select synced platform</option>' +
-    platforms.map(p => `<option value="${escapeForAttribute(p)}">${escapeHtml(p)}</option>`).join('');
+    platforms.map(p => {
+      const count = byPlatform.get(p);
+      const label = count ? `${p} — ${Number(count.unmatchedManuals).toLocaleString()} unmatched manuals` : p;
+      return `<option value="${escapeForAttribute(p)}">${escapeHtml(label)}</option>`;
+    }).join('');
   if (platforms.includes(previous)) select.value = previous;
   else if (platforms.includes('Nintendo Entertainment System')) select.value = 'Nintendo Entertainment System';
 }
@@ -27166,7 +27187,9 @@ async function runLaunchBoxControlledScan(page = 1) {
         `<small>${escapeHtml(r.matchBasis || '')}</small>` +
         (['Confirmed','Rejected','NeedsMetadata'].includes(r.savedStatus) ?
           `<div class="launchbox-scan-decision"><b>${escapeHtml(r.savedStatus === 'NeedsMetadata' ? 'Needs Metadata' : r.savedStatus)}</b>` +
-          `<button type="button" data-manual-review-action="undo" data-game-id="${escapeForAttribute(r.gameId)}" data-manual-id="${escapeForAttribute(r.publicationId)}">Undo</button></div>` :
+          `<button type="button" data-manual-review-action="undo" data-game-id="${escapeForAttribute(r.gameId)}" data-manual-id="${escapeForAttribute(r.publicationId)}">Undo</button>` +
+          (r.savedStatus === 'Rejected' ? `<button type="button" data-manual-repair-id="${escapeForAttribute(r.publicationId)}" data-manual-repair-title="${escapeForAttribute(r.publicationTitle)}">Find correct game</button>` : '') +
+          `</div>` :
           `<div class="launchbox-scan-decision">` +
           (r.classification === 'Strong candidate' ? `<button type="button" data-manual-review-action="approve" data-game-id="${escapeForAttribute(r.gameId)}" data-manual-id="${escapeForAttribute(r.publicationId)}">Approve</button>` : '') +
           (r.classification === 'Needs review' ? `<details class="launchbox-reviewed-manual-override"><summary>Approve after review</summary>` +
@@ -27197,6 +27220,8 @@ async function runLaunchBoxControlledScan(page = 1) {
       });
       host.querySelectorAll('button[data-manual-review-action]').forEach(button => button.addEventListener('click', () =>
         submitManualReviewDecision(button, platform)));
+      host.querySelectorAll('button[data-manual-repair-id]').forEach(button => button.addEventListener('click', () =>
+        openLaunchBoxManualCorrection(button.dataset.manualRepairId, button.dataset.manualRepairTitle)));
       // GUIDEVAULT_MANUAL_REVIEW_OVERRIDE_V16: explicit human reason; no browser popup.
       host.querySelectorAll('.launchbox-reviewed-manual-override').forEach(group => {
         const reason = group.querySelector('.launchbox-reviewed-manual-reason');
@@ -27342,4 +27367,73 @@ async function submitLaunchBoxManualBatch(action, platform) {
     launchBoxManualBatchPending = false;
     updateLaunchBoxManualBulkSelection();
   }
+}
+
+
+// GUIDEVAULT_MANUAL_RECOVERY_V18: a manual can be corrected even when it has
+// no auto-generated candidate for its actual game. Only explicit user action saves.
+let launchBoxCorrectionBusy = false;
+function launchBoxCorrectionStatus(message, success = false) {
+  const node = $('launchBoxCorrectionStatus');
+  if (node) { node.textContent = message; node.classList.toggle('success', !!success); }
+}
+async function searchLaunchBoxCorrectionManuals(selectId = '') {
+  const platform = $('launchBoxScanPlatform')?.value || '';
+  const q = ($('launchBoxCorrectionManualQuery')?.value || '').trim();
+  if (!platform || q.length < 2) return launchBoxCorrectionStatus('Select a platform and enter at least two characters of the manual title.');
+  try {
+    const r = await launchBoxControlledApi('/api/integrations/launchbox/scans/manual/correction/manuals?' +
+      new URLSearchParams({ platform, q }));
+    const select = $('launchBoxCorrectionManual');
+    if (select) {
+      select.innerHTML = '<option value="">Select GuideVault manual</option>' +
+        (r.items || []).map(i => `<option value="${escapeForAttribute(i.id)}">${escapeHtml(i.title)}${i.gameTitle && i.gameTitle !== i.title ? ' · ' + escapeHtml(i.gameTitle) : ''}</option>`).join('');
+      if (selectId && (r.items || []).some(i => i.id === selectId)) select.value = selectId;
+    }
+    launchBoxCorrectionStatus(`${(r.items || []).length} matching manuals. Choose the exact publication.`);
+  } catch (err) { launchBoxCorrectionStatus(err.message); }
+}
+async function searchLaunchBoxCorrectionGames() {
+  const platform = $('launchBoxScanPlatform')?.value || '';
+  const q = ($('launchBoxCorrectionGameQuery')?.value || '').trim();
+  if (!platform || q.length < 2) return launchBoxCorrectionStatus('Select a platform and enter at least two characters of the correct game title.');
+  try {
+    const r = await launchBoxControlledApi('/api/integrations/launchbox/manual-match/games?' +
+      new URLSearchParams({ platform, q, limit: 50 }));
+    const select = $('launchBoxCorrectionGame');
+    if (select) select.innerHTML = '<option value="">Select correct LaunchBox game</option>' +
+      (r.items || []).map(g => `<option value="${escapeForAttribute(g.id)}">${escapeHtml(g.title)}${g.region ? ' · ' + escapeHtml(g.region) : ''}</option>`).join('');
+    launchBoxCorrectionStatus(`${(r.items || []).length} matching games. Choose the correct LaunchBox entry.`);
+  } catch (err) { launchBoxCorrectionStatus(err.message); }
+}
+function openLaunchBoxManualCorrection(id, title) {
+  const panel = $('launchBoxManualRecoveryPanel');
+  if (panel) { panel.open = true; panel.scrollIntoView({ behavior: 'smooth', block: 'start' }); }
+  const input = $('launchBoxCorrectionManualQuery');
+  if (input) input.value = title || '';
+  searchLaunchBoxCorrectionManuals(id);
+  launchBoxCorrectionStatus('Earlier rejection is preserved. Search for the correct LaunchBox game and document how you verified it.');
+}
+async function approveLaunchBoxCorrection() {
+  if (launchBoxCorrectionBusy) return;
+  const platform = $('launchBoxScanPlatform')?.value || '';
+  const publicationId = $('launchBoxCorrectionManual')?.value || '';
+  const gameId = $('launchBoxCorrectionGame')?.value || '';
+  const reviewNote = ($('launchBoxCorrectionNote')?.value || '').trim();
+  if (!platform || !publicationId || !gameId || reviewNote.length < 8 || reviewNote.length > 240)
+    return launchBoxCorrectionStatus('Select one manual, its correct game, and an 8–240 character verification note.');
+  const button = $('launchBoxCorrectionApprove');
+  launchBoxCorrectionBusy = true;
+  if (button) button.disabled = true;
+  try {
+    const r = await launchBoxControlledApi('/api/integrations/launchbox/scans/manual/correction', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ platform, publicationId, gameId, reviewNote })
+    });
+    launchBoxCorrectionStatus(r.message || 'Reviewed association saved.', true);
+    if ($('launchBoxCorrectionNote')) $('launchBoxCorrectionNote').value = '';
+    await loadLaunchBoxCoverage(false);
+    await runLaunchBoxControlledScan(launchBoxManualScanCurrentPage);
+  } catch (err) { launchBoxCorrectionStatus(err.message); }
+  finally { launchBoxCorrectionBusy = false; if (button) button.disabled = false; }
 }

@@ -358,6 +358,30 @@ public static class GuidevaultLaunchBoxControlledManualScanner
             note = "Manuals only: excluded wrong platforms and conflicting numbered games. Scanning never writes links. Pending hides saved decisions; review Approved/Rejected/Needs Metadata using the queue filter." };
     }
 
+    // GUIDEVAULT_MANUAL_RECOVERY_V18: reuse the release-specific safety checks
+    // for a reviewer-directed correction outside the exact-title candidate scan.
+    public static string NormalizedPlatform(string? platform) => NormalizePlatform(platform);
+    public static string[] PrimaryManualPlatforms(LibraryItem item) =>
+        ManualPlatforms(new[] { item.System, item.PrimarySystem, item.PlatformFocus });
+
+    public static string? CorrectionSafetyIssue(GuidevaultLaunchBoxGame game, LibraryItem item)
+    {
+        var target = NormalizePlatform(game.Platform);
+        var primaries = PrimaryManualPlatforms(item);
+        if (target.Length == 0 || primaries.Length == 0)
+            return "The manual's primary platform is missing; correct its platform metadata before approving a manual correction.";
+        if (!primaries.Contains(target, StringComparer.OrdinalIgnoreCase) || primaries.Any(p => p != target))
+            return "The manual explicitly identifies another primary system; correct its platform metadata first.";
+        var gameTitle = NormalizeGameName(game.Title, publication: false);
+        var titles = new[] { item.Title, item.GameTitle, item.ManualTitle }
+            .Where(t => !string.IsNullOrWhiteSpace(t))
+            .Select(t => NormalizeGameName(t, publication: true))
+            .Where(t => t.Length > 0).ToArray();
+        if (titles.Any(title => DifferentNumberedGame(gameTitle, title)))
+            return "A numbered sequel conflicts with the proposed game's identity. Correct source metadata rather than overriding it.";
+        return null;
+    }
+
     // A sequel number is part of a game's identity, not a fuzzy alias.
     // Compare a numbered title against the same series with a different number
     // or against the base title lacking a number. Do not confuse 1942 and 1943:
@@ -427,6 +451,21 @@ public static class GuidevaultLaunchBoxControlledManualScanner
             "3do" or "3do interactive multiplayer" => "3do interactive multiplayer",
             "n64" or "nintendo 64" => "nintendo 64",
             "mega drive" or "sega mega drive" or "sega genesis" or "genesis" => "sega genesis",
+            // Recognize common abbreviated shelf labels without conflating distinct generations.
+            "gb" or "game boy" or "nintendo game boy" => "nintendo game boy",
+            "gbc" or "game boy color" or "nintendo game boy color" => "nintendo game boy color",
+            "gba" or "game boy advance" or "nintendo game boy advance" => "nintendo game boy advance",
+            "nds" or "nintendo ds" => "nintendo ds",
+            "3ds" or "nintendo 3ds" => "nintendo 3ds",
+            "ps2" or "playstation 2" or "sony playstation 2" => "sony playstation 2",
+            "ps3" or "playstation 3" or "sony playstation 3" => "sony playstation 3",
+            "ps4" or "playstation 4" or "sony playstation 4" => "sony playstation 4",
+            "psp" or "playstation portable" or "sony psp" => "sony psp",
+            "dreamcast" or "sega dreamcast" => "sega dreamcast",
+            "saturn" or "sega saturn" => "sega saturn",
+            "master system" or "sega master system" => "sega master system",
+            "xbox" or "microsoft xbox" => "microsoft xbox",
+            "xbox 360" or "microsoft xbox 360" => "microsoft xbox 360",
             "multi platform" or "multiplatform" or "mixed" or "unknown" or "unsorted" or "manuals" or "manual" or "nintendo" or "sega" or "sony" or "console" or "all platforms" => "",
             _ => text
         };
