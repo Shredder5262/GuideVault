@@ -22795,6 +22795,16 @@ body.guidevault-direct-reader-pending:not(.auth-locked) #guidevaultDirectReaderL
 .launchbox-strategy-actions button:hover:not(:disabled),.launchbox-strategy-bulkbar button:hover:not(:disabled){border-color:rgba(137,199,255,.85);background:rgba(38,88,138,.6)}
 .launchbox-strategy-actions button:disabled,.launchbox-strategy-bulkbar button:disabled{opacity:.43;cursor:not-allowed}
 .launchbox-strategy-actions .guide-approve,.launchbox-strategy-bulkbar .guide-approve{border-color:rgba(63,195,145,.53);background:rgba(26,132,97,.26)}
+/* GUIDEVAULT_STRATEGY_RELEASE_REVIEW_V25: compact, reasoned per-pair rejection. */
+.launchbox-strategy-reject{width:100%;max-width:380px;border:1px solid rgba(211,135,140,.35);padding:8px 10px;border-radius:9px}
+.launchbox-strategy-reject>summary{cursor:pointer;font-weight:600;color:#f1bbc0;font-size:.8rem}
+.launchbox-strategy-reject label{display:grid;gap:4px;margin:8px 0;font-size:.77rem;color:#e3d0d6}
+.launchbox-strategy-reject input,.launchbox-strategy-reject select{width:100%;min-width:0;background:#0b1929;color:#edf6ff;border:1px solid rgba(207,126,140,.44);border-radius:7px;padding:8px;box-sizing:border-box}
+.launchbox-strategy-bulk-rejection{display:flex;align-items:center;flex-wrap:wrap;gap:9px;padding-top:9px;border-top:1px solid rgba(211,135,140,.23)}
+.launchbox-strategy-bulk-rejection label{display:grid;gap:5px;min-width:170px;color:#e3d0d6;font-size:.79rem}
+.launchbox-strategy-bulk-rejection label:nth-child(2){flex:1 1 260px}
+.launchbox-strategy-decision-history{margin-top:5px;font-size:.77rem;color:#c1d4e6;overflow-wrap:anywhere}
+.launchbox-strategy-decision-history summary{cursor:pointer;color:#a4caef}
 .launchbox-strategy-override{width:100%;max-width:380px;border:1px solid rgba(115,164,218,.37);padding:8px 10px;border-radius:9px}
 .launchbox-strategy-override>summary{cursor:pointer;font-weight:600;color:#b4d8ff;font-size:.8rem}
 .launchbox-strategy-override label{display:grid;gap:4px;margin:8px 0;font-size:.77rem;color:#c6d8ed}

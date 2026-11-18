@@ -50,10 +50,11 @@ public static class GuidevaultLaunchBoxStrategyScanner
             // A guide covering six games contributes six pairs when pending.
             var scan = System.Text.Json.JsonSerializer.SerializeToElement(
                 Preview(platform, games, documents, 1, 25, savedMatches, "pending"));
-            return new { platform, pendingPairs = scan.GetProperty("pendingPairs").GetInt32() };
+            return new { platform, pendingPairs = scan.GetProperty("pendingPairs").GetInt32(),
+                relatedPairs = scan.GetProperty("relatedPairs").GetInt32() };
         }).ToArray();
         return new { kind = "Strategy Guide", platforms = rows,
-            definition = "Pending game-to-strategy-guide relationships shown by the selected platform's Strategy Guides scan. Multiple covered games in one guide count as separate pending relationships." };
+            definition = "Pending means platform-supported proposals. Related means titles covered by guides that do not list this platform; these require version/content verification. Counts refer to game/guide pairs." };
     }
 
     public static object Preview(string platform,
@@ -62,7 +63,7 @@ public static class GuidevaultLaunchBoxStrategyScanner
         string? statusFilter = "pending")
     {
         statusFilter = (statusFilter ?? "pending").Trim().ToLowerInvariant();
-        if (statusFilter is not ("pending" or "approved" or "rejected" or "metadata" or "all"))
+        if (statusFilter is not ("pending" or "related" or "approved" or "rejected" or "metadata" or "all"))
             throw new ArgumentException("Invalid strategy guide queue filter.");
         if (page < 1 || pageSize < 25 || pageSize > 500)
             throw new ArgumentException("Page must be at least 1 and page size between 25 and 500.");
@@ -95,7 +96,7 @@ public static class GuidevaultLaunchBoxStrategyScanner
         }
         var rows = new List<(int Priority, string GameTitle, string GuideTitle, object Row)>();
         var seenPairs = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        int pending = 0, approved = 0, rejected = 0, metadata = 0, strong = 0, review = 0;
+        int pending = 0, related = 0, approved = 0, rejected = 0, metadata = 0, strong = 0, review = 0;
         int gamesWithoutCandidate = 0;
         foreach (var game in selected)
         {
@@ -144,11 +145,14 @@ public static class GuidevaultLaunchBoxStrategyScanner
                 var platformCompatibility = declared.Length == 0 ? "Unknown" :
                     matchesPlatform ? (isCrossPlatform ? "Multiple declared platforms" : "Target platform listed") :
                     "Target platform not listed";
-                string classification = isStrong ? "Strong candidate" : "Needs review";
+                var isUnlistedRelease = declared.Length > 0 && !matchesPlatform;
+                // A shared name is NOT proof of equivalent gameplay across releases.
+                // Keep possibilities (e.g. arcade -> NES Donkey Kong) in a separate queue.
+                string classification = isUnlistedRelease ? "Related release" : isStrong ? "Strong candidate" : "Needs review";
                 string reason = evidence is "Game Title" or "Title only"
                     ? "Game-specific title clue only; verify the guide's actual coverage"
                     : !matchesPlatform && declared.Length > 0
-                        ? "Game explicitly covered; listed platforms differ — verify cross-platform applicability"
+                        ? "Matching title in Covered Games, but the guide does not list this platform. Different game or edition is possible; review actual guide contents before linking"
                         : declared.Length == 0
                             ? "Game explicitly covered; guide platform not documented"
                             : isCrossPlatform
@@ -164,10 +168,11 @@ public static class GuidevaultLaunchBoxStrategyScanner
                 var isApproved = savedStatus is "Confirmed" or "AutoMatched";
                 var isRejected = savedStatus == "Rejected";
                 var isMetadata = savedStatus == "NeedsMetadata";
-                if (isApproved) approved++; else if (isRejected) rejected++; else if (isMetadata) metadata++; else pending++;
+                if (isApproved) approved++; else if (isRejected) rejected++; else if (isMetadata) metadata++; else if (isUnlistedRelease) related++; else pending++;
                 bool show = statusFilter switch
                 {
-                    "pending" => !isApproved && !isRejected && !isMetadata,
+                    "pending" => !isApproved && !isRejected && !isMetadata && !isUnlistedRelease,
+                    "related" => !isApproved && !isRejected && !isMetadata && isUnlistedRelease,
                     "approved" => isApproved, "rejected" => isRejected, "metadata" => isMetadata, _ => true
                 };
                 if (!show) continue;
@@ -186,7 +191,8 @@ public static class GuidevaultLaunchBoxStrategyScanner
                     guideAssociatedPlatforms = string.Join(", ", associatedPlatform),
                     platformBasis, platformCompatibility,
                     evidenceProvenance = "GuideVault metadata (publication contents not verified)",
-                    savedStatus, coverUrl = "/api/items/" + Uri.EscapeDataString(item.Id) + "/cover-thumb?w=360"
+                    savedStatus, savedDecisionReason = prior?.MatchReason ?? "",
+                    coverUrl = "/api/items/" + Uri.EscapeDataString(item.Id) + "/cover-thumb?w=360"
                 }));
             }
             if (!found) gamesWithoutCandidate++;
@@ -200,7 +206,7 @@ public static class GuidevaultLaunchBoxStrategyScanner
             platform, matchType = "Strategy Guide", dryRun = true, changedRecords = 0,
             games = selected.Length, strategyGuidesInLibrary = guides.Length,
             candidatePairs = ordered.Length, strongCandidates = strong, needsReview = review,
-            pendingPairs = pending, approvedPairs = approved, rejectedPairs = rejected, metadataPairs = metadata,
+            pendingPairs = pending, relatedPairs = related, approvedPairs = approved, rejectedPairs = rejected, metadataPairs = metadata,
             gamesWithNoEligibleCandidate = gamesWithoutCandidate,
             statusFilter, page, pageSize, pageCount,
             firstRow = ordered.Length == 0 ? 0 : first + 1,

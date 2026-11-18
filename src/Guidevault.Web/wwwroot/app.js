@@ -27095,7 +27095,8 @@ function populateLaunchBoxScanPlatforms() {
   select.innerHTML = '<option value="">Select synced platform</option>' +
     platforms.map(p => {
       const count = byPlatform.get(p);
-      const label = count ? `${p} · ${Number(count.pendingPairs || 0).toLocaleString()} pending` : p;
+      const label = count ? `${p} · ${Number(count.pendingPairs || 0).toLocaleString()} pending` +
+        (kind === 'Strategy Guide' && Number(count.relatedPairs||0) ? ` · ${Number(count.relatedPairs).toLocaleString()} related` : '') : p;
       return `<option value="${escapeForAttribute(p)}">${escapeHtml(label)}</option>`;
     }).join('');
   if (platforms.includes(previous)) select.value = previous;
@@ -27479,6 +27480,19 @@ let launchBoxStrategyStatusFilter = 'pending';
 let launchBoxStrategyCurrentPage = 1;
 let launchBoxStrategyPageSize = 100;
 let launchBoxStrategyBusy = false;
+const launchBoxStrategyRejectReasons = [
+  ['different-game','Different game (same title)'],
+  ['incompatible-release','Gameplay or edition incompatible'],
+  ['incorrect-coverage','Incorrect Covered Games metadata'],
+  ['other-rejection','Other mismatch']
+];
+function launchBoxStrategyRejectOptions() {
+  return '<option value="">Choose why not a match</option>' +
+    launchBoxStrategyRejectReasons.map(([v,label]) => `<option value="${v}">${label}</option>`).join('');
+}
+function launchBoxStrategyRejectValid(reason, note) {
+  return !!reason && note.length <= 240 && (reason !== 'other-rejection' || note.length >= 8);
+}
 const launchBoxStrategyReviewReasons = [
   ['same-game','Same game / verified release'],
   ['cross-platform','Cross-platform coverage verified'],
@@ -27509,7 +27523,11 @@ function launchBoxStrategyRowActions(r) {
         `<label>Verification note<input class="guide-review-note" type="text" maxlength="240" placeholder="Required for cross-platform approvals"></label>` +
         `<button type="button" class="guide-approve" data-guide-action="approve-reviewed" ${id} disabled>Approve reviewed guide</button>` +
       `</details>`) +
-    `<button type="button" data-guide-action="reject" ${id}>Not a Match</button>` +
+    `<details class="launchbox-strategy-reject"><summary>Not a Match</summary>` +
+       `<label>Reason<select class="guide-reject-reason">${launchBoxStrategyRejectOptions()}</select></label>` +
+       `<label>Optional note<input class="guide-reject-note" type="text" maxlength="240" placeholder="Required for Other"></label>` +
+       `<button type="button" data-guide-action="reject" ${id} disabled>Reject this pair</button>` +
+    `</details>` +
     `<button type="button" data-guide-action="needs-metadata" ${id}>Needs Metadata</button></div>`;
 }
 function launchBoxStrategySelected() {
@@ -27520,7 +27538,7 @@ function launchBoxStrategyUpdateBulk() {
   if (!host) return;
   const selected = launchBoxStrategySelected();
   const allStrong = selected.length && selected.every(x => x.dataset.classification === 'Strong candidate');
-  const allReview = selected.length && selected.every(x => x.dataset.classification === 'Needs review');
+  const allReview = selected.length && selected.every(x => ['Needs review','Related release'].includes(x.dataset.classification));
   const reason = host.querySelector('#launchBoxStrategyBulkReason')?.value || '';
   const note = (host.querySelector('#launchBoxStrategyBulkNote')?.value || '').trim();
   const hasUnlisted = selected.some(x => x.dataset.unlisted === 'true');
@@ -27530,9 +27548,11 @@ function launchBoxStrategyUpdateBulk() {
   const reviewed = host.querySelector('#launchBoxStrategyBulkReviewed');
   const reject = host.querySelector('#launchBoxStrategyBulkReject');
   const metadata = host.querySelector('#launchBoxStrategyBulkMetadata');
+  const rejectReason = host.querySelector('#launchBoxStrategyBulkRejectReason')?.value || '';
+  const rejectNote = (host.querySelector('#launchBoxStrategyBulkRejectNote')?.value || '').trim();
   if (approve) approve.disabled = launchBoxStrategyBusy || !allStrong;
   if (reviewed) reviewed.disabled = launchBoxStrategyBusy || !allReview || !launchBoxStrategyReviewValid(reason,note,hasUnlisted);
-  if (reject) reject.disabled = launchBoxStrategyBusy || !selected.length;
+  if (reject) reject.disabled = launchBoxStrategyBusy || !selected.length || !launchBoxStrategyRejectValid(rejectReason,rejectNote);
   if (metadata) metadata.disabled = launchBoxStrategyBusy || !selected.length;
   host.querySelectorAll('.launchbox-strategy-select').forEach(x =>
     x.closest('.launchbox-strategy-pair')?.classList.toggle('is-selected', x.checked));
@@ -27542,7 +27562,7 @@ function launchBoxStrategySelectPage(mode) {
   const host = $('launchBoxControlledScanResults');
   host?.querySelectorAll('.launchbox-strategy-select').forEach(box => {
     box.checked = mode === 'all' || (mode === 'strong' && box.dataset.classification === 'Strong candidate') ||
-      (mode === 'review' && box.dataset.classification === 'Needs review');
+      (mode === 'review' && ['Needs review','Related release'].includes(box.dataset.classification));
   });
   launchBoxStrategyUpdateBulk();
 }
@@ -27575,11 +27595,16 @@ async function launchBoxStrategyRowDecision(button) {
   const action = button.dataset.guideAction;
   const row = button.closest('.launchbox-strategy-pair');
   const group = row?.querySelector('.launchbox-strategy-override');
-  const reason = action === 'approve-reviewed' ? group?.querySelector('.guide-review-reason')?.value || '' : '';
-  const note = action === 'approve-reviewed' ? (group?.querySelector('.guide-review-note')?.value || '').trim() : '';
+  const rejection = row?.querySelector('.launchbox-strategy-reject');
+  const reason = action === 'approve-reviewed' ? group?.querySelector('.guide-review-reason')?.value || '' :
+    action === 'reject' ? rejection?.querySelector('.guide-reject-reason')?.value || '' : '';
+  const note = action === 'approve-reviewed' ? (group?.querySelector('.guide-review-note')?.value || '').trim() :
+    action === 'reject' ? (rejection?.querySelector('.guide-reject-note')?.value || '').trim() : '';
   const unlisted = row?.dataset.guideUnlisted === 'true';
   if (action === 'approve-reviewed' && !launchBoxStrategyReviewValid(reason,note,unlisted))
     return launchBoxControlledMessage('launchBoxControlledScanStatus', 'Verify platform applicability and provide a note when the guide does not list this platform.');
+  if (action === 'reject' && !launchBoxStrategyRejectValid(reason,note))
+    return launchBoxControlledMessage('launchBoxControlledScanStatus', 'Choose a rejection reason; Other requires a note.');
   await launchBoxStrategySubmit(action, [{gameId:button.dataset.gameId,publicationId:button.dataset.guideId}],reason,note);
 }
 function launchBoxStrategySubmitSelection(action) {
@@ -27588,13 +27613,17 @@ function launchBoxStrategySubmitSelection(action) {
   if (!boxes.length) return;
   if (action === 'approve' && boxes.some(b => b.dataset.classification !== 'Strong candidate'))
     return launchBoxControlledMessage('launchBoxControlledScanStatus', 'Select only Strong guide candidates for standard approval.');
-  if (action === 'approve-reviewed' && boxes.some(b => b.dataset.classification !== 'Needs review'))
+  if (action === 'approve-reviewed' && boxes.some(b => !['Needs review','Related release'].includes(b.dataset.classification)))
     return launchBoxControlledMessage('launchBoxControlledScanStatus', 'Select only Needs Review guide candidates for shared reviewed approval.');
-  const reason = action === 'approve-reviewed' ? host.querySelector('#launchBoxStrategyBulkReason')?.value || '' : '';
-  const note = action === 'approve-reviewed' ? (host.querySelector('#launchBoxStrategyBulkNote')?.value || '').trim() : '';
+  const reason = action === 'approve-reviewed' ? host.querySelector('#launchBoxStrategyBulkReason')?.value || '' :
+    action === 'reject' ? host.querySelector('#launchBoxStrategyBulkRejectReason')?.value || '' : '';
+  const note = action === 'approve-reviewed' ? (host.querySelector('#launchBoxStrategyBulkNote')?.value || '').trim() :
+    action === 'reject' ? (host.querySelector('#launchBoxStrategyBulkRejectNote')?.value || '').trim() : '';
   const hasUnlisted = boxes.some(x => x.dataset.unlisted === 'true');
   if (action === 'approve-reviewed' && !launchBoxStrategyReviewValid(reason,note,hasUnlisted))
     return launchBoxControlledMessage('launchBoxControlledScanStatus', 'Select a verification reason and document applicability for unlisted platforms.');
+  if (action === 'reject' && !launchBoxStrategyRejectValid(reason,note))
+    return launchBoxControlledMessage('launchBoxControlledScanStatus', 'Choose one rejection reason for the selected pairs.');
   return launchBoxStrategySubmit(action,boxes.map(x=>({gameId:x.dataset.gameId,publicationId:x.dataset.guideId})),reason,note);
 }
 async function runLaunchBoxStrategyScan(page = 1) {
@@ -27618,11 +27647,11 @@ async function runLaunchBoxStrategyScan(page = 1) {
     const pager = `<nav class="launchbox-scan-pagination" aria-label="Strategy guide results pages"><span>${Number(data.firstRow || 0)}–${Number(data.lastRow || 0)} of ${count} · Page ${current} of ${pages}</span>` +
       `<div class="launchbox-scan-page-actions"><button type="button" data-guide-page="${current-1}" ${current<=1?'disabled':''}>Previous</button>` +
       `<button type="button" data-guide-page="${current+1}" ${current>=pages?'disabled':''}>Next</button></div></nav>`;
-    const filters = [['pending','Pending'],['approved','Approved'],['rejected','Not a Match'],['metadata','Needs Metadata'],['all','All']]
+    const filters = [['pending','Pending'],['related','Related releases'],['approved','Approved'],['rejected','Not a Match'],['metadata','Needs Metadata'],['all','All']]
       .map(([value,label])=>`<option value="${value}"${value===launchBoxStrategyStatusFilter?' selected':''}>${label}</option>`).join('');
-    const pending = launchBoxStrategyStatusFilter === 'pending';
+    const pending = ['pending','related'].includes(launchBoxStrategyStatusFilter);
     const toolbar = `<div class="launchbox-scan-queuebar"><label>Show <select id="launchBoxStrategyStatus">${filters}</select></label>` +
-      `<span>${Number(data.pendingPairs||0)} pending · ${Number(data.approvedPairs||0)} approved · ${Number(data.rejectedPairs||0)} rejected · ${Number(data.metadataPairs||0)} need metadata</span></div>`;
+      `<span>${Number(data.pendingPairs||0)} pending · ${Number(data.relatedPairs||0)} related · ${Number(data.approvedPairs||0)} approved · ${Number(data.rejectedPairs||0)} rejected · ${Number(data.metadataPairs||0)} need metadata</span></div>`;
     const bulk = pending ? `<div class="launchbox-strategy-bulkbar">` +
       `<div class="launchbox-scan-bulkselect"><button type="button" data-guide-select="all">Select page</button><button type="button" data-guide-select="strong">Select strong</button>` +
       `<button type="button" data-guide-select="review">Select needs review</button><button type="button" data-guide-select="none">Clear</button></div>` +
@@ -27630,6 +27659,8 @@ async function runLaunchBoxStrategyScan(page = 1) {
       `<button type="button" class="guide-approve" id="launchBoxStrategyBulkApprove" disabled>Approve selected</button>` +
       `<button type="button" id="launchBoxStrategyBulkReject" disabled>Not a Match</button>` +
       `<button type="button" id="launchBoxStrategyBulkMetadata" disabled>Needs Metadata</button></div>` +
+      `<div class="launchbox-strategy-bulk-rejection"><label>Shared rejection reason<select id="launchBoxStrategyBulkRejectReason">${launchBoxStrategyRejectOptions()}</select></label>` +
+      `<label>Optional note<input id="launchBoxStrategyBulkRejectNote" type="text" maxlength="240" placeholder="Required for Other"></label></div>` +
       `<div class="launchbox-strategy-bulk-review"><label>Shared review reason<select id="launchBoxStrategyBulkReason">${launchBoxStrategyReasonOptions()}</select></label>` +
       `<label>Shared note<input id="launchBoxStrategyBulkNote" type="text" maxlength="240" placeholder="Required for cross-platform approvals"></label>` +
       `<button type="button" class="guide-approve" id="launchBoxStrategyBulkReviewed" disabled>Approve reviewed selection</button></div></div>` : '';
@@ -27647,6 +27678,7 @@ async function runLaunchBoxStrategyScan(page = 1) {
         `<div class="launchbox-strategy-proof"><b>Platform evidence</b><span>${escapeHtml(r.platformBasis||'Not specified')}: ${escapeHtml(r.platformCompatibility||'Unknown')}</span></div></div></div>` +
         `<div class="launchbox-controlled-evidence"><strong>${escapeHtml(r.classification)}</strong><span>${escapeHtml(r.reason)}</span>` +
         `<small>${escapeHtml(r.evidenceProvenance||'Metadata-based proposal')}</small>` +
+        (r.savedStatus && r.savedDecisionReason ? `<details class="launchbox-strategy-decision-history"><summary>Saved decision explanation</summary>${escapeHtml(r.savedDecisionReason)}</details>` : '') +
         `<details class="launchbox-strategy-evidence-details"><summary>All platform fields</summary><div>Primary / shelf: ${escapeHtml(r.guidePrimaryPlatform||'Unknown')}</div><div>Covered: ${escapeHtml(r.guideCoveredPlatforms||'Not specified')}</div><div>Associated: ${escapeHtml(r.guideAssociatedPlatforms||'Not specified')}</div>${r.guideGameTitle?`<div>Game Title: ${escapeHtml(r.guideGameTitle)}</div>`:''}</details>` +
         launchBoxStrategyRowActions(r) + `</div></article>`).join('') + `</div>` + pager;
     host.querySelector('#launchBoxStrategyStatus')?.addEventListener('change',e=>{
@@ -27663,10 +27695,19 @@ async function runLaunchBoxStrategyScan(page = 1) {
       const check=()=>{if(button)button.disabled=!launchBoxStrategyReviewValid(reason?.value||'',(note?.value||'').trim(),box.closest('.launchbox-strategy-pair')?.dataset.guideUnlisted==='true');};
       reason?.addEventListener('change',check);note?.addEventListener('input',check);check();
     });
+    host.querySelectorAll('.launchbox-strategy-reject').forEach(box=>{
+      const reason=box.querySelector('.guide-reject-reason');
+      const note=box.querySelector('.guide-reject-note');
+      const button=box.querySelector('[data-guide-action="reject"]');
+      const check=()=>{if(button)button.disabled=!launchBoxStrategyRejectValid(reason?.value||'',(note?.value||'').trim());};
+      reason?.addEventListener('change',check); note?.addEventListener('input',check);check();
+    });
     host.querySelectorAll('.launchbox-strategy-select').forEach(box=>box.addEventListener('change',launchBoxStrategyUpdateBulk));
     host.querySelectorAll('[data-guide-select]').forEach(button=>button.addEventListener('click',()=>launchBoxStrategySelectPage(button.dataset.guideSelect)));
     host.querySelector('#launchBoxStrategyBulkReason')?.addEventListener('change',launchBoxStrategyUpdateBulk);
     host.querySelector('#launchBoxStrategyBulkNote')?.addEventListener('input',launchBoxStrategyUpdateBulk);
+    host.querySelector('#launchBoxStrategyBulkRejectReason')?.addEventListener('change',launchBoxStrategyUpdateBulk);
+    host.querySelector('#launchBoxStrategyBulkRejectNote')?.addEventListener('input',launchBoxStrategyUpdateBulk);
     host.querySelector('#launchBoxStrategyBulkApprove')?.addEventListener('click',()=>launchBoxStrategySubmitSelection('approve'));
     host.querySelector('#launchBoxStrategyBulkReviewed')?.addEventListener('click',()=>launchBoxStrategySubmitSelection('approve-reviewed'));
     host.querySelector('#launchBoxStrategyBulkReject')?.addEventListener('click',()=>launchBoxStrategySubmitSelection('reject'));

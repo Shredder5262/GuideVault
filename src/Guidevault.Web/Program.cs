@@ -909,7 +909,7 @@ app.MapPost("/api/integrations/launchbox/scans/strategy/decisions/batch", (Guide
     if (action is not ("approve" or "approve-reviewed" or "reject" or "needs-metadata" or "undo"))
         return (IResult)Results.BadRequest(new { error = "Invalid strategy-guide disposition." });
     var statusFilter = (payload.StatusFilter ?? "pending").Trim().ToLowerInvariant();
-    if (action == "undo" ? statusFilter is not ("approved" or "rejected" or "metadata") : statusFilter != "pending")
+    if (action == "undo" ? statusFilter is not ("approved" or "rejected" or "metadata") : statusFilter is not ("pending" or "related"))
         return (IResult)Results.BadRequest(new { error = "Refresh the correct review queue before saving a decision." });
     if (string.IsNullOrWhiteSpace(payload.Platform) || payload.Page < 1 ||
         payload.PageSize is not (25 or 50 or 100 or 250 or 500) ||
@@ -922,8 +922,12 @@ app.MapPost("/api/integrations/launchbox/scans/strategy/decisions/batch", (Guide
          reviewNote.Length > 240 ||
          ((reviewReason is "cross-platform" or "other-verified") && reviewNote.Length < 8)))
         return (IResult)Results.BadRequest(new { error = "Choose a review reason; cross-platform and Other approvals also require a note (8–240 characters)." });
-    if (action != "approve-reviewed" && (reviewReason.Length > 0 || reviewNote.Length > 0))
-        return (IResult)Results.BadRequest(new { error = "Review notes are only accepted for reviewed approvals." });
+    if (action == "reject" &&
+        (reviewReason is not ("different-game" or "incompatible-release" or "incorrect-coverage" or "other-rejection") ||
+         reviewNote.Length > 240 || (reviewReason == "other-rejection" && reviewNote.Length < 8)))
+        return (IResult)Results.BadRequest(new { error = "Choose why this guide is not a match; Other requires a note (8–240 characters)." });
+    if (action is not ("approve-reviewed" or "reject") && (reviewReason.Length > 0 || reviewNote.Length > 0))
+        return (IResult)Results.BadRequest(new { error = "Review reasons are only accepted for reviewed approvals and rejections." });
     var keys = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
     foreach (var pair in payload.Pairs)
         if (pair is null || string.IsNullOrWhiteSpace(pair.GameId) || string.IsNullOrWhiteSpace(pair.PublicationId) ||
@@ -964,8 +968,8 @@ app.MapPost("/api/integrations/launchbox/scans/strategy/decisions/batch", (Guide
                     return (IResult)Results.BadRequest(new { error = "A selected guide already has a saved decision. Refresh the queue." });
                 if (action == "approve" && evidence.Classification != "Strong candidate")
                     return (IResult)Results.BadRequest(new { error = "Standard approval requires Strong candidates only." });
-                if (action == "approve-reviewed" && evidence.Classification != "Needs review")
-                    return (IResult)Results.BadRequest(new { error = "Choose Needs Review pairs for reviewed approval." });
+                if (action == "approve-reviewed" && evidence.Classification is not ("Needs review" or "Related release"))
+                    return (IResult)Results.BadRequest(new { error = "Choose Needs Review or Related Release pairs for reviewed approval." });
                 if (action == "approve-reviewed" && evidence.PlatformCompatibility == "Target platform not listed" &&
                     (reviewReason is not ("cross-platform" or "coverage-inspected" or "other-verified") || reviewNote.Length < 8))
                     return (IResult)Results.BadRequest(new { error = "For a guide that does not list this platform, choose cross-platform/content verification and explain the evidence (at least 8 characters)." });
@@ -9560,6 +9564,17 @@ public sealed class GuidevaultLaunchBoxIntegrationStore
             (reasonLabel.Length == 0 || note.Length > 240 ||
              ((reviewReason is "cross-platform" or "other-verified") && note.Length < 8)))
             return (false, 0, "Reviewed guide approvals require a valid reason and verification note when applicable.");
+        var rejectionLabel = reviewReason switch
+        {
+            "different-game" => "Different game despite same title",
+            "incompatible-release" => "Guide content not applicable to this release",
+            "incorrect-coverage" => "Incorrect Covered Games metadata",
+            "other-rejection" => "Other verified mismatch",
+            _ => string.Empty
+        };
+        if (action == "reject" && (rejectionLabel.Length == 0 || note.Length > 240 ||
+            (reviewReason == "other-rejection" && note.Length < 8)))
+            return (false, 0, "Choose a rejection reason; Other requires a verification note.");
         var itemsById = items.Where(i => !string.IsNullOrWhiteSpace(i.Id))
             .GroupBy(i => i.Id, StringComparer.OrdinalIgnoreCase)
             .ToDictionary(g => g.Key, g => g.First(), StringComparer.OrdinalIgnoreCase);
@@ -9617,7 +9632,8 @@ public sealed class GuidevaultLaunchBoxIntegrationStore
                         : action == "approve"
                             ? $"Approved Strong strategy-guide proposal. Scan: {scanEvidence}."
                             : action == "reject"
-                                ? $"Reviewer rejected this particular game/guide relationship. Scan: {scanEvidence}."
+                                ? $"Not a Match ({rejectionLabel}). Scan: {scanEvidence}." +
+                                  (note.Length > 0 ? $" Reviewer note: {note}" : "")
                                 : $"Needs publication metadata verification. Scan: {scanEvidence}.";
                     var match = GuidevaultLaunchBoxMatcher.CreateMatch(game, item, "Strategy Guide", status, 0, explanation);
                     match.PreviousMatchStatus = "Missing";
