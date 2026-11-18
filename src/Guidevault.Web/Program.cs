@@ -880,6 +880,10 @@ app.MapPost("/api/integrations/launchbox/scans/preview", (GuidevaultLaunchBoxSco
     try
     {
         var snapshot = launchBoxIntegrationStore.GetSnapshot();
+        if (string.Equals(payload.MatchType, "Strategy Guide", StringComparison.OrdinalIgnoreCase))
+            return (IResult)Results.Ok(GuidevaultLaunchBoxStrategyScanner.Preview(
+                payload.Platform, snapshot.Games, cache.GetItemsSnapshot(), payload.Page,
+                payload.PageSize, snapshot.Matches, payload.StatusFilter));
         return (IResult)Results.Ok(GuidevaultLaunchBoxControlledManualScanner.Preview(
             payload.Platform, payload.MatchType, snapshot.Games, cache.GetItemsSnapshot(),
             launchBoxSourceSettingsStore.Get().RootPath, payload.Page, payload.PageSize, snapshot.Matches, payload.StatusFilter));

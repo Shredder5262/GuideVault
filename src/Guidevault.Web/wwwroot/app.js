@@ -27083,7 +27083,7 @@ function populateLaunchBoxScanPlatforms() {
   select.innerHTML = '<option value="">Select synced platform</option>' +
     platforms.map(p => {
       const count = byPlatform.get(p);
-      const label = count ? `${p} — ${Number(count.unmatchedManuals).toLocaleString()} unmatched manuals` : p;
+      const label = count ? `${p} · ${Number(count.pendingPairs || 0).toLocaleString()} pending` : p;
       return `<option value="${escapeForAttribute(p)}">${escapeHtml(label)}</option>`;
     }).join('');
   if (platforms.includes(previous)) select.value = previous;
@@ -27100,6 +27100,7 @@ async function runLaunchBoxControlledScan(page = 1) {
   const kind = $('launchBoxScanKind')?.value || 'Manual';
   const host = $('launchBoxControlledScanResults');
   if (!platform) return launchBoxControlledMessage('launchBoxControlledScanStatus', 'Select a synced platform first.');
+  if (kind === 'Strategy Guide') return runLaunchBoxStrategyScan(page);
   const requestId = ++launchBoxManualScanRequestId;
   if (host) host.innerHTML = '';
   launchBoxControlledMessage('launchBoxControlledScanStatus', `Loading read-only ${platform} → Manuals proposals (page ${page})...`);
@@ -27136,21 +27137,13 @@ async function runLaunchBoxControlledScan(page = 1) {
       `<strong>${Number(data.games || 0).toLocaleString()}</strong> games · ` +
       `<strong>${total.toLocaleString()}</strong> proposed pairs · ` +
       `${Number(data.strongCandidates || 0).toLocaleString()} strong · ${Number(data.needsReview || 0).toLocaleString()} needs review · ` +
-      `${Number(data.excludedByPlatform || 0).toLocaleString()} other-platform pairs excluded · ` +
-      `${Number(data.excludedByIdentity || 0).toLocaleString()} conflicting game identities excluded · ` +
-      `${Number(data.gamesWithNoEligibleCandidate || 0).toLocaleString()} games without an eligible manual</div>` +
-      `<p class="sub">No changes made. ${escapeHtml(data.note || '')}</p>` +
-      (Number(data.excludedByPlatform || 0) > 0 ? `<details class="launchbox-manual-exclusions"><summary>${Number(data.excludedByPlatform)} wrong-platform manual pairs skipped (show examples)</summary>` +
-        `<div class="launchbox-exclusions-list">` + (data.excludedExamples || []).map(r => `<div>${escapeHtml(r.gameTitle)} → ${escapeHtml(r.publicationTitle)} (${escapeHtml(r.publicationSystem || 'Unknown')})</div>`).join('') + `</div></details>` : '') +
-      (Number(data.excludedByIdentity || 0) > 0 ? `<details class="launchbox-manual-exclusions"><summary>${Number(data.excludedByIdentity)} conflicting game identities skipped (show examples)</summary>` +
-        `<div class="launchbox-exclusions-list">` + (data.identityExclusions || []).map(r => `<div>${escapeHtml(r.gameTitle)} → ${escapeHtml(r.publicationTitle)} · ${escapeHtml(r.reason || '')}</div>`).join('') + `</div></details>` : '') +
-      `<p class="sub launchbox-controlled-artwork-note">${escapeHtml(data.artworkNote || '')}</p>` +
+      `${Number(data.gamesWithNoEligibleCandidate || 0).toLocaleString()} games without eligible candidates</div>` +
       (launchBoxManualScanStatusFilter === 'pending' ? `<div class="launchbox-scan-bulkbar" role="group" aria-label="Manual batch review for this page">` +
       `<div class="launchbox-scan-bulkselect">` +
-      `<button type="button" id="launchBoxSelectPage">Select undecided on page</button>` +
-      `<button type="button" id="launchBoxSelectStrong">Select strong on page</button>` +
-      `<button type="button" id="launchBoxSelectNeedsReview">Select Needs Review on page</button>` +
-      `<button type="button" id="launchBoxClearSelection">Clear selection</button></div>` +
+      `<button type="button" id="launchBoxSelectPage">Select page</button>` +
+      `<button type="button" id="launchBoxSelectStrong">Select strong</button>` +
+      `<button type="button" id="launchBoxSelectNeedsReview">Select review</button>` +
+      `<button type="button" id="launchBoxClearSelection">Clear</button></div>` +
       `<div class="launchbox-scan-bulkactions"><span id="launchBoxSelectedCount" aria-live="polite">0 selected on this page</span>` +
       `<button type="button" id="launchBoxBulkApprove" disabled>Approve selected (0)</button>` +
       `<button type="button" id="launchBoxBulkReject" disabled>Not a Match selected (0)</button></div>` +
@@ -27164,7 +27157,7 @@ async function runLaunchBoxControlledScan(page = 1) {
       `<option value="other-verified">Other verified evidence</option></select></label>` +
       `<label>Shared verification note<input id="launchBoxBulkReviewNote" maxlength="240" type="text" placeholder="Optional, except for Other"></label>` +
       `<button type="button" id="launchBoxBulkApproveReviewed" disabled>Approve reviewed selected (0)</button></div>` +
-      `<small>Select Strong candidates for standard approval, or select Needs Review candidates and give them one shared verification reason. Selections are page-only. Decisions leave Pending and remain available in history.</small></div>` : '') +
+      `</div>` : '') +
       `<div class="launchbox-scan-page-toolbar"><label>Results per page: <select id="launchBoxScanPageSize">${pageSizeOptions}</select></label></div>` +
       pager +
       `<div class="launchbox-controlled-table">` +
@@ -27204,7 +27197,7 @@ async function runLaunchBoxControlledScan(page = 1) {
           `<button type="button" data-manual-review-action="needs-metadata" data-game-id="${escapeForAttribute(r.gameId)}" data-manual-id="${escapeForAttribute(r.publicationId)}">Needs Metadata</button></div>`) +
         `</div>` +
         `</article>`).join('') + `</div>` + pager +
-      `<p class="sub">All proposals are viewable using Previous/Next. Only explicitly selected pairs can be dispositioned.</p>`;
+      ``;
     if (host) {
       host.querySelector('#launchBoxManualStatusFilter')?.addEventListener('change', e => {
         launchBoxManualScanStatusFilter = e.target.value;
@@ -27282,6 +27275,7 @@ async function submitManualReviewDecision(button, platform) {
     });
     launchBoxControlledMessage('launchBoxControlledScanStatus', result.message || 'Decision saved.', true);
     await loadLaunchBoxCoverage(false);
+    await refreshLaunchBoxManualPlatformCounts();
     await runLaunchBoxControlledScan(launchBoxManualScanCurrentPage);
   } catch (err) {
     buttons.forEach(b => b.disabled = false);
@@ -27359,6 +27353,7 @@ async function submitLaunchBoxManualBatch(action, platform) {
         pageSize: launchBoxManualScanPageSize, pairs, reviewReason, reviewNote })
     });
     await loadLaunchBoxCoverage(false);
+    await refreshLaunchBoxManualPlatformCounts();
     await runLaunchBoxControlledScan(launchBoxManualScanCurrentPage);
     launchBoxControlledMessage('launchBoxControlledScanStatus', result.message || `${result.applied} decisions saved.`, true);
   } catch (err) {
@@ -27389,8 +27384,9 @@ async function searchLaunchBoxCorrectionManuals(selectId = '') {
       select.innerHTML = '<option value="">Select GuideVault manual</option>' +
         (r.items || []).map(i => `<option value="${escapeForAttribute(i.id)}">${escapeHtml(i.title)}${i.gameTitle && i.gameTitle !== i.title ? ' · ' + escapeHtml(i.gameTitle) : ''}</option>`).join('');
       if (selectId && (r.items || []).some(i => i.id === selectId)) select.value = selectId;
+      else if ((r.items || []).length === 1) select.value = r.items[0].id;
     }
-    launchBoxCorrectionStatus(`${(r.items || []).length} matching manuals. Choose the exact publication.`);
+    launchBoxCorrectionStatus((r.items || []).length === 1 ? 'Manual selected. Find the correct game next.' : `${(r.items || []).length} manuals found. Select the correct document.`);
   } catch (err) { launchBoxCorrectionStatus(err.message); }
 }
 async function searchLaunchBoxCorrectionGames() {
@@ -27403,7 +27399,7 @@ async function searchLaunchBoxCorrectionGames() {
     const select = $('launchBoxCorrectionGame');
     if (select) select.innerHTML = '<option value="">Select correct LaunchBox game</option>' +
       (r.items || []).map(g => `<option value="${escapeForAttribute(g.id)}">${escapeHtml(g.title)}${g.region ? ' · ' + escapeHtml(g.region) : ''}</option>`).join('');
-    launchBoxCorrectionStatus(`${(r.items || []).length} matching games. Choose the correct LaunchBox entry.`);
+    launchBoxCorrectionStatus((r.items || []).length === 1 ? 'One game found. Select it, add a note, and link.' : `${(r.items || []).length} games found. Select the exact LaunchBox game.`);
   } catch (err) { launchBoxCorrectionStatus(err.message); }
 }
 function openLaunchBoxManualCorrection(id, title) {
@@ -27420,8 +27416,10 @@ async function approveLaunchBoxCorrection() {
   const publicationId = $('launchBoxCorrectionManual')?.value || '';
   const gameId = $('launchBoxCorrectionGame')?.value || '';
   const reviewNote = ($('launchBoxCorrectionNote')?.value || '').trim();
-  if (!platform || !publicationId || !gameId || reviewNote.length < 8 || reviewNote.length > 240)
-    return launchBoxCorrectionStatus('Select one manual, its correct game, and an 8–240 character verification note.');
+  if (!platform) return launchBoxCorrectionStatus('Choose a platform first.');
+  if (!publicationId) return launchBoxCorrectionStatus('Select a manual from the manual results.');
+  if (!gameId) return launchBoxCorrectionStatus('Select a game from the LaunchBox search results.');
+  if (reviewNote.length < 8 || reviewNote.length > 240) return launchBoxCorrectionStatus('Enter an 8–240 character note describing how you verified the match.');
   const button = $('launchBoxCorrectionApprove');
   launchBoxCorrectionBusy = true;
   if (button) button.disabled = true;
@@ -27433,7 +27431,51 @@ async function approveLaunchBoxCorrection() {
     launchBoxCorrectionStatus(r.message || 'Reviewed association saved.', true);
     if ($('launchBoxCorrectionNote')) $('launchBoxCorrectionNote').value = '';
     await loadLaunchBoxCoverage(false);
+    await refreshLaunchBoxManualPlatformCounts();
     await runLaunchBoxControlledScan(launchBoxManualScanCurrentPage);
   } catch (err) { launchBoxCorrectionStatus(err.message); }
   finally { launchBoxCorrectionBusy = false; if (button) button.disabled = false; }
+}
+
+
+// GUIDEVAULT_STRATEGY_SCOPED_V19 — read-only coverage scan; no strategy guide approvals in this release.
+async function runLaunchBoxStrategyScan(page = 1) {
+  const platform = $('launchBoxScanPlatform')?.value || '';
+  const host = $('launchBoxControlledScanResults');
+  if (!host || !platform) return;
+  const requestId = ++launchBoxManualScanRequestId;
+  host.innerHTML = '';
+  launchBoxControlledMessage('launchBoxControlledScanStatus', `Scanning ${platform} → Strategy Guides (read-only)...`);
+  try {
+    const data = await launchBoxControlledApi('/api/integrations/launchbox/scans/preview', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ platform, matchType: 'Strategy Guide', page,
+        pageSize: launchBoxManualScanPageSize, statusFilter: 'pending' })
+    });
+    if (requestId !== launchBoxManualScanRequestId) return;
+    const currentPage = Number(data.page || 1), pages = Number(data.pageCount || 1);
+    launchBoxManualScanCurrentPage = currentPage;
+    const pager = `<nav class="launchbox-scan-pagination"><span>${Number(data.firstRow || 0)}–${Number(data.lastRow || 0)} of ${Number(data.candidatePairs || 0)} · Page ${currentPage} of ${pages}</span>` +
+      `<div class="launchbox-scan-page-actions"><button type="button" data-guide-page="${currentPage - 1}" ${currentPage <= 1 ? 'disabled' : ''}>Previous</button>` +
+      `<button type="button" data-guide-page="${currentPage + 1}" ${currentPage >= pages ? 'disabled' : ''}>Next</button></div></nav>`;
+    host.innerHTML = `<div class="launchbox-controlled-summary"><strong>${Number(data.pendingPairs || 0)} pending relationships</strong> · ` +
+      `${Number(data.strongCandidates || 0)} strong · ${Number(data.needsReview || 0)} need review · ` +
+      `${Number(data.strategyGuidesInLibrary || 0)} strategy guides in library</div>` +
+      `<p class="sub">${escapeHtml(data.note || '')}</p>` + pager +
+      `<div class="launchbox-controlled-table">` +
+      (data.rows || []).map(r => `<article class="launchbox-controlled-pair launchbox-strategy-pair">` +
+        `<div class="launchbox-controlled-sourcecard"><div class="launchbox-controlled-cover"><img data-launchbox-scan-image src="${escapeForAttribute(r.gameBoxFrontUrl || '')}" alt="${escapeForAttribute(r.gameTitle)}" loading="lazy"><span class="launchbox-controlled-no-cover">No box front</span></div>` +
+        `<div class="launchbox-controlled-sourceinfo"><small>LAUNCHBOX</small><strong>${escapeHtml(r.gameTitle)}</strong><span>${escapeHtml(r.gamePlatform)}</span></div></div>` +
+        `<div class="launchbox-controlled-sourcecard"><div class="launchbox-controlled-cover"><img data-launchbox-scan-image src="${escapeForAttribute(r.coverUrl)}" alt="${escapeForAttribute(r.publicationTitle)}" loading="lazy"><span class="launchbox-controlled-no-cover">No guide cover</span></div>` +
+        `<div class="launchbox-controlled-sourceinfo"><small>STRATEGY GUIDE</small><strong>${escapeHtml(r.publicationTitle)}</strong><span>${escapeHtml(r.publicationSystem || 'Platform unknown')}</span></div></div>` +
+        `<div class="launchbox-controlled-evidence"><strong>${escapeHtml(r.classification)}</strong><span>${escapeHtml(r.reason)}</span><small>${escapeHtml(r.matchBasis)}</small></div>` +
+        `</article>`).join('') + `</div>` + pager;
+    host.querySelectorAll('[data-guide-page]').forEach(button => button.addEventListener('click', () => {
+      const n = Number(button.dataset.guidePage); if (n >= 1 && n <= pages) runLaunchBoxStrategyScan(n);
+    }));
+    host.querySelectorAll('img[data-launchbox-scan-image]').forEach(img => img.addEventListener('error', () => {
+      img.closest('.launchbox-controlled-cover')?.classList.add('is-missing'); img.remove();
+    }, { once: true }));
+    launchBoxControlledMessage('launchBoxControlledScanStatus', 'Strategy guide preview complete — 0 links created.', true);
+  } catch (err) { if (requestId === launchBoxManualScanRequestId) launchBoxControlledMessage('launchBoxControlledScanStatus', err.message); }
 }

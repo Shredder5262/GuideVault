@@ -43,11 +43,17 @@ public static class GuidevaultLaunchBoxManualRecovery
             var key = GuidevaultLaunchBoxControlledManualScanner.NormalizedPlatform(platform);
             var eligible = tagged.Where(row => row.Platforms.Contains(key, StringComparer.OrdinalIgnoreCase)).ToArray();
             var linked = eligible.Count(row => approved.Contains(key + "\u001f" + row.Item.Id));
+            // Pending means actionable candidates visible in the scanner, not every orphan document.
+            // The previous unmatched count could be nonzero with an empty review queue.
+            var preview = GuidevaultLaunchBoxControlledManualScanner.Preview(platform, "Manual",
+                snapshot.Games, items, null, 1, 25, snapshot.Matches, "pending");
+            var json = System.Text.Json.JsonSerializer.SerializeToElement(preview);
+            var pending = json.GetProperty("pendingPairs").GetInt32();
             return new { platform, manualDocuments = eligible.Length, linkedManuals = linked,
-                unmatchedManuals = eligible.Length - linked };
+                unmatchedManuals = eligible.Length - linked, pendingPairs = pending };
         }).ToArray();
         return new { kind = "Manual", unknownPlatformManuals = unknownCount, platforms = rows,
-            definition = "Unmatched means a distinct manual explicitly tagged for this platform with no approved Manual link to a synced LaunchBox game on this platform. Rejected pairs are not approved links. Unknown-platform manuals are counted separately." };
+            definition = "Pending means undecided game/manual candidate pairs shown by a platform's manual scan. Unlinked manuals without eligible candidates are not counted as pending. Unlinked document totals remain available separately." };
     }
 
     public static object SearchManuals(string platform, string? query, IReadOnlyList<LibraryItem> items)

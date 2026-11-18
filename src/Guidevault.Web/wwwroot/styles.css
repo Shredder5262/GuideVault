@@ -22759,3 +22759,14 @@ body.guidevault-direct-reader-pending:not(.auth-locked) #guidevaultDirectReaderL
 .launchbox-manual-recovery-body input,.launchbox-manual-recovery-body select,.launchbox-manual-recovery-body textarea{width:100%;min-width:0;background:#0b1929;color:#e7eff9;border:1px solid rgba(110,160,210,.50);border-radius:8px;padding:9px}
 .launchbox-manual-recovery-body button{justify-self:start}
 @media(max-width:920px){.launchbox-manual-recovery-search{grid-template-columns:1fr}.launchbox-manual-recovery-body button{justify-self:stretch}}
+
+/* GUIDEVAULT_STRATEGY_SCOPED_V19 — simplify the matching workspace */
+.launchbox-controlled-scan-card .launchbox-controlled-summary {font-size:.94rem;margin:10px 0}
+.launchbox-controlled-scan-card .launchbox-controlled-form {margin-bottom:16px}
+.launchbox-controlled-scan-card .launchbox-manual-recovery {margin:12px 0 18px;border:1px solid var(--border,#5555);border-radius:10px;padding:12px 16px}
+.launchbox-controlled-scan-card .launchbox-manual-recovery summary {cursor:pointer}
+.launchbox-controlled-scan-card .launchbox-manual-recovery-body {margin-top:15px}
+.launchbox-controlled-scan-card .launchbox-scan-bulkbar {gap:7px;padding:10px 12px}
+.launchbox-controlled-scan-card .launchbox-scan-bulkselect {display:flex;gap:6px;flex-wrap:wrap}
+.launchbox-controlled-scan-card .launchbox-scan-bulkselect button {font-size:.8rem;padding:7px 10px}
+.launchbox-strategy-pair {padding-left:16px;min-height:185px}

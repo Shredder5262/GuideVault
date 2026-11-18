@@ -1826,18 +1826,18 @@
             <p id="launchBoxMatchReviewStatus" class="sub account-status" aria-live="polite"></p>
             <article class="settings-card launchbox-controlled-scan-card">
               <div class="settings-card-heading-row compact-heading"><div><h3>Controlled Literature Scan</h3>
-                <p class="sub">First stage: exact identity candidates for one platform's manuals. Scanning never creates or approves links.</p></div></div>
+                <p class="sub">Find likely literature for one platform. Manuals can be reviewed and linked; strategy guides are a read-only preview.</p></div></div>
               <div class="launchbox-controlled-form">
                 <label>LaunchBox platform
                   <select id="launchBoxScanPlatform"><option value="">Select a synced platform</option></select>
                 </label>
                 <label>Document type
-                  <select id="launchBoxScanKind"><option value="Manual">Manuals</option><option value="Strategy Guide" disabled>Strategy Guides (next phase)</option><option value="Magazine" disabled>Magazines (next phase)</option></select>
+                  <select id="launchBoxScanKind"><option value="Manual">Manuals</option><option value="Strategy Guide">Strategy Guides</option><option value="Magazine" disabled>Magazines (next phase)</option></select>
                 </label>
                 <button id="launchBoxRunControlledScan" class="primary" type="button">Run Dry Scan</button>
               </div>
               <details class="launchbox-manual-recovery" id="launchBoxManualRecoveryPanel">
-                <summary><strong>Correct a manual linked to the wrong game</strong><span class="sub">Find the publication, choose its correct LaunchBox game, and save a verified link. Earlier rejections remain in history.</span></summary>
+                <summary><strong>Link a manual to the correct game</strong><span class="sub">Search the document and game, select each, then save the link.</span></summary>
                 <div class="launchbox-manual-recovery-body">
                   <div class="launchbox-manual-recovery-search">
                     <label>Find GuideVault manual <input id="launchBoxCorrectionManualQuery" type="search" placeholder="Manual title (2+ characters)"></label>
@@ -1849,12 +1849,12 @@
                     <button id="launchBoxCorrectionSearchGames" type="button">Find games</button>
                     <label>Game <select id="launchBoxCorrectionGame" aria-label="Correct LaunchBox target"><option value="">Find a game first</option></select></label>
                   </div>
-                  <label>How did you verify this is the correct manual?
+                  <label>Verification note
                     <textarea id="launchBoxCorrectionNote" maxlength="240" rows="2" placeholder="Brief verification note (8–240 characters), e.g. examined title page and screenshots"></textarea>
                   </label>
                   <button id="launchBoxCorrectionApprove" class="primary" type="button">Link manual to selected game</button>
                   <p class="sub" id="launchBoxCorrectionStatus" aria-live="polite"></p>
-                  <p class="sub">For manuals, primary platform must match. Conflicting numbered sequels cannot be overridden here. Correction adds a separate reviewed link; it does not erase past rejections or replace another game's manuals.</p>
+                  <p class="sub">Manual links require a compatible platform and game identity. Existing links and rejected history are preserved.</p>
                 </div>
               </details>
               <p class="sub account-status" id="launchBoxControlledScanStatus" aria-live="polite"></p>
