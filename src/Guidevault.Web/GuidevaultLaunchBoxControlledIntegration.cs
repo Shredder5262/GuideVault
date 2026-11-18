@@ -177,7 +177,8 @@ public static class GuidevaultLaunchBoxControlledManualScanner
     // A strict read-only first pass, not a replacement for a complete identity/edition engine.
     // Never auto-approves, persists or restores associations. Returns evidence to a human.
     public static object Preview(string platform, string matchType,
-        IReadOnlyList<GuidevaultLaunchBoxGame> games, IReadOnlyList<LibraryItem> documents)
+        IReadOnlyList<GuidevaultLaunchBoxGame> games, IReadOnlyList<LibraryItem> documents,
+        string? launchBoxRoot)
     {
         if (!string.Equals(matchType, "Manual", StringComparison.OrdinalIgnoreCase))
             throw new ArgumentException("The first controlled scanner supports Manuals only. Guides and magazines require separate coverage rules.");
@@ -230,16 +231,18 @@ public static class GuidevaultLaunchBoxControlledManualScanner
                 else if (classification == "Strong candidate") strong++;
                 else review++;
                 rows.Add(new { gameId = game.Id, gameTitle = game.Title, gamePlatform = game.Platform,
+                    gameBoxFrontUrl = "/api/integrations/launchbox/games/" + Uri.EscapeDataString(game.Id) + "/box-front",
                     publicationId = item.Id, publicationTitle = item.Title,
                     publicationSystem = string.Join(", ", namedPlatforms),
                     classification, reason,
-                    coverUrl = "/api/items/" + Uri.EscapeDataString(item.Id) + "/cover-thumb?w=160" });
+                    coverUrl = "/api/items/" + Uri.EscapeDataString(item.Id) + "/cover-thumb?w=360" });
             }
         }
         return new { platform, matchType = "Manual", dryRun = true, changedRecords = 0,
             games = selectedGames.Length, manualsInLibrary = manuals.Length,
             candidatePairs = rows.Count, strongCandidates = strong, needsReview = review,
             conflicts = conflict, gamesWithNoExactTitleCandidate = unmatched,
+            artworkNote = GuidevaultLaunchBoxBoxFronts.AvailabilityNote(launchBoxRoot, platform),
             truncated = rows.Count > 500, rows = rows.Take(500).ToArray(),
             note = "Strict exact-title discovery. No links are written. Review platform/year conflicts and metadata gaps; approval is not enabled in this first update." };
     }

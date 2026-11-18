@@ -27083,14 +27083,30 @@ async function runLaunchBoxControlledScan() {
       `${Number(data.strongCandidates || 0)} strong · ${Number(data.needsReview || 0)} review · ` +
       `${Number(data.conflicts || 0)} conflicts · ${Number(data.gamesWithNoExactTitleCandidate || 0)} no exact title candidate</div>` +
       `<p class="sub">No changes made. ${escapeHtml(data.note || '')}</p>` +
+      `<p class="sub launchbox-controlled-artwork-note">${escapeHtml(data.artworkNote || '')}</p>` +
       `<div class="launchbox-controlled-table">` +
       (data.rows || []).map(r => `<article class="launchbox-controlled-pair">` +
-        `<div><strong>${escapeHtml(r.gameTitle)}</strong><span>${escapeHtml(r.gamePlatform)}</span></div>` +
-        `<div class="launchbox-controlled-cover"><img src="${escapeForAttribute(r.coverUrl)}" alt="Publication cover" loading="lazy"></div>` +
-        `<div><strong>${escapeHtml(r.publicationTitle)}</strong><span>${escapeHtml(r.publicationSystem || 'Platform unknown')}</span></div>` +
-        `<div><strong>${escapeHtml(r.classification)}</strong><span>${escapeHtml(r.reason)}</span></div>` +
+        `<div class="launchbox-controlled-sourcecard">` +
+          `<div class="launchbox-controlled-cover">` +
+            `<img data-launchbox-scan-image src="${escapeForAttribute(r.gameBoxFrontUrl || '')}" alt="LaunchBox box front for ${escapeForAttribute(r.gameTitle)}" loading="lazy" decoding="async">` +
+            `<span class="launchbox-controlled-no-cover">Box front unavailable</span></div>` +
+          `<div class="launchbox-controlled-sourceinfo"><small>LAUNCHBOX GAME</small>` +
+            `<strong>${escapeHtml(r.gameTitle)}</strong><span>${escapeHtml(r.gamePlatform)}</span></div></div>` +
+        `<div class="launchbox-controlled-sourcecard">` +
+          `<div class="launchbox-controlled-cover">` +
+            `<img data-launchbox-scan-image src="${escapeForAttribute(r.coverUrl)}" alt="Manual cover for ${escapeForAttribute(r.publicationTitle)}" loading="lazy" decoding="async">` +
+            `<span class="launchbox-controlled-no-cover">Manual cover unavailable</span></div>` +
+          `<div class="launchbox-controlled-sourceinfo"><small>GUIDEVAULT MANUAL</small>` +
+            `<strong>${escapeHtml(r.publicationTitle)}</strong><span>${escapeHtml(r.publicationSystem || 'Platform unknown')}</span></div></div>` +
+        `<div class="launchbox-controlled-evidence"><strong>${escapeHtml(r.classification)}</strong><span>${escapeHtml(r.reason)}</span></div>` +
         `</article>`).join('') + `</div>` +
       (data.truncated ? '<p class="sub">Showing first 500 proposals; this is a limited review preview, not an approval queue.</p>' : '');
+    if (host) host.querySelectorAll('img[data-launchbox-scan-image]').forEach(img => {
+      img.addEventListener('error', () => {
+        img.closest('.launchbox-controlled-cover')?.classList.add('is-missing');
+        img.remove();
+      }, { once: true });
+    });
     launchBoxControlledMessage('launchBoxControlledScanStatus', `Dry scan complete — 0 links created.`, true);
   } catch (err) { launchBoxControlledMessage('launchBoxControlledScanStatus', err.message); }
 }

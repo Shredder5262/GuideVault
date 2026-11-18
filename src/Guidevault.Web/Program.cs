@@ -850,13 +850,29 @@ app.MapPost("/api/integrations/launchbox/catalog/import", (GuidevaultLaunchBoxSc
     { return (IResult)Results.BadRequest(new { error = ex.Message }); }
 });
 
+// Read-only, game-ID-addressed box-front image. Never accepts a filesystem path from the browser.
+app.MapGet("/api/integrations/launchbox/games/{gameId}/box-front", (string gameId) =>
+{
+    try
+    {
+        var game = launchBoxIntegrationStore.FindGameForBoxFront(gameId);
+        if (game is null) return (IResult)Results.NotFound();
+        var image = GuidevaultLaunchBoxBoxFronts.Resolve(launchBoxSourceSettingsStore.Get().RootPath, game);
+        if (image is null) return (IResult)Results.NotFound();
+        return (IResult)Results.File(image, GuidevaultLaunchBoxBoxFronts.ContentType(image));
+    }
+    catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or ArgumentException)
+    { return (IResult)Results.NotFound(); }
+});
+
 app.MapPost("/api/integrations/launchbox/scans/preview", (GuidevaultLaunchBoxScopedRequest payload) =>
 {
     try
     {
         var snapshot = launchBoxIntegrationStore.GetSnapshot();
         return (IResult)Results.Ok(GuidevaultLaunchBoxControlledManualScanner.Preview(
-            payload.Platform, payload.MatchType, snapshot.Games, cache.GetItemsSnapshot()));
+            payload.Platform, payload.MatchType, snapshot.Games, cache.GetItemsSnapshot(),
+            launchBoxSourceSettingsStore.Get().RootPath));
     }
     catch (Exception ex) when (ex is ArgumentException or InvalidOperationException)
     { return (IResult)Results.BadRequest(new { error = ex.Message }); }
@@ -8547,6 +8563,24 @@ public sealed class GuidevaultLaunchBoxIntegrationStore
         lock (_gate)
         {
             return Clone(_data);
+        }
+    }
+
+    // Returns only artwork identity fields; avoids serializing/cloning the full 16k+ game catalog
+    // on every lazy-loaded box-front request.
+    public GuidevaultLaunchBoxGame? FindGameForBoxFront(string gameId)
+    {
+        if (string.IsNullOrWhiteSpace(gameId)) return null;
+        lock (_gate)
+        {
+            var game = _data.Games.FirstOrDefault(g =>
+                string.Equals(g.Id, gameId, StringComparison.OrdinalIgnoreCase));
+            return game is null ? null : new GuidevaultLaunchBoxGame
+            {
+                Id = game.Id, Title = game.Title, SortTitle = game.SortTitle,
+                Platform = game.Platform, Region = game.Region,
+                AlternateNames = (game.AlternateNames ?? new List<string>()).ToList()
+            };
         }
     }
 
