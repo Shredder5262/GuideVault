@@ -893,8 +893,8 @@ app.MapPost("/api/integrations/launchbox/scans/preview", (GuidevaultLaunchBoxSco
 app.MapPost("/api/integrations/launchbox/scans/manual/decision", (GuidevaultManualReviewRequest payload) =>
 {
     var action = (payload.Action ?? string.Empty).Trim().ToLowerInvariant();
-    if (action is not ("approve" or "reject" or "needs-metadata" or "undo"))
-        return (IResult)Results.BadRequest(new { error = "Choose Approve, Reject, Needs Metadata, or Undo." });
+    if (action is not ("approve" or "approve-reviewed" or "reject" or "needs-metadata" or "undo"))
+        return (IResult)Results.BadRequest(new { error = "Choose Approve, Approve Reviewed, Reject, Needs Metadata, or Undo." });
     if (string.IsNullOrWhiteSpace(payload.Platform) || string.IsNullOrWhiteSpace(payload.GameId)
         || string.IsNullOrWhiteSpace(payload.PublicationId))
         return (IResult)Results.BadRequest(new { error = "Platform, game ID, and publication ID are required." });
@@ -905,6 +905,11 @@ app.MapPost("/api/integrations/launchbox/scans/manual/decision", (GuidevaultManu
     if (game is null || item is null || !string.Equals(item.Kind, "Manual", StringComparison.OrdinalIgnoreCase)
         || !string.Equals(game.Platform, payload.Platform, StringComparison.OrdinalIgnoreCase))
         return (IResult)Results.BadRequest(new { error = "The game/manual pair is missing or outside this platform's manual scope." });
+    // GUIDEVAULT_MANUAL_REVIEW_OVERRIDE_V16: reviewer overrides are individual only.
+    // Strong bulk approval still requires all pairs to be independently Strong.
+    var reviewReason = (payload.ReviewReason ?? string.Empty).Trim().ToLowerInvariant();
+    var reviewNote = (payload.ReviewNote ?? string.Empty).Trim();
+    var scanReason = string.Empty;
     var prior = snapshot.Matches.FirstOrDefault(m => string.Equals(m.LaunchBoxGameId, game.Id, StringComparison.OrdinalIgnoreCase)
         && string.Equals(m.GuideVaultItemId, item.Id, StringComparison.OrdinalIgnoreCase)
         && string.Equals(m.MatchType, "Manual", StringComparison.OrdinalIgnoreCase));
@@ -921,8 +926,18 @@ app.MapPost("/api/integrations/launchbox/scans/manual/decision", (GuidevaultManu
             payload.Platform, game.Id, item.Id, snapshot.Games, items, launchBoxSourceSettingsStore.Get().RootPath);
         if (!evidence.Found)
             return (IResult)Results.BadRequest(new { error = evidence.Reason });
+        scanReason = evidence.Reason;
         if (action == "approve" && !string.Equals(evidence.Classification, "Strong candidate", StringComparison.Ordinal))
-            return (IResult)Results.BadRequest(new { error = "Only Strong manual candidates can be approved. Investigate the metadata first." });
+            return (IResult)Results.BadRequest(new { error = "Use Approve Reviewed for a verified Needs Review manual; Strong approval is not available." });
+        if (action == "approve-reviewed")
+        {
+            if (!string.Equals(evidence.Classification, "Needs review", StringComparison.Ordinal))
+                return (IResult)Results.BadRequest(new { error = "Reviewed approval is limited to eligible Needs Review manual pairs." });
+            if (reviewReason is not ("regional-variant" or "alternate-title" or "release-year" or "metadata-verified" or "other-verified"))
+                return (IResult)Results.BadRequest(new { error = "Select a verification reason before approving this reviewed manual." });
+            if (reviewNote.Length > 240 || (reviewReason == "other-verified" && reviewNote.Length < 5))
+                return (IResult)Results.BadRequest(new { error = "For Other, enter a brief verification note (5–240 characters)." });
+        }
     }
     var request = new GuidevaultLaunchBoxMatchDecisionRequest
     {
@@ -931,13 +946,16 @@ app.MapPost("/api/integrations/launchbox/scans/manual/decision", (GuidevaultManu
     var result = action switch
     {
         "approve" => launchBoxIntegrationStore.ConfirmMatch(request, items),
+        "approve-reviewed" => launchBoxIntegrationStore.ApproveScopedReviewedManual(
+            request, items, reviewReason, scanReason, reviewNote),
         "reject" => launchBoxIntegrationStore.RejectMatch(request, items),
         "needs-metadata" => launchBoxIntegrationStore.FlagManualNeedsMetadata(request, items),
         _ => launchBoxIntegrationStore.ClearScopedManualDecision(request, items)
     };
     if (!result.Success) return (IResult)Results.BadRequest(new { error = result.Message });
     RecordSystemEvent("Integration", $"Scoped manual review: {action}",
-        $"{game.Title} [{game.Platform}] ↔ {item.Title} (GameId {game.Id}, PublicationId {item.Id}): {result.Message}",
+        $"{game.Title} [{game.Platform}] ↔ {item.Title} (GameId {game.Id}, PublicationId {item.Id}): {result.Message}" +
+        (action == "approve-reviewed" ? $"; reason={reviewReason}; note={reviewNote}" : string.Empty),
         "launchbox-manual-review", result.ItemId, result.ItemTitle);
     return (IResult)Results.Ok(new { success = true, matchStatus = result.MatchStatus, message = result.Message });
 });
@@ -9251,6 +9269,58 @@ public sealed class GuidevaultLaunchBoxIntegrationStore
         }
     }
 
+    // GUIDEVAULT_MANUAL_REVIEW_OVERRIDE_V16: a reviewer can explicitly approve an
+    // otherwise eligible Needs Review manual. Never replaces a different regional manual.
+    // Caller must validate the candidate against the scoped scanner before reaching this.
+    public GuidevaultLaunchBoxDecisionResult ApproveScopedReviewedManual(
+        GuidevaultLaunchBoxMatchDecisionRequest request, IReadOnlyList<LibraryItem> items,
+        string reviewReason, string scanReason, string? reviewNote)
+    {
+        var reasonLabel = reviewReason switch
+        {
+            "regional-variant" => "Verified regional title / edition",
+            "alternate-title" => "Verified alternate game title",
+            "release-year" => "Verified despite release-year metadata difference",
+            "metadata-verified" => "Verified publication metadata after inspection",
+            "other-verified" => "Other verified evidence",
+            _ => string.Empty
+        };
+        var note = (reviewNote ?? string.Empty).Trim().Replace('\r', ' ').Replace('\n', ' ');
+        if (reasonLabel.Length == 0 || note.Length > 240 ||
+            (reviewReason == "other-verified" && note.Length < 5))
+            return new GuidevaultLaunchBoxDecisionResult { Message = "A valid review reason and note are required." };
+        var gameId = (request.LaunchBoxGameId ?? string.Empty).Trim();
+        var itemId = (request.GuideVaultItemId ?? string.Empty).Trim();
+        var item = items.FirstOrDefault(i => string.Equals(i.Id, itemId, StringComparison.OrdinalIgnoreCase)
+            && string.Equals(i.Kind, "Manual", StringComparison.OrdinalIgnoreCase));
+        if (item is null) return new GuidevaultLaunchBoxDecisionResult { Message = "Manual not found." };
+        lock (_gate)
+        {
+            var game = _data.Games.FirstOrDefault(g => string.Equals(g.Id, gameId, StringComparison.OrdinalIgnoreCase));
+            if (game is null) return new GuidevaultLaunchBoxDecisionResult { Message = "Game not found." };
+            if (_data.Matches.Any(m =>
+                string.Equals(m.LaunchBoxGameId, gameId, StringComparison.OrdinalIgnoreCase) &&
+                string.Equals(m.GuideVaultItemId, itemId, StringComparison.OrdinalIgnoreCase) &&
+                string.Equals(m.MatchType, "Manual", StringComparison.OrdinalIgnoreCase)))
+                return new GuidevaultLaunchBoxDecisionResult { Message = "This manual pair already has a saved decision. Refresh and Undo first." };
+            var evidence = string.IsNullOrWhiteSpace(scanReason) ? "Needs Review classification" : scanReason.Trim();
+            var justification = $"Human-reviewed manual approval ({reasonLabel}). Original scan: {evidence}." +
+                (note.Length > 0 ? $" Reviewer note: {note}" : string.Empty);
+            var match = GuidevaultLaunchBoxMatcher.CreateMatch(game, item, "Manual", "Confirmed", 0, justification);
+            match.PreviousMatchStatus = "Missing";
+            match.Source = "ManualReviewed";
+            _data.Matches.Add(match);
+            try { Save(); }
+            catch { _data.Matches.Remove(match); throw; }
+            return new GuidevaultLaunchBoxDecisionResult
+            {
+                Success = true, LaunchBoxGameId = game.Id, GuideVaultItemId = item.Id,
+                ItemId = item.Id, ItemTitle = item.Title, MatchType = "Manual", MatchStatus = "Confirmed",
+                Message = $"Reviewed and approved manual: {game.Title} → {item.Title} ({reasonLabel})."
+            };
+        }
+    }
+
     // GUIDEVAULT_MANUAL_BATCH_REVIEW_V15: verify every row before writing; commit once.
     // A failed validation changes nothing. A failed atomic save rolls back in-memory state.
     public (bool Success, int Applied, string Message) ApplyScopedManualBatchDecision(
@@ -11308,6 +11378,9 @@ public sealed class GuidevaultManualReviewRequest
     public string GameId { get; set; } = string.Empty;
     public string PublicationId { get; set; } = string.Empty;
     public string Action { get; set; } = string.Empty;
+    // GUIDEVAULT_MANUAL_REVIEW_OVERRIDE_V16 — logged for reviewed approvals only.
+    public string ReviewReason { get; set; } = string.Empty;
+    public string ReviewNote { get; set; } = string.Empty;
 }
 
 public sealed class GuidevaultLaunchBoxMatchDecisionRequest

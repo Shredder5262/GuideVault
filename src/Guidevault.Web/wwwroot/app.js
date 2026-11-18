@@ -27146,6 +27146,14 @@ async function runLaunchBoxControlledScan(page = 1) {
           `<button type="button" data-manual-review-action="undo" data-game-id="${escapeForAttribute(r.gameId)}" data-manual-id="${escapeForAttribute(r.publicationId)}">Undo</button></div>` :
           `<div class="launchbox-scan-decision">` +
           (r.classification === 'Strong candidate' ? `<button type="button" data-manual-review-action="approve" data-game-id="${escapeForAttribute(r.gameId)}" data-manual-id="${escapeForAttribute(r.publicationId)}">Approve</button>` : '') +
+          (r.classification === 'Needs review' ? `<details class="launchbox-reviewed-manual-override"><summary>Approve after review</summary>` +
+            `<label>Why is this manual a valid match?<select class="launchbox-reviewed-manual-reason" aria-label="Verified reason for ${escapeForAttribute(r.gameTitle)} and ${escapeForAttribute(r.publicationTitle)}">` +
+            `<option value="">Select verification reason</option><option value="regional-variant">Regional title / edition</option>` +
+            `<option value="alternate-title">Verified alternate title</option><option value="release-year">Release-year metadata difference</option>` +
+            `<option value="metadata-verified">Metadata verified by inspection</option><option value="other-verified">Other verified evidence</option></select></label>` +
+            `<input class="launchbox-reviewed-manual-note" type="text" maxlength="240" placeholder="Verification note (required for Other)" aria-label="Review note">` +
+            `<button type="button" data-manual-review-action="approve-reviewed" data-game-id="${escapeForAttribute(r.gameId)}" data-manual-id="${escapeForAttribute(r.publicationId)}" disabled>Approve reviewed manual</button>` +
+            `</details>` : '') +
           `<button type="button" data-manual-review-action="reject" data-game-id="${escapeForAttribute(r.gameId)}" data-manual-id="${escapeForAttribute(r.publicationId)}">Not a Match</button>` +
           `<button type="button" data-manual-review-action="needs-metadata" data-game-id="${escapeForAttribute(r.gameId)}" data-manual-id="${escapeForAttribute(r.publicationId)}">Needs Metadata</button></div>`) +
         `</div>` +
@@ -27162,6 +27170,17 @@ async function runLaunchBoxControlledScan(page = 1) {
       });
       host.querySelectorAll('button[data-manual-review-action]').forEach(button => button.addEventListener('click', () =>
         submitManualReviewDecision(button, platform)));
+      // GUIDEVAULT_MANUAL_REVIEW_OVERRIDE_V16: explicit human reason; no browser popup.
+      host.querySelectorAll('.launchbox-reviewed-manual-override').forEach(group => {
+        const reason = group.querySelector('.launchbox-reviewed-manual-reason');
+        const note = group.querySelector('.launchbox-reviewed-manual-note');
+        const approve = group.querySelector('[data-manual-review-action="approve-reviewed"]');
+        const update = () => { if (approve) approve.disabled = !reason?.value ||
+          (reason.value === 'other-verified' && (note?.value || '').trim().length < 5); };
+        reason?.addEventListener('change', update);
+        note?.addEventListener('input', update);
+        update();
+      });
       host.querySelectorAll('.launchbox-scan-select').forEach(box => box.addEventListener('change', updateLaunchBoxManualBulkSelection));
       host.querySelector('#launchBoxSelectPage')?.addEventListener('click', () => selectLaunchBoxManualPage('all'));
       host.querySelector('#launchBoxSelectStrong')?.addEventListener('click', () => selectLaunchBoxManualPage('strong'));
@@ -27186,17 +27205,24 @@ async function submitManualReviewDecision(button, platform) {
   const action = button.dataset.manualReviewAction;
   const gameId = button.dataset.gameId;
   const publicationId = button.dataset.manualId;
-  if (!['approve', 'reject', 'needs-metadata', 'undo'].includes(action) || !gameId || !publicationId) return;
+  if (!['approve', 'approve-reviewed', 'reject', 'needs-metadata', 'undo'].includes(action) || !gameId || !publicationId) return;
   const row = button.closest('.launchbox-controlled-pair');
   const names = [...(row?.querySelectorAll('.launchbox-controlled-sourceinfo strong') || [])].map(el => el.textContent).join(' → ');
   // No browser confirmation prompt: the clicked disposition button is the action.
+  const details = row?.querySelector('.launchbox-reviewed-manual-override');
+  const reviewReason = action === 'approve-reviewed' ? (details?.querySelector('.launchbox-reviewed-manual-reason')?.value || '') : '';
+  const reviewNote = action === 'approve-reviewed' ? (details?.querySelector('.launchbox-reviewed-manual-note')?.value || '').trim() : '';
+  if (action === 'approve-reviewed' && (!reviewReason || (reviewReason === 'other-verified' && reviewNote.length < 5))) {
+    launchBoxControlledMessage('launchBoxControlledScanStatus', 'Choose a verified reason (and a note for Other) before approving this manual.');
+    return;
+  }
   const buttons = row?.querySelectorAll('button[data-manual-review-action]') || [];
   buttons.forEach(b => b.disabled = true);
   launchBoxControlledMessage('launchBoxControlledScanStatus', `Saving ${action} for ${names}...`);
   try {
     const result = await launchBoxControlledApi('/api/integrations/launchbox/scans/manual/decision', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ platform, gameId, publicationId, action })
+      body: JSON.stringify({ platform, gameId, publicationId, action, reviewReason, reviewNote })
     });
     launchBoxControlledMessage('launchBoxControlledScanStatus', result.message || 'Decision saved.', true);
     await loadLaunchBoxCoverage(false);
