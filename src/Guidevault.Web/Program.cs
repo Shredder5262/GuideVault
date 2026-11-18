@@ -882,11 +882,64 @@ app.MapPost("/api/integrations/launchbox/scans/preview", (GuidevaultLaunchBoxSco
         var snapshot = launchBoxIntegrationStore.GetSnapshot();
         return (IResult)Results.Ok(GuidevaultLaunchBoxControlledManualScanner.Preview(
             payload.Platform, payload.MatchType, snapshot.Games, cache.GetItemsSnapshot(),
-            launchBoxSourceSettingsStore.Get().RootPath, payload.Page, payload.PageSize));
+            launchBoxSourceSettingsStore.Get().RootPath, payload.Page, payload.PageSize, snapshot.Matches));
         // GUIDEVAULT_MANUAL_IDENTITY_PAGINATION_V13
     }
     catch (Exception ex) when (ex is ArgumentException or InvalidOperationException)
     { return (IResult)Results.BadRequest(new { error = ex.Message }); }
+});
+
+// GUIDEVAULT_MANUAL_REVIEW_V14 — scoped, individual decisions only.
+app.MapPost("/api/integrations/launchbox/scans/manual/decision", (GuidevaultManualReviewRequest payload) =>
+{
+    var action = (payload.Action ?? string.Empty).Trim().ToLowerInvariant();
+    if (action is not ("approve" or "reject" or "needs-metadata" or "undo"))
+        return (IResult)Results.BadRequest(new { error = "Choose Approve, Reject, Needs Metadata, or Undo." });
+    if (string.IsNullOrWhiteSpace(payload.Platform) || string.IsNullOrWhiteSpace(payload.GameId)
+        || string.IsNullOrWhiteSpace(payload.PublicationId))
+        return (IResult)Results.BadRequest(new { error = "Platform, game ID, and publication ID are required." });
+    var snapshot = launchBoxIntegrationStore.GetSnapshot();
+    var items = cache.GetItemsSnapshot();
+    var game = snapshot.Games.FirstOrDefault(g => string.Equals(g.Id, payload.GameId, StringComparison.OrdinalIgnoreCase));
+    var item = items.FirstOrDefault(i => string.Equals(i.Id, payload.PublicationId, StringComparison.OrdinalIgnoreCase));
+    if (game is null || item is null || !string.Equals(item.Kind, "Manual", StringComparison.OrdinalIgnoreCase)
+        || !string.Equals(game.Platform, payload.Platform, StringComparison.OrdinalIgnoreCase))
+        return (IResult)Results.BadRequest(new { error = "The game/manual pair is missing or outside this platform's manual scope." });
+    var prior = snapshot.Matches.FirstOrDefault(m => string.Equals(m.LaunchBoxGameId, game.Id, StringComparison.OrdinalIgnoreCase)
+        && string.Equals(m.GuideVaultItemId, item.Id, StringComparison.OrdinalIgnoreCase)
+        && string.Equals(m.MatchType, "Manual", StringComparison.OrdinalIgnoreCase));
+    if (action == "undo")
+    {
+        if (prior is null || prior.MatchStatus is not ("Confirmed" or "Rejected" or "NeedsMetadata"))
+            return (IResult)Results.BadRequest(new { error = "There is no manual review decision to undo." });
+    }
+    else
+    {
+        if (prior is not null && prior.MatchStatus is "Confirmed" or "Rejected" or "NeedsMetadata")
+            return (IResult)Results.BadRequest(new { error = "This pair is already dispositioned. Undo that decision first." });
+        var evidence = GuidevaultLaunchBoxControlledManualScanner.FindCandidate(
+            payload.Platform, game.Id, item.Id, snapshot.Games, items, launchBoxSourceSettingsStore.Get().RootPath);
+        if (!evidence.Found)
+            return (IResult)Results.BadRequest(new { error = evidence.Reason });
+        if (action == "approve" && !string.Equals(evidence.Classification, "Strong candidate", StringComparison.Ordinal))
+            return (IResult)Results.BadRequest(new { error = "Only Strong manual candidates can be approved. Investigate the metadata first." });
+    }
+    var request = new GuidevaultLaunchBoxMatchDecisionRequest
+    {
+        LaunchBoxGameId = game.Id, GuideVaultItemId = item.Id, MatchType = "Manual"
+    };
+    var result = action switch
+    {
+        "approve" => launchBoxIntegrationStore.ConfirmMatch(request, items),
+        "reject" => launchBoxIntegrationStore.RejectMatch(request, items),
+        "needs-metadata" => launchBoxIntegrationStore.FlagManualNeedsMetadata(request, items),
+        _ => launchBoxIntegrationStore.ClearScopedManualDecision(request, items)
+    };
+    if (!result.Success) return (IResult)Results.BadRequest(new { error = result.Message });
+    RecordSystemEvent("Integration", $"Scoped manual review: {action}",
+        $"{game.Title} [{game.Platform}] ↔ {item.Title} (GameId {game.Id}, PublicationId {item.Id}): {result.Message}",
+        "launchbox-manual-review", result.ItemId, result.ItemTitle);
+    return (IResult)Results.Ok(new { success = true, matchStatus = result.MatchStatus, message = result.Message });
 });
 
 app.MapGet("/api/integrations/launchbox/coverage", () =>
@@ -9024,13 +9077,8 @@ public sealed class GuidevaultLaunchBoxIntegrationStore
 
             matchType = string.IsNullOrWhiteSpace(matchType) ? GuidevaultLaunchBoxMatcher.MatchTypeFromItem(item) : matchType;
             var now = DateTimeOffset.UtcNow;
-            if (string.Equals(matchType, "Manual", StringComparison.OrdinalIgnoreCase))
-            {
-                _data.Matches.RemoveAll(m => string.Equals(m.LaunchBoxGameId, gameId, StringComparison.OrdinalIgnoreCase)
-                    && string.Equals(m.MatchType, matchType, StringComparison.OrdinalIgnoreCase)
-                    && !string.Equals(m.GuideVaultItemId, itemId, StringComparison.OrdinalIgnoreCase)
-                    && !string.Equals(m.MatchStatus, "Rejected", StringComparison.OrdinalIgnoreCase));
-            }
+            // GUIDEVAULT_MANUAL_REVIEW_V14: preserve other manual editions/regions for the same game.
+            // A manual review action must never silently remove a different publication's link.
 
             var match = _data.Matches.FirstOrDefault(m => string.Equals(m.LaunchBoxGameId, gameId, StringComparison.OrdinalIgnoreCase)
                 && string.Equals(m.GuideVaultItemId, itemId, StringComparison.OrdinalIgnoreCase)
@@ -9038,7 +9086,11 @@ public sealed class GuidevaultLaunchBoxIntegrationStore
 
             if (match is null)
             {
-                match = GuidevaultLaunchBoxMatcher.CreateMatch(game, item, matchType, "Confirmed", 100, "Manually confirmed in GuideVault.");
+                match = GuidevaultLaunchBoxMatcher.CreateMatch(game, item, matchType, "Confirmed",
+                    string.Equals(matchType, "Manual", StringComparison.OrdinalIgnoreCase) ? 0 : 100,
+                    string.Equals(matchType, "Manual", StringComparison.OrdinalIgnoreCase)
+                        ? "Explicitly reviewed after title/platform validation; not a machine confidence score."
+                        : "Manually confirmed in GuideVault.");
                 match.PreviousMatchStatus = "Missing";
                 _data.Matches.Add(match);
             }
@@ -9046,8 +9098,11 @@ public sealed class GuidevaultLaunchBoxIntegrationStore
             {
                 RememberPreviousMatchStatus(match);
                 match.MatchStatus = "Confirmed";
-                match.ConfidenceScore = Math.Max(match.ConfidenceScore, 100);
-                match.MatchReason = "Manually confirmed in GuideVault.";
+                match.ConfidenceScore = Math.Max(match.ConfidenceScore,
+                    string.Equals(matchType, "Manual", StringComparison.OrdinalIgnoreCase) ? 0 : 100);
+                match.MatchReason = string.Equals(matchType, "Manual", StringComparison.OrdinalIgnoreCase)
+                    ? "Explicitly reviewed after title/platform validation; not a machine confidence score."
+                    : "Manually confirmed in GuideVault.";
                 match.UpdatedAt = now;
             }
 
@@ -9128,6 +9183,70 @@ public sealed class GuidevaultLaunchBoxIntegrationStore
                 MatchType = matchType,
                 MatchStatus = "Rejected",
                 Message = $"Rejected {matchType} match: {game.Title} -> {(item?.Title ?? itemId)}."
+            };
+        }
+    }
+
+    // Scoped Undo removes this pair only. Do not restore old AutoMatched statuses.
+    public GuidevaultLaunchBoxDecisionResult ClearScopedManualDecision(GuidevaultLaunchBoxMatchDecisionRequest request,
+        IReadOnlyList<LibraryItem> items)
+    {
+        var gameId = (request.LaunchBoxGameId ?? string.Empty).Trim();
+        var itemId = (request.GuideVaultItemId ?? string.Empty).Trim();
+        lock (_gate)
+        {
+            var match = _data.Matches.FirstOrDefault(m =>
+                string.Equals(m.LaunchBoxGameId, gameId, StringComparison.OrdinalIgnoreCase)
+                && string.Equals(m.GuideVaultItemId, itemId, StringComparison.OrdinalIgnoreCase)
+                && string.Equals(m.MatchType, "Manual", StringComparison.OrdinalIgnoreCase));
+            if (match is null) return new GuidevaultLaunchBoxDecisionResult { Message = "No decision found for this pair." };
+            _data.Matches.Remove(match);
+            Save();
+            return new GuidevaultLaunchBoxDecisionResult
+            {
+                Success = true, LaunchBoxGameId = gameId, GuideVaultItemId = itemId, ItemId = itemId,
+                ItemTitle = match.GuideVaultItemTitle, MatchType = "Manual", MatchStatus = "Missing",
+                Message = $"Cleared manual review decision for {match.LaunchBoxGameTitle} → {match.GuideVaultItemTitle}."
+            };
+        }
+    }
+
+    // GUIDEVAULT_MANUAL_REVIEW_V14: "NeedsMetadata" is non-linking and reversible.
+    public GuidevaultLaunchBoxDecisionResult FlagManualNeedsMetadata(GuidevaultLaunchBoxMatchDecisionRequest request,
+        IReadOnlyList<LibraryItem> items)
+    {
+        var gameId = (request.LaunchBoxGameId ?? string.Empty).Trim();
+        var itemId = (request.GuideVaultItemId ?? string.Empty).Trim();
+        var item = items.FirstOrDefault(i => string.Equals(i.Id, itemId, StringComparison.OrdinalIgnoreCase)
+            && string.Equals(i.Kind, "Manual", StringComparison.OrdinalIgnoreCase));
+        if (item is null) return new GuidevaultLaunchBoxDecisionResult { Message = "Manual not found." };
+        lock (_gate)
+        {
+            var game = _data.Games.FirstOrDefault(g => string.Equals(g.Id, gameId, StringComparison.OrdinalIgnoreCase));
+            if (game is null) return new GuidevaultLaunchBoxDecisionResult { Message = "Game not found." };
+            var match = _data.Matches.FirstOrDefault(m => string.Equals(m.LaunchBoxGameId, gameId, StringComparison.OrdinalIgnoreCase)
+                && string.Equals(m.GuideVaultItemId, itemId, StringComparison.OrdinalIgnoreCase)
+                && string.Equals(m.MatchType, "Manual", StringComparison.OrdinalIgnoreCase));
+            if (match is null)
+            {
+                match = GuidevaultLaunchBoxMatcher.CreateMatch(game, item, "Manual", "NeedsMetadata", 0,
+                    "Manually flagged for metadata investigation; not an active publication link.");
+                match.PreviousMatchStatus = "Missing";
+                _data.Matches.Add(match);
+            }
+            else
+            {
+                RememberPreviousMatchStatus(match);
+                match.MatchStatus = "NeedsMetadata";
+                match.MatchReason = "Manually flagged for metadata investigation; not an active publication link.";
+                match.UpdatedAt = DateTimeOffset.UtcNow;
+            }
+            Save();
+            return new GuidevaultLaunchBoxDecisionResult
+            {
+                Success = true, LaunchBoxGameId = gameId, GuideVaultItemId = itemId,
+                ItemId = itemId, ItemTitle = item.Title, MatchType = "Manual",
+                MatchStatus = "NeedsMetadata", Message = $"Flagged {game.Title} → {item.Title} for metadata review."
             };
         }
     }
@@ -11040,6 +11159,14 @@ public sealed class GuidevaultLaunchBoxSyncJobStatus
     public DateTimeOffset? UpdatedAt { get; set; }
     public DateTimeOffset? CompletedAt { get; set; }
     public List<string> Errors { get; set; } = new();
+}
+
+public sealed class GuidevaultManualReviewRequest
+{
+    public string Platform { get; set; } = string.Empty;
+    public string GameId { get; set; } = string.Empty;
+    public string PublicationId { get; set; } = string.Empty;
+    public string Action { get; set; } = string.Empty;
 }
 
 public sealed class GuidevaultLaunchBoxMatchDecisionRequest

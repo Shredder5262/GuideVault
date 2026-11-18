@@ -27071,6 +27071,7 @@ function populateLaunchBoxScanPlatforms() {
 // GUIDEVAULT_MANUAL_IDENTITY_PAGINATION_V13
 // The scanner is read-only. Paging fetches the next slice, never creates matches.
 let launchBoxManualScanPageSize = 100;
+let launchBoxManualScanCurrentPage = 1;
 let launchBoxManualScanRequestId = 0;
 async function runLaunchBoxControlledScan(page = 1) {
   const platform = $('launchBoxScanPlatform')?.value || '';
@@ -27087,6 +27088,7 @@ async function runLaunchBoxControlledScan(page = 1) {
     });
     if (requestId !== launchBoxManualScanRequestId) return;
     const currentPage = Number(data.page || 1);
+    launchBoxManualScanCurrentPage = currentPage;
     const pageCount = Number(data.pageCount || 1);
     const total = Number(data.candidatePairs || 0);
     const pageSize = Number(data.pageSize || launchBoxManualScanPageSize);
@@ -27127,7 +27129,15 @@ async function runLaunchBoxControlledScan(page = 1) {
           `<div class="launchbox-controlled-sourceinfo"><small>GUIDEVAULT MANUAL</small>` +
             `<strong>${escapeHtml(r.publicationTitle)}</strong><span>${escapeHtml(r.publicationSystem || 'Platform unknown')}</span></div></div>` +
         `<div class="launchbox-controlled-evidence"><strong>${escapeHtml(r.classification)}</strong><span>${escapeHtml(r.reason)}</span>` +
-        `<small>${escapeHtml(r.matchBasis || '')}</small></div>` +
+        `<small>${escapeHtml(r.matchBasis || '')}</small>` +
+        (['Confirmed','Rejected','NeedsMetadata'].includes(r.savedStatus) ?
+          `<div class="launchbox-scan-decision"><b>${escapeHtml(r.savedStatus === 'NeedsMetadata' ? 'Needs Metadata' : r.savedStatus)}</b>` +
+          `<button type="button" data-manual-review-action="undo" data-game-id="${escapeForAttribute(r.gameId)}" data-manual-id="${escapeForAttribute(r.publicationId)}">Undo</button></div>` :
+          `<div class="launchbox-scan-decision">` +
+          (r.classification === 'Strong candidate' ? `<button type="button" data-manual-review-action="approve" data-game-id="${escapeForAttribute(r.gameId)}" data-manual-id="${escapeForAttribute(r.publicationId)}">Approve</button>` : '') +
+          `<button type="button" data-manual-review-action="reject" data-game-id="${escapeForAttribute(r.gameId)}" data-manual-id="${escapeForAttribute(r.publicationId)}">Not a Match</button>` +
+          `<button type="button" data-manual-review-action="needs-metadata" data-game-id="${escapeForAttribute(r.gameId)}" data-manual-id="${escapeForAttribute(r.publicationId)}">Needs Metadata</button></div>`) +
+        `</div>` +
         `</article>`).join('') + `</div>` + pager +
       `<p class="sub">All proposals are viewable using Previous/Next. This is a read-only preview, not an approval queue.</p>`;
     if (host) {
@@ -27139,6 +27149,8 @@ async function runLaunchBoxControlledScan(page = 1) {
         const nextSize = Number(e.target.value);
         if ([100,250,500].includes(nextSize)) { launchBoxManualScanPageSize = nextSize; runLaunchBoxControlledScan(1); }
       });
+      host.querySelectorAll('button[data-manual-review-action]').forEach(button => button.addEventListener('click', () =>
+        submitManualReviewDecision(button, platform)));
       host.querySelectorAll('img[data-launchbox-scan-image]').forEach(img => img.addEventListener('error', () => {
         img.closest('.launchbox-controlled-cover')?.classList.add('is-missing'); img.remove();
       }, { once: true }));
@@ -27147,5 +27159,35 @@ async function runLaunchBoxControlledScan(page = 1) {
   } catch (err) {
     if (requestId === launchBoxManualScanRequestId)
       launchBoxControlledMessage('launchBoxControlledScanStatus', err.message);
+  }
+}
+
+// GUIDEVAULT_MANUAL_REVIEW_V14 — individual decisions, no bulk action.
+async function submitManualReviewDecision(button, platform) {
+  if (button.disabled) return;
+  const action = button.dataset.manualReviewAction;
+  const gameId = button.dataset.gameId;
+  const publicationId = button.dataset.manualId;
+  if (!['approve', 'reject', 'needs-metadata', 'undo'].includes(action) || !gameId || !publicationId) return;
+  const row = button.closest('.launchbox-controlled-pair');
+  const names = [...(row?.querySelectorAll('.launchbox-controlled-sourceinfo strong') || [])].map(el => el.textContent).join(' → ');
+  const labels = { approve: 'Approve', reject: 'Mark Not a Match', 'needs-metadata': 'Flag Needs Metadata', undo: 'Undo decision for' };
+  if (!window.confirm(`${labels[action]} ${names}?
+
+This changes one manual relationship only.`)) return;
+  const buttons = row?.querySelectorAll('button[data-manual-review-action]') || [];
+  buttons.forEach(b => b.disabled = true);
+  launchBoxControlledMessage('launchBoxControlledScanStatus', `Saving ${action} for ${names}...`);
+  try {
+    const result = await launchBoxControlledApi('/api/integrations/launchbox/scans/manual/decision', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ platform, gameId, publicationId, action })
+    });
+    launchBoxControlledMessage('launchBoxControlledScanStatus', result.message || 'Decision saved.', true);
+    await loadLaunchBoxCoverage(false);
+    await runLaunchBoxControlledScan(launchBoxManualScanCurrentPage);
+  } catch (err) {
+    buttons.forEach(b => b.disabled = false);
+    launchBoxControlledMessage('launchBoxControlledScanStatus', err.message);
   }
 }

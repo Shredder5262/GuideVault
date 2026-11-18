@@ -183,7 +183,8 @@ public static class GuidevaultLaunchBoxControlledManualScanner
     // deliberately out of scope; do not copy these rules to magazines or strategy guides.
     public static object Preview(string platform, string matchType,
         IReadOnlyList<GuidevaultLaunchBoxGame> games, IReadOnlyList<LibraryItem> documents,
-        string? launchBoxRoot, int page = 1, int pageSize = 100)
+        string? launchBoxRoot, int page = 1, int pageSize = 100,
+        IReadOnlyList<GuidevaultLaunchBoxMatch>? savedMatches = null)
     {
         if (!string.Equals(matchType, "Manual", StringComparison.OrdinalIgnoreCase))
             throw new ArgumentException("The controlled scanner currently supports Manuals only.");
@@ -302,6 +303,10 @@ public static class GuidevaultLaunchBoxControlledManualScanner
                     publicationSystem = string.Join(", ", declared), classification, reason,
                     matchBasis = samePrimaryGame ? "Primary game title" : "Sort/alternate name",
                     manualGameTitle = rawManualGameName,
+                    savedStatus = savedMatches?.FirstOrDefault(m =>
+                        string.Equals(m.LaunchBoxGameId, game.Id, StringComparison.OrdinalIgnoreCase)
+                        && string.Equals(m.GuideVaultItemId, item.Id, StringComparison.OrdinalIgnoreCase)
+                        && string.Equals(m.MatchType, "Manual", StringComparison.OrdinalIgnoreCase))?.MatchStatus ?? string.Empty,
                     coverUrl = "/api/items/" + Uri.EscapeDataString(item.Id) + "/cover-thumb?w=360" };
                 if (strongCandidate) strongRows.Add(row); else reviewRows.Add(row);
             }
@@ -324,7 +329,7 @@ public static class GuidevaultLaunchBoxControlledManualScanner
             firstRow = includedCount == 0 ? 0 : offset + 1,
             lastRow = Math.Min(includedCount, offset + pageSize),
             rows = strongRows.Concat(reviewRows).Skip(offset).Take(pageSize).ToArray(),
-            note = "Manuals only: other platforms and conflicting numbered games excluded. Sort/alternate-name hits and missing platform evidence require review. No links are written; approval remains disabled." };
+            note = "Manuals only: other platforms and conflicting numbered games excluded. A scan itself never writes links. Approvals are available individually for Strong candidates only; other candidates require investigation." };
     }
 
     // A sequel number is part of a game's identity, not a fuzzy alias.
@@ -351,6 +356,30 @@ public static class GuidevaultLaunchBoxControlledManualScanner
         if (a is not null && string.Equals(a.Value.Stem, right, StringComparison.OrdinalIgnoreCase)) return true;
         if (b is not null && string.Equals(b.Value.Stem, left, StringComparison.OrdinalIgnoreCase)) return true;
         return false;
+    }
+
+    // GUIDEVAULT_MANUAL_REVIEW_V14 — server-side revalidation of one scanned pair.
+    // The scanner remains the only authority for what may be reviewed or approved.
+    public static (bool Found, string Classification, string Reason) FindCandidate(
+        string platform, string gameId, string publicationId,
+        IReadOnlyList<GuidevaultLaunchBoxGame> games, IReadOnlyList<LibraryItem> documents,
+        string? launchBoxRoot)
+    {
+        int pageCount = 1;
+        for (var page = 1; page <= pageCount && page <= 100; page++)
+        {
+            using var json = JsonDocument.Parse(JsonSerializer.Serialize(
+                Preview(platform, "Manual", games, documents, launchBoxRoot, page, 500)));
+            pageCount = json.RootElement.GetProperty("pageCount").GetInt32();
+            foreach (var row in json.RootElement.GetProperty("rows").EnumerateArray())
+            {
+                if (string.Equals(row.GetProperty("gameId").GetString(), gameId, StringComparison.OrdinalIgnoreCase)
+                    && string.Equals(row.GetProperty("publicationId").GetString(), publicationId, StringComparison.OrdinalIgnoreCase))
+                    return (true, row.GetProperty("classification").GetString() ?? string.Empty,
+                        row.GetProperty("reason").GetString() ?? string.Empty);
+            }
+        }
+        return (false, string.Empty, "The pair is not eligible for the selected platform's manual scan.");
     }
 
     private static string[] ManualPlatforms(IEnumerable<string?> values) => values
