@@ -1670,27 +1670,37 @@
               </div>
             </div>
             <div class="integrations-grid integrations-compact-grid">
-              <article class="settings-card integration-source-card integration-openlibrary-card">
-                <div class="integration-card-head">
+            <!-- GUIDEVAULT_INTEGRATIONS_ACCORDION_V1: native collapsed-by-default integration sections -->
+              <details name="guidevault-integrations" class="settings-card integration-source-card integration-openlibrary-card integration-accordion">
+                <summary class="integration-card-head integration-accordion-toggle">
                   <span class="integration-source-icon integration-source-icon-image"><img src="assets/integrations/open-library.png" alt="" /></span>
-                  <div><h2>Open Library</h2><p class="sub">Book-style metadata lookup for guides and ISBN-based records.</p></div>
-                </div>
+                  <div class="integration-accordion-title"><h2>Open Library</h2><p class="sub">Book-style metadata lookup for guides and ISBN-based records.</p></div>
+                <span class="integration-accordion-chevron" aria-hidden="true">&#x203A;</span></summary>
+                <div class="integration-accordion-body">
+                  <p class="integration-readonly-note">Available by default. No API credentials or connection settings are required.</p>
                 <div class="integration-chip-row"><span>Enabled by default</span><span>No API key</span><span>Books / ISBNs</span></div>
-              </article>
-              <article class="settings-card integration-source-card integration-esrb-card">
-                <div class="integration-card-head">
+              
+                </div>
+              </details>
+              <details name="guidevault-integrations" class="settings-card integration-source-card integration-esrb-card integration-accordion">
+                <summary class="integration-card-head integration-accordion-toggle">
                   <span class="integration-source-icon integration-source-icon-image"><img src="assets/integrations/esrb.png" alt="" /></span>
-                  <div><h2>ESRB.org</h2><p class="sub">Official game rating lookup for manuals and strategy guides.</p></div>
-                </div>
+                  <div class="integration-accordion-title"><h2>ESRB.org</h2><p class="sub">Official game rating lookup for manuals and strategy guides.</p></div>
+                <span class="integration-accordion-chevron" aria-hidden="true">&#x203A;</span></summary>
+                <div class="integration-accordion-body">
+                  <p class="integration-readonly-note">Available by default. No API credentials or connection settings are required.</p>
                 <div class="integration-chip-row"><span>Enabled by default</span><span>No API key</span><span>Game ratings</span></div>
-              </article>
-              <article class="settings-card integration-source-card integration-homeassistant-card">
-                <div class="integration-card-head">
-                  <span class="integration-source-icon integration-source-icon-image"><img src="assets/integrations/home-assistant.png" alt="" /></span>
-                  <div>
-                    <h2>Home Assistant</h2>
-                  </div>
+              
                 </div>
+              </details>
+              <details name="guidevault-integrations" class="settings-card integration-source-card integration-homeassistant-card integration-accordion">
+                <summary class="integration-card-head integration-accordion-toggle">
+                  <span class="integration-source-icon integration-source-icon-image"><img src="assets/integrations/home-assistant.png" alt="" /></span>
+                  <div class="integration-accordion-title">
+                    <h2>Home Assistant</h2><p class="sub">Reader state, sensors, events, and remote commands.</p>
+                  </div>
+                <span class="integration-accordion-chevron" aria-hidden="true">&#x203A;</span></summary>
+                <div class="integration-accordion-body">
                 <div class="preference-toggle-row preference-toggle-row-master">
                   <div><strong>Enable Home Assistant Connector</strong><span>Turn on state publishing and command endpoints.</span></div>
                   <label class="gv-toggle" for="homeAssistantEnabled">
@@ -1718,16 +1728,19 @@
                   <summary>Command endpoint and supported actions</summary>
                   <div class="integration-endpoint-copy"><strong>POST /api/home-assistant/command</strong><span>Use Authorization: Bearer &lt;GuideVault Command Token&gt;. Actions include open, open_manual, open_strategy_guide, open_magazine, next_page, previous_page, set_page, zoom_in, zoom_out, set_zoom, set_display_mode, close_reader, and toggle_overlay.</span></div>
                 </details>
-              </article>
-              <article class="settings-card integration-source-card integration-igdb-card">
-                <div class="integration-card-head">
+              
+                </div>
+              </details>
+              <details name="guidevault-integrations" class="settings-card integration-source-card integration-igdb-card integration-accordion">
+                <summary class="integration-card-head integration-accordion-toggle">
                   <span class="integration-source-icon integration-source-icon-image"><img src="assets/integrations/igdb.png" alt="" /></span>
-                  <div>
+                  <div class="integration-accordion-title">
                     <h2>IGDB</h2>
                     <p class="sub">Expanded game metadata lookup and Game Dossier creation using Twitch Developer app credentials.</p>
-                    <p class="field-help metadata-source-note">Guidevault uses server-to-server client credentials; the OAuth redirect URL is not used.</p>
                   </div>
-                </div>
+                <span class="integration-accordion-chevron" aria-hidden="true">&#x203A;</span></summary>
+                <div class="integration-accordion-body">
+                  <p class="field-help metadata-source-note">Guidevault uses server-to-server client credentials; the OAuth redirect URL is not used.</p>
                 <div class="server-settings-grid server-metadata-source-grid integrations-credential-grid">
                   <label for="igdbClientId">IGDB Client ID<input id="igdbClientId" type="text" autocomplete="off" placeholder="Twitch Developer Client ID" /></label>
                   <label for="igdbClientSecret">IGDB Client Secret<input id="igdbClientSecret" type="password" autocomplete="new-password" placeholder="Twitch Developer Client Secret" /></label>
@@ -1753,19 +1766,22 @@
                   <button id="igdbTestCredentials" class="ghost blue-gradient-action" type="button">Test IGDB Credentials</button>
                 </div>
                 <p id="integrationsSettingsStatus" class="sub account-status" aria-live="polite"></p>
-              </article>
-              <article class="settings-card integration-source-card integration-launchbox-card launchbox-coverage-card">
-                <div class="integration-card-head">
+              
+                </div>
+              </details>
+              <details name="guidevault-integrations" class="settings-card integration-source-card integration-launchbox-card launchbox-coverage-card integration-accordion">
+                <summary class="integration-card-head integration-accordion-toggle">
                   <span class="integration-source-icon integration-source-icon-image"><img src="assets/integrations/launchbox.png" alt="" /></span>
-                  <div>
-                    <h2>LaunchBox</h2>
+                  <div class="integration-accordion-title">
+                    <h2>LaunchBox</h2><p class="sub">Read-only game catalog, platform imports, and literature coverage.</p>
                     <p class="sub launchbox-connection-line"><span id="launchBoxConnectionBadge" class="launchbox-connection-badge disconnected">Disconnected</span><span id="launchBoxConnectionText">No successful LaunchBox connection since this server boot.</span></p>
                   </div>
-                </div>
+                <span class="integration-accordion-chevron" aria-hidden="true">&#x203A;</span></summary>
+                <div class="integration-accordion-body">
                 <div class="integration-chip-row"><span>Read-only XML</span><span>Path-independent IDs</span><span>Per-platform import</span><span>Dry-run review</span></div>
                 <div class="launchbox-controlled-source">
                   <label for="launchBoxSourceRoot">LaunchBox root path (visible inside the GuideVault server/container)</label>
-                  <input id="launchBoxSourceRoot" type="text" spellcheck="false" placeholder="/launchbox" />
+                  <input id="launchBoxSourceRoot" type="text" spellcheck="false" placeholder="" />
                   <span class="field-help">Remote LaunchBox on another computer? Mount its SMB share read-only as /launchbox in Docker, then enter /launchbox here. Do not enter the remote Windows D:\ path.</span>
                   <div class="settings-actions inline-actions integrations-actions launchbox-actions">
                     <button id="launchBoxSaveSource" class="primary" type="button">Save Path</button>
@@ -1790,7 +1806,9 @@
                   </summary>
                   <div id="launchBoxPlatformCoverage" class="launchbox-platform-table"></div>
                 </details>
-              </article>
+              
+                </div>
+              </details>
             </div>
           </section>
 

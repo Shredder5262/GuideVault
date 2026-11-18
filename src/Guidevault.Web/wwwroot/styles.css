@@ -22558,3 +22558,141 @@ body.guidevault-direct-reader-pending:not(.auth-locked) #guidevaultDirectReaderL
 .launchbox-controlled-cover.is-missing .launchbox-controlled-no-cover{display:flex!important}
 @media(max-width:1120px){.launchbox-controlled-pair{grid-template-columns:minmax(0,1fr) minmax(0,1fr)}.launchbox-controlled-evidence{grid-column:1/-1;border-top:1px solid var(--border,#5555);padding-top:10px}}
 @media(max-width:760px){.launchbox-controlled-form{grid-template-columns:1fr}.launchbox-controlled-pair{grid-template-columns:1fr;gap:14px}.launchbox-controlled-evidence{grid-column:auto}.launchbox-controlled-sourcecard{grid-template-columns:110px minmax(0,1fr)}.launchbox-controlled-cover{width:110px;height:150px}}
+
+/* GUIDEVAULT_INTEGRATIONS_ACCORDION_V1
+   Single-column, collapsed-by-default integration sections. Applies only to Settings > Integrations.
+   Other GuideVault cards and existing control IDs/handlers are unchanged. */
+#settingsIntegrationsPanel .integrations-grid.integrations-compact-grid {
+  display: flex !important;
+  flex-direction: column !important;
+  align-items: stretch !important;
+  gap: 12px !important;
+  width: 100%;
+}
+#settingsIntegrationsPanel .integrations-grid.integrations-compact-grid > details.integration-accordion {
+  display: block !important;
+  grid-column: 1 / -1 !important;
+  order: initial !important;
+  width: 100% !important;
+  max-width: none !important;
+  min-height: 0 !important;
+  height: auto !important;
+  padding: 0 !important;
+  border-radius: 17px !important;
+  border: 1px solid rgba(120,181,255,.22) !important;
+  box-sizing: border-box;
+  overflow: hidden !important;
+  background: linear-gradient(125deg,rgba(14,33,57,.94),rgba(6,16,29,.98)) !important;
+  box-shadow: 0 10px 26px rgba(0,0,0,.16) !important;
+}
+#settingsIntegrationsPanel .integrations-grid.integrations-compact-grid > details.integration-accordion[open] {
+  border-color: rgba(107,181,255,.42) !important;
+  background: linear-gradient(135deg,rgba(16,38,66,.97),rgba(6,16,29,.99)) !important;
+}
+#settingsIntegrationsPanel .integration-accordion > summary.integration-accordion-toggle {
+  display: flex !important;
+  grid-template-columns: none !important;
+  align-items: center !important;
+  gap: 16px !important;
+  min-height: 80px !important;
+  padding: 17px 22px !important;
+  margin: 0 !important;
+  cursor: pointer;
+  list-style: none;
+  border: 0;
+  box-sizing: border-box;
+  user-select: none;
+}
+#settingsIntegrationsPanel .integration-accordion > summary.integration-accordion-toggle::-webkit-details-marker {display:none}
+#settingsIntegrationsPanel .integration-accordion > summary.integration-accordion-toggle::marker {content:''}
+#settingsIntegrationsPanel .integration-accordion > summary.integration-accordion-toggle:hover {
+  background: rgba(79,149,240,.08);
+}
+#settingsIntegrationsPanel .integration-accordion > summary.integration-accordion-toggle:focus-visible {
+  outline: 2px solid #74c1ff;
+  outline-offset: -3px;
+  border-radius: 15px;
+}
+#settingsIntegrationsPanel .integration-accordion .integration-accordion-title {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+#settingsIntegrationsPanel .integration-accordion .integration-accordion-title h2 {
+  font-size: clamp(17px,1.2vw,21px) !important;
+  line-height: 1.2 !important;
+  margin: 0 !important;
+}
+#settingsIntegrationsPanel .integration-accordion .integration-accordion-title > p.sub {
+  color:#a9bfd8 !important;
+  font-size: 13px !important;
+  line-height: 1.4 !important;
+  margin: 0 !important;
+}
+#settingsIntegrationsPanel .integration-accordion .integration-accordion-chevron {
+  flex: 0 0 28px;
+  width: 28px;
+  height: 28px;
+  display: grid;
+  place-items: center;
+  border: 1px solid rgba(125,181,245,.25);
+  border-radius: 9px;
+  background: rgba(20,47,80,.62);
+  color: #9dd1ff;
+  font-size: 23px;
+  line-height: 1;
+  transition: transform .16s ease;
+  transform: rotate(0deg);
+}
+#settingsIntegrationsPanel .integration-accordion[open] > summary .integration-accordion-chevron {
+  transform: rotate(90deg);
+}
+#settingsIntegrationsPanel .integration-accordion > .integration-accordion-body {
+  display: block;
+  padding: 20px 22px 24px;
+  border-top: 1px solid rgba(125,181,245,.16);
+  background: rgba(3,12,23,.23);
+  min-width:0;
+}
+#settingsIntegrationsPanel .integration-accordion:not([open]) > .integration-accordion-body {
+  display: none !important;
+}
+#settingsIntegrationsPanel .integration-accordion .integration-accordion-body > :first-child {margin-top:0 !important;}
+#settingsIntegrationsPanel .integration-accordion .integration-accordion-body > .integration-chip-row {margin-bottom:14px;}
+#settingsIntegrationsPanel .integration-accordion .integration-readonly-note {max-width:820px;color:#c5d8ea;font-size:13px;line-height:1.6;margin:0 0 12px;}
+#settingsIntegrationsPanel .integration-accordion .integration-source-icon {
+  flex: 0 0 48px !important;
+  width: 48px !important;
+  height: 48px !important;
+}
+#settingsIntegrationsPanel .integration-accordion .launchbox-connection-line {
+  display:flex;
+  flex-wrap:wrap;
+  align-items:center;
+  gap:8px;
+  margin: 5px 0 0 !important;
+}
+#settingsIntegrationsPanel .integration-accordion .launchbox-connection-line #launchBoxConnectionText {
+  color:#8eaccb;
+  font-size:12px;
+}
+#settingsIntegrationsPanel .integration-accordion .metadata-source-note {margin:0 0 16px !important;}
+#settingsIntegrationsPanel .integration-accordion .integration-accordion-body .integrations-credential-grid {
+  margin-bottom: 8px !important;
+  max-width: 1080px;
+}
+#settingsIntegrationsPanel .integration-accordion .launchbox-controlled-source {max-width: 1080px;}
+@media(max-width:700px){
+  #settingsIntegrationsPanel .integration-accordion > summary.integration-accordion-toggle {gap:11px!important;padding:14px 13px!important;}
+  #settingsIntegrationsPanel .integration-accordion > .integration-accordion-body {padding:16px 13px 20px;}
+  #settingsIntegrationsPanel .integration-accordion .integration-source-icon {flex-basis:40px!important;width:40px!important;height:40px!important;}
+  #settingsIntegrationsPanel .integration-accordion .integration-accordion-chevron {width:25px;height:25px;flex-basis:25px;}
+  #settingsIntegrationsPanel .integration-accordion .integrations-credential-grid,
+  #settingsIntegrationsPanel .integration-accordion .integration-homeassistant-card .integrations-credential-grid {grid-template-columns:1fr!important;}
+}
+@media(prefers-reduced-motion:reduce){
+  #settingsIntegrationsPanel .integration-accordion .integration-accordion-chevron {transition:none;}
+}
+
