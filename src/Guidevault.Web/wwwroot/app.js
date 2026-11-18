@@ -8452,7 +8452,8 @@ function handleGuidevaultStartupDeepLink() {
   const wanted = String(link.id || '').trim();
   const wantedLower = wanted.toLowerCase();
   const cachedItem = (state.items || []).find(i => itemIdOf(i).toLowerCase() === wantedLower);
-  if (!isDirectReader && !cachedItem) return false;
+  // A valid detail deep link can refer to a publication not yet cached in state.items.
+  // Fetch it by stable publication ID below, just like a reader deep link.
   guidevaultStartupDeepLinkHandled = true;
   if (isDirectReader) setGuidevaultDirectReaderPending(true);
   (async () => {
@@ -27171,11 +27172,12 @@ async function runLaunchBoxControlledScan(page = 1) {
           `<div class="launchbox-controlled-sourceinfo"><small>LAUNCHBOX GAME</small>` +
             `<strong>${escapeHtml(r.gameTitle)}</strong><span>${escapeHtml(r.gamePlatform)}</span></div></div>` +
         `<div class="launchbox-controlled-sourcecard">` +
+          `<a class="launchbox-publication-cover-link" href="/?detail=${encodeURIComponent(r.publicationId)}" target="_blank" rel="noopener noreferrer" aria-label="Open GuideVault manual details: ${escapeForAttribute(r.publicationTitle)}">` +
           `<div class="launchbox-controlled-cover">` +
             `<img data-launchbox-scan-image src="${escapeForAttribute(r.coverUrl)}" alt="Manual cover for ${escapeForAttribute(r.publicationTitle)}" loading="lazy" decoding="async">` +
-            `<span class="launchbox-controlled-no-cover">Manual cover unavailable</span></div>` +
+            `<span class="launchbox-controlled-no-cover">Manual cover unavailable</span></div></a>` +
           `<div class="launchbox-controlled-sourceinfo"><small>GUIDEVAULT MANUAL</small>` +
-            `<strong>${escapeHtml(r.publicationTitle)}</strong><span>${escapeHtml(r.publicationSystem || 'Platform unknown')}</span></div></div>` +
+            `<a class="launchbox-publication-title-link" href="/?detail=${encodeURIComponent(r.publicationId)}" target="_blank" rel="noopener noreferrer" aria-label="Open GuideVault manual details: ${escapeForAttribute(r.publicationTitle)}"><strong>${escapeHtml(r.publicationTitle)}</strong></a><span>${escapeHtml(r.publicationSystem || 'Platform unknown')}</span></div></div>` +
         `<div class="launchbox-controlled-evidence"><strong>${escapeHtml(r.classification)}</strong><span>${escapeHtml(r.reason)}</span>` +
         `<small>${escapeHtml(r.matchBasis || '')}</small>` +
         (['Confirmed','Rejected','NeedsMetadata'].includes(r.savedStatus) ?
@@ -27467,8 +27469,8 @@ async function runLaunchBoxStrategyScan(page = 1) {
         `<div class="launchbox-controlled-sourcecard"><div class="launchbox-controlled-cover"><img data-launchbox-scan-image src="${escapeForAttribute(r.gameBoxFrontUrl || '')}" alt="${escapeForAttribute(r.gameTitle)}" loading="lazy"><span class="launchbox-controlled-no-cover">No box front</span></div>` +
         `<div class="launchbox-controlled-sourceinfo"><small>LAUNCHBOX</small><strong>${escapeHtml(r.gameTitle)}</strong><span>${escapeHtml(r.gamePlatform)}</span>` +
         `<div class="launchbox-strategy-proof"><b>${escapeHtml(r.launchBoxMatchField || 'Title')}</b><span>${escapeHtml(r.launchBoxMatchedValue || r.gameTitle)}</span></div></div></div>` +
-        `<div class="launchbox-controlled-sourcecard"><div class="launchbox-controlled-cover"><img data-launchbox-scan-image src="${escapeForAttribute(r.coverUrl)}" alt="${escapeForAttribute(r.publicationTitle)}" loading="lazy"><span class="launchbox-controlled-no-cover">No guide cover</span></div>` +
-        `<div class="launchbox-controlled-sourceinfo"><small>STRATEGY GUIDE</small><strong>${escapeHtml(r.publicationTitle)}</strong><span>${escapeHtml(r.publicationSystem || 'Platform unknown')}</span>` +
+        `<div class="launchbox-controlled-sourcecard"><a class="launchbox-publication-cover-link" href="/?detail=${encodeURIComponent(r.publicationId)}" target="_blank" rel="noopener noreferrer" aria-label="Open GuideVault strategy guide details: ${escapeForAttribute(r.publicationTitle)}"><div class="launchbox-controlled-cover"><img data-launchbox-scan-image src="${escapeForAttribute(r.coverUrl)}" alt="${escapeForAttribute(r.publicationTitle)}" loading="lazy"><span class="launchbox-controlled-no-cover">No guide cover</span></div></a>` +
+        `<div class="launchbox-controlled-sourceinfo"><small>STRATEGY GUIDE</small><a class="launchbox-publication-title-link" href="/?detail=${encodeURIComponent(r.publicationId)}" target="_blank" rel="noopener noreferrer" aria-label="Open GuideVault strategy guide details: ${escapeForAttribute(r.publicationTitle)}"><strong>${escapeHtml(r.publicationTitle)}</strong></a><span>${escapeHtml(r.publicationSystem || 'Platform unknown')}</span>` +
         `<div class="launchbox-strategy-proof"><b>${escapeHtml(r.guideMatchField || 'Coverage clue')}</b><span>${escapeHtml(r.guideMatchedValue || '')}</span></div>` +
         `<div class="launchbox-strategy-proof"><b>Platform evidence</b><span>${escapeHtml(r.platformBasis || 'Not specified')}: ${escapeHtml(r.platformCompatibility || 'Unknown')}</span></div></div></div>` +
         `<div class="launchbox-controlled-evidence"><strong>${escapeHtml(r.classification)}</strong><span>${escapeHtml(r.reason)}</span>` +
