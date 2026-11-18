@@ -95,6 +95,9 @@ var deviceStore = new DeviceHistoryStore(deviceHistoryPath);
 var systemInfoStore = new SystemInfoStore(systemInfoPath, GuidevaultVersion);
 var systemEventStore = new GuidevaultSystemEventStore(systemEventsPath);
 var launchBoxIntegrationStore = new GuidevaultLaunchBoxIntegrationStore(launchBoxIntegrationPath);
+// GUIDEVAULT_LAUNCHBOX_CONTROLLED_V1: Source configuration never includes machine-specific IDs in links.
+var launchBoxSourceSettingsStore = new GuidevaultLaunchBoxSourceSettingsStore(
+    Path.Combine(dataRoot, "config", "launchbox.source.json"));
 // Confirmed edition relationships survive LaunchBox resyncs and are backed up with /data/config.
 var launchBoxEditionGroupsStore = new GuidevaultLaunchBoxEditionGroupsStore(
     Path.Combine(dataRoot, "config", "launchbox.edition-groups.json"));
@@ -754,31 +757,109 @@ app.MapGet("/api/integrations/launchbox/sync/jobs/current", () => Results.Ok(lau
 
 app.MapPost("/api/integrations/launchbox/sync/cancel", () => Results.Ok(launchBoxIntegrationStore.CancelCurrentJob()));
 
+// GUIDEVAULT_LAUNCHBOX_CONTROLLED_V1: Backward-compatible plugin import, NO background matching.
 app.MapPost("/api/integrations/launchbox/sync", (GuidevaultLaunchBoxSyncRequest payload) =>
 {
-    var importResult = launchBoxIntegrationStore.SyncImportOnly(payload);
-    var selectedPlatforms = GuidevaultLaunchBoxIntegrationStore.SelectedPlatformKeysForSync(payload);
-    var selectedMatchTypes = GuidevaultLaunchBoxIntegrationStore.SelectedMatchTypesForSync(payload);
-    var job = launchBoxIntegrationStore.StartRematch(cache.GetItemsSnapshot(), selectedPlatformKeys: selectedPlatforms, selectedMatchTypes: selectedMatchTypes);
-    importResult.JobId = job.JobId;
-    importResult.JobStatus = job.Status;
-    importResult.Job = job;
-    var platformScope = selectedPlatforms.Count > 0 ? $" for {selectedPlatforms.Count} selected platform(s)" : string.Empty;
-    var matchScope = selectedMatchTypes.Count > 0 ? $" ({string.Join(", ", selectedMatchTypes)} only)" : string.Empty;
-    importResult.Message = selectedPlatforms.Count > 0 || selectedMatchTypes.Count > 0
-        ? $"Imported LaunchBox game data. Match job {job.Status.ToLowerInvariant()}{platformScope}{matchScope} in background."
-        : $"Imported {importResult.TotalGames} LaunchBox game(s). Match job {job.Status.ToLowerInvariant()} in background.";
-    RecordSystemEvent("Integration", "LaunchBox sync imported", selectedPlatforms.Count > 0 || selectedMatchTypes.Count > 0
-        ? $"Imported scoped LaunchBox data; match job {job.JobId} is {job.Status}{platformScope}{matchScope}."
-        : $"Imported {importResult.TotalGames} LaunchBox game(s); match job {job.JobId} is {job.Status}.", "launchbox");
-    return Results.Ok(importResult);
+    // Avoid two competing sources after direct XML integration is configured.
+    if (!string.IsNullOrWhiteSpace(launchBoxSourceSettingsStore.Get().RootPath))
+        return (IResult)Results.Conflict(new { error = "Direct LaunchBox XML source is configured. Legacy plugin sync is disabled. Clear the source root to re-enable legacy catalog import." });
+    var result = launchBoxIntegrationStore.SyncImportOnly(payload);
+    result.Message = "LaunchBox catalog imported only. Automatic matching is disabled. Use a controlled dry scan in Library Tools.";
+    RecordSystemEvent("Integration", "LaunchBox catalog import", result.Message, "launchbox");
+    return (IResult)Results.Ok(result);
 });
 
+// Legacy whole-catalog matcher is deliberately disabled until its identity/coverage
+// policy is replaced. This prevents restoration of stale native confirmations.
 app.MapPost("/api/integrations/launchbox/rematch", () =>
+    Results.Conflict(new { error = "Legacy bulk rematch is disabled. Use platform/document-type dry scans." }));
+
+app.MapGet("/api/integrations/launchbox/source", () =>
+    Results.Ok(launchBoxSourceSettingsStore.Get()));
+
+app.MapPut("/api/integrations/launchbox/source", (GuidevaultLaunchBoxSourceSettings input) =>
 {
-    var job = launchBoxIntegrationStore.StartRematch(cache.GetItemsSnapshot(), force: true);
-    RecordSystemEvent("Integration", "LaunchBox rematch started", $"LaunchBox rematch job {job.JobId} is {job.Status}.", "launchbox");
-    return Results.Ok(job);
+    try { return (IResult)Results.Ok(launchBoxSourceSettingsStore.Save(input)); }
+    catch (Exception ex) when (ex is ArgumentException or IOException or UnauthorizedAccessException)
+    { return (IResult)Results.BadRequest(new { error = ex.Message }); }
+});
+
+app.MapGet("/api/integrations/launchbox/source/test", () =>
+{
+    try { return (IResult)Results.Ok(GuidevaultLaunchBoxCatalogReader.Inspect(launchBoxSourceSettingsStore.Get().RootPath)); }
+    catch (Exception ex) when (ex is ArgumentException or InvalidOperationException or IOException or UnauthorizedAccessException)
+    { return (IResult)Results.BadRequest(new { error = ex.Message }); }
+});
+
+app.MapPost("/api/integrations/launchbox/catalog/preview", (GuidevaultLaunchBoxScopedRequest payload) =>
+{
+    try
+    {
+        return (IResult)Results.Ok(GuidevaultLaunchBoxCatalogReader.Preview(
+            launchBoxSourceSettingsStore.Get().RootPath, payload.Platform,
+            launchBoxIntegrationStore.GetSnapshot()));
+    }
+    catch (Exception ex) when (ex is ArgumentException or InvalidOperationException or IOException or UnauthorizedAccessException or System.Xml.XmlException)
+    { return (IResult)Results.BadRequest(new { error = ex.Message }); }
+});
+
+app.MapPost("/api/integrations/launchbox/catalog/import", (GuidevaultLaunchBoxScopedRequest payload) =>
+{
+    try
+    {
+        var (games, hash, filename) = GuidevaultLaunchBoxCatalogReader.ReadPlatform(
+            launchBoxSourceSettingsStore.Get().RootPath, payload.Platform);
+        if (string.IsNullOrWhiteSpace(payload.ExpectedSha256) ||
+            !string.Equals(hash, payload.ExpectedSha256, StringComparison.OrdinalIgnoreCase))
+            return (IResult)Results.Conflict(new { error = "Platform XML changed since preview. Preview again before importing." });
+        var before = launchBoxIntegrationStore.GetSnapshot();
+        var existing = before.Games.Where(g => string.Equals(g.Platform, payload.Platform, StringComparison.OrdinalIgnoreCase)).ToArray();
+        var previousById = existing.ToDictionary(g => g.Id, StringComparer.OrdinalIgnoreCase);
+        var incomingIds = games.Select(g => g.Id).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var removedNames = existing.Where(g => !incomingIds.Contains(g.Id))
+            .Select(g => g.Title.Trim()).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        if (games.Any(g => !previousById.ContainsKey(g.Id) && removedNames.Contains(g.Title.Trim())))
+            return (IResult)Results.Conflict(new { error = "Possible changed LaunchBox game IDs. Import refused until source XML identity is verified." });
+        // Preserve connector-provided aliases and custom fields for unchanged IDs;
+        // this XML-first importer does not yet parse every auxiliary LaunchBox file.
+        foreach (var game in games)
+        {
+            if (!previousById.TryGetValue(game.Id, out var previous)) continue;
+            game.AlternateNames = previous.AlternateNames?.ToList() ?? new List<string>();
+            game.CustomFields = new Dictionary<string, string>(previous.CustomFields ?? new Dictionary<string, string>(), StringComparer.OrdinalIgnoreCase);
+            if (string.IsNullOrWhiteSpace(game.Region)) game.Region = previous.Region;
+            if (string.IsNullOrWhiteSpace(game.ReleaseYear)) game.ReleaseYear = previous.ReleaseYear;
+            if (string.IsNullOrWhiteSpace(game.Series)) game.Series = previous.Series;
+            if (string.IsNullOrWhiteSpace(game.DatabaseId)) game.DatabaseId = previous.DatabaseId;
+        }
+        // Never accept an implausibly shrunken snapshot without investigating it.
+        if (existing.Length >= 20 && games.Count < existing.Length * 0.8)
+            return (IResult)Results.Conflict(new { error = "Platform game count dropped more than 20%; import blocked for safety. Verify the source XML." });
+        var result = launchBoxIntegrationStore.SyncImportOnly(new GuidevaultLaunchBoxSyncRequest
+        {
+            Source = "LaunchBox XML", LaunchBoxRoot = launchBoxSourceSettingsStore.Get().RootPath,
+            SyncMode = "MergeSelectedPlatforms", SelectedPlatforms = new List<string> { payload.Platform },
+            Games = games
+        });
+        RecordSystemEvent("Integration", "LaunchBox scoped XML import",
+            $"Imported {games.Count} games for {payload.Platform} from {filename}; no matching job run.", "launchbox");
+        return (IResult)Results.Ok(new { imported = games.Count, platform = payload.Platform,
+            result.TotalGames, result.MatchedGames, result.Message, matchingStarted = false });
+    }
+    catch (Exception ex) when (ex is ArgumentException or InvalidOperationException or IOException or UnauthorizedAccessException or System.Xml.XmlException)
+    { return (IResult)Results.BadRequest(new { error = ex.Message }); }
+});
+
+app.MapPost("/api/integrations/launchbox/scans/preview", (GuidevaultLaunchBoxScopedRequest payload) =>
+{
+    try
+    {
+        var snapshot = launchBoxIntegrationStore.GetSnapshot();
+        return (IResult)Results.Ok(GuidevaultLaunchBoxControlledManualScanner.Preview(
+            payload.Platform, payload.MatchType, snapshot.Games, cache.GetItemsSnapshot()));
+    }
+    catch (Exception ex) when (ex is ArgumentException or InvalidOperationException)
+    { return (IResult)Results.BadRequest(new { error = ex.Message }); }
 });
 
 app.MapGet("/api/integrations/launchbox/coverage", () =>
@@ -894,6 +975,7 @@ app.MapGet("/api/client/launchbox/game/{launchBoxGameId}/literature", (HttpReque
 
     // React to Featured Games edits immediately, without requiring the user to
     // launch a full LaunchBox sync/rematch job. This is not title-only matching.
+    if (string.Equals(Environment.GetEnvironmentVariable("GUIDEVAULT_ALLOW_LEGACY_LITERATURE_FALLBACK"), "1", StringComparison.Ordinal))
     foreach (var item in availableItems.Where(item =>
         string.Equals(item.Kind, "Magazine", StringComparison.OrdinalIgnoreCase) &&
         !rejectedIds.Contains(item.Id) &&
@@ -909,6 +991,7 @@ app.MapGet("/api/client/launchbox/game/{launchBoxGameId}/literature", (HttpReque
     // include only explicitly associated strategy guides, or exact titled
     // guides with a confirmed platform hint. Never surface rejected items.
     // This does not write/confirm LaunchBox matches or affect magazines.
+    if (string.Equals(Environment.GetEnvironmentVariable("GUIDEVAULT_ALLOW_LEGACY_LITERATURE_FALLBACK"), "1", StringComparison.Ordinal))
     foreach (var item in availableItems.Where(item =>
         string.Equals(item.Kind, "Strategy Guide", StringComparison.OrdinalIgnoreCase) &&
         !rejectedIds.Contains(item.Id) &&
@@ -8615,6 +8698,9 @@ public sealed class GuidevaultLaunchBoxIntegrationStore
 
     public GuidevaultLaunchBoxSyncJobStatus StartRematch(IReadOnlyList<LibraryItem> guidevaultItems, bool force = false, IReadOnlyCollection<string>? selectedPlatformKeys = null, IReadOnlyCollection<string>? selectedMatchTypes = null)
     {
+        // GUIDEVAULT_LAUNCHBOX_CONTROLLED_V1: fail closed even for internal callers.
+        if (!string.Equals(Environment.GetEnvironmentVariable("GUIDEVAULT_ENABLE_LEGACY_BULK_MATCH"), "1", StringComparison.Ordinal))
+            throw new InvalidOperationException("Legacy bulk rematching is disabled. Use controlled scoped scans.");
         List<GuidevaultLaunchBoxGame> gamesSnapshot;
         List<GuidevaultLaunchBoxMatch> existingMatchesSnapshot;
         List<LibraryItem> itemsSnapshot;

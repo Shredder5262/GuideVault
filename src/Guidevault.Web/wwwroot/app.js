@@ -60,6 +60,9 @@ const state = {
   esrb: { results: [], selectedResult: null, resolvedResult: null, step: 'search' }
 };
 const $ = id => document.getElementById(id);
+// GUIDEVAULT_LAUNCHBOX_CONTROLLED_V1: persisted preview token never survives a path/platform change.
+let launchBoxXmlPreview = null;
+let launchBoxControlledSourceLoaded = false;
 // Reader deep links should never expose the library while a requested document opens.
 // Set this on initial script evaluation; authentication remains the normal prerequisite.
 try {
@@ -4255,6 +4258,7 @@ function renderLaunchBoxCoverage() {
     }
   }
   renderLaunchBoxPlatformCoverage(coverage.byPlatform || []);
+  populateLaunchBoxScanPlatforms();
   renderStatisticsLaunchBoxManagement();
 }
 function renderLaunchBoxPlatformCoverage(rows = []) {
@@ -4920,6 +4924,13 @@ function bindLaunchBoxCoverageActions() {
   if ($('launchBoxRefreshCoverage')) $('launchBoxRefreshCoverage').addEventListener('click', e => { e.preventDefault(); loadLaunchBoxCoverage(true); });
   if ($('launchBoxReviewRefreshCoverage')) $('launchBoxReviewRefreshCoverage').addEventListener('click', e => { e.preventDefault(); loadLaunchBoxCoverage(true); });
   if ($('launchBoxStartRematch')) $('launchBoxStartRematch').addEventListener('click', e => { e.preventDefault(); startLaunchBoxRematch(); });
+  if ($('launchBoxSaveSource')) $('launchBoxSaveSource').addEventListener('click', e => { e.preventDefault(); saveLaunchBoxSource(); });
+  if ($('launchBoxTestSource')) $('launchBoxTestSource').addEventListener('click', e => { e.preventDefault(); testLaunchBoxSource(); });
+  if ($('launchBoxCatalogPlatform')) $('launchBoxCatalogPlatform').addEventListener('change', invalidateLaunchBoxXmlPreview);
+  if ($('launchBoxSourceRoot')) $('launchBoxSourceRoot').addEventListener('input', invalidateLaunchBoxXmlPreview);
+  if ($('launchBoxPreviewCatalog')) $('launchBoxPreviewCatalog').addEventListener('click', e => { e.preventDefault(); previewLaunchBoxCatalog(); });
+  if ($('launchBoxImportCatalog')) $('launchBoxImportCatalog').addEventListener('click', e => { e.preventDefault(); importLaunchBoxCatalog(); });
+  if ($('launchBoxRunControlledScan')) $('launchBoxRunControlledScan').addEventListener('click', e => { e.preventDefault(); runLaunchBoxControlledScan(); });
   if ($('launchBoxCancelSync')) $('launchBoxCancelSync').addEventListener('click', e => { e.preventDefault(); cancelLaunchBoxSync(); });
   if ($('launchBoxLoadReview')) $('launchBoxLoadReview').addEventListener('click', e => { e.preventDefault(); state.launchBox.reviewPlatform = ''; loadLaunchBoxReview(true); });
   if ($('launchBoxReviewStatus')) $('launchBoxReviewStatus').addEventListener('change', () => loadLaunchBoxReview(true));
@@ -24675,8 +24686,8 @@ function activateSettingsTab(tab = 'account') {
   if (active === 'customize') renderCustomizeSettings();
   if (active === 'server') loadServerSettings(false);
   if (serverFilesTabs.has(active)) renderServerFilesWorkspace();
-  if (active === 'integrations') { loadServerSettings(false); loadLaunchBoxCoverage(false); }
-  if (active === 'launchbox-match-review') { loadLaunchBoxCoverage(false); loadLaunchBoxReview(false); }
+  if (active === 'integrations') { loadServerSettings(false); loadLaunchBoxCoverage(false); loadLaunchBoxSource(); }
+  if (active === 'launchbox-match-review') { loadLaunchBoxCoverage(false); populateLaunchBoxScanPlatforms(); }
   if (active === 'media') loadServerSettings(false);
   if (active === 'email') { if (!state.serverSettings) loadServerSettings(false); loadEmailSettings(false); loadEmailHistory(false); requestAnimationFrame(syncEmailTemplatePreview); }
   if (active === 'users') { renderUsersLoadingState(); deferAfterVisiblePaint(() => openUsersSettingsPanel(), 120); }
@@ -26957,3 +26968,129 @@ installLibraryCardDelegates();
 installGlobalDetailDelegate();
 syncEmailTemplatePreview();
 initializeGuidevaultAuthAndApp();
+
+
+// GUIDEVAULT_LAUNCHBOX_CONTROLLED_V1 — independent source and proposal workflow
+async function launchBoxControlledApi(url, options = {}) {
+  const response = await fetch(url, { cache: 'no-store', ...options });
+  const json = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error(json.error || `HTTP ${response.status}`);
+  return json;
+}
+function launchBoxControlledMessage(id, text, ok = false) {
+  const el = $(id);
+  if (el) { el.textContent = text || ''; el.style.color = ok ? 'var(--success, #53c388)' : ''; }
+}
+function invalidateLaunchBoxXmlPreview() {
+  launchBoxXmlPreview = null;
+  if ($('launchBoxImportCatalog')) $('launchBoxImportCatalog').disabled = true;
+  if ($('launchBoxCatalogPreview')) $('launchBoxCatalogPreview').innerHTML = '';
+}
+async function loadLaunchBoxSource() {
+  try {
+    const data = await launchBoxControlledApi('/api/integrations/launchbox/source');
+    if ($('launchBoxSourceRoot')) $('launchBoxSourceRoot').value = data.rootPath || '';
+    if (!launchBoxControlledSourceLoaded && data.rootPath) await testLaunchBoxSource(false);
+    launchBoxControlledSourceLoaded = true;
+  } catch (err) { launchBoxControlledMessage('launchBoxSourceStatus', err.message); }
+}
+async function saveLaunchBoxSource() {
+  invalidateLaunchBoxXmlPreview();
+  try {
+    const data = await launchBoxControlledApi('/api/integrations/launchbox/source', {
+      method: 'PUT', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ rootPath: $('launchBoxSourceRoot')?.value.trim() || '' })
+    });
+    launchBoxControlledMessage('launchBoxSourceStatus', `Source saved: ${data.rootPath || '(unset)'}. Test connection to inspect the XML files.`, true);
+    await testLaunchBoxSource(false);
+  } catch (err) { launchBoxControlledMessage('launchBoxSourceStatus', err.message); }
+}
+async function testLaunchBoxSource(showStatus = true) {
+  invalidateLaunchBoxXmlPreview();
+  try {
+    const result = await launchBoxControlledApi('/api/integrations/launchbox/source/test');
+    const select = $('launchBoxCatalogPlatform');
+    if (select) select.innerHTML = '<option value="">Select platform XML</option>' +
+      (result.platforms || []).map(p => `<option value="${escapeForAttribute(p)}">${escapeHtml(p)}</option>`).join('');
+    if (showStatus) launchBoxControlledMessage('launchBoxSourceStatus',
+      `Read-only connection verified: ${(result.platforms || []).length} platform XML files.`, true);
+  } catch (err) { launchBoxControlledMessage('launchBoxSourceStatus', err.message); }
+}
+async function previewLaunchBoxCatalog() {
+  invalidateLaunchBoxXmlPreview();
+  const platform = $('launchBoxCatalogPlatform')?.value || '';
+  if (!platform) return launchBoxControlledMessage('launchBoxSourceStatus', 'Select one platform first.');
+  try {
+    const result = await launchBoxControlledApi('/api/integrations/launchbox/catalog/preview', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ platform })
+    });
+    launchBoxXmlPreview = result;
+    const host = $('launchBoxCatalogPreview');
+    if (host) host.innerHTML = `<div class="launchbox-controlled-summary"><strong>${escapeHtml(result.platform)}:</strong> ` +
+      `${Number(result.count || 0).toLocaleString()} games in XML · ` +
+      `${Number(result.previousCount || 0).toLocaleString()} previously imported · ` +
+      `${Number(result.additions || 0).toLocaleString()} additions · ` +
+      `${Number(result.removals || 0).toLocaleString()} removals` +
+      (result.possibleChangedIds ? ` · <strong>${Number(result.possibleChangedIds)} possible changed IDs</strong>` : '') +
+      `</div><p class="sub">${escapeHtml(result.warning || '')}</p>`;
+    if ($('launchBoxImportCatalog')) $('launchBoxImportCatalog').disabled = !!result.possibleChangedIds;
+    launchBoxControlledMessage('launchBoxSourceStatus', result.possibleChangedIds
+      ? 'Possible game-ID changes detected. Import is blocked until investigated.'
+      : 'Preview ready. Importing updates only this platform and does not run the matcher.', !result.possibleChangedIds);
+  } catch (err) { launchBoxControlledMessage('launchBoxSourceStatus', err.message); }
+}
+async function importLaunchBoxCatalog() {
+  const preview = launchBoxXmlPreview;
+  if (!preview || !preview.sha256 || preview.platform !== $('launchBoxCatalogPlatform')?.value) return;
+  if (!window.confirm(`Import ${preview.count} ${preview.platform} games? This updates only this platform's catalog. It will NOT create any document links.`)) return;
+  try {
+    const result = await launchBoxControlledApi('/api/integrations/launchbox/catalog/import', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ platform: preview.platform, expectedSha256: preview.sha256 })
+    });
+    invalidateLaunchBoxXmlPreview();
+    launchBoxControlledMessage('launchBoxSourceStatus', `Imported ${result.imported} ${result.platform} games; no matching job started.`, true);
+    await loadLaunchBoxCoverage(false);
+    populateLaunchBoxScanPlatforms();
+  } catch (err) { launchBoxControlledMessage('launchBoxSourceStatus', err.message); }
+}
+function populateLaunchBoxScanPlatforms() {
+  const select = $('launchBoxScanPlatform');
+  if (!select) return;
+  const previous = select.value;
+  const rows = state.launchBox.status?.coverage?.byPlatform || [];
+  const platforms = rows.map(r => r.platform).filter(Boolean).sort((a,b) => a.localeCompare(b));
+  select.innerHTML = '<option value="">Select synced platform</option>' +
+    platforms.map(p => `<option value="${escapeForAttribute(p)}">${escapeHtml(p)}</option>`).join('');
+  if (platforms.includes(previous)) select.value = previous;
+  else if (platforms.includes('Nintendo Entertainment System')) select.value = 'Nintendo Entertainment System';
+}
+async function runLaunchBoxControlledScan() {
+  const platform = $('launchBoxScanPlatform')?.value || '';
+  const kind = $('launchBoxScanKind')?.value || 'Manual';
+  const host = $('launchBoxControlledScanResults');
+  if (!platform) return launchBoxControlledMessage('launchBoxControlledScanStatus', 'Select a synced platform first.');
+  if (host) host.innerHTML = '';
+  launchBoxControlledMessage('launchBoxControlledScanStatus', `Running read-only ${platform} → Manuals scan...`);
+  try {
+    const data = await launchBoxControlledApi('/api/integrations/launchbox/scans/preview', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ platform, matchType: kind })
+    });
+    if (host) host.innerHTML = `<div class="launchbox-controlled-summary">` +
+      `<strong>${Number(data.games || 0).toLocaleString()}</strong> games · ` +
+      `<strong>${Number(data.candidatePairs || 0).toLocaleString()}</strong> proposed pairs · ` +
+      `${Number(data.strongCandidates || 0)} strong · ${Number(data.needsReview || 0)} review · ` +
+      `${Number(data.conflicts || 0)} conflicts · ${Number(data.gamesWithNoExactTitleCandidate || 0)} no exact title candidate</div>` +
+      `<p class="sub">No changes made. ${escapeHtml(data.note || '')}</p>` +
+      `<div class="launchbox-controlled-table">` +
+      (data.rows || []).map(r => `<article class="launchbox-controlled-pair">` +
+        `<div><strong>${escapeHtml(r.gameTitle)}</strong><span>${escapeHtml(r.gamePlatform)}</span></div>` +
+        `<div class="launchbox-controlled-cover"><img src="${escapeForAttribute(r.coverUrl)}" alt="Publication cover" loading="lazy"></div>` +
+        `<div><strong>${escapeHtml(r.publicationTitle)}</strong><span>${escapeHtml(r.publicationSystem || 'Platform unknown')}</span></div>` +
+        `<div><strong>${escapeHtml(r.classification)}</strong><span>${escapeHtml(r.reason)}</span></div>` +
+        `</article>`).join('') + `</div>` +
+      (data.truncated ? '<p class="sub">Showing first 500 proposals; this is a limited review preview, not an approval queue.</p>' : '');
+    launchBoxControlledMessage('launchBoxControlledScanStatus', `Dry scan complete — 0 links created.`, true);
+  } catch (err) { launchBoxControlledMessage('launchBoxControlledScanStatus', err.message); }
+}
