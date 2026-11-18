@@ -942,6 +942,70 @@ app.MapPost("/api/integrations/launchbox/scans/manual/decision", (GuidevaultManu
     return (IResult)Results.Ok(new { success = true, matchStatus = result.MatchStatus, message = result.Message });
 });
 
+// GUIDEVAULT_MANUAL_BATCH_REVIEW_V15: one page, one document type, atomic decision batch.
+// Re-derive scope and Strong eligibility server-side; never trust the browser's labels.
+app.MapPost("/api/integrations/launchbox/scans/manual/decisions/batch", (GuidevaultManualBatchReviewRequest payload) =>
+{
+    var action = (payload.Action ?? string.Empty).Trim().ToLowerInvariant();
+    if (action is not ("approve" or "reject"))
+        return (IResult)Results.BadRequest(new { error = "Only Approve or Not a Match are available in manual batch review." });
+    if (string.IsNullOrWhiteSpace(payload.Platform) || payload.Page < 1 ||
+        payload.PageSize is not (100 or 250 or 500) || payload.Pairs is null ||
+        payload.Pairs.Count is < 1 or > 500)
+        return (IResult)Results.BadRequest(new { error = "Select 1–500 manual pairs from one displayed scan page." });
+
+    var requested = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+    foreach (var pair in payload.Pairs)
+    {
+        if (pair is null || string.IsNullOrWhiteSpace(pair.GameId) || string.IsNullOrWhiteSpace(pair.PublicationId) ||
+            !requested.Add(pair.GameId.Trim() + "\u001F" + pair.PublicationId.Trim()))
+            return (IResult)Results.BadRequest(new { error = "Every selected manual pair must have unique, nonempty IDs." });
+    }
+
+    try
+    {
+        var snapshot = launchBoxIntegrationStore.GetSnapshot();
+        var items = cache.GetItemsSnapshot();
+        using var scan = JsonDocument.Parse(JsonSerializer.Serialize(
+            GuidevaultLaunchBoxControlledManualScanner.Preview(payload.Platform, "Manual",
+                snapshot.Games, items, launchBoxSourceSettingsStore.Get().RootPath,
+                payload.Page, payload.PageSize, snapshot.Matches)));
+        var scanRoot = scan.RootElement;
+        if (scanRoot.GetProperty("page").GetInt32() != payload.Page)
+            return (IResult)Results.BadRequest(new { error = "Scan results changed. Refresh the page and reselect the pairs." });
+        var eligible = new Dictionary<string, (string Classification, string SavedStatus)>(StringComparer.OrdinalIgnoreCase);
+        foreach (var row in scanRoot.GetProperty("rows").EnumerateArray())
+        {
+            var key = row.GetProperty("gameId").GetString() + "\u001F" + row.GetProperty("publicationId").GetString();
+            eligible[key] = (row.GetProperty("classification").GetString() ?? string.Empty,
+                row.GetProperty("savedStatus").GetString() ?? string.Empty);
+        }
+        foreach (var key in requested)
+        {
+            if (!eligible.TryGetValue(key, out var evidence))
+                return (IResult)Results.BadRequest(new { error = "A selected pair is no longer on this scan page. Refresh and select again." });
+            if (!string.IsNullOrWhiteSpace(evidence.SavedStatus))
+                return (IResult)Results.BadRequest(new { error = "A selected pair already has a saved decision. Refresh and select only undecided pairs." });
+            if (action == "approve" && evidence.Classification != "Strong candidate")
+                return (IResult)Results.BadRequest(new { error = "Bulk approval is only available when every selected manual is a Strong candidate." });
+        }
+
+        var outcome = launchBoxIntegrationStore.ApplyScopedManualBatchDecision(
+            payload.Platform, action, payload.Pairs, items);
+        if (!outcome.Success)
+            return (IResult)Results.BadRequest(new { error = outcome.Message });
+        RecordSystemEvent("Integration", $"Scoped manual batch: {action}",
+            $"{payload.Platform}: {outcome.Applied} manual pairs; first IDs: " +
+            string.Join(", ", payload.Pairs.Take(20).Select(x => $"{x.GameId}/{x.PublicationId}")),
+            "launchbox-manual-review", string.Empty, string.Empty);
+        return (IResult)Results.Ok(new { success = true, applied = outcome.Applied, message = outcome.Message });
+    }
+    catch (Exception ex) when (ex is ArgumentException or InvalidOperationException)
+    {
+        return (IResult)Results.BadRequest(new { error = ex.Message });
+    }
+});
+
 app.MapGet("/api/integrations/launchbox/coverage", () =>
 {
     var snapshot = launchBoxIntegrationStore.GetSnapshot();
@@ -9187,6 +9251,67 @@ public sealed class GuidevaultLaunchBoxIntegrationStore
         }
     }
 
+    // GUIDEVAULT_MANUAL_BATCH_REVIEW_V15: verify every row before writing; commit once.
+    // A failed validation changes nothing. A failed atomic save rolls back in-memory state.
+    public (bool Success, int Applied, string Message) ApplyScopedManualBatchDecision(
+        string platform, string action, IReadOnlyList<GuidevaultManualReviewPair> pairs,
+        IReadOnlyList<LibraryItem> items)
+    {
+        if (action is not ("approve" or "reject") || pairs.Count is < 1 or > 500)
+            return (false, 0, "Invalid manual batch request.");
+        var itemsById = items.Where(i => !string.IsNullOrWhiteSpace(i.Id))
+            .GroupBy(i => i.Id, StringComparer.OrdinalIgnoreCase)
+            .ToDictionary(g => g.Key, g => g.First(), StringComparer.OrdinalIgnoreCase);
+        lock (_gate)
+        {
+            var changes = new List<(GuidevaultLaunchBoxGame Game, LibraryItem Item)>();
+            var checkedPairs = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            foreach (var pair in pairs)
+            {
+                if (pair is null || string.IsNullOrWhiteSpace(pair.GameId) || string.IsNullOrWhiteSpace(pair.PublicationId))
+                    return (false, 0, "A selected pair is missing its identity. Refresh and try again.");
+                var key = pair.GameId.Trim() + "\u001F" + pair.PublicationId.Trim();
+                if (!checkedPairs.Add(key)) return (false, 0, "Duplicate manual pair in batch.");
+                var game = _data.Games.FirstOrDefault(g =>
+                    string.Equals(g.Id, pair.GameId, StringComparison.OrdinalIgnoreCase) &&
+                    string.Equals(g.Platform, platform, StringComparison.OrdinalIgnoreCase));
+                if (game is null || !itemsById.TryGetValue(pair.PublicationId, out var item) ||
+                    !string.Equals(item.Kind, "Manual", StringComparison.OrdinalIgnoreCase))
+                    return (false, 0, "A selected game or manual is no longer available in this platform. Refresh the scan.");
+                if (_data.Matches.Any(m =>
+                    string.Equals(m.LaunchBoxGameId, game.Id, StringComparison.OrdinalIgnoreCase) &&
+                    string.Equals(m.GuideVaultItemId, item.Id, StringComparison.OrdinalIgnoreCase) &&
+                    string.Equals(m.MatchType, "Manual", StringComparison.OrdinalIgnoreCase)))
+                    return (false, 0, "A selected manual already has a decision. Refresh the scan before retrying.");
+                changes.Add((game, item));
+            }
+
+            var before = _data.Matches.Select(GuidevaultLaunchBoxMatcher.CloneMatch).ToList();
+            try
+            {
+                foreach (var (game, item) in changes)
+                {
+                    var status = action == "approve" ? "Confirmed" : "Rejected";
+                    var match = GuidevaultLaunchBoxMatcher.CreateMatch(game, item, "Manual", status, 0,
+                        action == "approve"
+                            ? "Approved from platform-scoped manual review; not a numeric confidence score."
+                            : "Rejected from platform-scoped manual review; not an active link.");
+                    match.PreviousMatchStatus = "Missing";
+                    match.Source = "Manual";
+                    _data.Matches.Add(match);
+                }
+                Save();
+            }
+            catch
+            {
+                _data.Matches = before;
+                throw;
+            }
+            return (true, changes.Count,
+                $"{(action == "approve" ? "Approved" : "Marked Not a Match")} {changes.Count} manual pairs for {platform}.");
+        }
+    }
+
     // Scoped Undo removes this pair only. Do not restore old AutoMatched statuses.
     public GuidevaultLaunchBoxDecisionResult ClearScopedManualDecision(GuidevaultLaunchBoxMatchDecisionRequest request,
         IReadOnlyList<LibraryItem> items)
@@ -11159,6 +11284,22 @@ public sealed class GuidevaultLaunchBoxSyncJobStatus
     public DateTimeOffset? UpdatedAt { get; set; }
     public DateTimeOffset? CompletedAt { get; set; }
     public List<string> Errors { get; set; } = new();
+}
+
+// GUIDEVAULT_MANUAL_BATCH_REVIEW_V15: explicitly selected game/manual IDs, current page only.
+public sealed class GuidevaultManualReviewPair
+{
+    public string GameId { get; set; } = string.Empty;
+    public string PublicationId { get; set; } = string.Empty;
+}
+
+public sealed class GuidevaultManualBatchReviewRequest
+{
+    public string Platform { get; set; } = string.Empty;
+    public string Action { get; set; } = string.Empty;
+    public int Page { get; set; } = 1;
+    public int PageSize { get; set; } = 100;
+    public List<GuidevaultManualReviewPair> Pairs { get; set; } = new();
 }
 
 public sealed class GuidevaultManualReviewRequest

@@ -27112,10 +27112,21 @@ async function runLaunchBoxControlledScan(page = 1) {
       (Number(data.excludedByIdentity || 0) > 0 ? `<details class="launchbox-manual-exclusions"><summary>${Number(data.excludedByIdentity)} conflicting game identities skipped (show examples)</summary>` +
         `<div class="launchbox-exclusions-list">` + (data.identityExclusions || []).map(r => `<div>${escapeHtml(r.gameTitle)} → ${escapeHtml(r.publicationTitle)} · ${escapeHtml(r.reason || '')}</div>`).join('') + `</div></details>` : '') +
       `<p class="sub launchbox-controlled-artwork-note">${escapeHtml(data.artworkNote || '')}</p>` +
+      `<div class="launchbox-scan-bulkbar" role="group" aria-label="Manual batch review for this page">` +
+      `<div class="launchbox-scan-bulkselect">` +
+      `<button type="button" id="launchBoxSelectPage">Select undecided on page</button>` +
+      `<button type="button" id="launchBoxSelectStrong">Select strong on page</button>` +
+      `<button type="button" id="launchBoxClearSelection">Clear selection</button></div>` +
+      `<div class="launchbox-scan-bulkactions"><span id="launchBoxSelectedCount" aria-live="polite">0 selected on this page</span>` +
+      `<button type="button" id="launchBoxBulkApprove" disabled>Approve selected (0)</button>` +
+      `<button type="button" id="launchBoxBulkReject" disabled>Not a Match selected (0)</button></div>` +
+      `<small>Selection applies only to this page. Already-reviewed pairs cannot be selected. Approvals require Strong candidates.</small></div>` +
       `<div class="launchbox-scan-page-toolbar"><label>Results per page: <select id="launchBoxScanPageSize">${pageSizeOptions}</select></label></div>` +
       pager +
       `<div class="launchbox-controlled-table">` +
       (data.rows || []).map(r => `<article class="launchbox-controlled-pair">` +
+        `<label class="launchbox-scan-row-selector" title="Select this game/manual pair">` +
+        `<input type="checkbox" class="launchbox-scan-select" data-game-id="${escapeForAttribute(r.gameId)}" data-manual-id="${escapeForAttribute(r.publicationId)}" data-manual-classification="${escapeForAttribute(r.classification)}" ${r.savedStatus ? 'disabled' : ''} aria-label="Select ${escapeForAttribute(r.gameTitle)} and ${escapeForAttribute(r.publicationTitle)}"></label>` +
         `<div class="launchbox-controlled-sourcecard">` +
           `<div class="launchbox-controlled-cover">` +
             `<img data-launchbox-scan-image src="${escapeForAttribute(r.gameBoxFrontUrl || '')}" alt="LaunchBox box front for ${escapeForAttribute(r.gameTitle)}" loading="lazy" decoding="async">` +
@@ -27139,7 +27150,7 @@ async function runLaunchBoxControlledScan(page = 1) {
           `<button type="button" data-manual-review-action="needs-metadata" data-game-id="${escapeForAttribute(r.gameId)}" data-manual-id="${escapeForAttribute(r.publicationId)}">Needs Metadata</button></div>`) +
         `</div>` +
         `</article>`).join('') + `</div>` + pager +
-      `<p class="sub">All proposals are viewable using Previous/Next. This is a read-only preview, not an approval queue.</p>`;
+      `<p class="sub">All proposals are viewable using Previous/Next. Only explicitly selected pairs can be dispositioned.</p>`;
     if (host) {
       host.querySelectorAll('button[data-launchbox-scan-page]').forEach(button => button.addEventListener('click', () => {
         const next = Number(button.dataset.launchboxScanPage);
@@ -27151,6 +27162,13 @@ async function runLaunchBoxControlledScan(page = 1) {
       });
       host.querySelectorAll('button[data-manual-review-action]').forEach(button => button.addEventListener('click', () =>
         submitManualReviewDecision(button, platform)));
+      host.querySelectorAll('.launchbox-scan-select').forEach(box => box.addEventListener('change', updateLaunchBoxManualBulkSelection));
+      host.querySelector('#launchBoxSelectPage')?.addEventListener('click', () => selectLaunchBoxManualPage('all'));
+      host.querySelector('#launchBoxSelectStrong')?.addEventListener('click', () => selectLaunchBoxManualPage('strong'));
+      host.querySelector('#launchBoxClearSelection')?.addEventListener('click', () => selectLaunchBoxManualPage('none'));
+      host.querySelector('#launchBoxBulkApprove')?.addEventListener('click', () => submitLaunchBoxManualBatch('approve', platform));
+      host.querySelector('#launchBoxBulkReject')?.addEventListener('click', () => submitLaunchBoxManualBatch('reject', platform));
+      updateLaunchBoxManualBulkSelection();
       host.querySelectorAll('img[data-launchbox-scan-image]').forEach(img => img.addEventListener('error', () => {
         img.closest('.launchbox-controlled-cover')?.classList.add('is-missing'); img.remove();
       }, { once: true }));
@@ -27171,10 +27189,7 @@ async function submitManualReviewDecision(button, platform) {
   if (!['approve', 'reject', 'needs-metadata', 'undo'].includes(action) || !gameId || !publicationId) return;
   const row = button.closest('.launchbox-controlled-pair');
   const names = [...(row?.querySelectorAll('.launchbox-controlled-sourceinfo strong') || [])].map(el => el.textContent).join(' → ');
-  const labels = { approve: 'Approve', reject: 'Mark Not a Match', 'needs-metadata': 'Flag Needs Metadata', undo: 'Undo decision for' };
-  if (!window.confirm(`${labels[action]} ${names}?
-
-This changes one manual relationship only.`)) return;
+  // No browser confirmation prompt: the clicked disposition button is the action.
   const buttons = row?.querySelectorAll('button[data-manual-review-action]') || [];
   buttons.forEach(b => b.disabled = true);
   launchBoxControlledMessage('launchBoxControlledScanStatus', `Saving ${action} for ${names}...`);
@@ -27189,5 +27204,63 @@ This changes one manual relationship only.`)) return;
   } catch (err) {
     buttons.forEach(b => b.disabled = false);
     launchBoxControlledMessage('launchBoxControlledScanStatus', err.message);
+  }
+}
+
+// GUIDEVAULT_MANUAL_BATCH_REVIEW_V15 — selection is limited to currently displayed rows.
+let launchBoxManualBatchPending = false;
+function getLaunchBoxManualSelectedPairs() {
+  const host = $('launchBoxControlledScanResults');
+  return [...(host?.querySelectorAll('.launchbox-scan-select:checked:not(:disabled)') || [])];
+}
+function updateLaunchBoxManualBulkSelection() {
+  const host = $('launchBoxControlledScanResults');
+  if (!host) return;
+  const selected = getLaunchBoxManualSelectedPairs();
+  const strongOnly = selected.every(x => x.dataset.manualClassification === 'Strong candidate');
+  const label = host.querySelector('#launchBoxSelectedCount');
+  if (label) label.textContent = `${selected.length} selected on this page` +
+    (selected.length && !strongOnly ? ' · non-Strong selection cannot be bulk approved' : '');
+  const approve = host.querySelector('#launchBoxBulkApprove');
+  const reject = host.querySelector('#launchBoxBulkReject');
+  if (approve) { approve.disabled = launchBoxManualBatchPending || !selected.length || !strongOnly; approve.textContent = `Approve selected (${selected.length})`; }
+  if (reject) { reject.disabled = launchBoxManualBatchPending || !selected.length; reject.textContent = `Not a Match selected (${selected.length})`; }
+  host.querySelectorAll('.launchbox-scan-bulkselect button').forEach(b => b.disabled = launchBoxManualBatchPending);
+  host.querySelectorAll('.launchbox-scan-select').forEach(box => {
+    box.closest('.launchbox-controlled-pair')?.classList.toggle('is-selected', box.checked);
+  });
+}
+function selectLaunchBoxManualPage(mode) {
+  if (launchBoxManualBatchPending) return;
+  const host = $('launchBoxControlledScanResults');
+  host?.querySelectorAll('.launchbox-scan-select:not(:disabled)').forEach(box => {
+    box.checked = mode === 'all' || (mode === 'strong' && box.dataset.manualClassification === 'Strong candidate');
+  });
+  updateLaunchBoxManualBulkSelection();
+}
+async function submitLaunchBoxManualBatch(action, platform) {
+  if (launchBoxManualBatchPending || !['approve','reject'].includes(action)) return;
+  const selected = getLaunchBoxManualSelectedPairs();
+  if (!selected.length) return;
+  if (action === 'approve' && selected.some(x => x.dataset.manualClassification !== 'Strong candidate')) {
+    return launchBoxControlledMessage('launchBoxControlledScanStatus', 'Select only Strong candidates for bulk approval.');
+  }
+  const pairs = selected.map(x => ({ gameId: x.dataset.gameId, publicationId: x.dataset.manualId }));
+  launchBoxManualBatchPending = true;
+  updateLaunchBoxManualBulkSelection();
+  launchBoxControlledMessage('launchBoxControlledScanStatus', `Saving ${pairs.length} selected manual decisions...`);
+  try {
+    const result = await launchBoxControlledApi('/api/integrations/launchbox/scans/manual/decisions/batch', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ platform, action, page: launchBoxManualScanCurrentPage, pageSize: launchBoxManualScanPageSize, pairs })
+    });
+    await loadLaunchBoxCoverage(false);
+    await runLaunchBoxControlledScan(launchBoxManualScanCurrentPage);
+    launchBoxControlledMessage('launchBoxControlledScanStatus', result.message || `${result.applied} decisions saved.`, true);
+  } catch (err) {
+    launchBoxControlledMessage('launchBoxControlledScanStatus', err.message || 'Batch review failed. No selections were cleared.');
+  } finally {
+    launchBoxManualBatchPending = false;
+    updateLaunchBoxManualBulkSelection();
   }
 }
