@@ -27072,6 +27072,7 @@ function populateLaunchBoxScanPlatforms() {
 // The scanner is read-only. Paging fetches the next slice, never creates matches.
 let launchBoxManualScanPageSize = 100;
 let launchBoxManualScanCurrentPage = 1;
+let launchBoxManualScanStatusFilter = 'pending';
 let launchBoxManualScanRequestId = 0;
 async function runLaunchBoxControlledScan(page = 1) {
   const platform = $('launchBoxScanPlatform')?.value || '';
@@ -27084,7 +27085,8 @@ async function runLaunchBoxControlledScan(page = 1) {
   try {
     const data = await launchBoxControlledApi('/api/integrations/launchbox/scans/preview', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ platform, matchType: kind, page, pageSize: launchBoxManualScanPageSize })
+      body: JSON.stringify({ platform, matchType: kind, page, pageSize: launchBoxManualScanPageSize,
+        statusFilter: launchBoxManualScanStatusFilter })
     });
     if (requestId !== launchBoxManualScanRequestId) return;
     const currentPage = Number(data.page || 1);
@@ -27099,7 +27101,17 @@ async function runLaunchBoxControlledScan(page = 1) {
       `<button type="button" data-launchbox-scan-page="${currentPage - 1}" ${currentPage <= 1 ? 'disabled' : ''}>Previous</button>` +
       `<button type="button" data-launchbox-scan-page="${currentPage + 1}" ${currentPage >= pageCount ? 'disabled' : ''}>Next</button>` +
       `</div></nav>`;
-    if (host) host.innerHTML = `<div class="launchbox-controlled-summary">` +
+    const statusFilterOptions = [
+      ['pending', 'Pending'], ['approved', 'Approved history'],
+      ['rejected', 'Not a Match history'], ['metadata', 'Needs Metadata history'], ['all', 'All proposals']
+    ].map(([value, label]) => `<option value="${value}"${value === launchBoxManualScanStatusFilter ? ' selected' : ''}>${label}</option>`).join('');
+    if (host) host.innerHTML = `<div class="launchbox-scan-queuebar">` +
+      `<label>Show <select id="launchBoxManualStatusFilter" aria-label="Manual matching review queue">${statusFilterOptions}</select></label>` +
+      `<span>${Number(data.pendingPairs || 0).toLocaleString()} pending · ` +
+      `${Number(data.approvedPairs || 0).toLocaleString()} approved · ` +
+      `${Number(data.rejectedPairs || 0).toLocaleString()} rejected · ` +
+      `${Number(data.metadataPairs || 0).toLocaleString()} need metadata</span></div>` +
+      `<div class="launchbox-controlled-summary">` +
       `<strong>${Number(data.games || 0).toLocaleString()}</strong> games · ` +
       `<strong>${total.toLocaleString()}</strong> proposed pairs · ` +
       `${Number(data.strongCandidates || 0).toLocaleString()} strong · ${Number(data.needsReview || 0).toLocaleString()} needs review · ` +
@@ -27112,15 +27124,26 @@ async function runLaunchBoxControlledScan(page = 1) {
       (Number(data.excludedByIdentity || 0) > 0 ? `<details class="launchbox-manual-exclusions"><summary>${Number(data.excludedByIdentity)} conflicting game identities skipped (show examples)</summary>` +
         `<div class="launchbox-exclusions-list">` + (data.identityExclusions || []).map(r => `<div>${escapeHtml(r.gameTitle)} → ${escapeHtml(r.publicationTitle)} · ${escapeHtml(r.reason || '')}</div>`).join('') + `</div></details>` : '') +
       `<p class="sub launchbox-controlled-artwork-note">${escapeHtml(data.artworkNote || '')}</p>` +
-      `<div class="launchbox-scan-bulkbar" role="group" aria-label="Manual batch review for this page">` +
+      (launchBoxManualScanStatusFilter === 'pending' ? `<div class="launchbox-scan-bulkbar" role="group" aria-label="Manual batch review for this page">` +
       `<div class="launchbox-scan-bulkselect">` +
       `<button type="button" id="launchBoxSelectPage">Select undecided on page</button>` +
       `<button type="button" id="launchBoxSelectStrong">Select strong on page</button>` +
+      `<button type="button" id="launchBoxSelectNeedsReview">Select Needs Review on page</button>` +
       `<button type="button" id="launchBoxClearSelection">Clear selection</button></div>` +
       `<div class="launchbox-scan-bulkactions"><span id="launchBoxSelectedCount" aria-live="polite">0 selected on this page</span>` +
       `<button type="button" id="launchBoxBulkApprove" disabled>Approve selected (0)</button>` +
       `<button type="button" id="launchBoxBulkReject" disabled>Not a Match selected (0)</button></div>` +
-      `<small>Selection applies only to this page. Already-reviewed pairs cannot be selected. Approvals require Strong candidates.</small></div>` +
+      `<div class="launchbox-reviewed-bulk" id="launchBoxReviewedBulkSection" hidden>` +
+      `<label>Shared verification reason<select id="launchBoxBulkReviewReason" aria-label="Shared review reason">` +
+      `<option value="">Select verification reason</option>` +
+      `<option value="regional-variant">Regional title / edition</option>` +
+      `<option value="alternate-title">Verified alternate title</option>` +
+      `<option value="release-year">Release-year metadata difference</option>` +
+      `<option value="metadata-verified">Metadata verified by inspection</option>` +
+      `<option value="other-verified">Other verified evidence</option></select></label>` +
+      `<label>Shared verification note<input id="launchBoxBulkReviewNote" maxlength="240" type="text" placeholder="Optional, except for Other"></label>` +
+      `<button type="button" id="launchBoxBulkApproveReviewed" disabled>Approve reviewed selected (0)</button></div>` +
+      `<small>Select Strong candidates for standard approval, or select Needs Review candidates and give them one shared verification reason. Selections are page-only. Decisions leave Pending and remain available in history.</small></div>` : '') +
       `<div class="launchbox-scan-page-toolbar"><label>Results per page: <select id="launchBoxScanPageSize">${pageSizeOptions}</select></label></div>` +
       pager +
       `<div class="launchbox-controlled-table">` +
@@ -27160,6 +27183,10 @@ async function runLaunchBoxControlledScan(page = 1) {
         `</article>`).join('') + `</div>` + pager +
       `<p class="sub">All proposals are viewable using Previous/Next. Only explicitly selected pairs can be dispositioned.</p>`;
     if (host) {
+      host.querySelector('#launchBoxManualStatusFilter')?.addEventListener('change', e => {
+        launchBoxManualScanStatusFilter = e.target.value;
+        runLaunchBoxControlledScan(1);
+      });
       host.querySelectorAll('button[data-launchbox-scan-page]').forEach(button => button.addEventListener('click', () => {
         const next = Number(button.dataset.launchboxScanPage);
         if (Number.isInteger(next) && next >= 1 && next <= pageCount) runLaunchBoxControlledScan(next);
@@ -27184,6 +27211,10 @@ async function runLaunchBoxControlledScan(page = 1) {
       host.querySelectorAll('.launchbox-scan-select').forEach(box => box.addEventListener('change', updateLaunchBoxManualBulkSelection));
       host.querySelector('#launchBoxSelectPage')?.addEventListener('click', () => selectLaunchBoxManualPage('all'));
       host.querySelector('#launchBoxSelectStrong')?.addEventListener('click', () => selectLaunchBoxManualPage('strong'));
+      host.querySelector('#launchBoxSelectNeedsReview')?.addEventListener('click', () => selectLaunchBoxManualPage('review'));
+      host.querySelector('#launchBoxBulkReviewReason')?.addEventListener('change', updateLaunchBoxManualBulkSelection);
+      host.querySelector('#launchBoxBulkReviewNote')?.addEventListener('input', updateLaunchBoxManualBulkSelection);
+      host.querySelector('#launchBoxBulkApproveReviewed')?.addEventListener('click', () => submitLaunchBoxManualBatch('approve-reviewed', platform));
       host.querySelector('#launchBoxClearSelection')?.addEventListener('click', () => selectLaunchBoxManualPage('none'));
       host.querySelector('#launchBoxBulkApprove')?.addEventListener('click', () => submitLaunchBoxManualBatch('approve', platform));
       host.querySelector('#launchBoxBulkReject')?.addEventListener('click', () => submitLaunchBoxManualBatch('reject', platform));
@@ -27244,9 +27275,20 @@ function updateLaunchBoxManualBulkSelection() {
   if (!host) return;
   const selected = getLaunchBoxManualSelectedPairs();
   const strongOnly = selected.every(x => x.dataset.manualClassification === 'Strong candidate');
+  const reviewOnly = selected.every(x => x.dataset.manualClassification === 'Needs review');
+  const reason = host.querySelector('#launchBoxBulkReviewReason')?.value || '';
+  const note = (host.querySelector('#launchBoxBulkReviewNote')?.value || '').trim();
+  const sharedReasonValid = !!reason && (reason !== 'other-verified' || note.length >= 5);
+  const reviewedGroup = host.querySelector('#launchBoxReviewedBulkSection');
+  if (reviewedGroup) reviewedGroup.hidden = !(selected.length > 0 && reviewOnly);
+  const reviewedButton = host.querySelector('#launchBoxBulkApproveReviewed');
+  if (reviewedButton) {
+    reviewedButton.disabled = launchBoxManualBatchPending || !selected.length || !reviewOnly || !sharedReasonValid;
+    reviewedButton.textContent = `Approve reviewed selected (${selected.length})`;
+  }
   const label = host.querySelector('#launchBoxSelectedCount');
   if (label) label.textContent = `${selected.length} selected on this page` +
-    (selected.length && !strongOnly ? ' · non-Strong selection cannot be bulk approved' : '');
+    (selected.length && !strongOnly && !reviewOnly ? ' · mixed classifications: choose one type for approval' : '');
   const approve = host.querySelector('#launchBoxBulkApprove');
   const reject = host.querySelector('#launchBoxBulkReject');
   if (approve) { approve.disabled = launchBoxManualBatchPending || !selected.length || !strongOnly; approve.textContent = `Approve selected (${selected.length})`; }
@@ -27260,16 +27302,26 @@ function selectLaunchBoxManualPage(mode) {
   if (launchBoxManualBatchPending) return;
   const host = $('launchBoxControlledScanResults');
   host?.querySelectorAll('.launchbox-scan-select:not(:disabled)').forEach(box => {
-    box.checked = mode === 'all' || (mode === 'strong' && box.dataset.manualClassification === 'Strong candidate');
+    box.checked = mode === 'all' || (mode === 'strong' && box.dataset.manualClassification === 'Strong candidate') ||
+      (mode === 'review' && box.dataset.manualClassification === 'Needs review');
   });
   updateLaunchBoxManualBulkSelection();
 }
 async function submitLaunchBoxManualBatch(action, platform) {
-  if (launchBoxManualBatchPending || !['approve','reject'].includes(action)) return;
+  if (launchBoxManualBatchPending || !['approve','approve-reviewed','reject'].includes(action)) return;
   const selected = getLaunchBoxManualSelectedPairs();
   if (!selected.length) return;
   if (action === 'approve' && selected.some(x => x.dataset.manualClassification !== 'Strong candidate')) {
     return launchBoxControlledMessage('launchBoxControlledScanStatus', 'Select only Strong candidates for bulk approval.');
+  }
+  if (action === 'approve-reviewed' && selected.some(x => x.dataset.manualClassification !== 'Needs review')) {
+    return launchBoxControlledMessage('launchBoxControlledScanStatus', 'Select only Needs Review candidates for shared reviewed approval.');
+  }
+  const host = $('launchBoxControlledScanResults');
+  const reviewReason = action === 'approve-reviewed' ? host?.querySelector('#launchBoxBulkReviewReason')?.value || '' : '';
+  const reviewNote = action === 'approve-reviewed' ? (host?.querySelector('#launchBoxBulkReviewNote')?.value || '').trim() : '';
+  if (action === 'approve-reviewed' && (!reviewReason || (reviewReason === 'other-verified' && reviewNote.length < 5))) {
+    return launchBoxControlledMessage('launchBoxControlledScanStatus', 'Choose one verification reason and, if Other, supply a note of at least five characters.');
   }
   const pairs = selected.map(x => ({ gameId: x.dataset.gameId, publicationId: x.dataset.manualId }));
   launchBoxManualBatchPending = true;
@@ -27278,7 +27330,8 @@ async function submitLaunchBoxManualBatch(action, platform) {
   try {
     const result = await launchBoxControlledApi('/api/integrations/launchbox/scans/manual/decisions/batch', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ platform, action, page: launchBoxManualScanCurrentPage, pageSize: launchBoxManualScanPageSize, pairs })
+      body: JSON.stringify({ platform, action, page: launchBoxManualScanCurrentPage,
+        pageSize: launchBoxManualScanPageSize, pairs, reviewReason, reviewNote })
     });
     await loadLaunchBoxCoverage(false);
     await runLaunchBoxControlledScan(launchBoxManualScanCurrentPage);

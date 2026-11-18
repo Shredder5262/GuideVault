@@ -67,6 +67,7 @@ public sealed class GuidevaultLaunchBoxScopedRequest
     public string ExpectedSha256 { get; set; } = string.Empty;
     public int Page { get; set; } = 1;
     public int PageSize { get; set; } = 100;
+    public string StatusFilter { get; set; } = "pending";
 }
 
 public static class GuidevaultLaunchBoxCatalogReader
@@ -184,8 +185,13 @@ public static class GuidevaultLaunchBoxControlledManualScanner
     public static object Preview(string platform, string matchType,
         IReadOnlyList<GuidevaultLaunchBoxGame> games, IReadOnlyList<LibraryItem> documents,
         string? launchBoxRoot, int page = 1, int pageSize = 100,
-        IReadOnlyList<GuidevaultLaunchBoxMatch>? savedMatches = null)
+        IReadOnlyList<GuidevaultLaunchBoxMatch>? savedMatches = null, string statusFilter = "pending")
     {
+        // GUIDEVAULT_MANUAL_BATCH_REVIEW_V17: filter saved decisions before paging.
+        // Pending is the default queue; history is separately inspectable/undoable.
+        statusFilter = (statusFilter ?? "pending").Trim().ToLowerInvariant();
+        if (statusFilter is not ("pending" or "approved" or "rejected" or "metadata" or "all"))
+            throw new ArgumentException("Invalid manual review queue.");
         if (!string.Equals(matchType, "Manual", StringComparison.OrdinalIgnoreCase))
             throw new ArgumentException("The controlled scanner currently supports Manuals only.");
         if (string.IsNullOrWhiteSpace(platform)) throw new ArgumentException("Select a LaunchBox platform.");
@@ -213,6 +219,7 @@ public static class GuidevaultLaunchBoxControlledManualScanner
         var excludedExamples = new List<object>();
         var identityExclusions = new List<object>();
         int strong = 0, review = 0, excluded = 0, excludedByIdentity = 0, withoutExactTitle = 0, withoutEligible = 0;
+        int pendingPairs = 0, approvedPairs = 0, rejectedPairs = 0, metadataPairs = 0;
         foreach (var game in selectedGames.OrderBy(g => g.Title, StringComparer.OrdinalIgnoreCase))
         {
             var keys = new[] { game.Title, game.SortTitle }
@@ -296,6 +303,27 @@ public static class GuidevaultLaunchBoxControlledManualScanner
                             : associatedIsTarget
                                 ? "Target platform appears only in associated/covered tags; verify manual's actual system"
                                 : "Manual platform missing; verify the edition before linking";
+                var savedStatus = savedMatches?.FirstOrDefault(m =>
+                    string.Equals(m.LaunchBoxGameId, game.Id, StringComparison.OrdinalIgnoreCase)
+                    && string.Equals(m.GuideVaultItemId, item.Id, StringComparison.OrdinalIgnoreCase)
+                    && string.Equals(m.MatchType, "Manual", StringComparison.OrdinalIgnoreCase))?.MatchStatus ?? string.Empty;
+                var isApproved = string.Equals(savedStatus, "Confirmed", StringComparison.OrdinalIgnoreCase)
+                    || string.Equals(savedStatus, "AutoMatched", StringComparison.OrdinalIgnoreCase);
+                var isRejected = string.Equals(savedStatus, "Rejected", StringComparison.OrdinalIgnoreCase);
+                var isMetadata = string.Equals(savedStatus, "NeedsMetadata", StringComparison.OrdinalIgnoreCase);
+                if (isApproved) approvedPairs++;
+                else if (isRejected) rejectedPairs++;
+                else if (isMetadata) metadataPairs++;
+                else pendingPairs++;
+                var show = statusFilter switch
+                {
+                    "pending" => !isApproved && !isRejected && !isMetadata,
+                    "approved" => isApproved,
+                    "rejected" => isRejected,
+                    "metadata" => isMetadata,
+                    _ => true
+                };
+                if (!show) continue;
                 if (strongCandidate) strong++; else review++;
                 var row = new { gameId = game.Id, gameTitle = game.Title, gamePlatform = game.Platform,
                     gameBoxFrontUrl = "/api/integrations/launchbox/games/" + Uri.EscapeDataString(game.Id) + "/box-front",
@@ -303,10 +331,7 @@ public static class GuidevaultLaunchBoxControlledManualScanner
                     publicationSystem = string.Join(", ", declared), classification, reason,
                     matchBasis = samePrimaryGame ? "Primary game title" : "Sort/alternate name",
                     manualGameTitle = rawManualGameName,
-                    savedStatus = savedMatches?.FirstOrDefault(m =>
-                        string.Equals(m.LaunchBoxGameId, game.Id, StringComparison.OrdinalIgnoreCase)
-                        && string.Equals(m.GuideVaultItemId, item.Id, StringComparison.OrdinalIgnoreCase)
-                        && string.Equals(m.MatchType, "Manual", StringComparison.OrdinalIgnoreCase))?.MatchStatus ?? string.Empty,
+                    savedStatus,
                     coverUrl = "/api/items/" + Uri.EscapeDataString(item.Id) + "/cover-thumb?w=360" };
                 if (strongCandidate) strongRows.Add(row); else reviewRows.Add(row);
             }
@@ -320,6 +345,7 @@ public static class GuidevaultLaunchBoxControlledManualScanner
         return new { platform, matchType = "Manual", dryRun = true, changedRecords = 0,
             games = selectedGames.Length, manualsInLibrary = manuals.Length,
             candidatePairs = includedCount, strongCandidates = strong, needsReview = review,
+            statusFilter, pendingPairs, approvedPairs, rejectedPairs, metadataPairs,
             conflicts = 0, excludedByPlatform = excluded, excludedByIdentity,
             excludedExamples = excludedExamples.ToArray(), identityExclusions = identityExclusions.ToArray(),
             gamesWithNoExactTitleCandidate = withoutExactTitle,
@@ -329,7 +355,7 @@ public static class GuidevaultLaunchBoxControlledManualScanner
             firstRow = includedCount == 0 ? 0 : offset + 1,
             lastRow = Math.Min(includedCount, offset + pageSize),
             rows = strongRows.Concat(reviewRows).Skip(offset).Take(pageSize).ToArray(),
-            note = "Manuals only: other platforms and conflicting numbered games excluded. A scan itself never writes links. Approvals are available individually for Strong candidates only; other candidates require investigation." };
+            note = "Manuals only: excluded wrong platforms and conflicting numbered games. Scanning never writes links. Pending hides saved decisions; review Approved/Rejected/Needs Metadata using the queue filter." };
     }
 
     // A sequel number is part of a game's identity, not a fuzzy alias.

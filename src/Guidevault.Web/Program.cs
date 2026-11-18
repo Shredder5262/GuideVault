@@ -882,7 +882,7 @@ app.MapPost("/api/integrations/launchbox/scans/preview", (GuidevaultLaunchBoxSco
         var snapshot = launchBoxIntegrationStore.GetSnapshot();
         return (IResult)Results.Ok(GuidevaultLaunchBoxControlledManualScanner.Preview(
             payload.Platform, payload.MatchType, snapshot.Games, cache.GetItemsSnapshot(),
-            launchBoxSourceSettingsStore.Get().RootPath, payload.Page, payload.PageSize, snapshot.Matches));
+            launchBoxSourceSettingsStore.Get().RootPath, payload.Page, payload.PageSize, snapshot.Matches, payload.StatusFilter));
         // GUIDEVAULT_MANUAL_IDENTITY_PAGINATION_V13
     }
     catch (Exception ex) when (ex is ArgumentException or InvalidOperationException)
@@ -965,8 +965,15 @@ app.MapPost("/api/integrations/launchbox/scans/manual/decision", (GuidevaultManu
 app.MapPost("/api/integrations/launchbox/scans/manual/decisions/batch", (GuidevaultManualBatchReviewRequest payload) =>
 {
     var action = (payload.Action ?? string.Empty).Trim().ToLowerInvariant();
-    if (action is not ("approve" or "reject"))
-        return (IResult)Results.BadRequest(new { error = "Only Approve or Not a Match are available in manual batch review." });
+    if (action is not ("approve" or "approve-reviewed" or "reject"))
+        return (IResult)Results.BadRequest(new { error = "Choose Approve, Approve Reviewed, or Not a Match for the selected manuals." });
+    // Reviewed approval is deliberately separate from Strong bulk approval.
+    var reviewReason = (payload.ReviewReason ?? string.Empty).Trim().ToLowerInvariant();
+    var reviewNote = (payload.ReviewNote ?? string.Empty).Trim();
+    if (action == "approve-reviewed" &&
+        (reviewReason is not ("regional-variant" or "alternate-title" or "release-year" or "metadata-verified" or "other-verified") ||
+         reviewNote.Length > 240 || (reviewReason == "other-verified" && reviewNote.Length < 5)))
+        return (IResult)Results.BadRequest(new { error = "Choose one verification reason for this batch (and a 5–240 character note for Other)." });
     if (string.IsNullOrWhiteSpace(payload.Platform) || payload.Page < 1 ||
         payload.PageSize is not (100 or 250 or 500) || payload.Pairs is null ||
         payload.Pairs.Count is < 1 or > 500)
@@ -987,16 +994,17 @@ app.MapPost("/api/integrations/launchbox/scans/manual/decisions/batch", (Guideva
         using var scan = JsonDocument.Parse(JsonSerializer.Serialize(
             GuidevaultLaunchBoxControlledManualScanner.Preview(payload.Platform, "Manual",
                 snapshot.Games, items, launchBoxSourceSettingsStore.Get().RootPath,
-                payload.Page, payload.PageSize, snapshot.Matches)));
+                payload.Page, payload.PageSize, snapshot.Matches, "pending")));
         var scanRoot = scan.RootElement;
         if (scanRoot.GetProperty("page").GetInt32() != payload.Page)
             return (IResult)Results.BadRequest(new { error = "Scan results changed. Refresh the page and reselect the pairs." });
-        var eligible = new Dictionary<string, (string Classification, string SavedStatus)>(StringComparer.OrdinalIgnoreCase);
+        var eligible = new Dictionary<string, (string Classification, string SavedStatus, string Evidence)>(StringComparer.OrdinalIgnoreCase);
         foreach (var row in scanRoot.GetProperty("rows").EnumerateArray())
         {
             var key = row.GetProperty("gameId").GetString() + "\u001F" + row.GetProperty("publicationId").GetString();
             eligible[key] = (row.GetProperty("classification").GetString() ?? string.Empty,
-                row.GetProperty("savedStatus").GetString() ?? string.Empty);
+                row.GetProperty("savedStatus").GetString() ?? string.Empty,
+                row.GetProperty("reason").GetString() ?? string.Empty);
         }
         foreach (var key in requested)
         {
@@ -1005,15 +1013,21 @@ app.MapPost("/api/integrations/launchbox/scans/manual/decisions/batch", (Guideva
             if (!string.IsNullOrWhiteSpace(evidence.SavedStatus))
                 return (IResult)Results.BadRequest(new { error = "A selected pair already has a saved decision. Refresh and select only undecided pairs." });
             if (action == "approve" && evidence.Classification != "Strong candidate")
-                return (IResult)Results.BadRequest(new { error = "Bulk approval is only available when every selected manual is a Strong candidate." });
+                return (IResult)Results.BadRequest(new { error = "Strong bulk approval requires Strong candidates only." });
+            if (action == "approve-reviewed" && evidence.Classification != "Needs review")
+                return (IResult)Results.BadRequest(new { error = "Reviewed bulk approval requires Needs Review candidates only. Select matching review cases separately." });
         }
 
+        var originalEvidence = requested.ToDictionary(key => key, key => eligible[key].Evidence,
+            StringComparer.OrdinalIgnoreCase);
         var outcome = launchBoxIntegrationStore.ApplyScopedManualBatchDecision(
-            payload.Platform, action, payload.Pairs, items);
+            payload.Platform, action, payload.Pairs, items, reviewReason, reviewNote, originalEvidence);
         if (!outcome.Success)
             return (IResult)Results.BadRequest(new { error = outcome.Message });
         RecordSystemEvent("Integration", $"Scoped manual batch: {action}",
-            $"{payload.Platform}: {outcome.Applied} manual pairs; first IDs: " +
+            $"{payload.Platform}: {outcome.Applied} manual pairs; " +
+            (action == "approve-reviewed" ? $"shared review reason={reviewReason}; note={reviewNote}; " : "") +
+            "first IDs: " +
             string.Join(", ", payload.Pairs.Take(20).Select(x => $"{x.GameId}/{x.PublicationId}")),
             "launchbox-manual-review", string.Empty, string.Empty);
         return (IResult)Results.Ok(new { success = true, applied = outcome.Applied, message = outcome.Message });
@@ -9325,10 +9339,24 @@ public sealed class GuidevaultLaunchBoxIntegrationStore
     // A failed validation changes nothing. A failed atomic save rolls back in-memory state.
     public (bool Success, int Applied, string Message) ApplyScopedManualBatchDecision(
         string platform, string action, IReadOnlyList<GuidevaultManualReviewPair> pairs,
-        IReadOnlyList<LibraryItem> items)
+        IReadOnlyList<LibraryItem> items, string reviewReason = "", string reviewNote = "",
+        IReadOnlyDictionary<string, string>? evidenceByPair = null)
     {
-        if (action is not ("approve" or "reject") || pairs.Count is < 1 or > 500)
+        if (action is not ("approve" or "approve-reviewed" or "reject") || pairs.Count is < 1 or > 500)
             return (false, 0, "Invalid manual batch request.");
+        var reasonLabel = reviewReason switch
+        {
+            "regional-variant" => "Verified regional title / edition",
+            "alternate-title" => "Verified alternate game title",
+            "release-year" => "Verified despite release-year metadata difference",
+            "metadata-verified" => "Verified publication metadata after inspection",
+            "other-verified" => "Other verified evidence",
+            _ => string.Empty
+        };
+        var safeNote = (reviewNote ?? string.Empty).Trim().Replace('\r', ' ').Replace('\n', ' ');
+        if (action == "approve-reviewed" && (reasonLabel.Length == 0 || safeNote.Length > 240 ||
+            (reviewReason == "other-verified" && safeNote.Length < 5)))
+            return (false, 0, "A valid shared review reason and note are required.");
         var itemsById = items.Where(i => !string.IsNullOrWhiteSpace(i.Id))
             .GroupBy(i => i.Id, StringComparer.OrdinalIgnoreCase)
             .ToDictionary(g => g.Key, g => g.First(), StringComparer.OrdinalIgnoreCase);
@@ -9361,13 +9389,19 @@ public sealed class GuidevaultLaunchBoxIntegrationStore
             {
                 foreach (var (game, item) in changes)
                 {
-                    var status = action == "approve" ? "Confirmed" : "Rejected";
-                    var match = GuidevaultLaunchBoxMatcher.CreateMatch(game, item, "Manual", status, 0,
-                        action == "approve"
+                    var status = action == "reject" ? "Rejected" : "Confirmed";
+                    var pairKey = game.Id + "\u001F" + item.Id;
+                    var original = evidenceByPair is not null && evidenceByPair.TryGetValue(pairKey, out var scanReason)
+                        ? scanReason : "Needs Review classification";
+                    var justification = action == "approve-reviewed"
+                        ? $"Human-reviewed batch approval ({reasonLabel}). Original scan: {original}." +
+                          (safeNote.Length > 0 ? $" Shared reviewer note: {safeNote}" : string.Empty)
+                        : action == "approve"
                             ? "Approved from platform-scoped manual review; not a numeric confidence score."
-                            : "Rejected from platform-scoped manual review; not an active link.");
+                            : "Rejected from platform-scoped manual review; not an active link.";
+                    var match = GuidevaultLaunchBoxMatcher.CreateMatch(game, item, "Manual", status, 0, justification);
                     match.PreviousMatchStatus = "Missing";
-                    match.Source = "Manual";
+                    match.Source = action == "approve-reviewed" ? "ManualReviewed" : "Manual";
                     _data.Matches.Add(match);
                 }
                 Save();
@@ -9378,7 +9412,7 @@ public sealed class GuidevaultLaunchBoxIntegrationStore
                 throw;
             }
             return (true, changes.Count,
-                $"{(action == "approve" ? "Approved" : "Marked Not a Match")} {changes.Count} manual pairs for {platform}.");
+                $"{(action == "reject" ? "Marked Not a Match" : action == "approve-reviewed" ? "Reviewed and approved" : "Approved")} {changes.Count} manual pairs for {platform}.");
         }
     }
 
@@ -11370,6 +11404,9 @@ public sealed class GuidevaultManualBatchReviewRequest
     public int Page { get; set; } = 1;
     public int PageSize { get; set; } = 100;
     public List<GuidevaultManualReviewPair> Pairs { get; set; } = new();
+    // GUIDEVAULT_MANUAL_BATCH_REVIEW_V17: one reviewer reason/note for selected Needs Review pairs.
+    public string ReviewReason { get; set; } = string.Empty;
+    public string ReviewNote { get; set; } = string.Empty;
 }
 
 public sealed class GuidevaultManualReviewRequest
