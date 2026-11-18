@@ -784,9 +784,19 @@ app.MapPut("/api/integrations/launchbox/source", (GuidevaultLaunchBoxSourceSetti
     { return (IResult)Results.BadRequest(new { error = ex.Message }); }
 });
 
+// GUIDEVAULT_LAUNCHBOX_DIRECT_SOURCE_BADGE_FIX_V1
 app.MapGet("/api/integrations/launchbox/source/test", () =>
 {
-    try { return (IResult)Results.Ok(GuidevaultLaunchBoxCatalogReader.Inspect(launchBoxSourceSettingsStore.Get().RootPath)); }
+    try
+    {
+        var root = launchBoxSourceSettingsStore.Get().RootPath;
+        var inspection = GuidevaultLaunchBoxCatalogReader.Inspect(root);
+        // An XML source is a successful LaunchBox connection even when the legacy plugin is absent.
+        // Do not mark connected if the directory exists but contains no platform XML files.
+        if (Directory.EnumerateFiles(Path.Combine(root, "Data", "Platforms"), "*.xml", SearchOption.TopDirectoryOnly).Any())
+            launchBoxIntegrationStore.MarkConnectedSinceBoot();
+        return (IResult)Results.Ok(inspection);
+    }
     catch (Exception ex) when (ex is ArgumentException or InvalidOperationException or IOException or UnauthorizedAccessException)
     { return (IResult)Results.BadRequest(new { error = ex.Message }); }
 });

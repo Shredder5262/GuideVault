@@ -27014,6 +27014,9 @@ async function testLaunchBoxSource(showStatus = true) {
       (result.platforms || []).map(p => `<option value="${escapeForAttribute(p)}">${escapeHtml(p)}</option>`).join('');
     if (showStatus) launchBoxControlledMessage('launchBoxSourceStatus',
       `Read-only connection verified: ${(result.platforms || []).length} platform XML files.`, true);
+    // GUIDEVAULT_LAUNCHBOX_DIRECT_SOURCE_BADGE_REFRESH_V1
+    // The status badge is based on /status, not /source/test, so refresh it after a successful test.
+    await loadLaunchBoxCoverage(false);
   } catch (err) { launchBoxControlledMessage('launchBoxSourceStatus', err.message); }
 }
 async function previewLaunchBoxCatalog() {
