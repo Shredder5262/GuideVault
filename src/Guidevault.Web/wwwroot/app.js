@@ -20562,7 +20562,13 @@ function normalizeReaderBookmarkRecord(value = null, item = state.reader.item ||
       page: Math.max(1, Math.min(Number(entry?.page) || 1, readerPageCount())),
       displayMode: normalizeReaderDisplayMode(entry?.displayMode ?? state.reader.displayMode),
       savedAt: entry?.savedAt || value?.savedAt || new Date().toISOString(),
-      note: normalizeReaderBookmarkNote(entry?.note)
+      note: normalizeReaderBookmarkNote(entry?.note),
+      gameContexts: Array.isArray(entry?.gameContexts) ? entry.gameContexts
+        .filter(g => g && g.gameTitle).map(g => ({
+          launchBoxGameId: String(g.launchBoxGameId || ''),
+          gameTitle: String(g.gameTitle || '').slice(0, 200),
+          platform: String(g.platform || '').slice(0, 160)
+        })) : []
     }))
     .filter(entry => {
       const key = String(entry.page);
@@ -20747,12 +20753,13 @@ function updateReaderBookmarksUi() {
     const saved = entry.savedAt ? new Date(entry.savedAt) : null;
     const savedLabel = saved && !Number.isNaN(saved.getTime()) ? saved.toLocaleDateString([], { month: 'short', day: 'numeric' }) : '';
     const note = normalizeReaderBookmarkNote(entry.note);
+    const gameTitles = [...new Set((entry.gameContexts || []).map(g => String(g.gameTitle || '').trim()).filter(Boolean))];
     const notePreview = note ? `<div class="reader-bookmark-note-preview">${escapeHtml(note)}</div>` : `<div class="reader-bookmark-note-preview empty">No note yet</div>`;
     const deleteNoteButton = note ? `<button type="button" class="reader-bookmark-note-delete" data-bookmark-note-delete="${page}">Delete note</button>` : '';
     const editor = editing
       ? `<div class="reader-bookmark-note-editor" data-bookmark-note-editor="${page}"><textarea data-bookmark-note-input="${page}" maxlength="1000" placeholder="Add a note for Page ${page}">${escapeHtml(note)}</textarea><div class="reader-bookmark-note-actions">${deleteNoteButton}<span class="reader-bookmark-note-action-spacer"></span><button type="button" class="reader-bookmark-note-save" data-bookmark-note-save="${page}">Save note</button><button type="button" class="reader-bookmark-note-cancel" data-bookmark-note-cancel="${page}">Cancel</button></div></div>`
       : '';
-    return `<div class="reader-bookmark-row${active ? ' active' : ''}${editing ? ' editing' : ''}"><button class="reader-bookmark-item" type="button" data-bookmark-page="${page}"><span class="reader-bookmark-main"><strong>Page ${page}</strong><span>${escapeHtml(readerBookmarkPageDescription(page))}</span>${notePreview}</span>${savedLabel ? `<em>${escapeHtml(savedLabel)}</em>` : ''}</button><button class="reader-bookmark-note-button${note ? ' has-note' : ''}" type="button" data-bookmark-note-page="${page}" aria-label="${note ? 'Edit' : 'Add'} note for Page ${page}" title="${note ? 'Edit note' : 'Add note'}">${note ? 'Note' : '+ Note'}</button>${editor}</div>`;
+    return `<div class="reader-bookmark-row${active ? ' active' : ''}${editing ? ' editing' : ''}"><button class="reader-bookmark-item" type="button" data-bookmark-page="${page}"><span class="reader-bookmark-main"><strong>${gameTitles.length ? escapeHtml(gameTitles.join(' · ')) : 'Page ' + page}</strong><span>Page ${page} · ${escapeHtml(readerBookmarkPageDescription(page))}</span>${notePreview}</span>${savedLabel ? `<em>${escapeHtml(savedLabel)}</em>` : ''}</button><button class="reader-bookmark-note-button${note ? ' has-note' : ''}" type="button" data-bookmark-note-page="${page}" aria-label="${note ? 'Edit' : 'Add'} note for Page ${page}" title="${note ? 'Edit note' : 'Add note'}">${note ? 'Note' : '+ Note'}</button>${editor}</div>`;
   }).join('');
 }
 
