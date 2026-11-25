@@ -25,9 +25,10 @@ ENV GUIDEVAULT_LIBRARY_PATH=/data/library
 ENV PAGEQUEST_LIBRARY_PATH=/data/library
 
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends poppler-utils \
+    && apt-get install -y --no-install-recommends poppler-utils tesseract-ocr tesseract-ocr-eng \
     && command -v pdftoppm \
     && command -v pdftocairo \
+    && command -v tesseract \
     && rm -rf /var/lib/apt/lists/*
 
 RUN mkdir -p /data/library

@@ -17039,6 +17039,7 @@ function renderMetadataManager() {
   const selectPage = $('metadataManagerSelectPage'); if (selectPage) selectPage.disabled = !renderedItems.length;
   const clear = $('metadataManagerClearSelection'); if (clear) clear.disabled = !selectedSet.size;
   ['metadataManagerApplyBatch','metadataManagerNormalizeSelected','metadataManagerWriteBackSelected','metadataManagerScrape'].forEach(id => { const el = $(id); if (el) el.disabled = !selectedSet.size; });
+  const magazineScanButton = $('metadataManagerScrape'); if (magazineScanButton) { const scanItems=metadataManagerSelectedItems(); magazineScanButton.classList.toggle('hidden', !selectedKinds.has('Magazine') || !currentUserIsAdmin()); magazineScanButton.disabled=scanItems.length<1 || scanItems.length>5 || scanItems.some(x=>x.kind!=='Magazine'); magazineScanButton.title='Select 1–5 magazine issues only'; }
   const sourcePanel = $('metadataManagerSourcePanel'); if (sourcePanel) { sourcePanel.hidden = !selectedKinds.has('Strategy Guide'); if (sourcePanel.hidden) sourcePanel.open = false; }
   const summary = $('metadataManagerSummary');
   if (summary) {
@@ -18640,9 +18641,118 @@ async function metadataManagerImportFile(file, format = 'json') {
   }
 }
 
-function metadataManagerScrapePlaceholder() {
-  metadataManagerSetStatus('Scraper/provider hooks are staged here for a future pass. For now, export CSV or import reviewed JSON metadata into the grid.', 'success');
+// GuideVault magazine scanner v1: read-only scan, explicit staging, existing save path.
+let gvMagazineScanSession = null;
+const GV_MAG_SCAN_ARRAYS = new Set(['featuredGames','mentionedGames','featuredPlatforms','specialFeatures','includedExtras','tags']);
+function gvMagazineScanDialog(items, fromDetail = false) {
+  if (!currentUserIsAdmin() || gvMagazineScanSession) return;
+  items = items.filter(item => item?.kind === 'Magazine');
+  if (!items.length || items.length > 5) { metadataManagerSetStatus('Select 1–5 magazine issues per scan.','error'); return; }
+  const dialog = document.createElement('dialog');
+  dialog.className = 'gv-magscan-dialog';
+  dialog.innerHTML = `<div class="gv-magscan-content"><h2>Scan magazine metadata</h2><p class="sub">${items.length} issue(s). Local OCR and LaunchBox title lookup. Nothing is saved automatically.</p><label>Scan scope <select data-scan-scope><option value="12">First 12 pages (cover, contents, masthead)</option><option value="300">Full issue (up to 300 pages)</option></select></label><p class="sub" data-scan-status aria-live="polite">Start a scan to review suggested fields. English OCR; game mentions and platform references may include ads. Titles containing list separators are omitted from automatic list proposals; review evidence.</p><progress data-scan-progress value="0" max="1"></progress><div data-scan-results></div><div class="gv-magscan-actions"><button class="ghost" type="button" data-scan-close>Close</button><button class="ghost" type="button" data-scan-stop hidden>Stop</button><button class="primary" type="button" data-scan-start>Start scan</button><button class="primary" type="button" data-scan-stage disabled>Stage selected suggestions</button></div></div>`;
+  document.body.appendChild(dialog);
+  const q = s => dialog.querySelector(s);
+  const session = { controller:null, running:false, rows:[], dialog };
+  gvMagazineScanSession = session;
+  function close() { if (session.running) return; dialog.close(); }
+  q('[data-scan-close]').onclick = close;
+  q('[data-scan-stop]').onclick = () => session.controller?.abort();
+  dialog.addEventListener('cancel', e => { if (session.running) { e.preventDefault(); session.controller?.abort(); } });
+  dialog.addEventListener('close', () => { gvMagazineScanSession = null; dialog.remove(); });
+  function render() {
+    const root = q('[data-scan-results]'); root.innerHTML = '';
+    session.rows.forEach((row, rowIndex) => {
+      const block = document.createElement('section'); block.className = 'gv-magscan-result';
+      block.innerHTML = `<h3>${escapeHtml(metadataManagerItemName(row.item))}</h3><p class="sub">${row.readable} of ${row.scanned} scanned pages yielded text; ${row.total || '?'} total pages. ${row.complete ? 'Scan scope completed.' : 'Partial scan.'}</p>`;
+      if (row.warnings.length) { const w = document.createElement('details'); w.innerHTML = `<summary>${row.warnings.length} scan warning(s)</summary><p>${row.warnings.map(escapeHtml).join('<br>')}</p>`; block.appendChild(w); }
+      const proposals = gvMagazineScanProposals(row);
+      if (!proposals.length) { const p = document.createElement('p'); p.textContent = 'No new editable suggestions found.'; block.appendChild(p); }
+      for (const proposal of proposals) {
+        const field = metadataManagerColumnDefinition(proposal.field,['Magazine'])?.label || proposal.field;
+        const el = document.createElement('div'); el.className = 'gv-magscan-field';
+        const input = document.createElement('input'); input.type = 'checkbox'; input.checked = proposal.safe; input.disabled = proposal.locked; input.dataset.scanRow = rowIndex; input.dataset.scanField = proposal.field; input.setAttribute('aria-label', `Stage ${field}`);
+        const label = document.createElement('div'); label.innerHTML = `<strong>${escapeHtml(field)}</strong>${proposal.locked?' <small>Locked</small>':''}<div class="sub">Current: ${escapeHtml(proposal.current || '—')}</div>`;
+        const edit = document.createElement('textarea'); edit.rows = 2; edit.value = proposal.value; edit.dataset.scanValue = proposal.field; edit.disabled = proposal.locked; edit.setAttribute('aria-label', `Proposed ${field}`); label.appendChild(edit);
+        const evidence = document.createElement('details'); evidence.innerHTML = `<summary>Evidence (${proposal.evidence.length})${proposal.conflict?' — conflicting values; choose manually':''}</summary>${proposal.evidence.slice(0,25).map(x=>`<p class="sub">${x.page?`Page ${x.page}: `:''}${escapeHtml(x.value)} — ${escapeHtml(x.evidence)}</p>`).join('')}${proposal.evidence.length>25?'<p class="sub">Additional evidence omitted from display.</p>':''}`; label.appendChild(evidence);
+        el.append(input,label); block.appendChild(el);
+      }
+      root.appendChild(block);
+    });
+    const updateStage = () => { q('[data-scan-stage]').disabled = session.running || !root.querySelector('input:checked:not(:disabled)'); };
+    root.onchange = updateStage; updateStage();
+  }
+  q('[data-scan-start]').onclick = async () => {
+    if (session.running) return;
+    session.running = true; session.rows = []; session.controller = new AbortController();
+    const scope = Number(q('[data-scan-scope]').value);
+    q('[data-scan-scope]').disabled = true; q('[data-scan-start]').disabled = true; q('[data-scan-close]').disabled = true; q('[data-scan-stop]').hidden = false; q('[data-scan-stage]').disabled = true;
+    q('[data-scan-results]').innerHTML = '';
+    const progress = q('[data-scan-progress]'); progress.max = items.length; progress.value = 0;
+    try {
+      for (let i=0; i<items.length; i++) {
+        const item=items[i], id=metadataManagerItemId(item);
+        const row = {item, total:0, scanned:0, readable:0, suggestions:[], warnings:[], complete:false}; session.rows.push(row);
+        let start = 0;
+        try {
+          do {
+            q('[data-scan-status]').textContent = `Scanning issue ${i+1}/${items.length}: ${metadataManagerItemName(item)} — page ${start+1}${row.total ? ' of '+Math.min(scope,row.total) : ''}`;
+            const res=await fetch(`/api/items/${encodeURIComponent(id)}/magazine-scan?start=${start}&count=${Math.min(3,scope-start)}`,{method:'POST',signal:session.controller.signal});
+            if (!res.ok) { let msg=`HTTP ${res.status}`; try { msg=(await res.json()).error||msg; } catch {} throw new Error(msg); }
+            const data=await res.json(); row.total=data.totalPages; row.scanned+=data.scanned; row.readable+=data.readablePages; row.suggestions.push(...(data.suggestions||[])); row.warnings.push(...(data.warnings||[]));
+            if (!data.scanned) break; start+=data.scanned; progress.value=i+Math.min(1,start/Math.min(scope,row.total));
+          } while(start<Math.min(scope,row.total));
+          row.complete=start>=Math.min(scope,row.total); if (row.total>scope) row.warnings.push(`Only first ${scope} of ${row.total} pages scanned; game coverage is incomplete.`);
+        } catch(err) { if (session.controller.signal.aborted) throw err; row.warnings.push(String(err.message||err)); }
+        progress.value=i+1;
+      }
+      q('[data-scan-status]').textContent='Review the proposals and their evidence. Select the proposals you want to stage. Only measured or checksum-valid empty fields are preselected; no field is saved yet.';
+    } catch(err) { q('[data-scan-status]').textContent=session.controller.signal.aborted?'Scan stopped. Completed page results remain available for review.':String(err.message||err); }
+    finally { session.running=false; q('[data-scan-start]').disabled=false; q('[data-scan-close]').disabled=false; q('[data-scan-scope]').disabled=false; q('[data-scan-stop]').hidden=true; render(); }
+  };
+  q('[data-scan-stage]').onclick = () => {
+    if (session.running) return;
+    let count=0; const ids=new Set(); state.metadataManager.dirty=state.metadataManager.dirty||{};
+    const index=metadataManagerBuildStateItemIndex();
+    for(const input of q('[data-scan-results]').querySelectorAll('input:checked:not(:disabled)')) {
+      const row=session.rows[Number(input.dataset.scanRow)], id=metadataManagerItemId(row.item), field=input.dataset.scanField;
+      const current=index.get(id)?.item; if (!current || current.kind!=='Magazine' || !metadataManagerFieldsForKind('Magazine').has(field) || isMetadataFieldLocked(current,field)) continue;
+      const value=input.closest('.gv-magscan-field').querySelector('textarea').value.trim(); if (!value || Object.hasOwn(state.metadataManager.dirty[id]||{},field) || String(metadataManagerFieldValue(current,field)??'')!==String(metadataManagerFieldValue(row.item,field)??'')) continue;
+      state.metadataManager.dirty[id]={...(state.metadataManager.dirty[id]||{}),[field]:value}; ids.add(id); count++;
+    }
+    close();
+    if(fromDetail) { Object.assign(state.metadataManager,{kindFilters:['Magazine'],category:'',seriesFilter:'',search:'',statusFilter:'',missing:'',selectedIds:[]}); metadataManagerResetRenderLimit(); showSettingsScreen('metadata-manager'); }
+    renderMetadataManager(); metadataManagerSetStatus(`Staged ${count} field(s) for ${ids.size} issue(s). Existing staged edits and locked fields were skipped. Review and click Save Edited Rows.`,'success');
+  };
+  dialog.showModal();
 }
+function gvMagazineScanProposals(row) {
+  const fields=new Map(); const id=metadataManagerItemId(row.item), dirty=state.metadataManager.dirty[id]||{};
+  function add(x) { if(!fields.has(x.field)) fields.set(x.field,[]); const a=fields.get(x.field); if(!a.some(y=>y.value===x.value&&y.page===x.page)) a.push(x); }
+  row.suggestions.forEach(add);
+  const covered=new Set([...itemArray(row.item.featuredGames),...((fields.get('featuredGames')||[]).map(x=>x.value)),row.item.coverSubject,...((fields.get('coverSubject')||[]).map(x=>x.value))].filter(Boolean).map(x=>String(x).toLowerCase()));
+  if(fields.has('mentionedGames')) fields.set('mentionedGames',fields.get('mentionedGames').filter(x=>!covered.has(x.value.toLowerCase())));
+  const platforms=[...new Set([...itemArray(row.item.featuredPlatforms),...((fields.get('featuredPlatforms')||[]).map(x=>x.value))])];
+  if((fields.get('featuredPlatforms')||[]).length) add({field:'primarySystem',value:platforms.length>1?MULTI_PLATFORM_LABEL:platforms[0],page:0,evidence:'Inferred from existing and scanned platform references; not proof of editorial focus.'});
+  const cover=fields.get('coverSubject')||[], featured=fields.get('featuredGames')||[];
+  const titles=[...new Set(featured.map(x=>x.value))].slice(0,8);
+  if(cover.length||titles.length) add({field:'summary',value:`${row.item.magazineTitle||row.item.title||'Magazine'}${row.item.issueNumber?' issue #'+row.item.issueNumber:''}.${cover.length===1?' Possible cover subject: '+cover[0].value+'.':''}${titles.length?' Contents headings include '+titles.join(', ')+'.':''}`,page:0,evidence:'Draft generated from scan evidence; review wording.'});
+  const result=[];
+  for(const [field,evidence] of fields) {
+    if(!evidence.length||!metadataManagerFieldsForKind('Magazine').has(field)||METADATA_MANAGER_READONLY_COLUMNS.has(field)) continue;
+    const current=String(dirty[field]??metadataManagerFieldValue(row.item,field)??'');
+    const locked=Object.hasOwn(dirty,field)||isMetadataFieldLocked(row.item,field)||(GV_MAG_SCAN_ARRAYS.has(field)&&Array.isArray(row.item[field])&&row.item[field].some(v=>/[;,|]/.test(v))); 
+    const values=[...new Set(evidence.map(x=>x.value))]; const array=GV_MAG_SCAN_ARRAYS.has(field);
+    const conflict=(!array&&values.length>1)||(array&&values.some(v=>/[;,|]/.test(v))); 
+    const value=array?mergeTokenLists(itemArray(current),values.filter(v=>!/[;,|]/.test(v))).join(', '):values[0];
+    if(!value||value.trim()===current.trim()) continue;
+    // OCR game matches, primary system and generated descriptions require explicit review, even when blank.
+    const safe=!locked&&!conflict&&!current.trim()&&evidence.every(x=>['Measured','Checksum valid'].includes(x.confidence));
+    result.push({field,current,value,evidence,conflict,locked,safe});
+  }
+  return result;
+}
+if ($('detailMagazineScan')) $('detailMagazineScan').addEventListener('click',()=>{if(state.selected) gvMagazineScanDialog([state.selected],true);});
 
 function mergeSavedMetadataClientSide(baseItem, serverItem, payload) {
   const merged = { ...(baseItem || {}), ...(serverItem || {}) };
@@ -19696,6 +19806,7 @@ function renderDetails(item) {
   if (!item || !$('detailCover')) return;
   document.body.classList.toggle('strategy-detail-mode', item.kind === 'Strategy Guide');
   document.body.classList.toggle('magazine-detail-mode', item.kind === 'Magazine');
+  $('detailMagazineScan')?.classList.toggle('hidden', item.kind !== 'Magazine' || !currentUserIsAdmin());
   document.body.classList.toggle('manual-detail-mode', item.kind === 'Manual');
   setDetailCoverPreview(item);
   applyColorscapeToDetail(item);
@@ -26948,7 +27059,7 @@ if ($('metadataManagerImportMenu')) {
   document.addEventListener('pointerdown', e => { if (menu.open && !menu.contains(e.target)) menu.open = false; });
   menu.addEventListener('keydown', e => { if (e.key === 'Escape' && menu.open) { menu.open = false; menu.querySelector('summary')?.focus(); } });
 }
-if ($('metadataManagerScrape')) $('metadataManagerScrape').addEventListener('click', metadataManagerScrapePlaceholder);
+if ($('metadataManagerScrape')) $('metadataManagerScrape').addEventListener('click', () => gvMagazineScanDialog(metadataManagerSelectedItems()));
 if ($('metadataManagerWriteBackSelected')) $('metadataManagerWriteBackSelected').addEventListener('click', async () => { try { await metadataManagerWriteBackSelected('metadata'); } catch (err) { console.error(err); metadataManagerSetStatus(`Write-back failed: ${err?.message || err}`, 'error'); } });
 if ($('metadataManagerOpenFilesWorkspace')) $('metadataManagerOpenFilesWorkspace').addEventListener('click', metadataManagerOpenFilesWorkspace);
 if ($('serverFilesRefreshSelection')) $('serverFilesRefreshSelection').addEventListener('click', renderServerFilesWorkspace);

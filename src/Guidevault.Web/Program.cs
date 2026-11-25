@@ -2957,6 +2957,25 @@ app.MapPut("/api/items/{id}/metadata", (string id, JsonElement payload) =>
     });
 });
 
+// Magazine OCR scan v1: admin-only, read-only suggestions, bounded page chunks.
+app.MapPost("/api/items/{id}/magazine-scan", async (HttpRequest request, string id, int? start, int? count) =>
+{
+    if (CurrentGuidevaultUser(request)?.IsAdmin != true) return Results.StatusCode(403);
+    if (GuidevaultLibraryIoGate.ShouldDeferArchiveReads) return Results.Conflict(new { error = "A library scan or file rewrite is running. Try again afterward." });
+    var item = VisibleLibraryItems(request, cache.GetItemsSnapshot()).FirstOrDefault(i => i.Id == id);
+    if (item is null) return Results.NotFound();
+    if (item.Kind != "Magazine" || !File.Exists(item.Path)) return Results.BadRequest(new { error = "A readable magazine issue is required." });
+    if (start is < 0 or >= 300) return Results.BadRequest(new { error = "Scan start must be between 0 and 299." });
+    try
+    {
+        var result = await GuidevaultMagazineContentScanner.ScanAsync(item, launchBoxIntegrationStore.GetSnapshot().Games, start ?? 0, Math.Min(count ?? 3, 300 - (start ?? 0)), request.HttpContext.RequestAborted);
+        return Results.Ok(result);
+    }
+    catch (OperationCanceledException) { return Results.StatusCode(499); }
+    catch (InvalidOperationException ex) { return Results.Conflict(new { error = ex.Message }); }
+    catch (Exception) { return Results.Problem("Magazine scan failed. Check file readability and OCR runtime tools."); }
+});
+
 app.MapPost("/api/items/metadata/bulk", (JsonElement payload) =>
 {
     try

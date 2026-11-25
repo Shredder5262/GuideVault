@@ -6,7 +6,7 @@
   <title>Guidevault</title>
   <link rel="icon" type="image/x-icon" href="/assets/favicon.ico?v=0.9.228" />
   <link rel="shortcut icon" type="image/x-icon" href="/assets/favicon.ico?v=0.9.228" />
-  <link rel="stylesheet" href="/styles.css?v=1.3.2-controlled-v1&amp;rev=launchbox-magazine-1&amp;bulk=publication-actions-v1&amp;mm=workspace-v1&amp;mmimport=v1" />
+  <link rel="stylesheet" href="/styles.css?v=1.3.2-controlled-v1&amp;rev=launchbox-magazine-1&amp;bulk=publication-actions-v1&amp;mm=workspace-v1&amp;mmimport=v1&amp;magscan=v1" />
 </head>
 <body class="right-collapsed auth-locked">
   <section id="loginView" class="login-view" aria-labelledby="loginTitle">
@@ -190,6 +190,7 @@
               <img id="detailCover" class="detail-cover" alt="Selected cover" />
               <div class="detail-action-stack">
                 <button id="readBtn" class="primary full" type="button">Open Reader</button>
+                <button id="detailMagazineScan" class="ghost full hidden" type="button">Scan Magazine Metadata</button>
                 <button id="downloadBtn" class="ghost full" type="button">Open / Download File</button>
                 <button id="deleteBtn" class="danger full" type="button">Remove from Library</button>
               </div>
@@ -1206,6 +1207,7 @@
                 <button id="metadataManagerClearSelection" class="ghost" type="button">Clear</button>
                 <button id="metadataManagerResetFilters" class="ghost" type="button">Reset filters</button>
                 <span class="gv-mm-spacer"></span>
+                <button id="metadataManagerScrape" class="ghost hidden" type="button">Scan selected magazines</button>
                 <button id="metadataManagerSaveDirty" class="primary" type="button">Save edited rows</button>
               </div>
               <details class="metadata-manager-column-panel">
@@ -1230,7 +1232,6 @@
 
                 <button id="metadataManagerApplyBatch" class="primary" type="button">Apply to Selected</button>
                 <button id="metadataManagerNormalizeSelected" class="ghost" type="button">Normalize Selected</button>
-                <button id="metadataManagerScrape" class="ghost" type="button">Scrape / Import Metadata</button>
                 <button id="metadataManagerWriteBackSelected" class="ghost" type="button">Write JSON to Selected Files</button>
                 <button id="metadataManagerOpenFilesWorkspace" class="ghost" type="button">Open JSON Write-Back</button>
               </div>
@@ -3742,6 +3743,6 @@
   </dialog>
 
 
-  <script src="/app.js?v=1.3.2-controlled-v1&amp;rev=launchbox-magazine-1&amp;bulk=publication-actions-v1&amp;mm=workspace-v1&amp;mmsections=v1&amp;mmfields=v1&amp;mmimport=v1"></script>
+  <script src="/app.js?v=1.3.2-controlled-v1&amp;rev=launchbox-magazine-1&amp;bulk=publication-actions-v1&amp;mm=workspace-v1&amp;mmsections=v1&amp;mmfields=v1&amp;mmimport=v1&amp;magscan=v1"></script>
 </body>
 </html>
