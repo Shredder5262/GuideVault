@@ -16131,7 +16131,7 @@ const METADATA_MANAGER_ARRAY_FIELDS = new Set([
   'coveredGames','coveredPlatforms','guideTopics','charactersCovered','locationsCovered','includedSections','itemsCovered'
 ]);
 const METADATA_MANAGER_READONLY_COLUMNS = new Set(['kind','metadataSource']);
-const METADATA_MANAGER_WIDE_COLUMNS = new Set(['name','category','series','publisher','topics','summary','notes','webLink','associatedPlatforms','featuredGames','mentionedGames','featuredPlatforms','specialFeatures','includedExtras','coveredGames','coveredPlatforms','guideTopics','charactersCovered','locationsCovered','includedSections','itemsCovered','platformMatchTitle','platformResolverSource','coverSubject','barcodeUpcIssn']);
+const METADATA_MANAGER_WIDE_COLUMNS = new Set(['tags','magazineTitle','name','category','series','publisher','topics','summary','notes','webLink','associatedPlatforms','featuredGames','mentionedGames','featuredPlatforms','specialFeatures','includedExtras','coveredGames','coveredPlatforms','guideTopics','charactersCovered','locationsCovered','includedSections','itemsCovered','platformMatchTitle','platformResolverSource','coverSubject','barcodeUpcIssn']);
 const METADATA_MANAGER_ALL_COLUMNS = [
   { key:'kind', label:'Type', description:'Manual, Strategy Guide, or Magazine.' },
   { key:'metadataStatus', label:'Status', description:'Metadata review workflow state.' },
@@ -16168,7 +16168,7 @@ const METADATA_MANAGER_ALL_COLUMNS = [
   { key:'featuredGames', label:'Featured Games', description:'Magazine featured games.' },
   { key:'mentionedGames', label:'Mentioned Games', description:'Games receiving brief mentions, cheats, news or short references.' },
   { key:'featuredPlatforms', label:'Featured Platforms', description:'Magazine featured platforms.' },
-  { key:'specialFeatures', label:'Sections / Departments', description:'Magazine sections, departments, and special features.' },
+  { key:'specialFeatures', label:'Sections / Departments / Special Features', description:'Sections and departments for magazines; special features for strategy guides.' },
   { key:'includedExtras', label:'Physical Extras', description:'Physical extras such as posters, inserts, discs, or maps.' },
   { key:'gameTitle', label:'Game Title', description:'Game title for manuals/guides.' },
   { key:'guideType', label:'Guide Type', description:'Strategy guide type.' },
@@ -16189,15 +16189,30 @@ const METADATA_MANAGER_ALL_COLUMNS = [
   { key:'controlScheme', label:'Control Scheme', description:'Controller/control information.' },
   { key:'itemsCovered', label:'Items Covered', description:'Items, equipment, or content covered.' },
   { key:'warrantySupport', label:'Warranty / Support', description:'Warranty/support notes.' },
+  { key:'tags', label:'Tags', description:'Freeform tags for filtering and discovery.' },
   { key:'notes', label:'Notes', description:'Freeform notes.' }
 ];
 
 const METADATA_MANAGER_KIND_FILTERS = ['Manual', 'Strategy Guide', 'Magazine'];
+// GuideVault: content-specific Metadata Manager columns v1.
+const METADATA_MANAGER_COMMON_FIELDS = ['kind','metadataStatus','name','languageTag','region','publisher','pageCount','writer','summary','includedExtras','tags','notes','metadataSource'];
+const METADATA_MANAGER_GAME_FIELDS = ['gameTitle','category','franchise','developer','gamePublisher','gameReleaseYear','genre','rating','charactersCovered'];
 const METADATA_MANAGER_AUTO_COLUMNS_BY_KIND = {
-  Manual: ['kind','metadataStatus','name','gameTitle','category','languageTag','region','publisher','manualTitle','manualType','franchise','developer','gamePublisher','gameReleaseYear','genre','includedSections','includedExtras','controlScheme','itemsCovered','charactersCovered','warrantySupport','metadataSource','platformMatchTitle','platformResolverSource','pageCount','rating','topics'],
-  'Strategy Guide': ['kind','metadataStatus','name','gameTitle','category','associatedPlatforms','series','languageTag','region','publisher','writer','publicationDate','isbn10','isbn13','guideType','edition','franchise','gameReleaseYear','genre','coveredGames','coveredPlatforms','guideTopics','metadataSource','platformMatchTitle','platformResolverSource','charactersCovered','locationsCovered','developer','gamePublisher','pageCount','rating','topics'],
-  Magazine: ['kind','metadataStatus','name','magazineTitle','issueNumber','volume','coverDate','year','publisher','region','languageTag','platformFocus','primarySystem','magazineCategory','coverSubject','featuredGames','mentionedGames','featuredPlatforms','specialFeatures','includedExtras','tags','metadataSource']
+  Manual: [...METADATA_MANAGER_COMMON_FIELDS,...METADATA_MANAGER_GAME_FIELDS,'manualType','includedSections','controlScheme','itemsCovered','warrantySupport'],
+  'Strategy Guide': [...METADATA_MANAGER_COMMON_FIELDS,...METADATA_MANAGER_GAME_FIELDS,'associatedPlatforms','publicationDate','isbn10','isbn13','guideType','edition','coveredGames','coveredPlatforms','guideTopics','specialFeatures','locationsCovered'],
+  Magazine: [...METADATA_MANAGER_COMMON_FIELDS,'magazineTitle','issueNumber','volume','coverDate','publicationDate','barcodeUpcIssn','platformFocus','primarySystem','magazineCategory','coverSubject','featuredGames','mentionedGames','featuredPlatforms','specialFeatures','year']
 };
+function metadataManagerFieldsForKind(kind) {
+  return new Set(METADATA_MANAGER_AUTO_COLUMNS_BY_KIND[kind] || []);
+}
+function metadataManagerScopedColumns(kinds = metadataManagerSelectedKinds(), requireAll = false) {
+  const sets = kinds.map(metadataManagerFieldsForKind);
+  return METADATA_MANAGER_ALL_COLUMNS.filter(c => sets.length && (requireAll ? sets.every(set => set.has(c.key)) : sets.some(set => set.has(c.key))))
+    .map(c => metadataManagerColumnDefinition(c.key, kinds));
+}
+function metadataManagerScopedColumnKeys(kinds = metadataManagerSelectedKinds()) {
+  return new Set(metadataManagerScopedColumns(kinds).map(c => c.key));
+}
 
 function metadataManagerSelectedKinds() {
   state.metadataManager = state.metadataManager || {};
@@ -16233,10 +16248,10 @@ function syncMetadataManagerKindDropdown() {
 }
 
 function metadataManagerAutoColumnKeysForKinds(kinds = metadataManagerSelectedKinds()) {
-  const common = ['kind','metadataStatus','name'];
-  if (kinds.length === 1 && kinds[0] === 'Magazine') return [...common,'issueNumber','coverDate','coverSubject','featuredPlatforms'];
-  if (kinds.length === 1 && kinds[0] !== 'Magazine') return [...common,'gameTitle','category','languageTag','region'];
-  return [...common,'series','languageTag','region','publisher'];
+  const common = ['kind','metadataStatus'];
+  if (kinds.length === 1 && kinds[0] === 'Magazine') return [...common,'magazineTitle','issueNumber','coverDate','coverSubject','featuredPlatforms'];
+  if (kinds.length === 1 && kinds[0] !== 'Magazine') return [...common,'name','gameTitle','category','languageTag','region'];
+  return [...common,'name','languageTag','region','publisher'];
 }
 
 function metadataManagerItemId(item) {
@@ -16511,6 +16526,11 @@ function metadataManagerRowPayload(item, changes = {}) {
     if (METADATA_MANAGER_READONLY_COLUMNS.has(field)) return;
     if (field === 'name') {
       payload.title = value;
+      if (item.kind === 'Manual') payload.manualTitle = value;
+      if (item.kind === 'Strategy Guide') payload.strategyGuideTitle = value;
+    } else if (field === 'magazineTitle' && item.kind === 'Magazine') {
+      payload.magazineTitle = value;
+      payload.series = value;
     } else if (field === 'category') {
       if (item.kind !== 'Magazine') {
         payload.category = value;
@@ -16561,13 +16581,21 @@ function metadataManagerValidColumnKeys() {
   return new Set(METADATA_MANAGER_ALL_COLUMNS.map(column => column.key));
 }
 
-function metadataManagerColumnDefinition(key) {
-  return METADATA_MANAGER_ALL_COLUMNS.find(column => column.key === key) || null;
+function metadataManagerColumnDefinition(key, kinds = metadataManagerSelectedKinds()) {
+  const column = METADATA_MANAGER_ALL_COLUMNS.find(c => c.key === key);
+  if (!column) return null;
+  const kind = kinds.length === 1 ? kinds[0] : '';
+  const common = {metadataStatus:'Metadata Status',rating:'ESRB Rating',controlScheme:'Controls / Control Scheme',itemsCovered:'Items / Mechanics Covered',warrantySupport:'Warranty / Support Info',coverSubject:'Cover Game / Subject',issueNumber:'Issue #',edition:'Edition', writer:'Writer / Author'};
+  const magazine = {name:'Entry Title',region:'Country of publication',writer:'Editor',includedExtras:'Insert Details',specialFeatures:'Sections / Departments'};
+  const manual = {name:'Manual Title'};
+  const guide = {name:'Strategy Guide Title',specialFeatures:'Special Features'};
+  const labels = kind === 'Magazine' ? magazine : kind === 'Manual' ? manual : kind === 'Strategy Guide' ? guide : {};
+  return {...column, label: labels[key] || common[key] || column.label};
 }
 
 function metadataManagerLoadVisibleColumns() {
   state.metadataManager = state.metadataManager || {};
-  const valid = metadataManagerValidColumnKeys();
+  const valid = metadataManagerScopedColumnKeys();
   if (!state.metadataManager.useCustomColumns) {
     const auto = metadataManagerAutoColumnKeysForKinds();
     state.metadataManager.visibleColumns = auto;
@@ -16585,14 +16613,14 @@ function metadataManagerLoadVisibleColumns() {
 function metadataManagerSaveVisibleColumns(columns) {
   state.metadataManager = state.metadataManager || {};
   state.metadataManager.useCustomColumns = true;
-  const valid = metadataManagerValidColumnKeys();
+  const valid = metadataManagerScopedColumnKeys();
   const seen = new Set();
   const resolved = (columns || []).filter(key => {
     if (!valid.has(key) || seen.has(key)) return false;
     seen.add(key);
     return true;
   });
-  const safe = resolved.length ? resolved : METADATA_MANAGER_DEFAULT_COLUMNS.slice();
+  const safe = resolved.length ? resolved : metadataManagerAutoColumnKeysForKinds();
   state.metadataManager.visibleColumns = safe;
   try { localStorage.setItem(GUIDEVAULT_METADATA_COLUMNS_KEY, JSON.stringify(safe)); } catch {}
   return safe;
@@ -16648,14 +16676,16 @@ function metadataManagerReorderColumn(sourceKey, targetKey) {
 }
 
 function metadataManagerLoadSort() {
-  const valid = metadataManagerValidColumnKeys();
+  const valid = metadataManagerScopedColumnKeys();
   let saved = null;
   try { saved = JSON.parse(localStorage.getItem(GUIDEVAULT_METADATA_COLUMN_SORT_KEY) || 'null'); } catch { saved = null; }
   const current = state.metadataManager || {};
   const currentKey = valid.has(current.sortKey) ? current.sortKey : '';
   const savedKey = valid.has(saved?.key) ? saved.key : '';
   const requestedKey = currentKey || savedKey || 'name';
-  const key = metadataManagerLoadVisibleColumns().includes(requestedKey) ? requestedKey : 'name';
+  const visible = metadataManagerLoadVisibleColumns();
+  const fallback = visible.includes('magazineTitle') ? 'magazineTitle' : visible.includes('name') ? 'name' : visible[0];
+  const key = visible.includes(requestedKey) ? requestedKey : fallback;
   const direction = currentKey ? (current.sortDirection === 'desc' ? 'desc' : 'asc') : (saved?.direction === 'desc' ? 'desc' : 'asc');
   state.metadataManager.sortKey = key;
   state.metadataManager.sortDirection = direction;
@@ -16663,7 +16693,7 @@ function metadataManagerLoadSort() {
 }
 
 function metadataManagerSaveSort(key, direction = 'asc') {
-  const valid = metadataManagerValidColumnKeys();
+  const valid = metadataManagerScopedColumnKeys();
   const safeKey = valid.has(key) ? key : 'name';
   const safeDirection = direction === 'desc' ? 'desc' : 'asc';
   state.metadataManager.sortKey = safeKey;
@@ -16713,7 +16743,7 @@ function metadataManagerResetColumns() {
 }
 
 function metadataManagerShowAllColumns() {
-  metadataManagerSaveVisibleColumns(METADATA_MANAGER_ALL_COLUMNS.map(column => column.key));
+  metadataManagerSaveVisibleColumns(metadataManagerScopedColumns().map(column => column.key));
   renderMetadataManagerColumnPicker();
   renderMetadataManager();
   metadataManagerSetStatus('All available metadata columns are visible.', 'success');
@@ -16732,12 +16762,12 @@ const METADATA_MANAGER_COLUMN_GROUPS = [
 
 function metadataManagerColumnGroupKey(column) {
   const key = String(column?.key || '');
-  if (['kind','metadataStatus','name','category','series','languageTag','region','year','publisher','topics','rating'].includes(key)) return 'core';
-  if (['gameTitle','franchise','developer','gamePublisher','gameReleaseYear','genre'].includes(key)) return 'game';
-  if (['asin','isbn10','isbn13','writer','webLink','publicationDate','pageCount'].includes(key)) return 'book';
+  if (['kind','metadataStatus','name','languageTag','region','publisher','pageCount','writer','summary','tags'].includes(key)) return 'core';
+  if (['gameTitle','category','franchise','developer','gamePublisher','gameReleaseYear','genre','rating','charactersCovered'].includes(key)) return 'game';
+  if (['isbn10','isbn13','publicationDate','year'].includes(key)) return 'book';
   if (['guideType','edition','associatedPlatforms','coveredGames','coveredPlatforms','guideTopics','locationsCovered'].includes(key)) return 'strategy';
-  if (['manualTitle','manualType','includedSections','controlScheme','itemsCovered','warrantySupport','charactersCovered'].includes(key)) return 'manual';
-  if (['magazineTitle','issueNumber','volume','coverDate','barcodeUpcIssn','platformFocus','primarySystem','magazineCategory','coverSubject','featuredGames','mentionedGames','featuredPlatforms','specialFeatures'].includes(key)) return 'magazine';
+  if (['manualTitle','manualType','includedSections','controlScheme','itemsCovered','warrantySupport'].includes(key)) return 'manual';
+  if (['magazineTitle','issueNumber','volume','coverDate','barcodeUpcIssn','platformFocus','primarySystem','magazineCategory','coverSubject','featuredGames','mentionedGames','featuredPlatforms'].includes(key)) return 'magazine';
   if (['metadataSource','platformMatchTitle','platformResolverSource'].includes(key)) return 'lookup';
   return 'notes';
 }
@@ -16746,7 +16776,7 @@ function renderMetadataManagerColumnPicker() {
   const picker = $('metadataManagerColumnPicker'); if (!picker) return;
   const visible = metadataManagerLoadVisibleColumns();
   const groups = METADATA_MANAGER_COLUMN_GROUPS.map(group => {
-    const columns = METADATA_MANAGER_ALL_COLUMNS.filter(c => metadataManagerColumnGroupKey(c) === group.key && !visible.includes(c.key));
+    const columns = metadataManagerScopedColumns().filter(c => metadataManagerColumnGroupKey(c) === group.key && !visible.includes(c.key));
     return columns.length ? `<optgroup label="${escapeForAttribute(group.label)}">${columns.map(c => `<option value="${escapeForAttribute(c.key)}">${escapeHtml(c.label)}</option>`).join('')}</optgroup>` : '';
   }).join('');
   picker.innerHTML = `<label>Add a column <select id="metadataManagerAddColumn"><option value="">Choose field...</option>${groups}</select></label>
@@ -16877,12 +16907,10 @@ function metadataManagerCollapseRows() {
 }
 
 function metadataManagerBatchEditableColumns() {
+  const filterKinds = metadataManagerSelectedKinds();
   const selected = metadataManagerSelectedItems();
-  const kinds = selected.length ? [...new Set(selected.map(i => i.kind))] : metadataManagerSelectedKinds();
-  const common = ['metadataStatus','name','series','languageTag','region','publisher','year','pageCount','summary','notes','rating','topics','webLink'];
-  const validFor = kind => new Set([...common, ...(METADATA_MANAGER_AUTO_COLUMNS_BY_KIND[kind] || []), ...(kind === 'Magazine' ? ['barcodeUpcIssn','includedExtras','featuredPlatforms','mentionedGames','publicationDate','writer'] : kind === 'Strategy Guide' ? ['asin','notes','webLink'] : [])]);
-  const sets = kinds.map(validFor);
-  return METADATA_MANAGER_ALL_COLUMNS.filter(c => !METADATA_MANAGER_READONLY_COLUMNS.has(c.key) && sets.every(s => s.has(c.key)));
+  const kinds = selected.length ? [...new Set(selected.map(i => i.kind))].filter(k => filterKinds.includes(k)) : filterKinds;
+  return metadataManagerScopedColumns(kinds, true).filter(c => !METADATA_MANAGER_READONLY_COLUMNS.has(c.key));
 }
 
 function metadataManagerBatchInputId(key) {
@@ -16933,7 +16961,7 @@ function metadataManagerRenderBatchEditor() {
   const columns = metadataManagerBatchEditableColumns();
   const manager = state.metadataManager;
   const active = columns.some(c => c.key === manager.batchField) ? manager.batchField : '';
-  const signature = columns.map(c => c.key).join('|') + ':' + active;
+  const signature = columns.map(c => c.key + ':' + c.label).join('|') + ':' + active;
   if (grid.dataset.activeColumnKeys === signature && grid.childElementCount) return;
   grid.dataset.activeColumnKeys = signature;
   manager.batchField = active;
@@ -16948,7 +16976,7 @@ function metadataManagerBatchEntries() {
   const entries = [];
   document.querySelectorAll('[data-metadata-batch-field-control]').forEach(control => {
     const field = control.dataset.metadataBatchFieldControl || '';
-    if (!field || METADATA_MANAGER_READONLY_COLUMNS.has(field)) return;
+    if (!field || !metadataManagerBatchEditableColumns().some(c => c.key === field)) return;
     let value = control.value;
     if (field === 'metadataStatus') value = normalizeMetadataStatus(value || '', '');
     else value = String(value ?? '').trim();
@@ -16963,7 +16991,7 @@ function metadataManagerBatchPayloadForItem(item, entries) {
   const payload = { metadataSource: 'Bulk metadata manager' };
   const topicsMode = $('metadataBatchTopicsMode')?.value || 'add';
   entries.forEach(entry => {
-    if (!entry?.field) return;
+    if (!entry?.field || !metadataManagerFieldsForKind(item.kind).has(entry.field)) return;
     if (entry.field === 'topics') {
       const topicField = metadataManagerTopicField(item);
       payload[topicField] = mergeTokenLists(item[topicField] || item.tags || [], entry.value, topicsMode);
@@ -17033,7 +17061,9 @@ function renderMetadataManager() {
       const rowAssociatedPlatforms = rowDirty.associatedPlatforms !== undefined ? itemArray(rowDirty.associatedPlatforms) : associatedPlatformsOf(item);
       const preferredPlatformReadOnly = item.kind === 'Strategy Guide' && hasMultipleAssociatedPlatforms(rowAssociatedPlatforms);
       const inputField = (name, value, readOnly = false, title = '') => `<input class="metadata-manager-input ${METADATA_MANAGER_WIDE_COLUMNS.has(name) ? 'wide' : ''} ${readOnly ? 'readonly' : ''}" data-id="${escapeForAttribute(id)}" data-field="${escapeForAttribute(name)}" value="${escapeForAttribute(rowDirty[name] ?? value ?? '')}" ${readOnly ? 'readonly aria-readonly="true"' : ''} ${title ? `title="${escapeForAttribute(title)}"` : ''} />`;
+      const rowFields = metadataManagerFieldsForKind(item.kind);
       const cellFor = column => {
+        if (!rowFields.has(column.key)) return '<span class="sub" title="Not applicable to this content type">—</span>';
         if (column.key === 'metadataStatus') {
           const currentStatus = normalizeMetadataStatus(rowDirty.metadataStatus ?? metadataStatusOf(item));
           return `<select class="metadata-manager-input metadata-status-select" data-id="${escapeForAttribute(id)}" data-field="metadataStatus">${metadataStatusOptionsHtml(currentStatus)}</select>`;
@@ -17451,7 +17481,7 @@ async function metadataManagerApplyBatch() {
     metadataManagerSetStatus('Enter at least one visible-column batch value to apply.', 'error');
     return;
   }
-  const fieldLabels = batchEntries.map(entry => metadataManagerColumnDefinition(entry.field)?.label || entry.field).join(', ');
+  const fieldLabels = batchEntries.map(entry => metadataManagerBatchEditableColumns().find(c => c.key === entry.field)?.label || entry.field).join(', ');
   if (!window.confirm(`Apply ${fieldLabels} to ${items.length} selected record(s)?`)) return;
   metadataManagerSetStatus(`Applying ${fieldLabels} to ${items.length} selected row(s) in bulk batches...`);
   const entries = items.map(item => ({
@@ -18501,7 +18531,7 @@ function metadataManagerImportJsonFile(file) {
         Name: 'name',
         system: 'category',
         primarySystem: 'category',
-        tags: 'topics',
+        tags: 'tags',
         language: 'languageTag',
         metadataPageCount: 'pageCount'
       };
@@ -18521,7 +18551,7 @@ function metadataManagerImportJsonFile(file) {
         const changes = {};
         Object.entries(entry || {}).forEach(([rawField, rawValue]) => {
           if (['id','Id','schema','generatedAt','items','matchName','sourceName','originalName'].includes(rawField)) return;
-          const field = importAliases[rawField] || rawField;
+          const field = rawField === 'primarySystem' && item.kind === 'Magazine' ? 'primarySystem' : (importAliases[rawField] || rawField);
           if (!validFields.has(field) || METADATA_MANAGER_READONLY_COLUMNS.has(field)) return;
           let value = rawValue;
           if (field === 'metadataStatus') value = normalizeMetadataStatus(rawValue);
