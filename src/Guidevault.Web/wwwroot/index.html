@@ -6,7 +6,7 @@
   <title>Guidevault</title>
   <link rel="icon" type="image/x-icon" href="/assets/favicon.ico?v=0.9.228" />
   <link rel="shortcut icon" type="image/x-icon" href="/assets/favicon.ico?v=0.9.228" />
-  <link rel="stylesheet" href="/styles.css?v=1.3.2-controlled-v1&amp;rev=launchbox-magazine-1&amp;bulk=publication-actions-v1" />
+  <link rel="stylesheet" href="/styles.css?v=1.3.2-controlled-v1&amp;rev=launchbox-magazine-1&amp;bulk=publication-actions-v1&amp;mm=workspace-v1" />
 </head>
 <body class="right-collapsed auth-locked">
   <section id="loginView" class="login-view" aria-labelledby="loginTitle">
@@ -1139,7 +1139,7 @@
               </div>
               <div class="settings-actions inline-actions metadata-manager-actions">
                 <button id="metadataManagerRefresh" class="ghost" type="button">&#x27F3; Refresh</button>
-                <button id="metadataManagerExportCsv" class="ghost" type="button">Export CSV</button>
+                <button id="metadataManagerExportCsv" class="ghost" type="button">Export table CSV</button>
                 <button id="metadataManagerImportJson" class="ghost" type="button">Import JSON</button>
                 <input id="metadataManagerImportFile" class="hidden" type="file" accept="application/json,.json" />
               </div>
@@ -1150,28 +1150,16 @@
             <article class="settings-card metadata-manager-toolbar">
               <div class="metadata-manager-filter-grid">
                 <label for="metadataManagerSearch">Search
-                  <input id="metadataManagerSearch" type="search" placeholder="Title, platform, publisher..." />
+                  <input id="metadataManagerSearch" type="search" placeholder="Title, issue, game, publisher..." />
                 </label>
-                <div class="metadata-manager-kind-filter" role="group" aria-label="Content type filters">
-                  <span>Content Type</span>
-                  <details id="metadataManagerKindDropdown" class="metadata-manager-kind-dropdown">
-                    <summary class="metadata-manager-kind-summary" role="button" aria-label="Choose one or more content types">
-                      <span id="metadataManagerKindSummary">Manuals, Strategy Guides, Magazines</span>
-                      <b aria-hidden="true">&#x25BE;</b>
-                    </summary>
-                    <div class="metadata-manager-kind-checks">
-                      <label><input id="metadataManagerKindManual" type="checkbox" data-metadata-manager-kind="Manual" checked /> Manuals</label>
-                      <label><input id="metadataManagerKindStrategy" type="checkbox" data-metadata-manager-kind="Strategy Guide" checked /> Strategy Guides</label>
-                      <label><input id="metadataManagerKindMagazine" type="checkbox" data-metadata-manager-kind="Magazine" checked /> Magazines</label>
-                    </div>
-                  </details>
-                  <select id="metadataManagerKind" class="hidden" aria-hidden="true" tabindex="-1">
-                    <option value="">Manuals, Guides, Magazines</option>
+                <label for="metadataManagerKind">Content type
+                  <select id="metadataManagerKind">
+                    <option value="">All content</option>
                     <option value="Manual">Manuals</option>
                     <option value="Strategy Guide">Strategy Guides</option>
                     <option value="Magazine">Magazines</option>
                   </select>
-                </div>
+                </label>
                 <label for="metadataManagerStatusFilter">Status
                   <select id="metadataManagerStatusFilter">
                     <option value="">All statuses</option>
@@ -1190,44 +1178,58 @@
                     <option value="missing-region">Missing region</option>
                     <option value="missing-topics">Missing topics/tags</option>
                     <option value="missing-publisher">Missing publisher</option>
+                    <option value="missing-cover-subject">Missing cover subject (magazines)</option>
+                    <option value="missing-featured-games">Missing featured games (magazines)</option>
+                    <option value="missing-mentioned-games">Missing mentioned games (magazines)</option>
+                    <option value="missing-featured-platforms">Missing featured platforms (magazines)</option>
                     <option value="unsorted-strategy-guides">Unsorted strategy guides</option>
                     <option value="multi-platform-strategy-guides">Multiple associated platforms</option>
                   </select>
                 </label>
-                <label for="metadataManagerCategory">Preferred Platform / Series
-                  <select id="metadataManagerCategory"><option value="">All platforms and series</option></select>
+                <label for="metadataManagerCategory">Platform
+                  <select id="metadataManagerCategory"><option value="">All platforms</option></select>
                 </label>
+                <label for="metadataManagerSeriesFilter">Publication / Series
+                  <select id="metadataManagerSeriesFilter"><option value="">All publications / series</option></select>
+                </label>
+              </div>
+              <div class="gv-mm-selection-bar">
+                <strong id="metadataManagerSelectionCount" aria-live="polite">0 selected</strong>
+                <button id="metadataManagerSelectPage" class="ghost" type="button">Select page</button>
+                <button id="metadataManagerSelectAll" class="ghost" type="button">Select all filtered</button>
+                <button id="metadataManagerClearSelection" class="ghost" type="button">Clear</button>
+                <button id="metadataManagerResetFilters" class="ghost" type="button">Reset filters</button>
+                <span class="gv-mm-spacer"></span>
+                <button id="metadataManagerSaveDirty" class="primary" type="button">Save edited rows</button>
               </div>
               <details class="metadata-manager-column-panel">
                 <summary>
-                  <span>Advanced Columns</span>
+                  <span>Table columns</span>
                   <em id="metadataManagerColumnActiveCount">Automatic columns shown</em>
                 </summary>
-                <p class="sub">Optional override for the automatic Manual / Strategy Guide / Magazine column set. Most cleanup should start with the content-type checkboxes above.</p>
+                <p class="sub">Add only the fields you want to work on. Drag table headers to reorder them, or reset to the compact view.</p>
                 <div id="metadataManagerColumnPicker" class="metadata-manager-column-picker"></div>
                 <div class="settings-actions inline-actions metadata-manager-column-actions">
-                  <button id="metadataManagerColumnsReset" class="ghost" type="button">Use Automatic Columns</button>
-                  <button id="metadataManagerColumnsShowAll" class="ghost" type="button">Show All Columns</button>
+                  <button id="metadataManagerColumnsReset" class="ghost" type="button">Reset to compact view</button>
+                  
                 </div>
               </details>
               <details class="metadata-manager-batch-panel">
                 <summary>
                   <span>Batch edit selected rows</span>
-                  <em>Uses the currently visible editable columns</em>
+                  <em>Choose one field to update across the selection</em>
                 </summary>
                 <div id="metadataManagerBatchGrid" class="metadata-manager-batch-grid"></div>
               <div class="settings-actions inline-actions metadata-manager-batch-actions">
-                <button id="metadataManagerSelectAll" class="ghost" type="button">Select Filtered</button>
-                <button id="metadataManagerClearSelection" class="ghost" type="button">Clear Selection</button>
+
                 <button id="metadataManagerApplyBatch" class="primary" type="button">Apply to Selected</button>
                 <button id="metadataManagerNormalizeSelected" class="ghost" type="button">Normalize Selected</button>
-                <button id="metadataManagerSaveDirty" class="primary" type="button">Save Edited Rows</button>
                 <button id="metadataManagerScrape" class="ghost" type="button">Scrape / Import Metadata</button>
                 <button id="metadataManagerWriteBackSelected" class="ghost" type="button">Write JSON to Selected Files</button>
                 <button id="metadataManagerOpenFilesWorkspace" class="ghost" type="button">Open JSON Write-Back</button>
               </div>
                             </details>
-              <details class="metadata-manager-batch-panel metadata-manager-source-batch-panel">
+              <details class="metadata-manager-batch-panel metadata-manager-source-batch-panel" id="metadataManagerSourcePanel">
                 <summary>
                   <span>Batch metadata lookup for Strategy Guides</span>
                   <em>Run, review covers, then apply checked rows</em>
@@ -1334,9 +1336,10 @@
               <div class="metadata-manager-table-footer">
                 <span id="metadataManagerCount">0 entries</span>
                 <div class="metadata-manager-render-actions" aria-label="Metadata row rendering controls">
-                  <button id="metadataManagerLoadMoreRows" class="ghost tiny" type="button" hidden>Load More</button>
-                  <button id="metadataManagerShowAllRows" class="ghost tiny" type="button" hidden>Show All</button>
-                  <button id="metadataManagerCollapseRows" class="ghost tiny" type="button" hidden>Collapse to 250</button>
+                  <button id="metadataManagerPrevPage" class="ghost tiny" type="button">Previous</button>
+                  <span id="metadataManagerPageLabel">Page 1 of 1</span>
+                  <button id="metadataManagerNextPage" class="ghost tiny" type="button">Next</button>
+                  <label>Rows <select id="metadataManagerPageSize"><option>50</option><option>100</option><option>250</option></select></label>
                 </div>
                 <span id="metadataManagerDirtyCount">0 edited</span>
               </div>
@@ -3733,6 +3736,6 @@
   </dialog>
 
 
-  <script src="/app.js?v=1.3.2-controlled-v1&amp;rev=launchbox-magazine-1&amp;bulk=publication-actions-v1"></script>
+  <script src="/app.js?v=1.3.2-controlled-v1&amp;rev=launchbox-magazine-1&amp;bulk=publication-actions-v1&amp;mm=workspace-v1"></script>
 </body>
 </html>

@@ -16233,13 +16233,10 @@ function syncMetadataManagerKindDropdown() {
 }
 
 function metadataManagerAutoColumnKeysForKinds(kinds = metadataManagerSelectedKinds()) {
-  const selected = (kinds && kinds.length ? kinds : METADATA_MANAGER_KIND_FILTERS).filter(kind => METADATA_MANAGER_KIND_FILTERS.includes(kind));
-  const keys = [];
-  const add = key => { if (!keys.includes(key) && metadataManagerValidColumnKeys().has(key)) keys.push(key); };
-  ['kind','metadataStatus','name'].forEach(add);
-  selected.forEach(kind => (METADATA_MANAGER_AUTO_COLUMNS_BY_KIND[kind] || []).forEach(add));
-  if (selected.length > 1) ['category','series','languageTag','region','year','publisher','topics','metadataSource'].forEach(add);
-  return keys.length ? keys : METADATA_MANAGER_DEFAULT_COLUMNS.slice();
+  const common = ['kind','metadataStatus','name'];
+  if (kinds.length === 1 && kinds[0] === 'Magazine') return [...common,'issueNumber','coverDate','coverSubject','featuredPlatforms'];
+  if (kinds.length === 1 && kinds[0] !== 'Magazine') return [...common,'gameTitle','category','languageTag','region'];
+  return [...common,'series','languageTag','region','publisher'];
 }
 
 function metadataManagerItemId(item) {
@@ -16307,75 +16304,55 @@ function metadataManagerIsUnsortedStrategyGuide(item) {
 }
 
 
+function metadataManagerSearchNormalize(value) {
+  return String(value ?? '').normalize('NFKD').replace(/\p{M}/gu, '').toLowerCase().replace(/[^\p{L}\p{N}]+/gu, ' ').trim();
+}
+function metadataManagerPlatformValues(item) {
+  const values = item.kind === 'Magazine'
+    ? [...itemArray(item.featuredPlatforms), ...itemArray(item.primarySystem)]
+    : [metadataManagerCategoryValue(item), ...associatedPlatformsOf(item), ...itemArray(item.coveredPlatforms)];
+  return normalizeGuidevaultPlatformList(values).filter(v => v && !isMultiPlatformBucketName(v) && !/^(unknown|multi[- ]?platform|unspecified)$/i.test(v));
+}
 function metadataManagerSearchText(item) {
   if (!item) return '';
-  const cacheKey = [
-    item.id, item.Id, item.updatedAt, item.modified, item.metadataSource, item.metadataStatus,
-    item.title, item.manualTitle, item.gameTitle, item.magazineTitle,
-    item.kind, metadataStatusOf(item), item.publisher, item.gamePublisher, item.year,
-    item.languageTag, item.region, item.series, item.franchise,
-    item.category, item.system, item.primarySystem,
-    item.summary
-  ].join('|');
-
-  if (item.__metadataManagerSearchKey === cacheKey && item.__metadataManagerSearchText) {
-    return item.__metadataManagerSearchText;
-  }
-
-  const text = [
-    metadataManagerItemName(item),
-    item.title,
-    item.kind,
-    metadataStatusOf(item),
-    metadataManagerCategoryValue(item),
-    metadataManagerSeriesValue(item),
-    item.publisher,
-    item.gamePublisher,
-    item.year,
-    item.languageTag,
-    item.region,
-    metadataManagerTopicValue(item),
-    platformListText(item),
-    item.metadataSource,
-    item.summary,
-    ...(item.tags || [])
-  ].join(' ').toLowerCase();
-
-  try {
-    Object.defineProperty(item, '__metadataManagerSearchKey', { value: cacheKey, writable: true, configurable: true });
-    Object.defineProperty(item, '__metadataManagerSearchText', { value: text, writable: true, configurable: true });
-  } catch {
-    item.__metadataManagerSearchKey = cacheKey;
-    item.__metadataManagerSearchText = text;
-  }
-
-  return text;
+  return metadataManagerSearchNormalize([
+    metadataManagerItemName(item), item.title, item.manualTitle, item.gameTitle, item.magazineTitle,
+    item.issueNumber, item.issueNumber ? `issue ${item.issueNumber}` : '', item.volume, item.coverDate, item.publicationDate,
+    item.kind, metadataStatusOf(item), ...metadataManagerPlatformValues(item), metadataManagerSeriesValue(item),
+    item.publisher, item.gamePublisher, item.year, item.gameReleaseYear, item.languageTag, item.region,
+    item.coverSubject, ...itemArray(item.featuredGames), ...itemArray(item.mentionedGames),
+    ...itemArray(item.coveredGames), metadataManagerTopicValue(item), item.metadataSource, item.summary,
+    ...itemArray(item.tags), item.fileName, item.relativePath, item.isbn10, item.isbn13, item.barcodeUpcIssn
+  ].join(' '));
 }
 
 function metadataManagerEditableItems() {
   const allowed = new Set(['Manual', 'Strategy Guide', 'Magazine']);
   const manager = state.metadataManager || {};
-  const q = String(manager.search || '').trim().toLowerCase();
+  const rawSearch = String(manager.search || '');
+  const issueMatch = rawSearch.match(/(?:#|\bissue\s+)(\d+)\b/i);
+  const q = metadataManagerSearchNormalize(issueMatch ? rawSearch.replace(issueMatch[0], '') : rawSearch).split(' ').filter(Boolean);
   const selectedKinds = new Set(metadataManagerSelectedKinds());
   const statusFilter = normalizeMetadataStatus(manager.statusFilter || '', '');
   const missing = String(manager.missing || '').trim();
-  const category = String(manager.category || '').trim().toLowerCase();
+  const category = String(manager.category || '').trim();
+  const series = String(manager.seriesFilter || '').trim();
   const filtered = (state.items || []).filter(item => {
     if (!allowed.has(item.kind)) return false;
     if (!selectedKinds.has(item.kind)) return false;
     if (statusFilter && metadataStatusOf(item) !== statusFilter) return false;
-    if (category) {
-      const cats = [metadataManagerCategoryValue(item), metadataManagerSeriesValue(item), item.magazineTitle, item.series, ...associatedPlatformsOf(item)]
-        .map(v => String(v || '').trim().toLowerCase()).filter(Boolean);
-      if (!cats.includes(category)) return false;
-    }
+    if (category && !metadataManagerPlatformValues(item).some(v => platformNamesEqual(v, category))) return false;
+    if (series && ![metadataManagerSeriesValue(item), item.magazineTitle].some(v => String(v || '').trim().toLowerCase() === series.toLowerCase())) return false;
     if (missing === 'missing-language' && String(item.languageTag || '').trim()) return false;
     if (missing === 'missing-region' && String(item.region || '').trim()) return false;
     if (missing === 'missing-publisher' && String(item.publisher || item.gamePublisher || '').trim()) return false;
     if (missing === 'missing-topics' && metadataManagerTopicValue(item).trim()) return false;
     if (missing === 'unsorted-strategy-guides' && !metadataManagerIsUnsortedStrategyGuide(item)) return false;
     if (missing === 'multi-platform-strategy-guides' && !metadataManagerIsMultiPlatformStrategyGuide(item)) return false;
-    if (q && !metadataManagerSearchText(item).includes(q)) return false;
+    const magazineMissing = {'missing-cover-subject':'coverSubject','missing-featured-games':'featuredGames','missing-mentioned-games':'mentionedGames','missing-featured-platforms':'featuredPlatforms'}[missing];
+    if (magazineMissing && (item.kind !== 'Magazine' || String(item[magazineMissing] || '').trim())) return false;
+    if (issueMatch && (item.kind !== 'Magazine' || String(item.issueNumber || '').trim().replace(/^0+(?=\d)/,'') !== issueMatch[1].replace(/^0+(?=\d)/,''))) return false;
+    if (q.length) { const haystack = metadataManagerSearchText(item); if (!q.every(token => haystack.includes(token))) return false; }
     return true;
   });
   return metadataManagerSortItems(filtered);
@@ -16401,36 +16378,29 @@ function metadataManagerUniqueCategories(items) {
 }
 
 function metadataManagerRenderCategoryFilter() {
-  const select = $('metadataManagerCategory');
-  if (!select) return;
-  const current = state.metadataManager.category || '';
-  const options = metadataManagerUniqueCategories((state.items || []).filter(item => ['Manual', 'Strategy Guide', 'Magazine'].includes(item.kind)));
-  select.innerHTML = `<option value="">All platforms and series</option>${options.map(v => `<option value="${escapeForAttribute(v)}">${escapeHtml(v)}</option>`).join('')}`;
-  select.value = current;
+  const manager = state.metadataManager;
+  const kinds = new Set(metadataManagerSelectedKinds());
+  const items = (state.items || []).filter(item => kinds.has(item.kind));
+  const setOptions = (id, key, values, label) => {
+    const el = $(id); if (!el) return;
+    const unique = new Map();
+    values.forEach(v => { v = String(v || '').trim(); if (v) unique.set(v.toLowerCase(), v); });
+    const options = [...unique.values()].sort((x,y) => x.localeCompare(y, undefined, {numeric:true,sensitivity:'base'}));
+    const current = unique.get(String(manager[key] || '').toLowerCase()) || '';
+    const html = `<option value="">${label}</option>${options.map(v => `<option value="${escapeForAttribute(v)}">${escapeHtml(v)}</option>`).join('')}`;
+    if (el._gvOptions !== html || !el.options.length) { el.innerHTML = html; el._gvOptions = html; }
+    el.value = current; manager[key] = current;
+  };
+  setOptions('metadataManagerCategory','category',items.flatMap(metadataManagerPlatformValues),'All platforms');
+  setOptions('metadataManagerSeriesFilter','seriesFilter',items.map(metadataManagerSeriesValue),'All publications / series');
 }
 
 function metadataManagerSummaryStats(items) {
-  const total = items.length;
-  const missingLanguage = items.filter(i => !String(i.languageTag || '').trim()).length;
-  const missingRegion = items.filter(i => !String(i.region || '').trim()).length;
-  const missingTopics = items.filter(i => !metadataManagerTopicValue(i).trim()).length;
-  const unsortedGuides = items.filter(metadataManagerIsUnsortedStrategyGuide).length;
-  const multiPlatformGuides = items.filter(metadataManagerIsMultiPlatformStrategyGuide).length;
-  const reviewed = items.filter(i => metadataStatusOf(i) === 'Reviewed').length;
-  const needsReview = items.filter(i => metadataStatusOf(i) === 'Needs Review').length;
-  const failedLookup = items.filter(i => metadataStatusOf(i) === 'Failed Lookup').length;
-  const edited = Object.keys(state.metadataManager.dirty || {}).length;
   return [
-    ['Visible', total],
-    ['Reviewed', reviewed],
-    ['Needs review', needsReview],
-    ['Failed lookup', failedLookup],
-    ['Missing language', missingLanguage],
-    ['Missing region', missingRegion],
-    ['Missing topics', missingTopics],
-    ['Unsorted guides', unsortedGuides],
-    ['Multiple platforms', multiPlatformGuides],
-    ['Edited rows', edited]
+    ['Matching records', items.length],
+    ['Needs review', items.filter(i => metadataStatusOf(i) === 'Needs Review').length],
+    ['Reviewed', items.filter(i => metadataStatusOf(i) === 'Reviewed').length],
+    ['Edited rows', Object.keys(state.metadataManager.dirty || {}).length]
   ];
 }
 
@@ -16684,8 +16654,9 @@ function metadataManagerLoadSort() {
   const current = state.metadataManager || {};
   const currentKey = valid.has(current.sortKey) ? current.sortKey : '';
   const savedKey = valid.has(saved?.key) ? saved.key : '';
-  const key = currentKey || savedKey || 'name';
-  const direction = current.sortDirection === 'desc' || saved?.direction === 'desc' ? 'desc' : 'asc';
+  const requestedKey = currentKey || savedKey || 'name';
+  const key = metadataManagerLoadVisibleColumns().includes(requestedKey) ? requestedKey : 'name';
+  const direction = currentKey ? (current.sortDirection === 'desc' ? 'desc' : 'asc') : (saved?.direction === 'desc' ? 'desc' : 'asc');
   state.metadataManager.sortKey = key;
   state.metadataManager.sortDirection = direction;
   return { key, direction };
@@ -16705,6 +16676,7 @@ function metadataManagerSetSort(key) {
   const current = metadataManagerLoadSort();
   const direction = current.key === key && current.direction === 'asc' ? 'desc' : 'asc';
   metadataManagerSaveSort(key, direction);
+  metadataManagerResetRenderLimit();
   renderMetadataManager();
 }
 
@@ -16771,36 +16743,17 @@ function metadataManagerColumnGroupKey(column) {
 }
 
 function renderMetadataManagerColumnPicker() {
-  const picker = $('metadataManagerColumnPicker');
-  if (!picker) return;
+  const picker = $('metadataManagerColumnPicker'); if (!picker) return;
   const visible = metadataManagerLoadVisibleColumns();
-  const visibleSet = new Set(visible);
-  const columnsByGroup = new Map(METADATA_MANAGER_COLUMN_GROUPS.map(group => [group.key, []]));
-  METADATA_MANAGER_ALL_COLUMNS.forEach(column => {
-    const groupKey = metadataManagerColumnGroupKey(column);
-    if (!columnsByGroup.has(groupKey)) columnsByGroup.set(groupKey, []);
-    columnsByGroup.get(groupKey).push(column);
-  });
-  picker.innerHTML = METADATA_MANAGER_COLUMN_GROUPS.map(group => {
-    const columns = columnsByGroup.get(group.key) || [];
-    if (!columns.length) return '';
-    return `<section class="metadata-manager-column-group" aria-label="${escapeForAttribute(group.label)}">
-      <h4>${escapeHtml(group.label)}</h4>
-      <div class="metadata-manager-column-group-grid">
-        ${columns.map(column => {
-          const position = visible.indexOf(column.key);
-          const isVisible = visibleSet.has(column.key);
-          return `<label class="metadata-manager-column-option" title="${escapeForAttribute(column.description || '')}">
-            <input type="checkbox" data-column-key="${escapeForAttribute(column.key)}" ${isVisible ? 'checked' : ''} />
-            <span>${escapeHtml(column.label)}</span>
-            ${isVisible ? `<button class="ghost tiny metadata-column-move" type="button" data-column-move="-1" data-column-key="${escapeForAttribute(column.key)}" ${position <= 0 ? 'disabled' : ''} title="Move left">\u2190</button><button class="ghost tiny metadata-column-move" type="button" data-column-move="1" data-column-key="${escapeForAttribute(column.key)}" ${position === visible.length - 1 ? 'disabled' : ''} title="Move right">\u2192</button>` : ''}
-          </label>`;
-        }).join('')}
-      </div>
-    </section>`;
+  const groups = METADATA_MANAGER_COLUMN_GROUPS.map(group => {
+    const columns = METADATA_MANAGER_ALL_COLUMNS.filter(c => metadataManagerColumnGroupKey(c) === group.key && !visible.includes(c.key));
+    return columns.length ? `<optgroup label="${escapeForAttribute(group.label)}">${columns.map(c => `<option value="${escapeForAttribute(c.key)}">${escapeHtml(c.label)}</option>`).join('')}</optgroup>` : '';
   }).join('');
-  const active = $('metadataManagerColumnActiveCount');
-  if (active) active.textContent = state.metadataManager?.useCustomColumns ? `${visible.length} of ${METADATA_MANAGER_ALL_COLUMNS.length} custom columns shown - click headers to sort or drag to reorder` : `${visible.length} automatic columns shown for selected content type(s)`;
+  picker.innerHTML = `<label>Add a column <select id="metadataManagerAddColumn"><option value="">Choose field...</option>${groups}</select></label>
+    <div class="gv-mm-column-chips">${visible.map(key => `<button type="button" class="ghost tiny" data-gv-mm-remove-column="${escapeForAttribute(key)}" ${visible.length <= 1 ? 'disabled' : ''}>${escapeHtml(metadataManagerColumnDefinition(key)?.label || key)} ×</button>`).join('')}</div>`;
+  $('metadataManagerAddColumn')?.addEventListener('change', e => { if (e.target.value) metadataManagerSetColumnVisible(e.target.value,true); });
+  picker.querySelectorAll('[data-gv-mm-remove-column]').forEach(btn => btn.addEventListener('click', () => metadataManagerSetColumnVisible(btn.dataset.gvMmRemoveColumn,false)));
+  const active = $('metadataManagerColumnActiveCount'); if (active) active.textContent = `${visible.length} columns`;
 }
 
 function metadataManagerSourceTitleCandidate(item) {
@@ -16902,6 +16855,7 @@ function metadataManagerCurrentRenderLimit(total = 0) {
 function metadataManagerResetRenderLimit() {
   state.metadataManager = state.metadataManager || {};
   state.metadataManager.renderLimit = metadataManagerDefaultRenderLimit();
+  state.metadataManager.page = 0;
 }
 
 function metadataManagerLoadMoreRows() {
@@ -16923,8 +16877,12 @@ function metadataManagerCollapseRows() {
 }
 
 function metadataManagerBatchEditableColumns() {
-  return metadataManagerVisibleColumns()
-    .filter(column => column && !METADATA_MANAGER_READONLY_COLUMNS.has(column.key));
+  const selected = metadataManagerSelectedItems();
+  const kinds = selected.length ? [...new Set(selected.map(i => i.kind))] : metadataManagerSelectedKinds();
+  const common = ['metadataStatus','name','series','languageTag','region','publisher','year','pageCount','summary','notes','rating','topics','webLink'];
+  const validFor = kind => new Set([...common, ...(METADATA_MANAGER_AUTO_COLUMNS_BY_KIND[kind] || []), ...(kind === 'Magazine' ? ['barcodeUpcIssn','includedExtras','featuredPlatforms','mentionedGames','publicationDate','writer'] : kind === 'Strategy Guide' ? ['asin','notes','webLink'] : [])]);
+  const sets = kinds.map(validFor);
+  return METADATA_MANAGER_ALL_COLUMNS.filter(c => !METADATA_MANAGER_READONLY_COLUMNS.has(c.key) && sets.every(s => s.has(c.key)));
 }
 
 function metadataManagerBatchInputId(key) {
@@ -16971,37 +16929,19 @@ function metadataManagerBatchControlHtml(column) {
 }
 
 function metadataManagerRenderBatchEditor() {
-  const grid = $('metadataManagerBatchGrid');
-  if (!grid) return;
+  const grid = $('metadataManagerBatchGrid'); if (!grid) return;
   const columns = metadataManagerBatchEditableColumns();
-  const activeKeys = columns.map(column => column.key).join('|');
-  if (grid.dataset.activeColumnKeys === activeKeys && grid.childElementCount) return;
-  const previousValues = {};
-  grid.querySelectorAll('[data-metadata-batch-field-control]').forEach(control => {
-    previousValues[control.dataset.metadataBatchFieldControl || ''] = control.value;
-  });
-  const topicModeValue = $('metadataBatchTopicsMode')?.value || 'add';
-  grid.dataset.activeColumnKeys = activeKeys;
-  if (!columns.length) {
-    grid.innerHTML = '<p class="metadata-manager-batch-empty">Show at least one editable column to make it available for batch editing.</p>';
-    return;
-  }
-  grid.innerHTML = columns.map(metadataManagerBatchControlHtml).join('')
-    + (columns.some(column => column.key === 'topics')
-      ? `<label for="metadataBatchTopicsMode" class="metadata-manager-batch-mode-field">Topics Mode
-          <select id="metadataBatchTopicsMode" data-metadata-batch-mode="topics">
-            <option value="add">Add to existing</option>
-            <option value="replace">Replace existing</option>
-            <option value="remove">Remove from existing</option>
-          </select>
-        </label>`
-      : '');
-  grid.querySelectorAll('[data-metadata-batch-field-control]').forEach(control => {
-    const key = control.dataset.metadataBatchFieldControl || '';
-    if (previousValues[key] !== undefined) control.value = previousValues[key];
-  });
-  const topicMode = $('metadataBatchTopicsMode');
-  if (topicMode) topicMode.value = topicModeValue;
+  const manager = state.metadataManager;
+  const active = columns.some(c => c.key === manager.batchField) ? manager.batchField : '';
+  const signature = columns.map(c => c.key).join('|') + ':' + active;
+  if (grid.dataset.activeColumnKeys === signature && grid.childElementCount) return;
+  grid.dataset.activeColumnKeys = signature;
+  manager.batchField = active;
+  const column = columns.find(c => c.key === active);
+  grid.innerHTML = `<label>Field to update<select id="metadataManagerBatchField"><option value="">Choose field...</option>${columns.map(c => `<option value="${escapeForAttribute(c.key)}" ${c.key === active ? 'selected' : ''}>${escapeHtml(c.label)}</option>`).join('')}</select></label>`
+    + (column ? metadataManagerBatchControlHtml(column) : '<p class="sub">Select a field to enter a value.</p>')
+    + (active === 'topics' ? `<label>Topics mode<select id="metadataBatchTopicsMode"><option value="add">Add to existing</option><option value="replace">Replace existing</option><option value="remove">Remove from existing</option></select></label>` : '');
+  $('metadataManagerBatchField')?.addEventListener('change', e => { manager.batchField = e.target.value; metadataManagerRenderBatchEditor(); });
 }
 
 function metadataManagerBatchEntries() {
@@ -17038,8 +16978,7 @@ function metadataManagerBatchPayloadForItem(item, entries) {
 function renderMetadataManager() {
   if (!$('settingsMetadataManagerPanel')) return;
   state.metadataManager = state.metadataManager || { selectedIds: [], dirty: {}, filterKind: '', kindFilters: ['Manual','Strategy Guide','Magazine'], statusFilter: '', search: '', missing: '', category: '', visibleColumns: [], useCustomColumns: false, sortKey: '', sortDirection: 'asc', draggedColumnKey: '', renderLimit: METADATA_MANAGER_DEFAULT_RENDER_LIMIT };
-  const categorySelect = $('metadataManagerCategory');
-  if (categorySelect && !categorySelect.options.length) metadataManagerRenderCategoryFilter();
+  metadataManagerRenderCategoryFilter();
   const columnPicker = $('metadataManagerColumnPicker');
   if (columnPicker && !columnPicker.childElementCount) renderMetadataManagerColumnPicker();
   const manager = state.metadataManager;
@@ -17052,13 +16991,27 @@ function renderMetadataManager() {
   if ($('metadataManagerMissing')) $('metadataManagerMissing').value = manager.missing || '';
   if ($('metadataManagerCategory')) $('metadataManagerCategory').value = manager.category || '';
   const items = metadataManagerEditableItems();
-  const selectedSet = new Set(manager.selectedIds || []);
+  const matchingIds = new Set(items.map(metadataManagerItemId));
+  manager.selectedIds = (manager.selectedIds || []).filter(id => matchingIds.has(id));
+  const selectedSet = new Set(manager.selectedIds);
   const dirty = manager.dirty || {};
   const columns = metadataManagerVisibleColumns();
   metadataManagerRenderBatchEditor();
-  const renderLimit = metadataManagerCurrentRenderLimit(items.length);
-  const renderedItems = items.slice(0, renderLimit);
-  const hiddenCount = Math.max(0, items.length - renderedItems.length);
+  const pageSize = [50,100,250].includes(Number(manager.pageSize)) ? Number(manager.pageSize) : 50;
+  const pageCount = Math.max(1, Math.ceil(items.length / pageSize));
+  manager.page = Math.max(0, Math.min(pageCount - 1, Number(manager.page) || 0));
+  const pageStart = manager.page * pageSize;
+  const renderedItems = items.slice(pageStart, pageStart + pageSize);
+  const hiddenCount = 0;
+  const table = $('metadataManagerHeaderRow')?.closest('table');
+  if (table) table.classList.toggle('gv-mm-compact', columns.length <= 8);
+  const count = $('metadataManagerSelectionCount');
+  if (count) count.textContent = `${selectedSet.size.toLocaleString()} selected`;
+  const selectAll = $('metadataManagerSelectAll'); if (selectAll) { selectAll.textContent = `Select all ${items.length.toLocaleString()} filtered`; selectAll.disabled = !items.length; }
+  const selectPage = $('metadataManagerSelectPage'); if (selectPage) selectPage.disabled = !renderedItems.length;
+  const clear = $('metadataManagerClearSelection'); if (clear) clear.disabled = !selectedSet.size;
+  ['metadataManagerApplyBatch','metadataManagerNormalizeSelected','metadataManagerWriteBackSelected','metadataManagerScrape'].forEach(id => { const el = $(id); if (el) el.disabled = !selectedSet.size; });
+  const sourcePanel = $('metadataManagerSourcePanel'); if (sourcePanel) { sourcePanel.hidden = !selectedKinds.has('Strategy Guide'); if (sourcePanel.hidden) sourcePanel.open = false; }
   const summary = $('metadataManagerSummary');
   if (summary) {
     summary.innerHTML = metadataManagerSummaryStats(items).map(([label, value]) => `<div class="metadata-manager-stat"><span>${escapeHtml(label)}</span><strong>${escapeHtml(value)}</strong></div>`).join('');
@@ -17087,6 +17040,7 @@ function renderMetadataManager() {
         }
         if (column.key === 'kind') return `<span class="metadata-kind-pill metadata-kind-preview-trigger" data-metadata-preview-id="${escapeForAttribute(metadataManagerItemId(item))}" title="Click and hold to preview cover">${escapeHtml(item.kind || '\u2014')}</span>`;
         if (column.key === 'metadataSource') return `<span class="metadata-source-text">${escapeHtml(item.metadataSource || '\u2014')}</span>`;
+        if (column.key === 'category' && item.kind === 'Magazine') return '<span class="sub">—</span>';
         if (column.key === 'category' && preferredPlatformReadOnly) return `<input class="metadata-manager-input ${METADATA_MANAGER_WIDE_COLUMNS.has('category') ? 'wide' : ''} readonly" data-id="${escapeForAttribute(id)}" data-field="category" value="${escapeForAttribute(MULTI_PLATFORM_LABEL)}" readonly aria-readonly="true" title="Preferred Platform is read-only when Associated Platforms contains multiple systems." />`;
         return inputField(column.key, metadataManagerFieldValue(item, column.key));
       };
@@ -17096,36 +17050,18 @@ function renderMetadataManager() {
       </tr>`;
     }).join('') + (hiddenCount ? `<tr><td colspan="${columns.length + 1}" class="metadata-manager-empty metadata-manager-hidden-note">${hiddenCount} more matching entr${hiddenCount === 1 ? 'y is' : 'ies are'} hidden by the current display limit. Use Load More or Show All in the footer to render the rest.</td></tr>` : '') : `<tr><td colspan="${columns.length + 1}" class="metadata-manager-empty">No metadata entries match this filter.</td></tr>`;
   }
-  if ($('metadataManagerCount')) {
-    const editableTotal = (state.items || []).filter(i => ['Manual','Strategy Guide','Magazine'].includes(i.kind)).length;
-    $('metadataManagerCount').textContent = hiddenCount
-      ? `${renderedItems.length} shown / ${items.length} matched (${hiddenCount} not rendered yet) / ${editableTotal} editable entries total`
-      : `${renderedItems.length} shown / ${items.length} matched / ${editableTotal} editable entries total`;
-  }
-  const loadMoreButton = $('metadataManagerLoadMoreRows');
-  if (loadMoreButton) {
-    loadMoreButton.hidden = !hiddenCount;
-    loadMoreButton.disabled = !hiddenCount;
-    loadMoreButton.textContent = hiddenCount ? `Load ${Math.min(METADATA_MANAGER_RENDER_STEP, hiddenCount)} More` : 'Load More';
-  }
-  const showAllButton = $('metadataManagerShowAllRows');
-  if (showAllButton) {
-    showAllButton.hidden = !hiddenCount;
-    showAllButton.disabled = !hiddenCount;
-    showAllButton.textContent = hiddenCount ? `Show All ${items.length}` : 'Show All';
-  }
-  const collapseButton = $('metadataManagerCollapseRows');
-  if (collapseButton) {
-    const canCollapse = renderedItems.length > metadataManagerDefaultRenderLimit();
-    collapseButton.hidden = !canCollapse;
-    collapseButton.disabled = !canCollapse;
-  }
+  if ($('metadataManagerCount')) $('metadataManagerCount').textContent = items.length ? `${pageStart + 1}–${pageStart + renderedItems.length} of ${items.length.toLocaleString()} matching records` : 'No matching records';
+  if ($('metadataManagerPageLabel')) $('metadataManagerPageLabel').textContent = `Page ${manager.page + 1} of ${pageCount}`;
+  if ($('metadataManagerPrevPage')) $('metadataManagerPrevPage').disabled = manager.page === 0;
+  if ($('metadataManagerNextPage')) $('metadataManagerNextPage').disabled = manager.page >= pageCount - 1;
+  if ($('metadataManagerPageSize')) $('metadataManagerPageSize').value = String(pageSize);
   if ($('metadataManagerDirtyCount')) $('metadataManagerDirtyCount').textContent = `${Object.keys(dirty).length} edited`;
   const headerCheck = $('metadataManagerHeaderCheck');
   if (headerCheck) {
     headerCheck.addEventListener('change', e => metadataManagerSelectRendered(!!e.currentTarget.checked));
     const visibleIds = renderedItems.map(metadataManagerItemId).filter(Boolean);
     headerCheck.checked = visibleIds.length > 0 && visibleIds.every(id => selectedSet.has(id));
+    headerCheck.indeterminate = !headerCheck.checked && visibleIds.some(id => selectedSet.has(id));
   }
 }
 
@@ -17187,13 +17123,18 @@ function metadataManagerUpdateFilter(field, value) {
   state.metadataManager = state.metadataManager || {};
   state.metadataManager[field] = value;
   if (field === 'search') {
+    state.metadataManager.selectedIds = [];
+    state.metadataManager.batchField = '';
     metadataManagerResetRenderLimit();
-    metadataManagerSetStatus(value ? 'Searching metadata...' : '', '');
+    metadataManagerSetStatus('', '');
+    if ($('metadataManagerSelectionCount')) $('metadataManagerSelectionCount').textContent = '0 selected';
     metadataManagerScheduleRender();
     return;
   }
-  if (field === 'filterKind' || field === 'kindFilters' || field === 'statusFilter' || field === 'missing' || field === 'category') {
+  if (field === 'kindFilters') { state.metadataManager.category = ''; state.metadataManager.seriesFilter = ''; state.metadataManager.missing = ''; state.metadataManager.batchField = ''; metadataManagerSaveSort('name','asc'); renderMetadataManagerColumnPicker(); }
+  if (['filterKind','kindFilters','statusFilter','missing','category','seriesFilter'].includes(field)) {
     state.metadataManager.selectedIds = [];
+    state.metadataManager.batchField = '';
     metadataManagerResetRenderLimit();
   }
   renderMetadataManager();
@@ -17202,7 +17143,7 @@ function metadataManagerUpdateFilter(field, value) {
 function metadataManagerToggleSelection(id, checked) {
   if (!id) return;
   const selected = new Set(state.metadataManager.selectedIds || []);
-  if (checked) selected.add(id); else selected.delete(id);
+  if (checked && metadataManagerEditableItems().some(item => metadataManagerItemId(item) === id)) selected.add(id); else selected.delete(id);
   state.metadataManager.selectedIds = Array.from(selected);
   renderMetadataManager();
 }
@@ -17217,8 +17158,9 @@ function metadataManagerSelectVisible(select = true) {
 
 function metadataManagerSelectRendered(select = true) {
   const items = metadataManagerEditableItems();
-  const renderLimit = metadataManagerCurrentRenderLimit(items.length);
-  const renderedIds = items.slice(0, renderLimit).map(metadataManagerItemId).filter(Boolean);
+  const size = [50,100,250].includes(Number(state.metadataManager.pageSize)) ? Number(state.metadataManager.pageSize) : 50;
+  const start = (Number(state.metadataManager.page) || 0) * size;
+  const renderedIds = items.slice(start, start + size).map(metadataManagerItemId).filter(Boolean);
   const selected = new Set(state.metadataManager.selectedIds || []);
   renderedIds.forEach(id => select ? selected.add(id) : selected.delete(id));
   state.metadataManager.selectedIds = Array.from(selected);
@@ -17278,7 +17220,7 @@ function metadataManagerRefreshRowPreferredPlatformState(id) {
 
 function metadataManagerSelectedItems() {
   const selected = new Set(state.metadataManager.selectedIds || []);
-  return (state.items || []).filter(item => selected.has(metadataManagerItemId(item)));
+  return selected.size ? metadataManagerEditableItems().filter(item => selected.has(metadataManagerItemId(item))) : [];
 }
 
 function mergeTokenLists(existing, tokens, mode = 'add') {
@@ -17502,6 +17444,7 @@ async function metadataManagerApplyBatch() {
     metadataManagerSetStatus('Select one or more rows first.', 'error');
     return;
   }
+  if (Object.keys(state.metadataManager.dirty || {}).length) { metadataManagerSetStatus('Save edited rows before applying a batch update.', 'error'); return; }
   metadataManagerRenderBatchEditor();
   const batchEntries = metadataManagerBatchEntries();
   if (!batchEntries.length) {
@@ -17509,6 +17452,7 @@ async function metadataManagerApplyBatch() {
     return;
   }
   const fieldLabels = batchEntries.map(entry => metadataManagerColumnDefinition(entry.field)?.label || entry.field).join(', ');
+  if (!window.confirm(`Apply ${fieldLabels} to ${items.length} selected record(s)?`)) return;
   metadataManagerSetStatus(`Applying ${fieldLabels} to ${items.length} selected row(s) in bulk batches...`);
   const entries = items.map(item => ({
     id: metadataManagerItemId(item),
@@ -18376,14 +18320,15 @@ function metadataManagerSyncFiltersFromControls() {
     ['metadataManagerSearch', 'search'],
     ['metadataManagerStatusFilter', 'statusFilter'],
     ['metadataManagerMissing', 'missing'],
-    ['metadataManagerCategory', 'category']
+    ['metadataManagerCategory', 'category'],
+    ['metadataManagerSeriesFilter', 'seriesFilter']
   ];
   mappings.forEach(([id, field]) => {
     const control = $(id);
     if (control) state.metadataManager[field] = control.value || '';
   });
-  const checkedKinds = Array.from(document.querySelectorAll('[data-metadata-manager-kind]:checked')).map(el => el.dataset.metadataManagerKind || '').filter(Boolean);
-  metadataManagerSetSelectedKinds(checkedKinds.length ? checkedKinds : state.metadataManager.kindFilters || METADATA_MANAGER_KIND_FILTERS);
+  const kind = $('metadataManagerKind')?.value || '';
+  metadataManagerSetSelectedKinds(kind ? [kind] : METADATA_MANAGER_KIND_FILTERS);
   return state.metadataManager;
 }
 
@@ -26886,11 +26831,21 @@ document.querySelectorAll('[data-metadata-manager-kind]').forEach(input => input
 if ($('metadataManagerStatusFilter')) $('metadataManagerStatusFilter').addEventListener('change', e => metadataManagerUpdateFilter('statusFilter', e.currentTarget.value));
 if ($('metadataManagerMissing')) $('metadataManagerMissing').addEventListener('change', e => metadataManagerUpdateFilter('missing', e.currentTarget.value));
 if ($('metadataManagerCategory')) $('metadataManagerCategory').addEventListener('change', e => metadataManagerUpdateFilter('category', e.currentTarget.value));
+if ($('metadataManagerSeriesFilter')) $('metadataManagerSeriesFilter').addEventListener('change', e => metadataManagerUpdateFilter('seriesFilter', e.currentTarget.value));
+if ($('metadataManagerSelectPage')) $('metadataManagerSelectPage').addEventListener('click', () => metadataManagerSelectRendered(true));
+if ($('metadataManagerPrevPage')) $('metadataManagerPrevPage').addEventListener('click', () => { state.metadataManager.page = Math.max(0,(state.metadataManager.page || 0)-1); renderMetadataManager(); });
+if ($('metadataManagerNextPage')) $('metadataManagerNextPage').addEventListener('click', () => { state.metadataManager.page = (state.metadataManager.page || 0)+1; renderMetadataManager(); });
+if ($('metadataManagerPageSize')) $('metadataManagerPageSize').addEventListener('change', e => { state.metadataManager.pageSize = Number(e.target.value); metadataManagerResetRenderLimit(); renderMetadataManager(); });
+if ($('metadataManagerResetFilters')) $('metadataManagerResetFilters').addEventListener('click', () => {
+  metadataManagerSetSelectedKinds(METADATA_MANAGER_KIND_FILTERS);
+  Object.assign(state.metadataManager,{search:'',category:'',seriesFilter:'',statusFilter:'',missing:'',selectedIds:[],batchField:''});
+  metadataManagerResetRenderLimit(); metadataManagerSaveSort('name','asc'); renderMetadataManagerColumnPicker(); renderMetadataManager();
+});
 if ($('metadataManagerRefresh')) $('metadataManagerRefresh').addEventListener('click', () => { const picker = $('metadataManagerColumnPicker'); if (picker) picker.innerHTML = ''; const cat = $('metadataManagerCategory'); if (cat) cat.innerHTML = ''; metadataManagerResetRenderLimit(); renderMetadataManager(); metadataManagerSetStatus('Metadata grid refreshed.', 'success'); });
 if ($('metadataManagerLoadMoreRows')) $('metadataManagerLoadMoreRows').addEventListener('click', metadataManagerLoadMoreRows);
 if ($('metadataManagerShowAllRows')) $('metadataManagerShowAllRows').addEventListener('click', metadataManagerShowAllRows);
 if ($('metadataManagerCollapseRows')) $('metadataManagerCollapseRows').addEventListener('click', metadataManagerCollapseRows);
-if ($('metadataManagerSelectAll')) $('metadataManagerSelectAll').addEventListener('click', () => metadataManagerSelectVisible(true));
+if ($('metadataManagerSelectAll')) $('metadataManagerSelectAll').addEventListener('click', () => { const n = metadataManagerEditableItems().length; if (n <= 250 || window.confirm(`Select all ${n} filtered records, including other pages?`)) metadataManagerSelectVisible(true); });
 if ($('metadataManagerClearSelection')) $('metadataManagerClearSelection').addEventListener('click', () => { state.metadataManager.selectedIds = []; renderMetadataManager(); });
 if ($('metadataManagerApplyBatch')) $('metadataManagerApplyBatch').addEventListener('click', async () => { try { await metadataManagerApplyBatch(); } catch (err) { console.error(err); metadataManagerSetStatus(`Batch apply failed: ${err?.message || err}`, 'error'); } });
 if ($('metadataManagerNormalizeSelected')) $('metadataManagerNormalizeSelected').addEventListener('click', async () => { try { await metadataManagerNormalizeSelected(); } catch (err) { console.error(err); metadataManagerSetStatus(`Normalize failed: ${err?.message || err}`, 'error'); } });

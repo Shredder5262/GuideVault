@@ -22851,3 +22851,31 @@ body.guidevault-direct-reader-pending:not(.auth-locked) #guidevaultDirectReaderL
 .launchbox-publication-bulk-footer .launchbox-strategy-bulk-actions{margin-left:auto;justify-content:flex-end}
 .launchbox-publication-bulk-footer #launchBoxStrategyBulkReject{border-color:rgba(207,126,140,.44);color:#f1bbc0}
 @media(max-width:700px){.launchbox-publication-bulk-fields{grid-template-columns:minmax(0,1fr)}.launchbox-publication-bulk-unified #launchBoxStrategySelectedCount{margin-left:0}.launchbox-publication-bulk-footer .launchbox-strategy-bulk-actions{margin-left:0;justify-content:flex-start}}
+
+/* GuideVault: Metadata Manager compact workspace v1. */
+#settingsMetadataManagerPanel .metadata-manager-summary{display:grid;grid-template-columns:repeat(4,minmax(0,1fr))!important;gap:8px;margin:0 0 12px!important}
+#settingsMetadataManagerPanel .metadata-manager-summary>*{min-height:0;padding:8px 12px}
+#settingsMetadataManagerPanel .metadata-manager-toolbar{padding:14px;display:grid;gap:10px}
+#settingsMetadataManagerPanel .metadata-manager-filter-grid{display:grid;grid-template-columns:minmax(190px,1.6fr) repeat(5,minmax(110px,1fr))!important;gap:10px;align-items:end}
+#settingsMetadataManagerPanel .metadata-manager-filter-grid label{min-width:0;width:100%}
+#settingsMetadataManagerPanel .metadata-manager-filter-grid input,#settingsMetadataManagerPanel .metadata-manager-filter-grid select{width:100%;min-width:0}
+#settingsMetadataManagerPanel .gv-mm-selection-bar{display:flex;align-items:center;flex-wrap:wrap;gap:8px;padding:10px 0;border-top:1px solid rgba(110,160,200,.2)}
+#settingsMetadataManagerPanel .gv-mm-selection-bar strong{font-size:.9rem;color:#b8d8f3;margin-right:6px}
+#settingsMetadataManagerPanel .gv-mm-spacer{flex:1}
+#settingsMetadataManagerPanel .metadata-manager-toolbar details{margin:0}
+#settingsMetadataManagerPanel #metadataManagerSourcePanel[hidden]{display:none!important}
+#settingsMetadataManagerPanel .metadata-manager-column-picker{display:grid!important;grid-template-columns:minmax(160px,1fr) minmax(0,3fr);gap:12px;max-height:none;overflow:visible;padding:10px}
+#settingsMetadataManagerPanel .metadata-manager-column-picker label{display:grid;gap:5px;align-content:start}
+#settingsMetadataManagerPanel .gv-mm-column-chips{display:flex;flex-wrap:wrap;align-content:start;gap:6px}
+#settingsMetadataManagerPanel .metadata-manager-batch-grid{display:grid;grid-template-columns:minmax(160px,1fr) minmax(200px,2fr) minmax(100px,1fr);gap:10px;align-items:end}
+#settingsMetadataManagerPanel .metadata-manager-batch-grid>label{min-width:0}
+#settingsMetadataManagerPanel .metadata-manager-table.gv-mm-compact{min-width:850px;width:100%;table-layout:auto}
+#settingsMetadataManagerPanel .metadata-manager-table.gv-mm-compact .metadata-manager-input{width:100%;min-width:70px;max-width:100%;box-sizing:border-box}
+#settingsMetadataManagerPanel .metadata-manager-table.gv-mm-compact th:nth-child(1){width:32px}
+#settingsMetadataManagerPanel .metadata-manager-table.gv-mm-compact td{padding:7px 6px}
+#settingsMetadataManagerPanel .metadata-manager-render-actions{display:flex;flex-wrap:wrap;align-items:center;gap:8px}
+#settingsMetadataManagerPanel .metadata-manager-render-actions label{display:flex;align-items:center;gap:5px}
+#settingsMetadataManagerPanel .metadata-manager-table-footer{flex-wrap:wrap;gap:10px}
+#settingsMetadataManagerPanel #metadataManagerStatus:empty{display:none}
+@media(max-width:1150px){#settingsMetadataManagerPanel .metadata-manager-filter-grid{grid-template-columns:repeat(3,minmax(0,1fr))!important}}
+@media(max-width:650px){#settingsMetadataManagerPanel .metadata-manager-summary{grid-template-columns:repeat(2,minmax(0,1fr))!important}#settingsMetadataManagerPanel .metadata-manager-filter-grid{grid-template-columns:repeat(2,minmax(0,1fr))!important}#settingsMetadataManagerPanel .metadata-manager-batch-grid,#settingsMetadataManagerPanel .metadata-manager-column-picker{grid-template-columns:1fr!important}}
