@@ -22919,3 +22919,10 @@ body.guidevault-direct-reader-pending:not(.auth-locked) #guidevaultDirectReaderL
 .gv-magscan-field details[open]{max-height:280px;overflow:auto;padding:5px 8px;background:#0c1723;border-radius:6px;}
 .gv-magscan-field details p{padding:3px 0;line-height:1.45;}
 .gv-magscan-field details summary{cursor:pointer;color:#a9ccef;}
+
+/* GuideVault magazine scan v3 coverage */
+.gv-magscan-coverage{margin:10px 0;padding:10px;border:1px solid #36536d;border-radius:8px;background:#0b1521;}
+.gv-magscan-coverage summary{cursor:pointer;color:#b9d8f8;}
+.gv-magscan-coverage-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(185px,1fr));gap:6px;margin-top:10px;}
+.gv-magscan-coverage-grid>div{background:#142333;padding:7px;border-radius:5px;display:grid;gap:3px;}
+.gv-magscan-coverage-grid small{color:#9bb1c7;}
