@@ -9,7 +9,7 @@ public static class GuidevaultMagazineContentScanner
     public sealed record Suggestion(string Field, string Value, int Page, string Evidence, string Confidence);
     public sealed record ScanResult(int TotalPages, int Start, int Scanned, int ReadablePages, List<Suggestion> Suggestions, List<string> Warnings)
     {
-        public string ScannerRevision => "v3.1";
+        public string ScannerRevision => "v3.2";
     }
     private static readonly SemaphoreSlim Gate = new(1, 1);
     private static readonly Regex Words = new(@"[\p{L}\p{N}]+", RegexOptions.Compiled);
@@ -120,7 +120,7 @@ public static class GuidevaultMagazineContentScanner
     }
     private static int ParsePdfPages(string text) => int.TryParse(Regex.Match(text, @"(?im)^Pages:\s*(\d+)").Groups[1].Value, out int n) ? n : 0;
     private static int GetYear(string value) => int.TryParse(YearPattern.Match(value ?? "").Value, out int n) ? n : 0;
-    private static string Normalize(string value) => string.Join(" ", Words.Matches(value ?? "").Select(m => m.Value.ToLowerInvariant()));
+    private static string Normalize(string value) => string.Join(" ", Words.Matches((value ?? "").Normalize(NormalizationForm.FormKC)).Select(m => m.Value.ToLowerInvariant()));
     // Exact catalog names outrank aliases. Alias matches preserve the printed name;
     // do not silently rename an article to a different regional or unrelated game.
     private sealed record CatalogTitle(string Display, bool Alias);
@@ -181,7 +181,7 @@ public static class GuidevaultMagazineContentScanner
         var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         void Add(string field, string value, string evidence, string confidence = "Review")
         {
-            value = value.Trim(); evidence = Regex.Replace(evidence.Trim(), @"\s+", " ");
+            value = value.Trim(); if (field == "coverDate") value = NormalizeCoverDate(value); evidence = Regex.Replace(evidence.Trim(), @"\s+", " ");
             if (value.Length == 0 || value.Length > 500 || !seen.Add(field + "\0" + value)) return;
             suggestions.Add(new(field, value, page, evidence[..Math.Min(220, evidence.Length)], confidence));
         }
@@ -197,7 +197,9 @@ public static class GuidevaultMagazineContentScanner
         bool PlatformIndexLine(string line) => Regex.IsMatch(line, @"^\s*\d{1,3}[A-Za-z]?\s+", RegexOptions.IgnoreCase) &&
             (Platforms.Any(p => Regex.IsMatch(line, p.Pattern, RegexOptions.IgnoreCase)) || Regex.IsMatch(line, @"\b(?:Genesis|Saturn|PC|DOS)\b", RegexOptions.IgnoreCase));
         bool toc = page > 1 && (lines.Any(l => Regex.IsMatch(l, @"^(?:table of\s+)?contents\s*[:.!]?\s*$", RegexOptions.IgnoreCase)) || (lines.Count(PlatformIndexLine) >= 3 && lines.Any(l => Regex.IsMatch(l, @"\b(?:reviews|features|departments|previews)\b", RegexOptions.IgnoreCase))));
-        bool likelyAd = !toc && lines.Any(IsLegal) && Regex.IsMatch(text, @"\b(?:order now|call toll.free|available at participating|ask your retailer|for a limited time|send check or money order|suggested retail price|visit your local retailer)\b", RegexOptions.IgnoreCase);
+        bool retailPage = !toc && RetailMarkers(text) >= 2;
+        bool otherIssuePage = !toc && Regex.IsMatch(text, @"\b(?:back issues?|previous issues?|past issues?|next issue|order (?:this|your|an) issue)\b", RegexOptions.IgnoreCase) && (Regex.Matches(text, @"\b(?:issue|no\.)\s*#?\d{1,4}\b", RegexOptions.IgnoreCase).Count >= 2 || RetailMarkers(text) >= 1);
+        bool likelyAd = retailPage || otherIssuePage || !toc && lines.Any(IsLegal) && Regex.IsMatch(text, @"\b(?:order now|call toll.free|available at participating|ask your retailer|for a limited time|send check or money order|suggested retail price|visit your local retailer)\b", RegexOptions.IgnoreCase);
         if (page <= 8 || Regex.IsMatch(text, @"\b(?:published by|is published|editor.in.chief|ISSN|masthead)\b", RegexOptions.IgnoreCase))
         {
             // An isolated publication year is never a reliable issue number.
@@ -235,7 +237,11 @@ public static class GuidevaultMagazineContentScanner
                 if(!string.IsNullOrWhiteSpace(item.MagazineTitle) && Normalize(title)==Normalize(item.MagazineTitle+" Magazine")) title=item.MagazineTitle;
                 Add("magazineTitle",title,masthead.Value);
             }
-            MatchField("writer", @"^\s*(?:editor[- ]in[- ]chief|editorial director|(?:managing |executive )?editor)\s*[:–-]?\s*([^\r\n]{3,80})", text);
+            foreach (Match editor in Regex.Matches(text, @"(?im)^[ \t]*(?:editor[- ]in[- ]chief|editorial director|(?:managing |executive )?editor)\b[ \t]*[:–-]?[ \t]*([^\r\n]{3,80})"))
+            {
+                var person = editor.Groups[1].Value.Trim();
+                if (LooksLikePerson(person)) Add("writer", person, editor.Value);
+            }
             MatchField("region", @"\b(?:printed|published) in (?:the )?((?:United States(?: of America)?|USA|United Kingdom|Canada|Australia|Japan|Germany|France))\b", text);
             if (Regex.IsMatch(text, @"\b(?:postmaster|published|publisher)\b", RegexOptions.IgnoreCase) && Regex.IsMatch(text, @"\b(?:[A-Z]{2}\s+\d{5}(?:-\d{4})?|United States|U\.S\.A\.)\b")) Add("region", "US", "Publisher/postal address resembles a US address; verify country.", "Inferred");
             MatchField("languageTag", @"^\s*language\s*:\s*(English|French|German|Spanish|Japanese|Italian|Portuguese)\b", text);
@@ -281,7 +287,7 @@ public static class GuidevaultMagazineContentScanner
         foreach (var l in layout.Lines)
         {
             string line = l.Text;
-            if (IsLegal(line) || Regex.IsMatch(line, @"\b(?:grand prize|send (?:your )?entries|sweepstakes|win this|no purchase necessary|order now|(?:cd|poster) contest|third .* movie)\b", RegexOptions.IgnoreCase)) { previous = null; continue; }
+            if (IsLegal(line) || RetailMarkers(line) >= 2 || Regex.IsMatch(line, @"\b(?:grand prize|send (?:your )?entries|sweepstakes|win this|no purchase necessary|order now|(?:cd|poster) contest|third .* movie)\b", RegexOptions.IgnoreCase)) { previous = null; continue; }
             if (l.Height > 0 && l.Confidence < 38) { previous = null; continue; }
             var headingText = Regex.Replace(line, @"^\d{1,3}[A-Za-z]?[.\s]+|\.{2,}\s*\d{1,3}$", "").Trim();
             bool numbered = NumberedLine(line);
@@ -300,9 +306,19 @@ public static class GuidevaultMagazineContentScanner
             if (platformHeading) { if (!coverRegion || platformIndex) coverRegion = false; if (!Regex.IsMatch(section, @"^(?:departments?|letters|news|cheats?|tips|codes)", RegexOptions.IgnoreCase)) platformIndex = true; }
             bool departments = Regex.IsMatch(section, @"^(?:departments?|letters|news|cheats?|tips|codes|editorial)", RegexOptions.IgnoreCase);
             bool listContext = toc && !departments && (platformIndex || coverRegion || numbered);
+            // Explicit review/preview statements in introductory editorial text are
+            // useful even when the magazine has no recognizable contents heading.
+            bool explicitCoverage = page > 1 && page <= 8 && !departments && !otherIssuePage &&
+                Regex.IsMatch(line, @"\b(?:reviews?|previews?|walkthroughs?|features?)\s+(?:of|for|on)\s+", RegexOptions.IgnoreCase) &&
+                !Regex.IsMatch(line, @"\b(?:next|last|previous|back|past|upcoming)\s+issue\b", RegexOptions.IgnoreCase);
+            var coverageText = explicitCoverage ? Regex.Split(line, @"\b(?:reviews?|previews?|walkthroughs?|features?)\s+(?:of|for|on)\s+", RegexOptions.IgnoreCase).Last() : "";
+            var coverageHits = explicitCoverage ? FindGames(dictionary, coverageText, true, true, true).Where(h=>!h.Fuzzy).Select(h=>Compact(h.Game)).ToHashSet(StringComparer.Ordinal) : new HashSet<string>(StringComparer.Ordinal);
             bool titleContext = listContext || (prominent(l) && Words.Matches(line).Count <= 12) || page == 1;
             bool gameContext = Regex.IsMatch(line, @"\b(?:game|review|preview|version|cheat|code|password|released?|play(?:ed|ing)?|for (?:the )?(?:SNES|NES|Genesis|Game Boy|3DO|Sega CD))\b", RegexOptions.IgnoreCase);
             var matched = FindGames(dictionary, line, titleContext, listContext, gameContext).ToList();
+            if (explicitCoverage)
+                foreach (var hit in FindGames(dictionary, coverageText, true, true, true).Where(h=>!h.Fuzzy))
+                    if (!matched.Any(x=>Compact(x.Game)==Compact(hit.Game))) matched.Add(hit);
             if (departments && Regex.IsMatch(line,@"\b(?:presents|includes exclusive codes|hot news from)\b",RegexOptions.IgnoreCase)) matched.Clear();
             if (page > 1 && !listContext && !gameContext)
                 matched.RemoveAll(h=>Words.Matches(h.Game).Count==1 && !(prominent(l) && l.Y<layout.Height*.60 && Regex.IsMatch(text,@"\b(?:review|preview|rating|graphics|sound|gameplay|publisher|developer|walkthrough)\b",RegexOptions.IgnoreCase)));
@@ -330,12 +346,18 @@ public static class GuidevaultMagazineContentScanner
                 if (page == 1 && titleContext && l.Confidence >= 50) coverHeadings.Add((hit.Game,l));
                 else if (toc && coverRegion && Regex.IsMatch(line, @"\b(?:game for|in.depth|cover (?:story|feature))\b|:\s*[^:]+$", RegexOptions.IgnoreCase) && !hit.Fuzzy)
                 { Add("coverSubject", hit.Game, evidence, "Contents cover evidence"); Add("featuredGames", hit.Game, evidence, "Contents cover evidence"); }
+                else if (explicitCoverage && coverageHits.Contains(Compact(hit.Game))) Add("featuredGames", hit.Game, evidence, "Explicit review/feature reference");
                 else if (listContext || (page > 1 && prominent(l) && hit.Whole && !departments && !hit.Fuzzy && l.Y < layout.Height*.60 && Regex.IsMatch(text,@"\b(?:review|preview|rating|graphics|sound|gameplay|publisher|developer|walkthrough)\b",RegexOptions.IgnoreCase))) Add("featuredGames", hit.Game, evidence, hit.Fuzzy ? "Possible OCR correction" : "Editorial heading");
                 else if (page > 1) Add("mentionedGames", hit.Game, evidence, hit.Fuzzy ? "Possible OCR correction" : "Contextual title match");
             }
             if ((toc && !departments && (platformHeading || matched.Count > 0)) || (matched.Count > 0 && gameContext))
             {
-                foreach (var (pattern, name) in Platforms) if (Regex.IsMatch(line, pattern, RegexOptions.IgnoreCase)) Add("featuredPlatforms", name, line + Geometry(l, layout), "Editorial platform evidence");
+                foreach (var (pattern, name) in Platforms)
+                {
+                    if (!Regex.IsMatch(line, pattern, RegexOptions.IgnoreCase)) continue;
+                    if (name == "Arcade" && !ArcadePlatformEvidence(line, toc)) continue;
+                    Add("featuredPlatforms", name, line + Geometry(l, layout), "Editorial platform evidence");
+                }
                 if (toc && Regex.IsMatch(line, @"\bGenesis\b", RegexOptions.IgnoreCase)) Add("featuredPlatforms", "Sega Genesis", line + Geometry(l, layout), "Editorial platform evidence");
             }
             if (toc && departments && numbered && Words.Matches(headingText).Count <= 6 && !IsLegal(headingText) && !Regex.IsMatch(headingText,@"\b(?:presents|includes?|exclusive codes|hot news from)\b",RegexOptions.IgnoreCase)) Add("specialFeatures", headingText, line + Geometry(l, layout), "Department listing");
@@ -375,6 +397,26 @@ public static class GuidevaultMagazineContentScanner
     }
     private static string Geometry(LayoutLine l, PageLayout p) => p.Width>0&&p.Height>0 ? $" [x={100*l.X/p.Width}%, y={100*l.Y/p.Height}%, OCR {l.Confidence:0}%]" : "";
     private static string Compact(string s) => Normalize(s).Replace(" ", "");
+    private static string NormalizeCoverDate(string value)
+    {
+        return Regex.Replace(value, $@"\b(?:{Months})\b", m => CultureInfo.InvariantCulture.TextInfo.ToTitleCase(m.Value.ToLowerInvariant()), RegexOptions.IgnoreCase);
+    }
+    private static bool LooksLikePerson(string value)
+    {
+        if (Regex.IsMatch(value, @"\b(?:design|staff|team|department|production|editorial|editor|publisher|advertising|art director|layout|photography|marketing|office|contact)\b", RegexOptions.IgnoreCase)) return false;
+        return Regex.IsMatch(value, @"^[\p{L}][\p{L}.'’\-]*(?:[ \t]+[\p{L}][\p{L}.'’\-]*){1,4}$");
+    }
+    private static int RetailMarkers(string text)
+    {
+        string[] markers = [@"\b(?:special offer|mail order|order now|credit cards? accepted|call now|toll.free|free delivery|postage and packing|send cheque|send check)\b", @"\b(?:opening hours|open (?:mon|tue|wed|thu|fri|sat|sun)|mon\s*[-–]\s*fri|sat\s*[-–]\s*sun|hours\s*:)\b", @"(?:£|\$|€)\s*\d{1,5}[.,]\d{2}\b", @"\b(?:tel(?:ephone)?|fax)\s*[:.]?\s*\+?[0-9(]", @"\b(?:retailer|stockists?|catalogue|price list|trade in|trade-in)\b"];
+        return markers.Count(p => Regex.IsMatch(text, p, RegexOptions.IgnoreCase));
+    }
+    private static bool ArcadePlatformEvidence(string line, bool toc)
+    {
+        // The platform label must have its own context, not be a word in a game title.
+        return Regex.IsMatch(line, @"(?:^|[—–:])\s*Arcade\s*$|\b(?:for (?:the )?arcade|in (?:the )?arcades|arcade (?:version|release|machine|hardware|cabinet|gameplay))\b", RegexOptions.IgnoreCase) ||
+            (toc && Regex.IsMatch(line, @"^\s*\d{1,3}[. \t]+Arcade\s*$", RegexOptions.IgnoreCase));
+    }
     private static string CanonicalLanguage(string? raw)
     {
         var value = (raw ?? "").Trim();
@@ -416,7 +458,7 @@ public static class GuidevaultMagazineContentScanner
     }
     private static IEnumerable<GameHit> FindGames(Dictionary<string,CatalogTitle> dictionary,string line,bool titleContext,bool listing,bool context)
     {
-        var original=Words.Matches(line).Select(m=>m.Value).ToArray();var tokens=original.Select(x=>x.ToLowerInvariant()).ToArray();
+        var original=Words.Matches(line.Normalize(NormalizationForm.FormKC)).Select(m=>m.Value).ToArray();var tokens=original.Select(x=>x.ToLowerInvariant()).ToArray();
         var whole=Normalize(listing?Regex.Replace(line,@"^\d{1,3}[A-Za-z]?[.\s]+|\.{2,}\s*\d{1,3}$",""):line);
         var used=new HashSet<string>(StringComparer.Ordinal);
         var exactRanges = new List<string>();
@@ -449,7 +491,7 @@ public static class GuidevaultMagazineContentScanner
                 if(!dictionary.TryGetValue(key,out var hit))continue;
                 bool entire=key==whole;
                 if(!entire && exactRanges.Any(r=>r!=key && (" "+r+" ").Contains(" "+key+" ",StringComparison.Ordinal)))continue;
-                bool sequel=i+n<tokens.Length&&Regex.IsMatch(tokens[i+n],@"^(?:[0-9]{1,4}|i{1,3}|iv|v|vi{1,3}|ix|x|xi{1,3})$");
+                bool sequel=i+n<tokens.Length&&Regex.IsMatch(tokens[i+n],@"^(?:[0-9]{1,4}|i{1,3}|l{2,3}|iv|v|vi{1,3}|ix|x|xi{1,3})$");
                 if(sequel || (i+n<tokens.Length && Regex.IsMatch(tokens[i+n],@"^(?:vs|versus|series|franchise|movie|film|saga|meat|contest|universe)$")))continue;
                 // A single common word or character name in prose is insufficient evidence.
                 // Single-word games remain eligible as complete headings or exact listing entries.

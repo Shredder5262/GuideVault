@@ -18669,7 +18669,7 @@ function gvMagazineScanDialog(items, fromDetail = false, inlineHost = null) {
   if (!items.length || items.length > 5) { metadataManagerSetStatus('Select 1–5 magazine issues per scan.','error'); return; }
   const dialog = document.createElement(inlineHost ? 'div' : 'dialog');
   dialog.className = inlineHost ? 'gv-magscan-inline' : 'gv-magscan-dialog';
-  dialog.innerHTML = `<div class="gv-magscan-content"><h2>Scan magazine metadata</h2><p class="sub">${items.length} issue(s). Scanner UI v3.1 — Local OCR and LaunchBox title lookup. Nothing is saved automatically.</p><label>Scan scope <select data-scan-scope><option value="12">First 12 pages (cover, contents, masthead)</option><option value="300">Full issue (up to 300 pages)</option></select></label><p class="sub" data-scan-status aria-live="polite">Start a scan to review suggested fields. Layout-aware English OCR and catalog matching. All magazine fields are checked; uncertain or unavailable values are not guessed. Review all proposed editorial data.</p><progress data-scan-progress value="0" max="1"></progress><div data-scan-results></div><div class="gv-magscan-actions"><button class="ghost" type="button" data-scan-close>Close</button><button class="ghost" type="button" data-scan-stop hidden>Stop</button><button class="primary" type="button" data-scan-start>Start scan</button><button class="primary" type="button" data-scan-stage disabled>Stage selected suggestions</button></div></div>`;
+  dialog.innerHTML = `<div class="gv-magscan-content"><h2>Scan magazine metadata</h2><p class="sub">${items.length} issue(s). Scanner UI v3.2 — Local OCR and LaunchBox title lookup. Nothing is saved automatically.</p><label>Scan scope <select data-scan-scope><option value="12">First 12 pages (cover, contents, masthead)</option><option value="300">Full issue (up to 300 pages)</option></select></label><p class="sub" data-scan-status aria-live="polite">Start a scan to review suggested fields. Layout-aware English OCR and catalog matching. All magazine fields are checked; uncertain or unavailable values are not guessed. Review all proposed editorial data.</p><progress data-scan-progress value="0" max="1"></progress><div data-scan-results></div><div class="gv-magscan-actions"><button class="ghost" type="button" data-scan-close>Close</button><button class="ghost" type="button" data-scan-stop hidden>Stop</button><button class="primary" type="button" data-scan-start>Start scan</button><button class="primary" type="button" data-scan-stage disabled>Stage selected suggestions</button></div></div>`;
   (inlineHost || document.body).appendChild(dialog);
   const q = s => dialog.querySelector(s);
   const session = { controller:null, running:false, rows:[], dialog, inline:!!inlineHost, itemId:metadataManagerItemId(items[0]) };
@@ -18737,7 +18737,7 @@ function gvMagazineScanDialog(items, fromDetail = false, inlineHost = null) {
             if (!res.ok) { let msg=`HTTP ${res.status}`; try { msg=(await res.json()).error||msg; } catch {} throw new Error(msg); }
             const data=await res.json();
             row.revision=String(data.scannerRevision||'not reported');
-            if(row.revision!=='v3.1') { row.suggestions=[]; throw new Error(`Scanner backend revision ${row.revision}; expected v3.1. Deploy the matching image and reload before scanning.`); }
+            if(row.revision!=='v3.2') { row.suggestions=[]; throw new Error(`Scanner backend revision ${row.revision}; expected v3.2. Deploy the matching image and reload before scanning.`); }
             row.total=data.totalPages; row.scanned+=data.scanned; row.readable+=data.readablePages; row.suggestions.push(...(data.suggestions||[])); row.warnings.push(...(data.warnings||[]));
             if (!data.scanned) break; start+=data.scanned; progress.value=i+Math.min(1,start/Math.min(scope,row.total));
           } while(start<Math.min(scope,row.total));
@@ -18779,12 +18779,14 @@ function gvMagazineScanProposals(row) {
     add(x);
   });
   const isGameList=f=>f==='featuredGames'||f==='mentionedGames';
-  const uniqueField=(f,values)=>isGameList(f)?[...new Map(values.filter(v=>String(v??'').trim()).map(v=>[gameKey(v),v])).values()]:unique(values);
+  const platformCanonical=v=>{const k=key(v);if(['segamegadrive','megadrive','segagenesis','genesis'].includes(k))return 'Sega Genesis';if(['segamegacd','megacd','segacd'].includes(k))return 'Sega CD';return v;};
+  const genericGame=v=>/^(?:magazine|video game magazine|video games|gaming|news|reviews|previews|unknown|unspecified|not specified)$/i.test(String(v??'').trim());
+  const uniqueField=(f,values)=>isGameList(f)?[...new Map(values.filter(v=>String(v??'').trim()&&!genericGame(v)).map(v=>[gameKey(v),v])).values()]:f==='featuredPlatforms'?unique(values.map(platformCanonical)):unique(values);
   const candidates=f=>uniqueField(f,(fields.get(f)||[]).map(x=>x.value));
   const infer=(field,value,evidence)=>add({field,value,page:0,evidence,confidence:'Inferred'});
   const concretePlatform = v => !/^(?:multi[ -]?platform|unknown|unspecified|not specified)$/i.test(String(v).trim());
-  const editorialPlatforms=unique(candidates('featuredPlatforms').filter(concretePlatform));
-  const platforms=unique([...itemArray(row.item.featuredPlatforms),...editorialPlatforms].filter(concretePlatform));
+  const editorialPlatforms=uniqueField('featuredPlatforms',candidates('featuredPlatforms').filter(concretePlatform));
+  const platforms=uniqueField('featuredPlatforms',[...itemArray(row.item.featuredPlatforms),...editorialPlatforms].filter(concretePlatform));
   const existingCover=currentOf('coverSubject');
   const cover=fields.get('coverSubject')||[];
   const explicitCover=unique(cover.filter(x=>x.confidence==='Contents cover evidence').map(x=>x.value));
@@ -18844,7 +18846,8 @@ function gvMagazineScanProposals(row) {
     const joined=array?uniqueField(field,[...values.filter(v=>!/[;,|]/.test(v)),...(field==='featuredPlatforms'?existing.filter(concretePlatform):existing)]).join(', '):values[0];
     const value=joined||'';
     const comparisonKey=isGameList(field)?gameKey:key;
-    const equivalent=array?uniqueField(field,itemArray(current)).map(comparisonKey).sort().join('|')===uniqueField(field,itemArray(value)).map(comparisonKey).sort().join('|'):same(value,current);
+    const originalArray=array?itemArray(current):[];
+    const equivalent=array?(field==='featuredPlatforms'?originalArray.map(key).sort().join('|')===itemArray(value).map(key).sort().join('|'):isGameList(field)?originalArray.map(gameKey).sort().join('|')===itemArray(value).map(gameKey).sort().join('|'):uniqueField(field,originalArray).map(comparisonKey).sort().join('|')===uniqueField(field,itemArray(value)).map(comparisonKey).sort().join('|')):same(value,current);
     if(!value||equivalent) continue;
     const safe=!locked&&!conflict&&(!current.trim()||(field==='pageCount'&&current.trim()==='0'))&&evidence.every(x=>['Measured','Checksum valid'].includes(x.confidence));
     result.push({field,current,value,evidence,conflict,locked,safe});
