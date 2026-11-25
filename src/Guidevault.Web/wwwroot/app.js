@@ -16168,7 +16168,7 @@ const METADATA_MANAGER_ALL_COLUMNS = [
   { key:'featuredGames', label:'Featured Games', description:'Magazine featured games.' },
   { key:'mentionedGames', label:'Mentioned Games', description:'Games receiving brief mentions, cheats, news or short references.' },
   { key:'featuredPlatforms', label:'Featured Platforms', description:'Magazine featured platforms.' },
-  { key:'specialFeatures', label:'Special Features', description:'Special features, sections, or issue components.' },
+  { key:'specialFeatures', label:'Sections / Departments', description:'Magazine sections, departments, and special features.' },
   { key:'includedExtras', label:'Physical Extras', description:'Physical extras such as posters, inserts, discs, or maps.' },
   { key:'gameTitle', label:'Game Title', description:'Game title for manuals/guides.' },
   { key:'guideType', label:'Guide Type', description:'Strategy guide type.' },
