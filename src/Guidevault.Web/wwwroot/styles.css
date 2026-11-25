@@ -22911,3 +22911,11 @@ body.guidevault-direct-reader-pending:not(.auth-locked) #guidevaultDirectReaderL
 .gv-magscan-inline .gv-magscan-field textarea:focus{outline:2px solid #5da8f2;outline-offset:1px;}
 .gv-magscan-inline .gv-magscan-field details[open]{max-height:280px;overflow:auto;padding:5px 8px;background:#0c1723;border-radius:6px;}
 .gv-magscan-inline .gv-magscan-field details p{padding:3px 0;line-height:1.45;}
+
+/* GuideVault magazine scan v2 review */
+.gv-magscan-dialog{color-scheme:dark;width:min(1100px,calc(100vw - 32px));}
+.gv-magscan-field textarea{background:#0b1521;color:#eaf1f8;border:1px solid #36536f;border-radius:7px;padding:9px 11px;font:inherit;font-size:14px;line-height:1.5;min-height:44px;}
+.gv-magscan-field textarea:focus{outline:2px solid #5da8f2;outline-offset:1px;}
+.gv-magscan-field details[open]{max-height:280px;overflow:auto;padding:5px 8px;background:#0c1723;border-radius:6px;}
+.gv-magscan-field details p{padding:3px 0;line-height:1.45;}
+.gv-magscan-field details summary{cursor:pointer;color:#a9ccef;}

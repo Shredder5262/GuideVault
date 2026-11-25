@@ -18695,8 +18695,8 @@ function gvMagazineScanDialog(items, fromDetail = false, inlineHost = null) {
         const el = document.createElement('div'); el.className = 'gv-magscan-field';
         const input = document.createElement('input'); input.type = 'checkbox'; input.checked = proposal.safe; input.disabled = proposal.locked; input.dataset.scanRow = rowIndex; input.dataset.scanField = proposal.field; input.setAttribute('aria-label', `Stage ${field}`);
         const label = document.createElement('div'); label.innerHTML = `<strong>${escapeHtml(field)}</strong>${proposal.locked?' <small>Locked</small>':''}<div class="sub">Current: ${escapeHtml(proposal.current || '—')}</div>`;
-        const edit = document.createElement('textarea'); edit.rows = 2; edit.value = proposal.value; edit.dataset.scanValue = proposal.field; edit.disabled = proposal.locked; edit.setAttribute('aria-label', `Proposed ${field}`); label.appendChild(edit);
-        const evidence = document.createElement('details'); evidence.innerHTML = `<summary>Evidence (${proposal.evidence.length})${proposal.conflict?' — conflicting values; choose manually':''}</summary>${proposal.evidence.slice(0,25).map(x=>`<p class="sub">${x.page?`Page ${x.page}: `:''}${escapeHtml(x.value)} — ${escapeHtml(x.evidence)}</p>`).join('')}${proposal.evidence.length>25?'<p class="sub">Additional evidence omitted from display.</p>':''}`; label.appendChild(evidence);
+        const edit = document.createElement('textarea'); edit.rows = GV_MAG_SCAN_ARRAYS.has(proposal.field) ? Math.min(9, Math.max(4, Math.ceil(proposal.value.length / 85))) : (proposal.field === 'summary' ? 5 : 2); edit.value = proposal.value; edit.dataset.scanValue = proposal.field; edit.disabled = proposal.locked; edit.setAttribute('aria-label', `Proposed ${field}`); label.appendChild(edit);
+        const evidence = document.createElement('details'); evidence.innerHTML = `<summary>Evidence (${proposal.evidence.length})${proposal.conflict?' — conflicting values; edit the proposal before staging':''}</summary>${proposal.evidence.map(x=>`<p class="sub">${x.page?`Page ${x.page}: `:''}${escapeHtml(x.value)} — ${escapeHtml(x.evidence)}</p>`).join('')}`; label.appendChild(evidence);
         el.append(input,label); block.appendChild(el);
       }
       root.appendChild(block);
@@ -18752,10 +18752,11 @@ function gvMagazineScanProposals(row) {
   const fields=new Map(); const id=metadataManagerItemId(row.item), dirty=state.metadataManager.dirty[id]||{};
   function add(x) { if(!fields.has(x.field)) fields.set(x.field,[]); const a=fields.get(x.field); if(!a.some(y=>y.value===x.value&&y.page===x.page)) a.push(x); }
   row.suggestions.forEach(add);
-  const covered=new Set([...itemArray(row.item.featuredGames),...((fields.get('featuredGames')||[]).map(x=>x.value)),row.item.coverSubject,...((fields.get('coverSubject')||[]).map(x=>x.value))].filter(Boolean).map(x=>String(x).toLowerCase()));
+  const covered=new Set([...itemArray(row.item.featuredGames),...((fields.get('featuredGames')||[]).map(x=>x.value)),row.item.coverSubject,...((new Set((fields.get('coverSubject')||[]).map(x=>x.value)).size===1)?(fields.get('coverSubject')||[]).map(x=>x.value):[])].filter(Boolean).map(x=>String(x).toLowerCase()));
   if(fields.has('mentionedGames')) fields.set('mentionedGames',fields.get('mentionedGames').filter(x=>!covered.has(x.value.toLowerCase())));
-  const platforms=[...new Set([...itemArray(row.item.featuredPlatforms),...((fields.get('featuredPlatforms')||[]).map(x=>x.value))])];
-  if((fields.get('featuredPlatforms')||[]).length) add({field:'primarySystem',value:platforms.length>1?MULTI_PLATFORM_LABEL:platforms[0],page:0,evidence:'Inferred from existing and scanned platform references; not proof of editorial focus.'});
+  const concretePlatform = v => !/^(?:multi[ -]?platform|unknown|unspecified|not specified)$/i.test(String(v).trim());
+  const platforms=[...new Set([...itemArray(row.item.featuredPlatforms),...((fields.get('featuredPlatforms')||[]).map(x=>x.value))].filter(concretePlatform))];
+  if((fields.get('featuredPlatforms')||[]).length && platforms.length) add({field:'primarySystem',value:platforms.length>1?'Multi-platform':platforms[0],page:0,evidence:'Inferred from concrete editorial platform references; not proof of primary audience.'});
   const cover=fields.get('coverSubject')||[], featured=fields.get('featuredGames')||[];
   const titles=[...new Set(featured.map(x=>x.value))].slice(0,8);
   if(cover.length||titles.length) add({field:'summary',value:`${row.item.magazineTitle||row.item.title||'Magazine'}${row.item.issueNumber?' issue #'+row.item.issueNumber:''}.${cover.length===1?' Possible cover subject: '+cover[0].value+'.':''}${titles.length?' Contents headings include '+titles.join(', ')+'.':''}`,page:0,evidence:'Draft generated from scan evidence; review wording.'});
@@ -18766,10 +18767,11 @@ function gvMagazineScanProposals(row) {
     const locked=Object.hasOwn(dirty,field)||isMetadataFieldLocked(row.item,field)||(GV_MAG_SCAN_ARRAYS.has(field)&&Array.isArray(row.item[field])&&row.item[field].some(v=>/[;,|]/.test(v))); 
     const values=[...new Set(evidence.map(x=>x.value))]; const array=GV_MAG_SCAN_ARRAYS.has(field);
     const conflict=(!array&&values.length>1)||(array&&values.some(v=>/[;,|]/.test(v))); 
-    const value=array?mergeTokenLists(itemArray(current),values.filter(v=>!/[;,|]/.test(v))).join(', '):values[0];
-    if(!value||value.trim()===current.trim()) continue;
+    const existing=array?itemArray(current):[];
+    const value=array?mergeTokenLists(field==='featuredPlatforms'?existing.filter(concretePlatform):existing,values.filter(v=>!/[;,|]/.test(v))).join(', '):values[0];
+    if(!value||value.trim()===current.trim()||(field==='primarySystem'&&value.trim().toLowerCase()===current.trim().toLowerCase())) continue;
     // OCR game matches, primary system and generated descriptions require explicit review, even when blank.
-    const safe=!locked&&!conflict&&!current.trim()&&evidence.every(x=>['Measured','Checksum valid'].includes(x.confidence));
+    const safe=!locked&&!conflict&&(!current.trim()||(field==='pageCount'&&current.trim()==='0'))&&evidence.every(x=>['Measured','Checksum valid'].includes(x.confidence));
     result.push({field,current,value,evidence,conflict,locked,safe});
   }
   return result;

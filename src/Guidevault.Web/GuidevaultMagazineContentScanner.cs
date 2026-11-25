@@ -13,7 +13,7 @@ public static class GuidevaultMagazineContentScanner
     private const string Months = "January|February|March|April|May|June|July|August|September|October|November|December|Jan|Feb|Mar|Apr|Jun|Jul|Aug|Sep|Sept|Oct|Nov|Dec";
     private static readonly string[] Sections = ["Table of Contents", "Contents", "Reviews", "Previews", "Features", "News", "Letters", "Editorial", "Walkthroughs", "Strategy Guides", "Tips and Tricks", "Cheat Codes", "Classified Information", "Pak Watch", "Counselors Corner", "Now Playing", "Reader's Choice", "Top 10", "Hardware", "Interviews"];
     private static readonly (string Pattern, string Name)[] Platforms = [
-        (@"\b(?:NES|Nintendo Entertainment System)\b", "Nintendo Entertainment System"),
+        (@"\b(?:NES|(?<!Super )Nintendo Entertainment System)\b", "Nintendo Entertainment System"),
         (@"\b(?:SNES|Super Nintendo(?: Entertainment System)?)\b", "Super Nintendo Entertainment System"),
         (@"\b(?:Nintendo 64|N64)\b", "Nintendo 64"), (@"\bGame Boy Advance\b", "Nintendo Game Boy Advance"),
         (@"\bGame Boy Color\b", "Nintendo Game Boy Color"), (@"\bGame Boy\b(?!\s+(?:Advance|Color))", "Nintendo Game Boy"),
@@ -40,7 +40,7 @@ public static class GuidevaultMagazineContentScanner
             if (total <= 0) throw new InvalidOperationException("No readable pages were found.");
             start = Math.Clamp(start, 0, total); count = Math.Clamp(count, 1, 3);
             var result = new ScanResult(total, start, 0, 0, new(), new());
-            if (start == 0) result.Suggestions.Add(new("pageCount", total.ToString(), 0, "Actual page count from document reader.", "Measured"));
+            if (start == 0) result.Suggestions.Add(new("pageCount", total.ToString(), 0, "Document reader page/image count; printed page numbering or double-page scans may differ.", "Measured"));
             var dictionary = BuildDictionary(games, GetYear(item.CoverDate + " " + item.PublicationDate + " " + item.Year));
             for (int i = start; i < Math.Min(start + count, total); i++)
             {
@@ -120,10 +120,24 @@ public static class GuidevaultMagazineContentScanner
             if (match.Success) Add(field, match.Groups[1].Value, match.Value);
         }
         var lines = text.Split('\n').Select(x => x.Trim()).Where(x => x.Length > 0 && x.Length < 600).Take(1200).ToArray();
-        bool toc = lines.Any(l => Regex.IsMatch(l, @"^(?:table of\s+)?contents\s*$", RegexOptions.IgnoreCase));
+        // OCR may lose the Contents heading, particularly on multi-column layouts.
+        bool IsLegal(string line) => Regex.IsMatch(line, @"\b(?:all rights reserved|(?:registered )?trademarks?|copyright|official seals?)\b|©", RegexOptions.IgnoreCase);
+        bool NumberedLine(string line) => Regex.IsMatch(line, @"(?:^\s*\d{1,3}[.\s]+|\.{2,}\s*\d{1,3}\s*$|\s+\d{1,3}\s*$)");
+        bool PlatformIndexLine(string line) => Regex.IsMatch(line, @"^\s*\d{1,3}[A-Za-z]?\s+", RegexOptions.IgnoreCase) &&
+            (Platforms.Any(p => Regex.IsMatch(line, p.Pattern, RegexOptions.IgnoreCase)) || Regex.IsMatch(line, @"\b(?:Genesis|Saturn|PC|DOS)\b", RegexOptions.IgnoreCase));
+        bool toc = page > 1 && page <= 12 && (lines.Any(l => Regex.IsMatch(l, @"^(?:table of\s+)?contents\s*[:.!]?\s*$", RegexOptions.IgnoreCase)) || lines.Count(PlatformIndexLine) >= 3);
+        bool likelyAd = !toc && lines.Any(IsLegal) && Regex.IsMatch(text, @"\b(?:order now|call toll.free|available at participating|ask your retailer|for a limited time|send check or money order|suggested retail price|visit your local retailer)\b", RegexOptions.IgnoreCase);
         if (page <= 8)
         {
-            MatchField("issueNumber", @"\b(?:issue|no\.|number)\s*#?\s*(\d{1,4})\b", text);
+            // An isolated publication year is never a reliable issue number.
+            if (page <= 4 || Regex.IsMatch(text, @"\b(?:masthead|published by|editor.in.chief)\b", RegexOptions.IgnoreCase))
+            {
+                foreach (Match issue in Regex.Matches(text, @"\b(?:issue\s*(?:no\.?|number|#)?|(?:vol\.?\s*\d{1,3}\s*[,;]?\s*no\.?))\s*#?\s*(\d{1,4})\b", RegexOptions.IgnoreCase))
+                {
+                    if (int.TryParse(issue.Groups[1].Value, out int number) && number > 0 && (number < 1900 || number > 2099))
+                        Add("issueNumber", issue.Groups[1].Value, issue.Value);
+                }
+            }
             MatchField("volume", @"\b(?:volume|vol\.?)\s*(\d{1,3})\b", text);
             if (page <= 2)
             {
@@ -156,9 +170,12 @@ public static class GuidevaultMagazineContentScanner
         var coverGames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         foreach (string line in lines)
         {
-            var tokens = Normalize(line).Split(' ', StringSplitOptions.RemoveEmptyEntries);
+            if (IsLegal(line) || likelyAd) continue;
+            var originalTokens = Words.Matches(line).Select(m => m.Value).ToArray();
+            var tokens = originalTokens.Select(x => x.ToLowerInvariant()).ToArray();
             if (tokens.Length == 0) continue;
-            bool heading = toc && Regex.IsMatch(line, @"(?:^\d{1,3}\s+|\s+\d{1,3}$)");
+            bool heading = toc && NumberedLine(line);
+            bool contentsListing = toc && (heading || tokens.Length <= 18);
             string headingText = Regex.Replace(line, @"^\d{1,3}\s+|\s+\d{1,3}$", "").Trim();
             string headingKey = Normalize(headingText);
             var matched = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
@@ -170,23 +187,34 @@ public static class GuidevaultMagazineContentScanner
                     if (n == 1 && key != headingKey) continue; // Avoid common-word titles in prose.
                     if (n == 1 && !(page == 1 || heading)) continue;
                     if (!dictionary.TryGetValue(key, out var game)) continue;
+                    // Do not match an unrecognized sequel as its base game.
+                    if (i + n < tokens.Length && Regex.IsMatch(tokens[i+n], @"^(?:\d{1,2}|ii|iii|iv|v|vi|vii|viii|ix|x)$", RegexOptions.IgnoreCase)
+                        && !(heading && i + n == tokens.Length - 1 && Regex.IsMatch(tokens[i+n], @"^\d+$"))) continue;
+                    // Prose such as "rolling thunder" and "high-speed" is not title evidence.
+                    if (!contentsListing && page != 1 && !char.IsUpper(originalTokens[i][0])) continue;
                     if (matched.Add(game))
                     {
                         if (page == 1 && key == headingKey) coverGames.Add(game);
-                        else if (page > 1 && heading) Add("featuredGames", game, line, "Contents heading");
+                        else if (page > 1 && contentsListing) Add("featuredGames", game, line, "Contents listing (review editorial relevance)");
                         else Add("mentionedGames", game, line, "Text match");
                     }
                     i += n - 1; break;
                 }
             }
-            foreach (var (pattern, name) in Platforms)
-                if (Regex.IsMatch(line, pattern, RegexOptions.IgnoreCase)) Add("featuredPlatforms", name, line, "Explicit text");
+            // A platform in prose, a letter, or a legal notice is not necessarily a featured platform.
+            bool editorialPlatform = toc || (matched.Count > 0 && Regex.IsMatch(line, @"\b(?:review|preview|version|platform|released? for|available for|format)\b", RegexOptions.IgnoreCase));
+            if (editorialPlatform)
+            {
+                foreach (var (pattern, name) in Platforms)
+                    if (Regex.IsMatch(line, pattern, RegexOptions.IgnoreCase)) Add("featuredPlatforms", name, line, "Contents or game/platform context");
+                if (toc && Regex.IsMatch(line, @"\bGenesis\b", RegexOptions.IgnoreCase)) Add("featuredPlatforms", "Sega Genesis", line, "Contents platform reference");
+            }
             foreach (var section in Sections)
                 if (string.Equals(Normalize(headingText), Normalize(section), StringComparison.Ordinal)) Add("specialFeatures", section, line, "Heading");
             if (page <= 3 && Regex.IsMatch(line, @"\b(?:free poster|bonus poster|pull[- ]out poster|demo disc|bonus disc|free insert)\b", RegexOptions.IgnoreCase)) Add("includedExtras", line, line);
         }
         if (coverGames.Count == 1) Add("coverSubject", coverGames.First(), "Single exact cover heading matched to LaunchBox.");
-        else if (coverGames.Count > 1) foreach (var game in coverGames) Add("mentionedGames", game, "Multiple titles on cover; cover subject ambiguous.");
+        else if (coverGames.Count > 1) foreach (var game in coverGames) Add("coverSubject", game, "Multiple exact cover headings; select the actual cover subject manually.");
     }
     private static async Task<string> Run(string executable, string[] args, CancellationToken token)
     {
