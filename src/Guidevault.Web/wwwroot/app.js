@@ -130,7 +130,7 @@ const GUIDEVAULT_LIBRARY_CHUNK_YIELD_MS = 30;
 const GUIDEVAULT_STARTUP_STATUS_HIDE_MS = 2400;
 const GUIDEVAULT_LIBRARY_SEARCH_DEBOUNCE_MS = 180;
 const GUIDEVAULT_SORT_COLLATOR = new Intl.Collator(undefined, { numeric: true, sensitivity: 'base' });
-const GUIDEVAULT_APP_VERSION = '1.3.1';
+const GUIDEVAULT_APP_VERSION = '1.3.2';
 const GUIDEVAULT_FILENAME_SCHEMA_KEY = 'guidevault.filenameRename.schema.v1';
 const GUIDEVAULT_FILE_ORGANIZATION_TEMPLATE_PRESETS_KEY = 'guidevault.fileOrganization.templatePresets.v2';
 const GUIDEVAULT_FILE_ORGANIZATION_TEMPLATE_PRESETS_LEGACY_KEY = 'guidevault.fileOrganization.templatePresets.v1';
@@ -4694,7 +4694,9 @@ function launchBoxMatchDetailsHtml(game = {}, match = {}, item = null) {
     launchBoxDetailValue('Game title', item?.gameTitle || item?.manualTitle),
     launchBoxDetailValue('Guide type', item?.guideType || item?.manualType),
     launchBoxDetailValue('Edition', item?.edition),
+    launchBoxDetailValue('Cover game / subject', item?.coverSubject),
     launchBoxDetailValue('Featured games', item?.featuredGames || item?.coveredGames),
+    launchBoxDetailValue('Mentioned games', item?.mentionedGames),
     launchBoxDetailValue('Tags', item?.tags)
   ].join('') || '<dt>Details</dt><dd>No extra GuideVault metadata is available for this item yet.</dd>';
   const launchBoxDetails = [
@@ -4934,11 +4936,13 @@ function bindLaunchBoxCoverageActions() {
   if ($('launchBoxRunControlledScan')) $('launchBoxRunControlledScan').addEventListener('click', e => { e.preventDefault(); runLaunchBoxControlledScan(); });
   // Recalculate platform counts for the selected document type, never reuse manual counts for guides.
   $('launchBoxScanKind')?.addEventListener('change', () => {
+    invalidateLaunchBoxPublicationReview();
     updateLaunchBoxMatchingDocumentTypeUI();
     populateLaunchBoxScanPlatforms();
     refreshLaunchBoxCurrentPlatformCounts();
   });
 
+  $('launchBoxScanPlatform')?.addEventListener('change', invalidateLaunchBoxPublicationReview);
   updateLaunchBoxMatchingDocumentTypeUI();
   $('launchBoxCorrectionSearchManuals')?.addEventListener('click', searchLaunchBoxCorrectionManuals);
   $('launchBoxCorrectionSearchGames')?.addEventListener('click', searchLaunchBoxCorrectionGames);
@@ -9354,6 +9358,7 @@ function libraryItemSearchHaystack(item) {
     ...(item.tags || []),
     ...(item.associatedPlatforms || []),
     ...(item.featuredGames || []),
+    ...(item.mentionedGames || []),
     ...(item.featuredPlatforms || []),
     ...(item.specialFeatures || []),
     ...(item.includedExtras || []),
@@ -12697,6 +12702,7 @@ const METADATA_LOCKABLE_FIELDS = {
   editGenre: 'genre',
   editSummary: 'summary',
   editFeaturedGames: 'featuredGames',
+  editMentionedGames: 'mentionedGames',
   editFeaturedPlatforms: 'featuredPlatforms',
   editSpecialFeatures: 'specialFeatures',
   editIncludedExtras: 'includedExtras',
@@ -13074,6 +13080,7 @@ const METADATA_FIELD_HELP = {
   editGameReleaseYear: 'Release year of the associated game. For manuals, saving this field also sets Year to the same value.',
   editGenre: 'Game genre or broad content genre, such as RPG, Fighting, Action Adventure, Racing, or Puzzle.',
   editFeaturedGames: 'Comma-separated games featured in a magazine issue.',
+  editMentionedGames: 'Comma-separated games briefly mentioned (cheats, news, previews, short references).',
   editFeaturedPlatforms: 'Comma-separated platforms featured in a magazine issue.',
   editSpecialFeatures: "Comma-separated recurring sections, departments, columns, or major magazine components, such as Mail Box, Player's Poll, Top 30, or Counselors Corner.",
   editIncludedExtras: {
@@ -13593,6 +13600,7 @@ function buildCurrentMetadataPayloadFromForm(extra = {}) {
     magazineCategory: $('editMagazineCategory')?.value || '',
     coverSubject: $('editCoverSubject')?.value || '',
     featuredGames: csvInput('editFeaturedGames'),
+    mentionedGames: csvInput('editMentionedGames'),
     featuredPlatforms: csvInput('editFeaturedPlatforms'),
     specialFeatures: csvInput('editSpecialFeatures'),
     includedExtras: csvInput('editIncludedExtras')
@@ -16064,7 +16072,7 @@ function writeClientMetadataOverrides(map) {
 function normalizeClientMetadataPayload(payload, kindHint = '') {
   const clone = { ...(payload || {}) };
   if (clone.metadataStatus !== undefined) clone.metadataStatus = normalizeMetadataStatus(clone.metadataStatus);
-  ['tags','associatedPlatforms','featuredGames','featuredPlatforms','specialFeatures','includedExtras','coveredGames','coveredPlatforms','guideTopics','charactersCovered','locationsCovered','includedSections','itemsCovered'].forEach(key => {
+  ['tags','associatedPlatforms','featuredGames','mentionedGames','featuredPlatforms','specialFeatures','includedExtras','coveredGames','coveredPlatforms','guideTopics','charactersCovered','locationsCovered','includedSections','itemsCovered'].forEach(key => {
     if (clone[key] !== undefined && !Array.isArray(clone[key])) clone[key] = itemArray(clone[key]);
   });
 
@@ -16119,11 +16127,11 @@ function applyClientMetadataOverridesToLibrary(items = state.items) {
 
 const METADATA_MANAGER_DEFAULT_COLUMNS = ['kind','metadataStatus','name','category','associatedPlatforms','series','languageTag','region','year','publisher','topics','metadataSource'];
 const METADATA_MANAGER_ARRAY_FIELDS = new Set([
-  'tags','associatedPlatforms','featuredGames','featuredPlatforms','specialFeatures','includedExtras',
+  'tags','associatedPlatforms','featuredGames','mentionedGames','featuredPlatforms','specialFeatures','includedExtras',
   'coveredGames','coveredPlatforms','guideTopics','charactersCovered','locationsCovered','includedSections','itemsCovered'
 ]);
 const METADATA_MANAGER_READONLY_COLUMNS = new Set(['kind','metadataSource']);
-const METADATA_MANAGER_WIDE_COLUMNS = new Set(['name','category','series','publisher','topics','summary','notes','webLink','associatedPlatforms','featuredGames','featuredPlatforms','specialFeatures','includedExtras','coveredGames','coveredPlatforms','guideTopics','charactersCovered','locationsCovered','includedSections','itemsCovered','platformMatchTitle','platformResolverSource','coverSubject','barcodeUpcIssn']);
+const METADATA_MANAGER_WIDE_COLUMNS = new Set(['name','category','series','publisher','topics','summary','notes','webLink','associatedPlatforms','featuredGames','mentionedGames','featuredPlatforms','specialFeatures','includedExtras','coveredGames','coveredPlatforms','guideTopics','charactersCovered','locationsCovered','includedSections','itemsCovered','platformMatchTitle','platformResolverSource','coverSubject','barcodeUpcIssn']);
 const METADATA_MANAGER_ALL_COLUMNS = [
   { key:'kind', label:'Type', description:'Manual, Strategy Guide, or Magazine.' },
   { key:'metadataStatus', label:'Status', description:'Metadata review workflow state.' },
@@ -16158,6 +16166,7 @@ const METADATA_MANAGER_ALL_COLUMNS = [
   { key:'magazineCategory', label:'Magazine Category', description:'Magazine category/classification.' },
   { key:'coverSubject', label:'Cover Subject', description:'Main cover subject or feature.' },
   { key:'featuredGames', label:'Featured Games', description:'Magazine featured games.' },
+  { key:'mentionedGames', label:'Mentioned Games', description:'Games receiving brief mentions, cheats, news or short references.' },
   { key:'featuredPlatforms', label:'Featured Platforms', description:'Magazine featured platforms.' },
   { key:'specialFeatures', label:'Special Features', description:'Special features, sections, or issue components.' },
   { key:'includedExtras', label:'Physical Extras', description:'Physical extras such as posters, inserts, discs, or maps.' },
@@ -16187,7 +16196,7 @@ const METADATA_MANAGER_KIND_FILTERS = ['Manual', 'Strategy Guide', 'Magazine'];
 const METADATA_MANAGER_AUTO_COLUMNS_BY_KIND = {
   Manual: ['kind','metadataStatus','name','gameTitle','category','languageTag','region','publisher','manualTitle','manualType','franchise','developer','gamePublisher','gameReleaseYear','genre','includedSections','includedExtras','controlScheme','itemsCovered','charactersCovered','warrantySupport','metadataSource','platformMatchTitle','platformResolverSource','pageCount','rating','topics'],
   'Strategy Guide': ['kind','metadataStatus','name','gameTitle','category','associatedPlatforms','series','languageTag','region','publisher','writer','publicationDate','isbn10','isbn13','guideType','edition','franchise','gameReleaseYear','genre','coveredGames','coveredPlatforms','guideTopics','metadataSource','platformMatchTitle','platformResolverSource','charactersCovered','locationsCovered','developer','gamePublisher','pageCount','rating','topics'],
-  Magazine: ['kind','metadataStatus','name','magazineTitle','issueNumber','volume','coverDate','year','publisher','region','languageTag','platformFocus','primarySystem','magazineCategory','coverSubject','featuredGames','featuredPlatforms','specialFeatures','includedExtras','tags','metadataSource']
+  Magazine: ['kind','metadataStatus','name','magazineTitle','issueNumber','volume','coverDate','year','publisher','region','languageTag','platformFocus','primarySystem','magazineCategory','coverSubject','featuredGames','mentionedGames','featuredPlatforms','specialFeatures','includedExtras','tags','metadataSource']
 };
 
 function metadataManagerSelectedKinds() {
@@ -16756,7 +16765,7 @@ function metadataManagerColumnGroupKey(column) {
   if (['asin','isbn10','isbn13','writer','webLink','publicationDate','pageCount'].includes(key)) return 'book';
   if (['guideType','edition','associatedPlatforms','coveredGames','coveredPlatforms','guideTopics','locationsCovered'].includes(key)) return 'strategy';
   if (['manualTitle','manualType','includedSections','controlScheme','itemsCovered','warrantySupport','charactersCovered'].includes(key)) return 'manual';
-  if (['magazineTitle','issueNumber','volume','coverDate','barcodeUpcIssn','platformFocus','primarySystem','magazineCategory','coverSubject','featuredGames','featuredPlatforms','specialFeatures'].includes(key)) return 'magazine';
+  if (['magazineTitle','issueNumber','volume','coverDate','barcodeUpcIssn','platformFocus','primarySystem','magazineCategory','coverSubject','featuredGames','mentionedGames','featuredPlatforms','specialFeatures'].includes(key)) return 'magazine';
   if (['metadataSource','platformMatchTitle','platformResolverSource'].includes(key)) return 'lookup';
   return 'notes';
 }
@@ -18626,6 +18635,7 @@ function mergeSavedMetadataClientSide(baseItem, serverItem, payload) {
   if (payload?.charactersCovered !== undefined) merged.charactersCovered = Array.isArray(payload.charactersCovered) ? payload.charactersCovered : [];
   if (payload?.locationsCovered !== undefined) merged.locationsCovered = Array.isArray(payload.locationsCovered) ? payload.locationsCovered : [];
   if (payload?.featuredGames !== undefined) merged.featuredGames = Array.isArray(payload.featuredGames) ? payload.featuredGames : [];
+  if (payload?.mentionedGames !== undefined) merged.mentionedGames = Array.isArray(payload.mentionedGames) ? payload.mentionedGames : [];
   if (payload?.featuredPlatforms !== undefined) merged.featuredPlatforms = Array.isArray(payload.featuredPlatforms) ? payload.featuredPlatforms : [];
   if (payload?.includedSections !== undefined) merged.includedSections = Array.isArray(payload.includedSections) ? payload.includedSections : [];
   if (payload?.itemsCovered !== undefined) merged.itemsCovered = Array.isArray(payload.itemsCovered) ? payload.itemsCovered : [];
@@ -18827,6 +18837,7 @@ function magazineOverviewHtml(item) {
         </div>
       </section>
       ${magazineOverviewTagSection('Featured Games', item.featuredGames)}
+      ${magazineOverviewTagSection('Mentioned Games', item.mentionedGames)}
       ${magazineOverviewTagSection('Featured Platforms', item.featuredPlatforms)}
       ${magazineOverviewTagSection('Sections / Departments', item.specialFeatures)}
       ${magazineOverviewTagSection('Insert Details', item.includedExtras)}
@@ -19533,7 +19544,7 @@ function detailLaunchBoxIntroText(item = {}, total = null) {
   const noun = detailLaunchBoxKindNoun(item);
   const countText = Number.isFinite(Number(total)) ? `${launchBoxNumber(Number(total))} active LaunchBox connection${Number(total) === 1 ? '' : 's'}` : 'LaunchBox connections';
   if (item.kind === 'Strategy Guide') return `This strategy guide is connected to these LaunchBox games. ${countText}.`;
-  if (item.kind === 'Magazine') return `This magazine issue is connected to these LaunchBox games through Featured Games matching. ${countText}.`;
+  if (item.kind === 'Magazine') return `This magazine issue is connected to these LaunchBox games through cover, featured, or mentioned game matching. ${countText}.`;
   if (item.kind === 'Manual') return `This manual is connected to these LaunchBox games. ${countText}.`;
   return `This ${noun} can show LaunchBox relationships when it is matched by the LaunchBox integration.`;
 }
@@ -19756,6 +19767,7 @@ function renderDetails(item) {
   $('editWriter').value = item.writer || '';
   $('editSummary').value = item.summary || '';
   setMaybeValue('editFeaturedGames', isMagazine ? itemList(item.featuredGames).replace(/^\u2014$/, '') : '');
+  setMaybeValue('editMentionedGames', isMagazine ? itemList(item.mentionedGames).replace(/^\u2014$/, '') : '');
   setMaybeValue('editFeaturedPlatforms', isMagazine ? itemList(item.featuredPlatforms).replace(/^\u2014$/, '') : '');
   setMaybeValue('editSpecialFeatures', isMagazine ? itemList(item.specialFeatures).replace(/^\u2014$/, '') : '');
   setMaybeValue('editIncludedExtras', (isMagazine || isStrategyGuide || isManual) ? itemList(item.includedExtras).replace(/^\u2014$/, '') : '');
@@ -19823,6 +19835,7 @@ async function saveSelectedMetadata(extra = {}, options = {}) {
       magazineCategory: $('editMagazineCategory')?.value || '',
       coverSubject: $('editCoverSubject')?.value || '',
       featuredGames: csvInput('editFeaturedGames'),
+      mentionedGames: csvInput('editMentionedGames'),
       featuredPlatforms: csvInput('editFeaturedPlatforms'),
       specialFeatures: csvInput('editSpecialFeatures'),
       includedExtras: csvInput('editIncludedExtras')
@@ -27096,14 +27109,14 @@ function populateLaunchBoxScanPlatforms() {
   const rows = state.launchBox.status?.coverage?.byPlatform || [];
   const platforms = rows.map(r => r.platform).filter(Boolean).sort((a,b) => a.localeCompare(b));
   const kind = $('launchBoxScanKind')?.value || 'Manual';
-  const counts = kind === 'Strategy Guide' ? launchBoxStrategyPlatformCounts : launchBoxManualPlatformCounts;
+  const counts = kind === 'Magazine' ? launchBoxMagazinePlatformCounts : kind === 'Strategy Guide' ? launchBoxStrategyPlatformCounts : launchBoxManualPlatformCounts;
   const byPlatform = new Map((counts?.platforms || []).map(r => [r.platform, r]));
 
   select.innerHTML = '<option value="">Select synced platform</option>' +
     platforms.map(p => {
       const count = byPlatform.get(p);
       const label = count ? `${p} · ${Number(count.pendingPairs || 0).toLocaleString()} pending` +
-        (kind === 'Strategy Guide' && Number(count.relatedPairs||0) ? ` · ${Number(count.relatedPairs).toLocaleString()} related` : '') : p;
+        (kind !== 'Manual' && Number(count.relatedPairs||0) ? ` · ${Number(count.relatedPairs).toLocaleString()} related` : '') : p;
       return `<option value="${escapeForAttribute(p)}">${escapeHtml(label)}</option>`;
     }).join('');
   if (platforms.includes(previous)) select.value = previous;
@@ -27119,10 +27132,30 @@ async function refreshLaunchBoxStrategyPlatformCounts() {
     if ($('launchBoxScanKind')?.value === 'Strategy Guide') populateLaunchBoxScanPlatforms();
   } catch (err) { console.warn('Strategy guide pending-count lookup failed', err); }
 }
+let launchBoxMagazinePlatformCounts = null;
+async function refreshLaunchBoxMagazinePlatformCounts() {
+  try {
+    launchBoxMagazinePlatformCounts = await launchBoxControlledApi('/api/integrations/launchbox/scans/magazine/pending-counts');
+    if ($('launchBoxScanKind')?.value === 'Magazine') populateLaunchBoxScanPlatforms();
+  } catch (err) { console.warn('Magazine pending-count lookup failed', err); }
+}
 async function refreshLaunchBoxCurrentPlatformCounts() {
-  return $('launchBoxScanKind')?.value === 'Strategy Guide'
+  const kind = $('launchBoxScanKind')?.value;
+  return kind === 'Magazine' ? refreshLaunchBoxMagazinePlatformCounts() : kind === 'Strategy Guide'
     ? refreshLaunchBoxStrategyPlatformCounts() : refreshLaunchBoxManualPlatformCounts();
 }
+function invalidateLaunchBoxPublicationReview() {
+  ++launchBoxManualScanRequestId;
+  launchBoxStrategyStatusFilter = 'pending';
+  launchBoxStrategyCurrentPage = 1;
+  launchBoxManualScanStatusFilter = 'pending';
+  const host = $('launchBoxControlledScanResults');
+  if (host) host.innerHTML = '';
+  launchBoxControlledMessage('launchBoxControlledScanStatus', '');
+}
+function launchBoxPublicationIsMagazine() { return $('launchBoxScanKind')?.value === 'Magazine'; }
+function launchBoxPublicationNoun() { return launchBoxPublicationIsMagazine() ? 'magazine issue' : 'guide'; }
+
 // GUIDEVAULT_MANUAL_IDENTITY_PAGINATION_V13
 // The scanner is read-only. Paging fetches the next slice, never creates matches.
 let launchBoxManualScanPageSize = 100;
@@ -27134,7 +27167,7 @@ async function runLaunchBoxControlledScan(page = 1) {
   const kind = $('launchBoxScanKind')?.value || 'Manual';
   const host = $('launchBoxControlledScanResults');
   if (!platform) return launchBoxControlledMessage('launchBoxControlledScanStatus', 'Select a synced platform first.');
-  if (kind === 'Strategy Guide') return runLaunchBoxStrategyScan(page);
+  if (kind === 'Strategy Guide' || kind === 'Magazine') return runLaunchBoxStrategyScan(page);
   const requestId = ++launchBoxManualScanRequestId;
   if (host) host.innerHTML = '';
   launchBoxControlledMessage('launchBoxControlledScanStatus', `Loading read-only ${platform} → Manuals proposals (page ${page})...`);
@@ -27406,7 +27439,7 @@ function updateLaunchBoxMatchingDocumentTypeUI() {
   const panel = $('launchBoxManualRecoveryPanel');
   if (panel) { panel.hidden = !isManual; if (!isManual) panel.open = false; }
   const run = $('launchBoxRunControlledScan');
-  if (run) run.textContent = isManual ? 'Scan manuals' : 'Scan strategy guides';
+  if (run) run.textContent = isManual ? 'Scan manuals' : launchBoxPublicationIsMagazine() ? 'Scan magazines' : 'Scan strategy guides';
 }
 
 // GUIDEVAULT_MANUAL_RECOVERY_V18: a manual can be corrected even when it has
@@ -27495,7 +27528,7 @@ const launchBoxStrategyRejectReasons = [
 ];
 function launchBoxStrategyRejectOptions() {
   return '<option value="">Choose why not a match</option>' +
-    launchBoxStrategyRejectReasons.map(([v,label]) => `<option value="${v}">${label}</option>`).join('');
+    launchBoxStrategyRejectReasons.map(([v,label]) => `<option value="${v}">${launchBoxPublicationIsMagazine() && v === 'incorrect-coverage' ? 'Incorrect magazine game coverage metadata' : launchBoxPublicationIsMagazine() && v === 'incompatible-release' ? 'Article does not cover this release' : label}</option>`).join('');
 }
 function launchBoxStrategyRejectValid(reason, note) {
   return !!reason && note.length <= 240 && (reason !== 'other-rejection' || note.length >= 8);
@@ -27509,7 +27542,7 @@ const launchBoxStrategyReviewReasons = [
 ];
 function launchBoxStrategyReasonOptions() {
   return '<option value="">Choose verification reason</option>' +
-    launchBoxStrategyReviewReasons.map(([v, label]) => `<option value="${v}">${label}</option>`).join('');
+    launchBoxStrategyReviewReasons.map(([v, label]) => `<option value="${v}">${launchBoxPublicationIsMagazine() && v === 'coverage-inspected' ? 'Magazine article inspected' : label}</option>`).join('');
 }
 function launchBoxStrategyReviewValid(reason, note, unlisted = false) {
   return !!reason && note.length <= 240 &&
@@ -27526,9 +27559,9 @@ function launchBoxStrategyRowActions(r) {
     (r.classification === 'Strong candidate' ?
       `<button type="button" class="guide-approve" data-guide-action="approve" ${id}>Approve</button>` :
       `<details class="launchbox-strategy-override"><summary>Approve after review</summary>` +
-        `<label>Why is this guide applicable?<select class="guide-review-reason">${launchBoxStrategyReasonOptions()}</select></label>` +
+        `<label>Why is this ${launchBoxPublicationNoun()} applicable?<select class="guide-review-reason">${launchBoxStrategyReasonOptions()}</select></label>` +
         `<label>Verification note<input class="guide-review-note" type="text" maxlength="240" placeholder="Required for cross-platform approvals"></label>` +
-        `<button type="button" class="guide-approve" data-guide-action="approve-reviewed" ${id} disabled>Approve reviewed guide</button>` +
+        `<button type="button" class="guide-approve" data-guide-action="approve-reviewed" ${id} disabled>Approve reviewed ${launchBoxPublicationNoun()}</button>` +
       `</details>`) +
     `<details class="launchbox-strategy-reject"><summary>Not a Match</summary>` +
        `<label>Reason<select class="guide-reject-reason">${launchBoxStrategyRejectOptions()}</select></label>` +
@@ -27576,24 +27609,29 @@ function launchBoxStrategySelectPage(mode) {
 async function launchBoxStrategySubmit(action, pairs, reviewReason = '', reviewNote = '') {
   if (launchBoxStrategyBusy || !pairs.length) return;
   const platform = $('launchBoxScanPlatform')?.value || '';
+  const matchType = $('launchBoxScanKind')?.value;
+  if (!['Strategy Guide','Magazine'].includes(matchType)) return;
+  const requestId = launchBoxManualScanRequestId;
   launchBoxStrategyBusy = true;
   launchBoxStrategyUpdateBulk();
-  launchBoxControlledMessage('launchBoxControlledScanStatus', `Saving ${pairs.length} guide relationship${pairs.length === 1 ? '' : 's'}...`);
+  launchBoxControlledMessage('launchBoxControlledScanStatus', `Saving ${pairs.length} ${launchBoxPublicationNoun()} relationship${pairs.length === 1 ? '' : 's'}...`);
   try {
     const result = await launchBoxControlledApi('/api/integrations/launchbox/scans/strategy/decisions/batch', {
       method:'POST', headers:{'Content-Type':'application/json'},
-      body:JSON.stringify({platform, action, statusFilter:launchBoxStrategyStatusFilter,
+      body:JSON.stringify({platform, matchType, action, statusFilter:launchBoxStrategyStatusFilter,
         page:launchBoxStrategyCurrentPage, pageSize:launchBoxStrategyPageSize,
         pairs, reviewReason, reviewNote})
     });
     launchBoxStrategyBusy = false;
     await loadLaunchBoxCoverage(false);
-    await refreshLaunchBoxStrategyPlatformCounts();
+    if (matchType === 'Magazine') await refreshLaunchBoxMagazinePlatformCounts();
+    else await refreshLaunchBoxStrategyPlatformCounts();
+    if (requestId !== launchBoxManualScanRequestId) return;
     await runLaunchBoxStrategyScan(launchBoxStrategyCurrentPage);
-    launchBoxControlledMessage('launchBoxControlledScanStatus', result.message || 'Guide decisions saved.', true);
+    if (requestId + 1 === launchBoxManualScanRequestId) launchBoxControlledMessage('launchBoxControlledScanStatus', result.message || 'Publication decisions saved.', true);
   } catch (err) {
     launchBoxStrategyBusy = false;
-    launchBoxControlledMessage('launchBoxControlledScanStatus', err.message || 'Unable to save guide decisions.');
+    if (requestId === launchBoxManualScanRequestId) launchBoxControlledMessage('launchBoxControlledScanStatus', err.message || 'Unable to save publication decisions.');
     launchBoxStrategyUpdateBulk();
   }
 }
@@ -27609,7 +27647,7 @@ async function launchBoxStrategyRowDecision(button) {
     action === 'reject' ? (rejection?.querySelector('.guide-reject-note')?.value || '').trim() : '';
   const unlisted = row?.dataset.guideUnlisted === 'true';
   if (action === 'approve-reviewed' && !launchBoxStrategyReviewValid(reason,note,unlisted))
-    return launchBoxControlledMessage('launchBoxControlledScanStatus', 'Verify platform applicability and provide a note when the guide does not list this platform.');
+    return launchBoxControlledMessage('launchBoxControlledScanStatus', 'Verify platform applicability and provide a note when the publication does not list this platform.');
   if (action === 'reject' && !launchBoxStrategyRejectValid(reason,note))
     return launchBoxControlledMessage('launchBoxControlledScanStatus', 'Choose a rejection reason; Other requires a note.');
   await launchBoxStrategySubmit(action, [{gameId:button.dataset.gameId,publicationId:button.dataset.guideId}],reason,note);
@@ -27619,9 +27657,9 @@ function launchBoxStrategySubmitSelection(action) {
   const boxes = launchBoxStrategySelected();
   if (!boxes.length) return;
   if (action === 'approve' && boxes.some(b => b.dataset.classification !== 'Strong candidate'))
-    return launchBoxControlledMessage('launchBoxControlledScanStatus', 'Select only Strong guide candidates for standard approval.');
+    return launchBoxControlledMessage('launchBoxControlledScanStatus', 'Select only Strong candidates for standard approval.');
   if (action === 'approve-reviewed' && boxes.some(b => !['Needs review','Related release'].includes(b.dataset.classification)))
-    return launchBoxControlledMessage('launchBoxControlledScanStatus', 'Select only Needs Review guide candidates for shared reviewed approval.');
+    return launchBoxControlledMessage('launchBoxControlledScanStatus', 'Select only Needs Review or Related Release candidates for shared reviewed approval.');
   const reason = action === 'approve-reviewed' ? host.querySelector('#launchBoxStrategyBulkReason')?.value || '' :
     action === 'reject' ? host.querySelector('#launchBoxStrategyBulkRejectReason')?.value || '' : '';
   const note = action === 'approve-reviewed' ? (host.querySelector('#launchBoxStrategyBulkNote')?.value || '').trim() :
@@ -27637,21 +27675,24 @@ async function runLaunchBoxStrategyScan(page = 1) {
   updateLaunchBoxMatchingDocumentTypeUI();
   const platform = $('launchBoxScanPlatform')?.value || '';
   const host = $('launchBoxControlledScanResults');
-  if (!host || !platform) return;
+  const matchType = $('launchBoxScanKind')?.value;
+  if (!host || !platform || !['Strategy Guide','Magazine'].includes(matchType)) return;
+  const magazine = matchType === 'Magazine';
+  const plural = magazine ? 'magazines' : 'strategy guides';
   const requestId = ++launchBoxManualScanRequestId;
   host.innerHTML = '';
-  launchBoxControlledMessage('launchBoxControlledScanStatus', `Loading ${platform} strategy guides...`);
+  launchBoxControlledMessage('launchBoxControlledScanStatus', `Loading ${platform} ${plural}...`);
   try {
     const data = await launchBoxControlledApi('/api/integrations/launchbox/scans/preview', {
       method:'POST', headers:{'Content-Type':'application/json'},
-      body:JSON.stringify({ platform, matchType:'Strategy Guide', page,
+      body:JSON.stringify({ platform, matchType, page,
         pageSize:launchBoxStrategyPageSize, statusFilter:launchBoxStrategyStatusFilter })
     });
     if (requestId !== launchBoxManualScanRequestId) return;
     const current = Number(data.page || 1), pages = Number(data.pageCount || 1);
     launchBoxStrategyCurrentPage = current;
     const count = Number(data.candidatePairs || 0);
-    const pager = `<nav class="launchbox-scan-pagination" aria-label="Strategy guide results pages"><span>${Number(data.firstRow || 0)}–${Number(data.lastRow || 0)} of ${count} · Page ${current} of ${pages}</span>` +
+    const pager = `<nav class="launchbox-scan-pagination" aria-label="${plural} results pages"><span>${Number(data.firstRow || 0)}–${Number(data.lastRow || 0)} of ${count} · Page ${current} of ${pages}</span>` +
       `<div class="launchbox-scan-page-actions"><button type="button" data-guide-page="${current-1}" ${current<=1?'disabled':''}>Previous</button>` +
       `<button type="button" data-guide-page="${current+1}" ${current>=pages?'disabled':''}>Next</button></div></nav>`;
     const filters = [['pending','Pending'],['related','Related releases'],['approved','Approved'],['rejected','Not a Match'],['metadata','Needs Metadata'],['all','All']]
@@ -27672,21 +27713,21 @@ async function runLaunchBoxStrategyScan(page = 1) {
       `<label>Shared note<input id="launchBoxStrategyBulkNote" type="text" maxlength="240" placeholder="Required for cross-platform approvals"></label>` +
       `<button type="button" class="guide-approve" id="launchBoxStrategyBulkReviewed" disabled>Approve reviewed selection</button></div></div>` : '';
     host.innerHTML = toolbar + `<div class="launchbox-controlled-summary"><strong>${Number(data.candidatePairs||0)} ${escapeHtml(launchBoxStrategyStatusFilter)} relationships</strong> · ` +
-      `${Number(data.strongCandidates||0)} strong · ${Number(data.needsReview||0)} need review · ${Number(data.strategyGuidesInLibrary||0)} guides in library</div>` +
+      `${Number(data.strongCandidates||0)} strong · ${Number(data.needsReview||0)} need review · ${Number(data.publicationsInLibrary??data.strategyGuidesInLibrary??0)} ${plural} in library</div>` +
       bulk + pager + `<div class="launchbox-controlled-table">` +
       (data.rows || []).map(r => `<article class="launchbox-controlled-pair launchbox-strategy-pair ${pending?'is-pending':''}" data-guide-unlisted="${r.platformCompatibility==='Target platform not listed'?'true':'false'}">` +
         (pending ? `<label class="launchbox-scan-row-selector"><input type="checkbox" class="launchbox-scan-select launchbox-strategy-select" data-game-id="${escapeForAttribute(r.gameId)}" data-guide-id="${escapeForAttribute(r.publicationId)}" data-classification="${escapeForAttribute(r.classification)}" data-unlisted="${r.platformCompatibility==='Target platform not listed'?'true':'false'}" aria-label="Select ${escapeForAttribute(r.gameTitle)} and ${escapeForAttribute(r.publicationTitle)}"></label>` : '') +
         `<div class="launchbox-controlled-sourcecard"><div class="launchbox-controlled-cover"><img data-launchbox-scan-image src="${escapeForAttribute(r.gameBoxFrontUrl||'')}" alt="${escapeForAttribute(r.gameTitle)}" loading="lazy"><span class="launchbox-controlled-no-cover">No box front</span></div>` +
         `<div class="launchbox-controlled-sourceinfo"><small>LAUNCHBOX</small><strong>${escapeHtml(r.gameTitle)}</strong><span>${escapeHtml(r.gamePlatform)}</span>` +
         `<div class="launchbox-strategy-proof"><b>${escapeHtml(r.launchBoxMatchField||'Title')}</b><span>${escapeHtml(r.launchBoxMatchedValue||r.gameTitle)}</span></div></div></div>` +
-        `<div class="launchbox-controlled-sourcecard"><a class="launchbox-publication-cover-link" href="/?detail=${encodeURIComponent(r.publicationId)}" target="_blank" rel="noopener noreferrer" aria-label="Open GuideVault strategy guide details: ${escapeForAttribute(r.publicationTitle)}"><div class="launchbox-controlled-cover"><img data-launchbox-scan-image src="${escapeForAttribute(r.coverUrl)}" alt="${escapeForAttribute(r.publicationTitle)}" loading="lazy"><span class="launchbox-controlled-no-cover">No guide cover</span></div></a>` +
-        `<div class="launchbox-controlled-sourceinfo"><small>STRATEGY GUIDE</small><a class="launchbox-publication-title-link" href="/?detail=${encodeURIComponent(r.publicationId)}" target="_blank" rel="noopener noreferrer"><strong>${escapeHtml(r.publicationTitle)}</strong></a><span>${escapeHtml(r.publicationSystem||'Platform unknown')}</span>` +
-        `<div class="launchbox-strategy-proof"><b>${escapeHtml(r.guideMatchField||'Coverage clue')}</b><span>${escapeHtml(r.guideMatchedValue||'')}</span></div>` +
+        `<div class="launchbox-controlled-sourcecard"><a class="launchbox-publication-cover-link" href="/?detail=${encodeURIComponent(r.publicationId)}" target="_blank" rel="noopener noreferrer" aria-label="Open GuideVault ${magazine ? 'magazine issue' : 'strategy guide'} details: ${escapeForAttribute(r.publicationTitle)}"><div class="launchbox-controlled-cover"><img data-launchbox-scan-image src="${escapeForAttribute(r.coverUrl)}" alt="${escapeForAttribute(r.publicationTitle)}" loading="lazy"><span class="launchbox-controlled-no-cover">No ${magazine ? 'magazine' : 'guide'} cover</span></div></a>` +
+        `<div class="launchbox-controlled-sourceinfo"><small>${magazine ? 'MAGAZINE' : 'STRATEGY GUIDE'}</small><a class="launchbox-publication-title-link" href="/?detail=${encodeURIComponent(r.publicationId)}" target="_blank" rel="noopener noreferrer"><strong>${escapeHtml(r.publicationTitle)}</strong></a><span>${escapeHtml(r.publicationSystem||'Platform unknown')}</span>${magazine && (r.issueNumber || r.coverDate) ? `<span>${escapeHtml([r.issueNumber ? 'Issue '+r.issueNumber : '', r.coverDate].filter(Boolean).join(' · '))}</span>` : ''}` +
+        `<div class="launchbox-strategy-proof"><b>${escapeHtml((magazine && r.relevancePriority ? `Priority ${r.relevancePriority} · ` : '') + (r.guideMatchField||'Coverage clue'))}</b><span>${escapeHtml(r.guideMatchedValue||'')}</span></div>` +
         `<div class="launchbox-strategy-proof"><b>Platform evidence</b><span>${escapeHtml(r.platformBasis||'Not specified')}: ${escapeHtml(r.platformCompatibility||'Unknown')}</span></div></div></div>` +
         `<div class="launchbox-controlled-evidence"><strong>${escapeHtml(r.classification)}</strong><span>${escapeHtml(r.reason)}</span>` +
         `<small>${escapeHtml(r.evidenceProvenance||'Metadata-based proposal')}</small>` +
         (r.savedStatus && r.savedDecisionReason ? `<details class="launchbox-strategy-decision-history"><summary>Saved decision explanation</summary>${escapeHtml(r.savedDecisionReason)}</details>` : '') +
-        `<details class="launchbox-strategy-evidence-details"><summary>All platform fields</summary><div>Primary / shelf: ${escapeHtml(r.guidePrimaryPlatform||'Unknown')}</div><div>Covered: ${escapeHtml(r.guideCoveredPlatforms||'Not specified')}</div><div>Associated: ${escapeHtml(r.guideAssociatedPlatforms||'Not specified')}</div>${r.guideGameTitle?`<div>Game Title: ${escapeHtml(r.guideGameTitle)}</div>`:''}</details>` +
+        `<details class="launchbox-strategy-evidence-details"><summary>All platform fields</summary><div>Primary / shelf: ${escapeHtml(r.guidePrimaryPlatform||'Unknown')}</div><div>${magazine ? 'Featured Platforms' : 'Covered Platforms'}: ${escapeHtml(r.guideCoveredPlatforms||'Not specified')}</div><div>Associated: ${escapeHtml(r.guideAssociatedPlatforms||'Not specified')}</div>${r.guideGameTitle?`<div>Game Title: ${escapeHtml(r.guideGameTitle)}</div>`:''}</details>` +
         launchBoxStrategyRowActions(r) + `</div></article>`).join('') + `</div>` + pager;
     host.querySelector('#launchBoxStrategyStatus')?.addEventListener('change',e=>{
       launchBoxStrategyStatusFilter=e.target.value;runLaunchBoxStrategyScan(1);
@@ -27723,6 +27764,6 @@ async function runLaunchBoxStrategyScan(page = 1) {
     host.querySelectorAll('img[data-launchbox-scan-image]').forEach(img=>img.addEventListener('error',()=>{
       img.closest('.launchbox-controlled-cover')?.classList.add('is-missing');img.remove();
     },{once:true}));
-    launchBoxControlledMessage('launchBoxControlledScanStatus','Strategy guide review loaded. No decisions changed by scanning.',true);
+    launchBoxControlledMessage('launchBoxControlledScanStatus',`${magazine ? 'Magazine' : 'Strategy guide'} review loaded. No decisions changed by scanning.`,true);
   }catch(err){if(requestId===launchBoxManualScanRequestId)launchBoxControlledMessage('launchBoxControlledScanStatus',err.message);}
 }

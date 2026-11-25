@@ -31,7 +31,7 @@ builder.Services.AddResponseCompression(responseCompression =>
         "image/svg+xml"
     });
 });
-const string GuidevaultVersion = "1.3.1";
+const string GuidevaultVersion = "1.3.2";
 var app = builder.Build();
 var metadataJsonOptions = new JsonSerializerOptions(JsonSerializerDefaults.Web) { PropertyNameCaseInsensitive = true };
 var options = app.Configuration.GetSection("Guidevault").Get<GuidevaultOptions>() ?? new GuidevaultOptions();
@@ -880,10 +880,12 @@ app.MapPost("/api/integrations/launchbox/scans/preview", (GuidevaultLaunchBoxSco
     try
     {
         var snapshot = launchBoxIntegrationStore.GetSnapshot();
-        if (string.Equals(payload.MatchType, "Strategy Guide", StringComparison.OrdinalIgnoreCase))
+        if (string.Equals(payload.MatchType, "Strategy Guide", StringComparison.OrdinalIgnoreCase) ||
+            string.Equals(payload.MatchType, "Magazine", StringComparison.OrdinalIgnoreCase))
             return (IResult)Results.Ok(GuidevaultLaunchBoxStrategyScanner.Preview(
                 payload.Platform, snapshot.Games, cache.GetItemsSnapshot(), payload.Page,
-                payload.PageSize, snapshot.Matches, payload.StatusFilter));
+                payload.PageSize, snapshot.Matches, payload.StatusFilter,
+                string.Equals(payload.MatchType, "Magazine", StringComparison.OrdinalIgnoreCase) ? "Magazine" : "Strategy Guide"));
         return (IResult)Results.Ok(GuidevaultLaunchBoxControlledManualScanner.Preview(
             payload.Platform, payload.MatchType, snapshot.Games, cache.GetItemsSnapshot(),
             launchBoxSourceSettingsStore.Get().RootPath, payload.Page, payload.PageSize, snapshot.Matches, payload.StatusFilter));
@@ -901,20 +903,31 @@ app.MapGet("/api/integrations/launchbox/scans/strategy/pending-counts", () =>
         snapshot.Games, cache.GetItemsSnapshot(), snapshot.Matches));
 });
 
-// GUIDEVAULT_STRATEGY_DISPOSITIONS_V24 — validated, page-scoped, atomic strategy-guide decisions.
+// Magazine counts are independent of strategy guide counts.
+app.MapGet("/api/integrations/launchbox/scans/magazine/pending-counts", () =>
+{
+    var snapshot = launchBoxIntegrationStore.GetSnapshot();
+    return Results.Ok(GuidevaultLaunchBoxStrategyScanner.PendingByPlatform(
+        snapshot.Games, cache.GetItemsSnapshot(), snapshot.Matches, "Magazine"));
+});
+
+// GUIDEVAULT_STRATEGY_DISPOSITIONS_V24 — validated, page-scoped, atomic publication decisions.
 // One guide can be independently approved for many games and platforms.
 app.MapPost("/api/integrations/launchbox/scans/strategy/decisions/batch", (GuidevaultStrategyDecisionRequest payload) =>
 {
+    var matchType = payload.MatchType;
+    if (matchType is not ("Strategy Guide" or "Magazine"))
+        return (IResult)Results.BadRequest(new { error = "Invalid publication type." });
     var action = (payload.Action ?? string.Empty).Trim().ToLowerInvariant();
     if (action is not ("approve" or "approve-reviewed" or "reject" or "needs-metadata" or "undo"))
-        return (IResult)Results.BadRequest(new { error = "Invalid strategy-guide disposition." });
+        return (IResult)Results.BadRequest(new { error = "Invalid publication disposition." });
     var statusFilter = (payload.StatusFilter ?? "pending").Trim().ToLowerInvariant();
     if (action == "undo" ? statusFilter is not ("approved" or "rejected" or "metadata") : statusFilter is not ("pending" or "related"))
         return (IResult)Results.BadRequest(new { error = "Refresh the correct review queue before saving a decision." });
     if (string.IsNullOrWhiteSpace(payload.Platform) || payload.Page < 1 ||
         payload.PageSize is not (25 or 50 or 100 or 250 or 500) ||
         payload.Pairs is null || payload.Pairs.Count is < 1 or > 100)
-        return (IResult)Results.BadRequest(new { error = "Select 1–100 guide relationships from one review page." });
+        return (IResult)Results.BadRequest(new { error = "Select 1–100 publication relationships from one review page." });
     var reviewReason = (payload.ReviewReason ?? "").Trim().ToLowerInvariant();
     var reviewNote = (payload.ReviewNote ?? "").Trim();
     if (action == "approve-reviewed" &&
@@ -925,21 +938,21 @@ app.MapPost("/api/integrations/launchbox/scans/strategy/decisions/batch", (Guide
     if (action == "reject" &&
         (reviewReason is not ("different-game" or "incompatible-release" or "incorrect-coverage" or "other-rejection") ||
          reviewNote.Length > 240 || (reviewReason == "other-rejection" && reviewNote.Length < 8)))
-        return (IResult)Results.BadRequest(new { error = "Choose why this guide is not a match; Other requires a note (8–240 characters)." });
+        return (IResult)Results.BadRequest(new { error = "Choose why this publication is not a match; Other requires a note (8–240 characters)." });
     if (action is not ("approve-reviewed" or "reject") && (reviewReason.Length > 0 || reviewNote.Length > 0))
         return (IResult)Results.BadRequest(new { error = "Review reasons are only accepted for reviewed approvals and rejections." });
     var keys = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
     foreach (var pair in payload.Pairs)
         if (pair is null || string.IsNullOrWhiteSpace(pair.GameId) || string.IsNullOrWhiteSpace(pair.PublicationId) ||
             !keys.Add(pair.GameId.Trim() + "\u001F" + pair.PublicationId.Trim()))
-            return (IResult)Results.BadRequest(new { error = "Select unique, nonempty game/guide pairs." });
+            return (IResult)Results.BadRequest(new { error = "Select unique, nonempty game/publication pairs." });
     try
     {
         var snapshot = launchBoxIntegrationStore.GetSnapshot();
         var items = cache.GetItemsSnapshot();
         using var scan = JsonDocument.Parse(JsonSerializer.Serialize(
             GuidevaultLaunchBoxStrategyScanner.Preview(payload.Platform, snapshot.Games, items,
-                payload.Page, payload.PageSize, snapshot.Matches, statusFilter)));
+                payload.Page, payload.PageSize, snapshot.Matches, statusFilter, matchType)));
         if (scan.RootElement.GetProperty("page").GetInt32() != payload.Page)
             return (IResult)Results.BadRequest(new { error = "The scan page changed; refresh and reselect." });
         var eligible = new Dictionary<string, (string Classification, string SavedStatus, string Evidence, string PlatformCompatibility)>(StringComparer.OrdinalIgnoreCase);
@@ -965,24 +978,24 @@ app.MapPost("/api/integrations/launchbox/scans/strategy/decisions/batch", (Guide
             else
             {
                 if (!string.IsNullOrWhiteSpace(evidence.SavedStatus))
-                    return (IResult)Results.BadRequest(new { error = "A selected guide already has a saved decision. Refresh the queue." });
+                    return (IResult)Results.BadRequest(new { error = "A selected publication already has a saved decision. Refresh the queue." });
                 if (action == "approve" && evidence.Classification != "Strong candidate")
                     return (IResult)Results.BadRequest(new { error = "Standard approval requires Strong candidates only." });
                 if (action == "approve-reviewed" && evidence.Classification is not ("Needs review" or "Related release"))
                     return (IResult)Results.BadRequest(new { error = "Choose Needs Review or Related Release pairs for reviewed approval." });
                 if (action == "approve-reviewed" && evidence.PlatformCompatibility == "Target platform not listed" &&
                     (reviewReason is not ("cross-platform" or "coverage-inspected" or "other-verified") || reviewNote.Length < 8))
-                    return (IResult)Results.BadRequest(new { error = "For a guide that does not list this platform, choose cross-platform/content verification and explain the evidence (at least 8 characters)." });
+                    return (IResult)Results.BadRequest(new { error = "For a publication that does not list this platform, choose cross-platform/content verification and explain the evidence (at least 8 characters)." });
             }
         }
         var proof = keys.ToDictionary(k => k, k => eligible[k].Evidence, StringComparer.OrdinalIgnoreCase);
         var result = launchBoxIntegrationStore.ApplyScopedStrategyBatchDecision(
-            payload.Platform, action, payload.Pairs, items, reviewReason, reviewNote, proof);
+            payload.Platform, action, payload.Pairs, items, reviewReason, reviewNote, proof, matchType);
         if (!result.Success) return (IResult)Results.BadRequest(new { error = result.Message });
-        RecordSystemEvent("Integration", $"Scoped strategy-guide review: {action}",
+        RecordSystemEvent("Integration", $"Scoped {matchType} review: {action}",
             $"{payload.Platform}: {result.Applied} pairs; reason={reviewReason}; note={reviewNote}; " +
             string.Join(", ", payload.Pairs.Take(100).Select(x => $"{x.GameId}/{x.PublicationId}")),
-            "launchbox-strategy-review", string.Empty, string.Empty);
+            matchType == "Magazine" ? "launchbox-magazine-review" : "launchbox-strategy-review", string.Empty, string.Empty);
         return (IResult)Results.Ok(new { success = true, applied = result.Applied, message = result.Message });
     }
     catch (Exception ex) when (ex is ArgumentException or InvalidOperationException)
@@ -1262,8 +1275,8 @@ app.MapGet("/api/client/launchbox/game/{launchBoxGameId}/literature", (HttpReque
         if (rejectedIds.Contains(match.GuideVaultItemId) ||
             !byId.TryGetValue(match.GuideVaultItemId, out var item)) continue;
 
-        // A magazine belongs in the game-specific Guides area through its explicit
-        // Featured Games tag, or through a manually confirmed relationship.
+        // A magazine belongs in the game-specific Guides area through explicit
+        // cover/featured coverage or through a manually confirmed relationship.
         if (string.Equals(item.Kind, "Magazine", StringComparison.OrdinalIgnoreCase) &&
             !GuidevaultLaunchBoxMatcher.MagazineFeaturesGame(game, item) &&
             !string.Equals(match.MatchStatus, "Confirmed", StringComparison.OrdinalIgnoreCase)) continue;
@@ -1273,7 +1286,7 @@ app.MapGet("/api/client/launchbox/game/{launchBoxGameId}/literature", (HttpReque
         selected[item.Id] = (item, source, match.MatchReason ?? string.Empty);
     }
 
-    // React to Featured Games edits immediately, without requiring the user to
+    // React to cover/featured coverage edits immediately, without requiring the user to
     // launch a full LaunchBox sync/rematch job. This is not title-only matching.
     if (string.Equals(Environment.GetEnvironmentVariable("GUIDEVAULT_ALLOW_LEGACY_LITERATURE_FALLBACK"), "1", StringComparison.Ordinal))
     foreach (var item in availableItems.Where(item =>
@@ -1282,7 +1295,7 @@ app.MapGet("/api/client/launchbox/game/{launchBoxGameId}/literature", (HttpReque
         GuidevaultLaunchBoxMatcher.MagazineFeaturesGame(game, item)))
     {
         if (!selected.ContainsKey(item.Id))
-            selected.Add(item.Id, (item, "featuredGames", "Magazine Featured Games tag matched the LaunchBox game title."));
+            selected.Add(item.Id, (item, "featuredGames", "Magazine " + GuidevaultLaunchBoxStrategyScanner.MagazineEvidence(game, item) + " matched the LaunchBox game title."));
     }
 
     // DREAMPAUSE_GUIDE_MATCH_FALLBACK_V1: GuideVault's active match table is
@@ -1368,6 +1381,7 @@ app.MapGet("/api/client/launchbox/game/{launchBoxGameId}/literature", (HttpReque
                 volume = isMagazine ? item.Volume : string.Empty,
                 coverDate = isMagazine ? item.CoverDate : string.Empty,
                 featuredGame = isMagazine && GuidevaultLaunchBoxMatcher.MagazineFeaturesGame(game, item),
+                magazineRelevance = isMagazine ? GuidevaultLaunchBoxStrategyScanner.MagazineEvidence(game, item) : "",
                 matchSource = entry.Source,
                 matchReason = entry.Reason,
                 coverThumbUrl = $"/api/items/{id}/cover-thumb?w=480",
@@ -1469,9 +1483,10 @@ app.MapGet("/api/integrations/launchbox/manual-match/items", (string? q, string?
     var filtered = cache.GetItemsSnapshot()
         .Where(GuidevaultLaunchBoxIsMatchableItem)
         .Where(item => string.IsNullOrWhiteSpace(matchType) || string.Equals(GuidevaultLaunchBoxMatcher.MatchTypeFromItem(item), matchType, StringComparison.OrdinalIgnoreCase))
-        .Where(item => GuidevaultLaunchBoxTextMatches(new[] { item.Title, item.GameTitle, item.ManualTitle, item.MagazineTitle, item.System, item.PrimarySystem, item.Category, item.Publisher, item.GamePublisher, item.Series, item.Year, item.GameReleaseYear, item.IssueNumber, item.Volume, item.CoverDate, item.PublicationDate, item.FileName, item.RelativePath }
+        .Where(item => GuidevaultLaunchBoxTextMatches(new[] { item.Title, item.GameTitle, item.ManualTitle, item.MagazineTitle, item.CoverSubject, item.System, item.PrimarySystem, item.Category, item.Publisher, item.GamePublisher, item.Series, item.Year, item.GameReleaseYear, item.IssueNumber, item.Volume, item.CoverDate, item.PublicationDate, item.FileName, item.RelativePath }
             .Concat(item.Tags ?? Array.Empty<string>())
             .Concat(item.FeaturedGames ?? Array.Empty<string>())
+            .Concat(item.MentionedGames ?? Array.Empty<string>())
             .Concat(item.CoveredGames ?? Array.Empty<string>())
             .Concat(item.AssociatedPlatforms ?? Array.Empty<string>())
             .Concat(item.FeaturedPlatforms ?? Array.Empty<string>()), query))
@@ -1507,6 +1522,9 @@ app.MapGet("/api/integrations/launchbox/manual-match/items", (string? q, string?
             pageCount = item.PageCount,
             tags = item.Tags,
             featuredGames = item.FeaturedGames,
+            mentionedGames = item.MentionedGames,
+            coverSubject = item.CoverSubject,
+            featuredPlatforms = item.FeaturedPlatforms,
             coveredGames = item.CoveredGames,
             coveredPlatforms = item.CoveredPlatforms,
             associatedPlatforms = item.AssociatedPlatforms,
@@ -4479,6 +4497,7 @@ static string LibraryItemSearchText(LibraryItem item) => string.Join(' ', new[]
     string.Join(' ', item.Tags ?? Array.Empty<string>()),
     string.Join(' ', item.AssociatedPlatforms ?? Array.Empty<string>()),
     string.Join(' ', item.FeaturedGames ?? Array.Empty<string>()),
+    string.Join(' ', item.MentionedGames ?? Array.Empty<string>()),
     string.Join(' ', item.FeaturedPlatforms ?? Array.Empty<string>()),
     string.Join(' ', item.CoveredGames ?? Array.Empty<string>()),
     string.Join(' ', item.CoveredPlatforms ?? Array.Empty<string>())
@@ -4921,6 +4940,7 @@ static IEnumerable<(string Label, string Value)> OpdsItemDetailRows(LibraryItem 
     AddIf(rows, "Guide Type", item.GuideType);
     AddIf(rows, "Edition", item.Edition);
     AddIf(rows, "Featured Games", JoinValues(item.FeaturedGames));
+    AddIf(rows, "Mentioned Games", JoinValues(item.MentionedGames));
     AddIf(rows, "Featured Platforms", JoinValues(item.FeaturedPlatforms));
     AddIf(rows, "Covered Games", JoinValues(item.CoveredGames ?? Array.Empty<string>()));
     AddIf(rows, "Covered Platforms", JoinValues(item.CoveredPlatforms ?? Array.Empty<string>()));
@@ -5088,6 +5108,7 @@ static string OpdsSearchText(LibraryItem item) => string.Join(" ", new[]
     item.PlatformFocus,
     string.Join(" ", item.Tags ?? Array.Empty<string>()),
     string.Join(" ", item.FeaturedGames ?? Array.Empty<string>()),
+    string.Join(" ", item.MentionedGames ?? Array.Empty<string>()),
     string.Join(" ", item.CoveredGames ?? Array.Empty<string>())
 });
 
@@ -5653,6 +5674,7 @@ static ItemMetadataUpdate CreateMetadataSnapshotForMove(LibraryItem item)
         CoverSubject: item.CoverSubject,
         BarcodeUpcIssn: item.BarcodeUpcIssn,
         FeaturedGames: item.FeaturedGames,
+        MentionedGames: item.MentionedGames,
         FeaturedPlatforms: item.FeaturedPlatforms,
         SpecialFeatures: item.SpecialFeatures,
         IncludedExtras: item.IncludedExtras,
@@ -8364,7 +8386,8 @@ public sealed class GuidevaultGameDossierStore
             item.ManualTitle, item.CoverSubject, item.LaunchBoxGameTitle
         }
         .Concat(item.CoveredGames ?? Array.Empty<string>())
-        .Concat(item.FeaturedGames ?? Array.Empty<string>());
+        .Concat(item.FeaturedGames ?? Array.Empty<string>())
+            .Concat(item.MentionedGames ?? Array.Empty<string>());
         return values.Select(NormalizeMatchText).Where(value => value.Length >= 3).Distinct(StringComparer.OrdinalIgnoreCase);
     }
 
@@ -9545,9 +9568,9 @@ public sealed class GuidevaultLaunchBoxIntegrationStore
     public (bool Success, int Applied, string Message) ApplyScopedStrategyBatchDecision(
         string platform, string action, IReadOnlyList<GuidevaultManualReviewPair> pairs,
         IReadOnlyList<LibraryItem> items, string reviewReason, string reviewNote,
-        IReadOnlyDictionary<string, string> proof)
+        IReadOnlyDictionary<string, string> proof, string matchType = "Strategy Guide")
     {
-        if (action is not ("approve" or "approve-reviewed" or "reject" or "needs-metadata" or "undo") ||
+        if (matchType is not ("Strategy Guide" or "Magazine") || action is not ("approve" or "approve-reviewed" or "reject" or "needs-metadata" or "undo") ||
             pairs.Count is < 1 or > 100)
             return (false, 0, "Invalid strategy-guide batch.");
         var note = (reviewNote ?? "").Trim().Replace('\r', ' ').Replace('\n', ' ');
@@ -9567,8 +9590,8 @@ public sealed class GuidevaultLaunchBoxIntegrationStore
         var rejectionLabel = reviewReason switch
         {
             "different-game" => "Different game despite same title",
-            "incompatible-release" => "Guide content not applicable to this release",
-            "incorrect-coverage" => "Incorrect Covered Games metadata",
+            "incompatible-release" => "Publication content not applicable to this release",
+            "incorrect-coverage" => matchType == "Magazine" ? "Incorrect Featured Games metadata" : "Incorrect Covered Games metadata",
             "other-rejection" => "Other verified mismatch",
             _ => string.Empty
         };
@@ -9592,20 +9615,20 @@ public sealed class GuidevaultLaunchBoxIntegrationStore
                     string.Equals(g.Id, pair.GameId, StringComparison.OrdinalIgnoreCase) &&
                     string.Equals(g.Platform, platform, StringComparison.OrdinalIgnoreCase));
                 if (game is null || !itemsById.TryGetValue(pair.PublicationId, out var item) ||
-                    !string.Equals(item.Kind, "Strategy Guide", StringComparison.OrdinalIgnoreCase))
-                    return (false, 0, "Game or strategy guide is no longer available; refresh the scan.");
+                    !string.Equals(item.Kind, matchType, StringComparison.OrdinalIgnoreCase))
+                    return (false, 0, "Game or publication is no longer available; refresh the scan.");
                 var existing = _data.Matches.Where(m =>
                     string.Equals(m.LaunchBoxGameId, game.Id, StringComparison.OrdinalIgnoreCase) &&
                     string.Equals(m.GuideVaultItemId, item.Id, StringComparison.OrdinalIgnoreCase) &&
-                    string.Equals(m.MatchType, "Strategy Guide", StringComparison.OrdinalIgnoreCase)).ToArray();
-                if (existing.Length > 1) return (false, 0, "Duplicate stored guide decisions exist; investigate before proceeding.");
+                    string.Equals(m.MatchType, matchType, StringComparison.OrdinalIgnoreCase)).ToArray();
+                if (existing.Length > 1) return (false, 0, "Duplicate stored publication decisions exist; investigate before proceeding.");
                 if (action == "undo")
                 {
                     if (existing.Length != 1 || existing[0].MatchStatus is not ("Confirmed" or "AutoMatched" or "Rejected" or "NeedsMetadata"))
-                        return (false, 0, "A selected guide decision cannot be undone; refresh the queue.");
+                        return (false, 0, "A selected publication decision cannot be undone; refresh the queue.");
                 }
                 else if (existing.Length != 0)
-                    return (false, 0, "One selected guide already has a decision. Refresh the queue.");
+                    return (false, 0, "One selected publication already has a decision. Refresh the queue.");
                 changes.Add((game, item, existing.FirstOrDefault()));
             }
             var before = _data.Matches.Select(GuidevaultLaunchBoxMatcher.CloneMatch).ToList();
@@ -9627,17 +9650,17 @@ public sealed class GuidevaultLaunchBoxIntegrationStore
                     var key = game.Id + "\u001F" + item.Id;
                     var scanEvidence = proof.TryGetValue(key, out var scanReason) ? scanReason : "Coverage proposal";
                     var explanation = action == "approve-reviewed"
-                        ? $"Human-reviewed strategy-guide association ({reasonLabel}). Scan: {scanEvidence}." +
+                        ? $"Human-reviewed {matchType} association ({reasonLabel}). Scan: {scanEvidence}." +
                           (note.Length > 0 ? $" Reviewer note: {note}" : "")
                         : action == "approve"
-                            ? $"Approved Strong strategy-guide proposal. Scan: {scanEvidence}."
+                            ? $"Approved Strong {matchType} proposal. Scan: {scanEvidence}."
                             : action == "reject"
                                 ? $"Not a Match ({rejectionLabel}). Scan: {scanEvidence}." +
                                   (note.Length > 0 ? $" Reviewer note: {note}" : "")
                                 : $"Needs publication metadata verification. Scan: {scanEvidence}.";
-                    var match = GuidevaultLaunchBoxMatcher.CreateMatch(game, item, "Strategy Guide", status, 0, explanation);
+                    var match = GuidevaultLaunchBoxMatcher.CreateMatch(game, item, matchType, status, 0, explanation);
                     match.PreviousMatchStatus = "Missing";
-                    match.Source = "StrategyReviewed";
+                    match.Source = matchType == "Magazine" ? "MagazineReviewed" : "StrategyReviewed";
                     _data.Matches.Add(match);
                 }
                 Save();
@@ -9649,10 +9672,10 @@ public sealed class GuidevaultLaunchBoxIntegrationStore
             }
             return (true, changes.Count, action switch
             {
-                "undo" => $"Undid {changes.Count} strategy-guide decisions.",
-                "reject" => $"Rejected {changes.Count} game/guide pairs.",
+                "undo" => $"Undid {changes.Count} {matchType} decisions.",
+                "reject" => $"Rejected {changes.Count} game/{matchType} pairs.",
                 "needs-metadata" => $"Flagged {changes.Count} pairs for metadata review.",
-                _ => $"Approved {changes.Count} game/guide pairs."
+                _ => $"Approved {changes.Count} game/{matchType} pairs."
             });
         }
     }
@@ -11037,13 +11060,12 @@ public static class GuidevaultLaunchBoxMatcher
             titles.Contains(NormalizeTitle(item.Title));
     }
 
-    // Featured Games must be a true game-title association, not simply the name
+    // Cover or featured coverage must be a true game-title association, not simply the name
     // of a magazine, a shared platform, or a broad series/category match.
     public static bool MagazineFeaturesGame(GuidevaultLaunchBoxGame game, LibraryItem magazine)
     {
         if (!string.Equals(magazine.Kind, "Magazine", StringComparison.OrdinalIgnoreCase)) return false;
-        var titles = new[] { game.Title, game.SortTitle }.Concat(game.AlternateNames ?? new List<string>());
-        return TitleListContainsGameTitle(titles, magazine.FeaturedGames);
+        return GuidevaultLaunchBoxStrategyScanner.MagazineEvidence(game, magazine) is "Cover Game / Subject" or "Featured Games";
     }
 
     public static bool IsActiveMatchStatus(string? status) => string.Equals(status, "AutoMatched", StringComparison.OrdinalIgnoreCase) || string.Equals(status, "Confirmed", StringComparison.OrdinalIgnoreCase);
@@ -11132,6 +11154,15 @@ public static class GuidevaultLaunchBoxMatcher
 
     private static GuidevaultLaunchBoxCandidateScore ScoreCandidate(GuidevaultLaunchBoxGame game, LibraryItem item, string matchType)
     {
+        if (string.Equals(matchType, "Magazine", StringComparison.OrdinalIgnoreCase))
+        {
+            var evidence = GuidevaultLaunchBoxStrategyScanner.MagazineEvidence(game, item);
+            if (evidence.Length == 0) return new GuidevaultLaunchBoxCandidateScore(item, 0, "No explicit magazine game coverage.");
+            // Magazine links in the controlled workspace require user approval. Legacy rematch
+            // also emits review-only candidates, ordered by editorial relevance.
+            var magazineScore = evidence == "Cover Game / Subject" ? 74 : evidence == "Featured Games" ? 65 : 55;
+            return new GuidevaultLaunchBoxCandidateScore(item, magazineScore, evidence + "; verify Featured Platforms and issue content before linking.");
+        }
         var reasons = new List<string>();
         double score = 0;
         // Candidate scoring only affects automatic suggestions. Explicitly
@@ -11151,24 +11182,11 @@ public static class GuidevaultLaunchBoxMatcher
         if (HasExplicitEditionConflict(game, item))
             return new GuidevaultLaunchBoxCandidateScore(item, 0,
                 "Explicit edition mismatch; manual confirmation required.");
-        // Magazines must specifically list this game in Featured Games. A shared
-        // series, publisher, release year, or similar issue title is not enough.
-        if (string.Equals(matchType, "Magazine", StringComparison.OrdinalIgnoreCase) &&
-            !TitleListContainsGameTitle(gameTitles, item.FeaturedGames))
-            return new GuidevaultLaunchBoxCandidateScore(item, 0,
-                "Magazine does not explicitly feature this game.");
-
         if (string.Equals(matchType, "Strategy Guide", StringComparison.OrdinalIgnoreCase) && TitleListContainsGameTitle(gameTitles, item.CoveredGames))
         {
             score = Math.Max(score, 92);
             reasons.Add("covered game");
         }
-        else if (string.Equals(matchType, "Magazine", StringComparison.OrdinalIgnoreCase) && TitleListContainsGameTitle(gameTitles, item.FeaturedGames))
-        {
-            score = Math.Max(score, 88);
-            reasons.Add("featured game");
-        }
-
         var exactTitle = gameTitles.FirstOrDefault(gt => itemTitles.Any(it => string.Equals(gt, it, StringComparison.OrdinalIgnoreCase)));
         if (!string.IsNullOrWhiteSpace(exactTitle))
         {
@@ -11209,11 +11227,9 @@ public static class GuidevaultLaunchBoxMatcher
         // Treat mere similarity (even with same publisher/year/platform) as review-only.
         bool exactCovered = string.Equals(matchType, "Strategy Guide", StringComparison.OrdinalIgnoreCase) &&
             TitleListContainsGameTitle(gameTitles, item.CoveredGames);
-        bool exactFeatured = string.Equals(matchType, "Magazine", StringComparison.OrdinalIgnoreCase) &&
-            TitleListContainsGameTitle(gameTitles, item.FeaturedGames);
         bool exactPath = !string.IsNullOrWhiteSpace(game.ManualPath) &&
             PathsLikelyMatch(game.ManualPath, item.Path);
-        if (string.IsNullOrWhiteSpace(exactTitle) && !exactCovered && !exactFeatured && !exactPath)
+        if (string.IsNullOrWhiteSpace(exactTitle) && !exactCovered && !exactPath)
             score = Math.Min(score, 74);
         // Manuals and strategy guides require platform confirmation for automatic
         // linking, except when the existing full manual path is identical.
@@ -11263,6 +11279,10 @@ public static class GuidevaultLaunchBoxMatcher
         // A publication series is useful metadata but not a specific game title.
         foreach (var covered in item.CoveredGames ?? Array.Empty<string>()) yield return covered;
         foreach (var featured in item.FeaturedGames ?? Array.Empty<string>()) yield return featured;
+        if (KindEquals(item, "Magazine"))
+        {
+            foreach (var title in GuidevaultLaunchBoxStrategyScanner.MagazineTitles(item).Select(x => x.Title)) yield return title;
+        }
     }
 
     private static bool TitleListContainsGameTitle(IEnumerable<string> gameTitles, IEnumerable<string>? itemGameTitles)
@@ -11691,6 +11711,7 @@ public sealed class GuidevaultManualBatchReviewRequest
 // GUIDEVAULT_STRATEGY_DISPOSITIONS_V24
 public sealed class GuidevaultStrategyDecisionRequest
 {
+    public string MatchType { get; set; } = "Strategy Guide";
     public string Platform { get; set; } = string.Empty;
     public string Action { get; set; } = string.Empty;
     public string StatusFilter { get; set; } = "pending";
@@ -14358,7 +14379,8 @@ public sealed record LibraryItem(
     string LaunchBoxMatchStatus = "",
     string LaunchBoxMatchSource = "",
     string LaunchBoxMatchedAt = "",
-    Dictionary<string, MetadataFieldLock>? MetadataLocks = null);
+    Dictionary<string, MetadataFieldLock>? MetadataLocks = null,
+    string[]? MentionedGames = null);
 
 public sealed record MetadataFieldLock(
     bool Locked = true,
@@ -14401,6 +14423,7 @@ public sealed record ItemMetadataUpdate(
     string? CoverSubject = null,
     string? BarcodeUpcIssn = null,
     string[]? FeaturedGames = null,
+    string[]? MentionedGames = null,
     string[]? FeaturedPlatforms = null,
     string[]? SpecialFeatures = null,
     string[]? IncludedExtras = null,
@@ -14498,6 +14521,7 @@ public static class ItemMetadataJsonReader
             CoverSubject: coverSubject,
             BarcodeUpcIssn: FirstText(GetString(payload, "barcodeUpcIssn"), GetString(payload, "barcode"), GetString(payload, "upc"), GetString(payload, "issn")),
             FeaturedGames: GetStringArray(payload, "featuredGames"),
+            MentionedGames: GetStringArray(payload, "mentionedGames"),
             FeaturedPlatforms: GetStringArray(payload, "featuredPlatforms"),
             SpecialFeatures: GetStringArray(payload, "specialFeatures"),
             IncludedExtras: GetStringArray(payload, "includedExtras"),
@@ -15138,6 +15162,7 @@ public static class MetadataLockHelper
             CoverSubject: S("coverSubject", update.CoverSubject, "coverStory"),
             BarcodeUpcIssn: S("barcodeUpcIssn", update.BarcodeUpcIssn, "barcode", "upc", "issn"),
             FeaturedGames: A("featuredGames", update.FeaturedGames),
+            MentionedGames: A("mentionedGames", update.MentionedGames),
             FeaturedPlatforms: A("featuredPlatforms", update.FeaturedPlatforms),
             SpecialFeatures: A("specialFeatures", update.SpecialFeatures, "sections"),
             IncludedExtras: A("includedExtras", update.IncludedExtras, "physicalExtras", "insertDetails"),
@@ -15246,6 +15271,7 @@ public sealed class MetadataStore
                 CoverSubject = kind == "Magazine" ? First(o.CoverSubject, item.CoverSubject) : string.Empty,
                 BarcodeUpcIssn = kind == "Magazine" ? First(o.BarcodeUpcIssn, item.BarcodeUpcIssn) : string.Empty,
                 FeaturedGames = kind == "Magazine" && o.FeaturedGames is not null ? CleanDistinct(o.FeaturedGames) : item.FeaturedGames,
+                MentionedGames = kind == "Magazine" && o.MentionedGames is not null ? CleanDistinct(o.MentionedGames) : item.MentionedGames,
                 FeaturedPlatforms = kind == "Magazine" && o.FeaturedPlatforms is not null ? CleanDistinct(o.FeaturedPlatforms) : item.FeaturedPlatforms,
                 SpecialFeatures = (kind == "Magazine" || kind == "Strategy Guide" || kind == "Manual") && o.SpecialFeatures is not null ? CleanDistinct(o.SpecialFeatures) : item.SpecialFeatures,
                 IncludedExtras = (kind == "Magazine" || kind == "Strategy Guide" || kind == "Manual") && o.IncludedExtras is not null ? CleanDistinct(o.IncludedExtras) : item.IncludedExtras,
@@ -15328,6 +15354,7 @@ public sealed class MetadataStore
             CoverSubject = kind == "Magazine" ? Keep(update.CoverSubject, item.CoverSubject) : item.CoverSubject,
             BarcodeUpcIssn = kind == "Magazine" ? Keep(update.BarcodeUpcIssn, item.BarcodeUpcIssn) : item.BarcodeUpcIssn,
             FeaturedGames = kind == "Magazine" && update.FeaturedGames is not null ? CleanDistinct(update.FeaturedGames) : item.FeaturedGames,
+            MentionedGames = kind == "Magazine" && update.MentionedGames is not null ? CleanDistinct(update.MentionedGames) : item.MentionedGames,
             FeaturedPlatforms = kind == "Magazine" && update.FeaturedPlatforms is not null ? CleanDistinct(update.FeaturedPlatforms) : item.FeaturedPlatforms,
             SpecialFeatures = (kind == "Magazine" || kind == "Strategy Guide" || kind == "Manual") && update.SpecialFeatures is not null ? CleanDistinct(update.SpecialFeatures) : item.SpecialFeatures,
             IncludedExtras = (kind == "Magazine" || kind == "Strategy Guide" || kind == "Manual") && update.IncludedExtras is not null ? CleanDistinct(update.IncludedExtras) : item.IncludedExtras,
@@ -15509,6 +15536,7 @@ public sealed class MetadataStore
             CoverSubject: update.CoverSubject ?? existing?.CoverSubject,
             BarcodeUpcIssn: update.BarcodeUpcIssn ?? existing?.BarcodeUpcIssn,
             FeaturedGames: update.FeaturedGames ?? existing?.FeaturedGames,
+            MentionedGames: update.MentionedGames ?? existing?.MentionedGames,
             FeaturedPlatforms: update.FeaturedPlatforms ?? existing?.FeaturedPlatforms,
             SpecialFeatures: update.SpecialFeatures ?? existing?.SpecialFeatures,
             IncludedExtras: update.IncludedExtras ?? existing?.IncludedExtras,
@@ -16459,6 +16487,7 @@ public sealed class LibraryCache
                     MagazineCategory: merged.MagazineCategory,
                     CoverSubject: merged.CoverSubject,
                     FeaturedGames: merged.FeaturedGames ?? [],
+                    MentionedGames: merged.MentionedGames ?? cached?.MentionedGames ?? [],
                     FeaturedPlatforms: merged.FeaturedPlatforms ?? [],
                     SpecialFeatures: merged.SpecialFeatures ?? [],
                     IncludedExtras: merged.IncludedExtras ?? [],
@@ -16652,6 +16681,7 @@ public sealed record InferredMetadata(
     string MagazineCategory = "",
     string CoverSubject = "",
     string[]? FeaturedGames = null,
+    string[]? MentionedGames = null,
     string[]? FeaturedPlatforms = null,
     string[]? SpecialFeatures = null,
     string[]? IncludedExtras = null,
@@ -16793,6 +16823,7 @@ public static class MetadataInferer
                 MagazineCategory: magazineCategory,
                 CoverSubject: coverSubject,
                 FeaturedGames: [],
+                MentionedGames: [],
                 FeaturedPlatforms: featuredPlatforms,
                 SpecialFeatures: specialFeatures,
                 IncludedExtras: includedExtras);
@@ -17012,6 +17043,7 @@ public static class MetadataInferer
             MagazineCategory = inferred.Kind == "Magazine" ? magazineCategory : string.Empty,
             CoverSubject = inferred.Kind == "Magazine" ? coverSubject : string.Empty,
             FeaturedGames = inferred.Kind == "Magazine" ? featuredGames : [],
+            MentionedGames = inferred.Kind == "Magazine" ? (inferred.MentionedGames ?? []) : [],
             FeaturedPlatforms = inferred.Kind == "Magazine" ? featuredPlatforms : [],
             SpecialFeatures = inferred.Kind == "Magazine" ? specialFeatures : [],
             IncludedExtras = inferred.Kind == "Magazine" || inferred.Kind == "Strategy Guide" || inferred.Kind == "Manual" ? includedExtras : [],
@@ -17925,6 +17957,9 @@ public static class GuidevaultNativeMetadata
             Put(metadata, "coverSubject", First(update.CoverSubject, item.CoverSubject));
             Put(metadata, "barcodeUpcIssn", First(update.BarcodeUpcIssn, item.BarcodeUpcIssn));
             Put(metadata, "featuredGames", update.FeaturedGames ?? item.FeaturedGames);
+            // Keep an explicitly empty list so clearing mentions survives export/reimport.
+            if ((update.MentionedGames ?? item.MentionedGames) is { } mentionedGames)
+                metadata["mentionedGames"] = mentionedGames.Where(v => !string.IsNullOrWhiteSpace(v)).Select(v => v.Trim()).Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
             Put(metadata, "featuredPlatforms", update.FeaturedPlatforms ?? item.FeaturedPlatforms);
             Put(metadata, "specialFeatures", update.SpecialFeatures ?? item.SpecialFeatures);
             Put(metadata, "includedExtras", update.IncludedExtras ?? item.IncludedExtras);
@@ -22250,5 +22285,5 @@ static class GuidevaultLibraryIoGate
 
 static class GuidevaultBuildInfo
 {
-    public const string Version = "1.3.1";
+    public const string Version = "1.3.2";
 }
