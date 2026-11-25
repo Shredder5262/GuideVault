@@ -6,7 +6,10 @@ using System.Text.RegularExpressions;
 public static class GuidevaultMagazineContentScanner
 {
     public sealed record Suggestion(string Field, string Value, int Page, string Evidence, string Confidence);
-    public sealed record ScanResult(int TotalPages, int Start, int Scanned, int ReadablePages, List<Suggestion> Suggestions, List<string> Warnings);
+    public sealed record ScanResult(int TotalPages, int Start, int Scanned, int ReadablePages, List<Suggestion> Suggestions, List<string> Warnings)
+    {
+        public string ScannerRevision => "v2.2";
+    }
     private static readonly SemaphoreSlim Gate = new(1, 1);
     private static readonly Regex Words = new(@"[\p{L}\p{N}]+", RegexOptions.Compiled);
     private static readonly Regex YearPattern = new(@"\b(?:19|20)\d{2}\b", RegexOptions.Compiled);
@@ -87,25 +90,46 @@ public static class GuidevaultMagazineContentScanner
     private static int ParsePdfPages(string text) => int.TryParse(Regex.Match(text, @"(?im)^Pages:\s*(\d+)").Groups[1].Value, out int n) ? n : 0;
     private static int GetYear(string value) => int.TryParse(YearPattern.Match(value ?? "").Value, out int n) ? n : 0;
     private static string Normalize(string value) => string.Join(" ", Words.Matches(value ?? "").Select(m => m.Value.ToLowerInvariant()));
-    private static Dictionary<string, string> BuildDictionary(IEnumerable<GuidevaultLaunchBoxGame> games, int year)
+    // Exact catalog names outrank aliases. Alias matches preserve the printed name;
+    // do not silently rename an article to a different regional or unrelated game.
+    private sealed record CatalogTitle(string Display, bool Alias);
+    private static Dictionary<string, CatalogTitle> BuildDictionary(IEnumerable<GuidevaultLaunchBoxGame> games, int year)
     {
-        var names = new Dictionary<string, HashSet<string>>(StringComparer.Ordinal);
+        var exact = new Dictionary<string, HashSet<string>>(StringComparer.Ordinal);
+        var aliases = new Dictionary<string, List<(string Alias, string Owner)>>(StringComparer.Ordinal);
         foreach (var game in games)
         {
             int release = GetYear(game.ReleaseYear);
             if (year > 0 && release > year + 2) continue;
             if (string.IsNullOrWhiteSpace(game.Title)) continue;
-            foreach (var alias in new[] { game.Title }.Concat(game.AlternateNames ?? new()))
+            string title = game.Title.Trim();
+            string key = Normalize(title);
+            if (Usable(key))
             {
-                string key = Normalize(alias);
-                if (key.Length < 4 || key.Split(' ').Length > 9) continue;
-                if (!names.TryGetValue(key, out var values)) names[key] = values = new(StringComparer.OrdinalIgnoreCase);
-                values.Add(game.Title);
+                if (!exact.TryGetValue(key, out var values)) exact[key] = values = new(StringComparer.OrdinalIgnoreCase);
+                values.Add(title);
+            }
+            foreach (var alias in game.AlternateNames ?? new())
+            {
+                string aliasKey = Normalize(alias);
+                if (!Usable(aliasKey) || aliasKey == key) continue;
+                if (!aliases.TryGetValue(aliasKey, out var values)) aliases[aliasKey] = values = new();
+                values.Add((alias.Trim(), title));
             }
         }
-        return names.Where(x => x.Value.Count == 1).ToDictionary(x => x.Key, x => x.Value.First(), StringComparer.Ordinal);
+        var result = new Dictionary<string, CatalogTitle>(StringComparer.Ordinal);
+        foreach (var (key, values) in exact)
+            if (values.Count == 1) result[key] = new(values.First(), false);
+        foreach (var (key, values) in aliases)
+        {
+            // Even an ambiguous exact name must never fall through to an alias.
+            if (exact.ContainsKey(key) || values.Select(v => v.Owner).Distinct(StringComparer.OrdinalIgnoreCase).Count() != 1) continue;
+            result[key] = new(values.Select(v => v.Alias).OrderBy(v => v, StringComparer.Ordinal).First(), true);
+        }
+        return result;
+        static bool Usable(string key) => key.Length >= 4 && key.Split(' ').Length <= 9;
     }
-    private static void AnalyzePage(LibraryItem item, Dictionary<string, string> dictionary, string text, int page, List<Suggestion> suggestions)
+    private static void AnalyzePage(LibraryItem item, Dictionary<string, CatalogTitle> dictionary, string text, int page, List<Suggestion> suggestions)
     {
         var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         void Add(string field, string value, string evidence, string confidence = "Review")
@@ -171,6 +195,8 @@ public static class GuidevaultMagazineContentScanner
         foreach (string line in lines)
         {
             if (IsLegal(line) || likelyAd) continue;
+            // Contest slogans and submission instructions are not game coverage.
+            if (!toc && Regex.IsMatch(line, @"\b(?:grand prize|send (?:your )?entries|sweepstakes|win this|no purchase necessary|(?:cd|poster) contest)\b", RegexOptions.IgnoreCase)) continue;
             var originalTokens = Words.Matches(line).Select(m => m.Value).ToArray();
             var tokens = originalTokens.Select(x => x.ToLowerInvariant()).ToArray();
             if (tokens.Length == 0) continue;
@@ -186,7 +212,15 @@ public static class GuidevaultMagazineContentScanner
                     string key = string.Join(" ", tokens, i, n);
                     if (n == 1 && key != headingKey) continue; // Avoid common-word titles in prose.
                     if (n == 1 && !(page == 1 || heading)) continue;
-                    if (!dictionary.TryGetValue(key, out var game)) continue;
+                    if (!dictionary.TryGetValue(key, out var matchTitle)) continue;
+                    string game = matchTitle.Display;
+                    // Do not interpret common instructions as short game titles.
+                    if (!contentsListing && key == "pick up" && i + n < tokens.Length && Regex.IsMatch(tokens[i+n], @"^(?:all|the|a|an|your|any|some|each|every|items?|objects?|coins?)$")) continue;
+                    // Franchise references are not necessarily references to the original game.
+                    if (!contentsListing && i + n < tokens.Length && Regex.IsMatch(tokens[i+n], @"^(?:saga|franchise|series|universe)$")) continue;
+                    // Short aliases need a heading, a list entry, or explicit game context.
+                    if (matchTitle.Alias && n <= 2 && key != headingKey && !contentsListing && page != 1 &&
+                        !Regex.IsMatch(line, @"\b(?:game|review|preview|version|cheat|code|password|released?|play(?:ed|ing)?|for (?:the )?(?:SNES|NES|Genesis|Game Boy|3DO|Sega CD))\b", RegexOptions.IgnoreCase)) continue;
                     // Do not match an unrecognized sequel as its base game.
                     if (i + n < tokens.Length && Regex.IsMatch(tokens[i+n], @"^(?:\d{1,2}|ii|iii|iv|v|vi|vii|viii|ix|x)$", RegexOptions.IgnoreCase)
                         && !(heading && i + n == tokens.Length - 1 && Regex.IsMatch(tokens[i+n], @"^\d+$"))) continue;
@@ -195,8 +229,8 @@ public static class GuidevaultMagazineContentScanner
                     if (matched.Add(game))
                     {
                         if (page == 1 && key == headingKey) coverGames.Add(game);
-                        else if (page > 1 && contentsListing) Add("featuredGames", game, line, "Contents listing (review editorial relevance)");
-                        else Add("mentionedGames", game, line, "Text match");
+                        else if (page > 1 && contentsListing) Add("featuredGames", game, line, matchTitle.Alias ? "Contents alias (review printed title)" : "Contents listing (review editorial relevance)");
+                        else Add("mentionedGames", game, line, matchTitle.Alias ? "Catalog alias (printed name retained; review)" : "Text match");
                     }
                     i += n - 1; break;
                 }

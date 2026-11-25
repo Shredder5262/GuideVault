@@ -18669,7 +18669,7 @@ function gvMagazineScanDialog(items, fromDetail = false, inlineHost = null) {
   if (!items.length || items.length > 5) { metadataManagerSetStatus('Select 1–5 magazine issues per scan.','error'); return; }
   const dialog = document.createElement(inlineHost ? 'div' : 'dialog');
   dialog.className = inlineHost ? 'gv-magscan-inline' : 'gv-magscan-dialog';
-  dialog.innerHTML = `<div class="gv-magscan-content"><h2>Scan magazine metadata</h2><p class="sub">${items.length} issue(s). Local OCR and LaunchBox title lookup. Nothing is saved automatically.</p><label>Scan scope <select data-scan-scope><option value="12">First 12 pages (cover, contents, masthead)</option><option value="300">Full issue (up to 300 pages)</option></select></label><p class="sub" data-scan-status aria-live="polite">Start a scan to review suggested fields. English OCR; game mentions and platform references may include ads. Titles containing list separators are omitted from automatic list proposals; review evidence.</p><progress data-scan-progress value="0" max="1"></progress><div data-scan-results></div><div class="gv-magscan-actions"><button class="ghost" type="button" data-scan-close>Close</button><button class="ghost" type="button" data-scan-stop hidden>Stop</button><button class="primary" type="button" data-scan-start>Start scan</button><button class="primary" type="button" data-scan-stage disabled>Stage selected suggestions</button></div></div>`;
+  dialog.innerHTML = `<div class="gv-magscan-content"><h2>Scan magazine metadata</h2><p class="sub">${items.length} issue(s). Scanner UI v2.2 — Local OCR and LaunchBox title lookup. Nothing is saved automatically.</p><label>Scan scope <select data-scan-scope><option value="12">First 12 pages (cover, contents, masthead)</option><option value="300">Full issue (up to 300 pages)</option></select></label><p class="sub" data-scan-status aria-live="polite">Start a scan to review suggested fields. English OCR; game mentions and platform references may include ads. Titles containing list separators are omitted from automatic list proposals; review evidence.</p><progress data-scan-progress value="0" max="1"></progress><div data-scan-results></div><div class="gv-magscan-actions"><button class="ghost" type="button" data-scan-close>Close</button><button class="ghost" type="button" data-scan-stop hidden>Stop</button><button class="primary" type="button" data-scan-start>Start scan</button><button class="primary" type="button" data-scan-stage disabled>Stage selected suggestions</button></div></div>`;
   (inlineHost || document.body).appendChild(dialog);
   const q = s => dialog.querySelector(s);
   const session = { controller:null, running:false, rows:[], dialog, inline:!!inlineHost, itemId:metadataManagerItemId(items[0]) };
@@ -18686,8 +18686,13 @@ function gvMagazineScanDialog(items, fromDetail = false, inlineHost = null) {
     const root = q('[data-scan-results]'); root.innerHTML = '';
     session.rows.forEach((row, rowIndex) => {
       const block = document.createElement('section'); block.className = 'gv-magscan-result';
-      block.innerHTML = `<h3>${escapeHtml(metadataManagerItemName(row.item))}</h3><p class="sub">${row.readable} of ${row.scanned} scanned pages yielded text; ${row.total || '?'} total pages. ${row.complete ? 'Scan scope completed.' : 'Partial scan.'}</p>`;
-      if (row.warnings.length) { const w = document.createElement('details'); w.innerHTML = `<summary>${row.warnings.length} scan warning(s)</summary><p>${row.warnings.map(escapeHtml).join('<br>')}</p>`; block.appendChild(w); }
+      block.innerHTML = `<h3>${escapeHtml(metadataManagerItemName(row.item))}</h3><p class="sub">${row.readable} of ${row.scanned} scanned pages yielded text; ${row.total || '?'} total pages. ${row.complete ? 'Scan scope completed.' : 'Partial scan.'} Backend scanner: ${escapeHtml(row.revision||'not reported')}.</p>`;
+      const coverNames=[...new Set(row.suggestions.filter(x=>x.field==='coverSubject').map(x=>x.value))];
+      const existingCover=String(row.item.coverSubject||'').trim();
+      const coverConflict=coverNames.length>1 || (existingCover && coverNames.some(v=>v.toLowerCase()!==existingCover.toLowerCase()));
+      const reviewWarnings=[...row.warnings];
+      if(coverConflict) reviewWarnings.push(`Cover headings detected: ${coverNames.join(', ')}. ${existingCover?'Existing cover subject retained: '+existingCover+'. ':''}OCR headings do not establish the primary cover story; edit Metadata after checking the cover.`);
+      if (reviewWarnings.length) { const w = document.createElement('details'); w.innerHTML = `<summary>${reviewWarnings.length} scan warning(s)</summary><p>${reviewWarnings.map(escapeHtml).join('<br>')}</p>`; block.appendChild(w); }
       const proposals = gvMagazineScanProposals(row);
       if (!proposals.length) { const p = document.createElement('p'); p.textContent = 'No new editable suggestions found.'; block.appendChild(p); }
       for (const proposal of proposals) {
@@ -18721,7 +18726,10 @@ function gvMagazineScanDialog(items, fromDetail = false, inlineHost = null) {
             q('[data-scan-status]').textContent = `Scanning issue ${i+1}/${items.length}: ${metadataManagerItemName(item)} — page ${start+1}${row.total ? ' of '+Math.min(scope,row.total) : ''}`;
             const res=await fetch(`/api/items/${encodeURIComponent(id)}/magazine-scan?start=${start}&count=${Math.min(3,scope-start)}`,{method:'POST',signal:session.controller.signal});
             if (!res.ok) { let msg=`HTTP ${res.status}`; try { msg=(await res.json()).error||msg; } catch {} throw new Error(msg); }
-            const data=await res.json(); row.total=data.totalPages; row.scanned+=data.scanned; row.readable+=data.readablePages; row.suggestions.push(...(data.suggestions||[])); row.warnings.push(...(data.warnings||[]));
+            const data=await res.json();
+            row.revision=String(data.scannerRevision||'not reported');
+            if(row.revision!=='v2.2') { row.suggestions=[]; throw new Error(`Scanner backend revision ${row.revision}; expected v2.2. Deploy the matching image and reload before scanning.`); }
+            row.total=data.totalPages; row.scanned+=data.scanned; row.readable+=data.readablePages; row.suggestions.push(...(data.suggestions||[])); row.warnings.push(...(data.warnings||[]));
             if (!data.scanned) break; start+=data.scanned; progress.value=i+Math.min(1,start/Math.min(scope,row.total));
           } while(start<Math.min(scope,row.total));
           row.complete=start>=Math.min(scope,row.total); if (row.total>scope) row.warnings.push(`Only first ${scope} of ${row.total} pages scanned; game coverage is incomplete.`);
@@ -18752,14 +18760,25 @@ function gvMagazineScanProposals(row) {
   const fields=new Map(); const id=metadataManagerItemId(row.item), dirty=state.metadataManager.dirty[id]||{};
   function add(x) { if(!fields.has(x.field)) fields.set(x.field,[]); const a=fields.get(x.field); if(!a.some(y=>y.value===x.value&&y.page===x.page)) a.push(x); }
   row.suggestions.forEach(add);
-  const covered=new Set([...itemArray(row.item.featuredGames),...((fields.get('featuredGames')||[]).map(x=>x.value)),row.item.coverSubject,...((new Set((fields.get('coverSubject')||[]).map(x=>x.value)).size===1)?(fields.get('coverSubject')||[]).map(x=>x.value):[])].filter(Boolean).map(x=>String(x).toLowerCase()));
+  const covered=new Set([...itemArray(row.item.featuredGames),...((fields.get('featuredGames')||[]).map(x=>x.value)),row.item.coverSubject,...((!String(dirty.coverSubject??row.item.coverSubject??'').trim()&&new Set((fields.get('coverSubject')||[]).map(x=>x.value)).size===1)?(fields.get('coverSubject')||[]).map(x=>x.value):[])].filter(Boolean).map(x=>String(x).toLowerCase()));
   if(fields.has('mentionedGames')) fields.set('mentionedGames',fields.get('mentionedGames').filter(x=>!covered.has(x.value.toLowerCase())));
   const concretePlatform = v => !/^(?:multi[ -]?platform|unknown|unspecified|not specified)$/i.test(String(v).trim());
   const platforms=[...new Set([...itemArray(row.item.featuredPlatforms),...((fields.get('featuredPlatforms')||[]).map(x=>x.value))].filter(concretePlatform))];
   if((fields.get('featuredPlatforms')||[]).length && platforms.length) add({field:'primarySystem',value:platforms.length>1?'Multi-platform':platforms[0],page:0,evidence:'Inferred from concrete editorial platform references; not proof of primary audience.'});
   const cover=fields.get('coverSubject')||[], featured=fields.get('featuredGames')||[];
+  const coverValues=[...new Set(cover.map(x=>x.value))];
+  const existingCover=String(dirty.coverSubject??row.item.coverSubject??'').trim();
+  if(coverValues.length>1 || (existingCover && coverValues.some(v=>v.toLowerCase()!==existingCover.toLowerCase()))) fields.delete('coverSubject');
+  const acceptedCover=existingCover||((fields.get('coverSubject')||[]).length===1?coverValues[0]:'');
   const titles=[...new Set(featured.map(x=>x.value))].slice(0,8);
-  if(cover.length||titles.length) add({field:'summary',value:`${row.item.magazineTitle||row.item.title||'Magazine'}${row.item.issueNumber?' issue #'+row.item.issueNumber:''}.${cover.length===1?' Possible cover subject: '+cover[0].value+'.':''}${titles.length?' Contents headings include '+titles.join(', ')+'.':''}`,page:0,evidence:'Draft generated from scan evidence; review wording.'});
+  const currentSummary=String(dirty.summary??metadataManagerFieldValue(row.item,'summary')??'').trim();
+  if(titles.length){
+    const sentence=`Contents headings include ${titles.join(', ')}.`;
+    if(!currentSummary.includes(sentence)){
+      const base=currentSummary||`${row.item.magazineTitle||row.item.title||'Magazine'}${row.item.issueNumber?' issue #'+row.item.issueNumber:''}${row.item.coverDate?' ('+row.item.coverDate+')':''}.${acceptedCover?' Cover subject: '+acceptedCover+'.':''}`;
+      add({field:'summary',value:`${base}${/[.!?]$/.test(base)?' ':'. '}${sentence}`,page:0,evidence:'Existing description retained; appended scan-supported contents headings. Review wording.'});
+    }
+  }
   const result=[];
   for(const [field,evidence] of fields) {
     if(!evidence.length||!metadataManagerFieldsForKind('Magazine').has(field)||METADATA_MANAGER_READONLY_COLUMNS.has(field)) continue;
