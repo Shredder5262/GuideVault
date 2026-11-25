@@ -22879,3 +22879,11 @@ body.guidevault-direct-reader-pending:not(.auth-locked) #guidevaultDirectReaderL
 #settingsMetadataManagerPanel #metadataManagerStatus:empty{display:none}
 @media(max-width:1150px){#settingsMetadataManagerPanel .metadata-manager-filter-grid{grid-template-columns:repeat(3,minmax(0,1fr))!important}}
 @media(max-width:650px){#settingsMetadataManagerPanel .metadata-manager-summary{grid-template-columns:repeat(2,minmax(0,1fr))!important}#settingsMetadataManagerPanel .metadata-manager-filter-grid{grid-template-columns:repeat(2,minmax(0,1fr))!important}#settingsMetadataManagerPanel .metadata-manager-batch-grid,#settingsMetadataManagerPanel .metadata-manager-column-picker{grid-template-columns:1fr!important}}
+
+/* GuideVault Metadata Manager Import dropdown v1 */
+.metadata-manager-import-menu{position:relative;flex:0 0 auto;min-width:110px;}
+.metadata-manager-import-menu[open]{z-index:45;}
+.metadata-manager-import-menu>summary{white-space:nowrap;}
+.metadata-manager-import-menu .metadata-manager-import-options{position:absolute;right:0;top:calc(100% + 6px);display:grid;gap:5px;min-width:155px;padding:7px;border:1px solid rgba(88,166,255,.34);border-radius:10px;background:#101e2e;box-shadow:0 12px 28px rgba(0,0,0,.4);}
+.metadata-manager-import-menu:not([open]) .metadata-manager-import-options{display:none;}
+.metadata-manager-import-menu .metadata-manager-import-options button{width:100%;text-align:left;white-space:nowrap;}

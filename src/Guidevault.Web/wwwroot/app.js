@@ -18517,68 +18517,127 @@ function metadataManagerFindImportItem(entry, lookup = null) {
   return null;
 }
 
-function metadataManagerImportJsonFile(file) {
+// GuideVault Metadata Manager CSV import v1: read the same canonical headers as Export table CSV.
+function metadataManagerParseCsv(text) {
+  const source = String(text ?? '').replace(/^\uFEFF/, '');
+  const rows = [];
+  let row = [], value = '', mode = 'start';
+  const field = () => { row.push(value); value = ''; mode = 'start'; };
+  const record = () => { field(); if (row.some(v => v.trim() !== '')) rows.push(row); row = []; };
+  for (let i = 0; i < source.length; i++) {
+    const c = source[i];
+    if (mode === 'quoted') {
+      if (c === '"') {
+        if (source[i + 1] === '"') { value += '"'; i++; }
+        else mode = 'closed';
+      } else value += c;
+      continue;
+    }
+    if (c === ',' || c === '\r' || c === '\n') {
+      if (c === ',') field();
+      else { record(); if (c === '\r' && source[i + 1] === '\n') i++; }
+      continue;
+    }
+    if (mode === 'closed') throw new Error('Unexpected character after quoted CSV field near record ' + (rows.length + 1) + '.');
+    if (c === '"') {
+      if (mode !== 'start') throw new Error('Unexpected quote near CSV record ' + (rows.length + 1) + '.');
+      mode = 'quoted';
+    } else { value += c; mode = 'plain'; }
+  }
+  if (mode === 'quoted') throw new Error('Unclosed quoted CSV field.');
+  if (row.length || mode !== 'start') record();
+  if (!rows.length) throw new Error('CSV file is empty.');
+  const headers = rows.shift().map(v => v.trim() === 'Id' ? 'id' : v.trim());
+  if (headers.some(v => !v) || new Set(headers).size !== headers.length) throw new Error('CSV column names must be nonempty and unique.');
+  if (!headers.includes('id')) throw new Error('CSV requires the original GuideVault id column. Export table CSV first.');
+  const validFields = metadataManagerValidColumnKeys();
+  if (!headers.some(h => validFields.has(h) && !METADATA_MANAGER_READONLY_COLUMNS.has(h))) throw new Error('No editable GuideVault CSV columns found. Use the original exported column names.');
+  const ids = new Set();
+  return rows.map((values, index) => {
+    if (values.length !== headers.length) throw new Error(`CSV record ${index + 2} has ${values.length} fields; expected ${headers.length}.`);
+    const entry = Object.fromEntries(headers.map((header, i) => [header, values[i]]));
+    entry.id = entry.id.trim();
+    if (!entry.id) throw new Error(`CSV record ${index + 2} is missing its GuideVault id.`);
+    if (ids.has(entry.id)) throw new Error(`Duplicate GuideVault id in CSV: ${entry.id}.`);
+    ids.add(entry.id);
+    return entry;
+  });
+}
+
+function metadataManagerChooseImport(format) {
+  const input = $('metadataManagerImportFile');
+  const menu = $('metadataManagerImportMenu');
+  if (!input || input.disabled) return;
+  input.dataset.importFormat = format;
+  input.accept = format === 'csv' ? '.csv,text/csv' : '.json,application/json';
+  input.value = '';
+  if (menu) menu.open = false;
+  input.click();
+}
+
+async function metadataManagerImportFile(file, format = 'json') {
   if (!file) return;
-  const reader = new FileReader();
-  reader.onload = async () => {
-    try {
-      const parsed = JSON.parse(String(reader.result || '[]'));
-      const entries = Array.isArray(parsed) ? parsed : (Array.isArray(parsed.items) ? parsed.items : []);
-      const validFields = metadataManagerValidColumnKeys();
-      const lookup = metadataManagerBuildImportLookup();
-      const importAliases = {
-        title: 'name',
-        Name: 'name',
-        system: 'category',
-        primarySystem: 'category',
-        tags: 'tags',
-        language: 'languageTag',
-        metadataPageCount: 'pageCount'
-      };
-      let matched = 0;
-      let staged = 0;
-      let changedFields = 0;
-      for (let entryIndex = 0; entryIndex < entries.length; entryIndex += 1) {
-        const entry = entries[entryIndex];
-        const item = metadataManagerFindImportItem(entry, lookup);
-        if (!item) {
-          if (entryIndex > 0 && entryIndex % 250 === 0) await metadataManagerYieldToBrowser();
-          continue;
-        }
+  const input = $('metadataManagerImportFile');
+  if (input?.disabled) return;
+  if (input) input.disabled = true;
+  try {
+    if (format !== 'csv' && format !== 'json') throw new Error('Unsupported import format.');
+    if (!file.name.toLowerCase().endsWith('.' + format)) throw new Error('Choose a .' + format + ' file.');
+    const text = (await file.text()).replace(/^\uFEFF/, '');
+    const parsed = format === 'csv' ? metadataManagerParseCsv(text) : JSON.parse(text);
+    const entries = Array.isArray(parsed) ? parsed : (Array.isArray(parsed?.items) ? parsed.items : null);
+    if (!entries || entries.some(e => !e || typeof e !== 'object' || Array.isArray(e))) throw new Error('Expected a list of metadata records.');
+    const validFields = metadataManagerValidColumnKeys();
+    const lookup = metadataManagerBuildImportLookup();
+    const importAliases = { title:'name', Name:'name', system:'category', primarySystem:'category', tags:'tags', language:'languageTag', metadataPageCount:'pageCount' };
+    const pending = new Map();
+    let matched = 0, changedFields = 0;
+    for (let entryIndex = 0; entryIndex < entries.length; entryIndex++) {
+      const entry = entries[entryIndex];
+      // CSV round trips use stable IDs exclusively; never guess a different record from its title.
+      const item = format === 'csv' ? lookup.byId.get(entry.id) : metadataManagerFindImportItem(entry, lookup);
+      if (item && !(format === 'csv' && entry.kind?.trim() && entry.kind.trim().toLowerCase() !== String(item.kind || '').toLowerCase())) {
         const id = metadataManagerItemId(item);
-        if (!id) continue;
-        matched += 1;
-        const changes = {};
-        Object.entries(entry || {}).forEach(([rawField, rawValue]) => {
-          if (['id','Id','schema','generatedAt','items','matchName','sourceName','originalName'].includes(rawField)) return;
-          const field = rawField === 'primarySystem' && item.kind === 'Magazine' ? 'primarySystem' : (importAliases[rawField] || rawField);
-          if (!validFields.has(field) || METADATA_MANAGER_READONLY_COLUMNS.has(field)) return;
-          let value = rawValue;
-          if (field === 'metadataStatus') value = normalizeMetadataStatus(rawValue);
-          else if (METADATA_MANAGER_ARRAY_FIELDS.has(field) || field === 'topics') value = Array.isArray(rawValue) ? rawValue.join(', ') : String(rawValue ?? '');
-          else value = String(rawValue ?? '');
-          if (String(metadataManagerFieldValue(item, field) ?? '').trim() === String(value ?? '').trim()) return;
-          changes[field] = value;
-        });
-        if (Object.keys(changes).length) {
-          state.metadataManager.dirty[id] = { ...(state.metadataManager.dirty[id] || {}), ...changes };
-          staged += 1;
-          changedFields += Object.keys(changes).length;
-        }
-        if (entryIndex > 0 && entryIndex % 250 === 0) {
-          metadataManagerSetStatus(`Import staging ${entryIndex}/${entries.length} record(s)...`);
-          await metadataManagerYieldToBrowser();
+        if (id) {
+          matched++;
+          const changes = {};
+          Object.entries(entry).forEach(([rawField, rawValue]) => {
+            if (['id','Id','schema','generatedAt','items','matchName','sourceName','originalName'].includes(rawField)) return;
+            // CSV uses exported canonical keys. JSON retains the existing alias behavior.
+            const field = format === 'csv' ? rawField : (rawField === 'primarySystem' && item.kind === 'Magazine' ? 'primarySystem' : (Object.hasOwn(importAliases, rawField) ? importAliases[rawField] : rawField));
+            if (!validFields.has(field) || METADATA_MANAGER_READONLY_COLUMNS.has(field)) return;
+            if (format === 'csv' && (!metadataManagerFieldsForKind(item.kind).has(field) || !String(rawValue ?? '').trim())) return;
+            let value = rawValue;
+            if (field === 'metadataStatus') value = normalizeMetadataStatus(rawValue);
+            else if (METADATA_MANAGER_ARRAY_FIELDS.has(field) || field === 'topics') value = Array.isArray(rawValue) ? rawValue.join(', ') : String(rawValue ?? '');
+            else value = String(rawValue ?? '');
+            const current = pending.get(id)?.[field] ?? state.metadataManager.dirty[id]?.[field] ?? metadataManagerFieldValue(item, field);
+            if (String(current ?? '').trim() === String(value ?? '').trim()) return;
+            changes[field] = value;
+          });
+          if (Object.keys(changes).length) pending.set(id, { ...pending.get(id), ...changes });
         }
       }
-      const unmatched = Math.max(0, entries.length - matched);
-      metadataManagerSetStatus(`Imported ${staged} row(s) with ${changedFields} field change(s). Matched ${matched} of ${entries.length} import record(s)${unmatched ? `; ${unmatched} unmatched` : ''}. Review and click Save Edited Rows.`, staged || matched ? 'success' : 'error');
-      if (staged > METADATA_MANAGER_DEFAULT_RENDER_LIMIT) metadataManagerResetRenderLimit();
-      renderMetadataManager();
-    } catch (err) {
-      metadataManagerSetStatus(`Import failed: ${err?.message || err}`, 'error');
+      if (entryIndex > 0 && entryIndex % 250 === 0) {
+        metadataManagerSetStatus(`Import staging ${entryIndex}/${entries.length} record(s)...`);
+        await metadataManagerYieldToBrowser();
+      }
     }
-  };
-  reader.readAsText(file);
+    // Parse/validate the entire file before changing the grid's staged edits.
+    for (const [id, changes] of pending) {
+      state.metadataManager.dirty[id] = { ...(state.metadataManager.dirty[id] || {}), ...changes };
+      changedFields += Object.keys(changes).length;
+    }
+    const staged = pending.size;
+    const unmatched = entries.length - matched;
+    if (staged > METADATA_MANAGER_DEFAULT_RENDER_LIMIT) metadataManagerResetRenderLimit();
+    renderMetadataManager();
+    metadataManagerSetStatus(`Imported ${staged} row(s) with ${changedFields} field change(s). Matched ${matched} of ${entries.length} import record(s)${unmatched ? `; ${unmatched} unmatched or incompatible` : ''}.${format === 'csv' ? ' Blank CSV cells were left unchanged.' : ''} Review and click Save Edited Rows.`, matched ? 'success' : 'error');
+  } catch (err) {
+    metadataManagerSetStatus(`Import failed: ${err?.message || err}`, 'error');
+  } finally {
+    if (input) { input.value = ''; input.disabled = false; }
+  }
 }
 
 function metadataManagerScrapePlaceholder() {
@@ -26881,8 +26940,14 @@ if ($('metadataManagerApplyBatch')) $('metadataManagerApplyBatch').addEventListe
 if ($('metadataManagerNormalizeSelected')) $('metadataManagerNormalizeSelected').addEventListener('click', async () => { try { await metadataManagerNormalizeSelected(); } catch (err) { console.error(err); metadataManagerSetStatus(`Normalize failed: ${err?.message || err}`, 'error'); } });
 if ($('metadataManagerSaveDirty')) $('metadataManagerSaveDirty').addEventListener('click', async () => { try { await metadataManagerSaveDirtyRows(); } catch (err) { console.error(err); metadataManagerSetStatus(`Save failed: ${err?.message || err}`, 'error'); } });
 if ($('metadataManagerExportCsv')) $('metadataManagerExportCsv').addEventListener('click', metadataManagerExportCsv);
-if ($('metadataManagerImportJson')) $('metadataManagerImportJson').addEventListener('click', () => $('metadataManagerImportFile')?.click());
-if ($('metadataManagerImportFile')) $('metadataManagerImportFile').addEventListener('change', e => metadataManagerImportJsonFile(e.currentTarget.files?.[0]));
+if ($('metadataManagerImportJson')) $('metadataManagerImportJson').addEventListener('click', () => metadataManagerChooseImport('json'));
+if ($('metadataManagerImportCsv')) $('metadataManagerImportCsv').addEventListener('click', () => metadataManagerChooseImport('csv'));
+if ($('metadataManagerImportFile')) $('metadataManagerImportFile').addEventListener('change', e => metadataManagerImportFile(e.currentTarget.files?.[0], e.currentTarget.dataset.importFormat || 'json'));
+if ($('metadataManagerImportMenu')) {
+  const menu = $('metadataManagerImportMenu');
+  document.addEventListener('pointerdown', e => { if (menu.open && !menu.contains(e.target)) menu.open = false; });
+  menu.addEventListener('keydown', e => { if (e.key === 'Escape' && menu.open) { menu.open = false; menu.querySelector('summary')?.focus(); } });
+}
 if ($('metadataManagerScrape')) $('metadataManagerScrape').addEventListener('click', metadataManagerScrapePlaceholder);
 if ($('metadataManagerWriteBackSelected')) $('metadataManagerWriteBackSelected').addEventListener('click', async () => { try { await metadataManagerWriteBackSelected('metadata'); } catch (err) { console.error(err); metadataManagerSetStatus(`Write-back failed: ${err?.message || err}`, 'error'); } });
 if ($('metadataManagerOpenFilesWorkspace')) $('metadataManagerOpenFilesWorkspace').addEventListener('click', metadataManagerOpenFilesWorkspace);
