@@ -41,6 +41,29 @@ public static class GuidevaultLaunchBoxStrategyScanner
         .Where(v => v.Length > 0)
         .Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
 
+    // GUIDEVAULT_MAGAZINE_CHRONOLOGY_V1
+    // Years are one-sided evidence: retrospectives never expire. A one-year
+    // preview window is normal; two years ahead needs review. Beyond that,
+    // suppress unsupported proposals, but retain explicit platform conflicts
+    // for review when the issue actually lists the target platform.
+    private static int LatestYear(string? value)
+    {
+        return Regex.Matches(value ?? "", @"(?<![0-9])(?:19[0-9]{2}|20[0-9]{2})(?![0-9])")
+            .Cast<Match>().Select(m => int.Parse(m.Value)).DefaultIfEmpty(0).Max();
+    }
+    private static int MagazineYear(LibraryItem item)
+    {
+        // Cover/publication dates outrank the generic Year. Use the later
+        // explicit year when an issue straddles a year boundary.
+        int year = Math.Max(LatestYear(item.CoverDate), LatestYear(item.PublicationDate));
+        return year > 0 ? year : LatestYear(item.Year);
+    }
+    private static int GameYear(GuidevaultLaunchBoxGame game) => LatestYear(game.ReleaseYear);
+    private static bool IsTooEarly(int publicationYear, int gameYear) =>
+        publicationYear > 0 && gameYear > 0 && gameYear - publicationYear > 2;
+    private static bool RequiresChronologyReview(int publicationYear, int gameYear) =>
+        publicationYear > 0 && gameYear > 0 && gameYear - publicationYear >= 2;
+
     // A title-only clue is always Needs Review, never sufficient for automatic coverage.
     private static string TitleHint(string title)
     {
@@ -126,6 +149,26 @@ public static class GuidevaultLaunchBoxStrategyScanner
                 list.Add((guide, explicitTitles.Length > 0 ? coverageField : titleOnly ? "Title only" : "Game Title", raw));
             }
         }
+        // A multi-platform issue is normal. Ambiguity exists only when the
+        // matching title also identifies a LaunchBox release on another listed platform.
+        var magazineTitleReleases = new Dictionary<string, List<(string Platform, int Year)>>(StringComparer.OrdinalIgnoreCase);
+        if (isMagazine)
+        {
+            foreach (var libraryGame in games)
+            {
+                var releasePlatform = GuidevaultLaunchBoxControlledManualScanner.NormalizedPlatform(libraryGame.Platform);
+                int releaseYear = GameYear(libraryGame);
+                var releaseNames = new[] { libraryGame.Title, libraryGame.SortTitle }
+                    .Concat(libraryGame.AlternateNames ?? new List<string>())
+                    .Select(Key).Where(k => k.Length >= 2).Distinct(StringComparer.OrdinalIgnoreCase);
+                foreach (var releaseName in releaseNames)
+                {
+                    if (!magazineTitleReleases.TryGetValue(releaseName, out var releases))
+                        magazineTitleReleases[releaseName] = releases = new();
+                    releases.Add((releasePlatform, releaseYear));
+                }
+            }
+        }
         var rows = new List<(int Priority, string GameTitle, string GuideTitle, object Row)>();
         var seenPairs = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         var savedByPair = (savedMatches ?? Array.Empty<GuidevaultLaunchBoxMatch>())
@@ -133,7 +176,7 @@ public static class GuidevaultLaunchBoxStrategyScanner
             .GroupBy(m => m.LaunchBoxGameId + "\u001f" + m.GuideVaultItemId, StringComparer.OrdinalIgnoreCase)
             .ToDictionary(g => g.Key, g => g.First(), StringComparer.OrdinalIgnoreCase);
         int pending = 0, related = 0, approved = 0, rejected = 0, metadata = 0, strong = 0, review = 0;
-        int gamesWithoutCandidate = 0;
+        int gamesWithoutCandidate = 0, chronologyExcludedPairs = 0;
         foreach (var game in selected)
         {
             var names = new[] { game.Title, game.SortTitle }.Concat(game.AlternateNames ?? new List<string>())
@@ -146,7 +189,6 @@ public static class GuidevaultLaunchBoxStrategyScanner
             {
                 var pairKey = game.Id + "\u001f" + item.Id;
                 if (!seenPairs.Add(pairKey)) continue;
-                found = true;
                 var explicitPlatforms = isMagazine ? item.FeaturedPlatforms : item.CoveredPlatforms;
                 // Magazine shelving and general focus are descriptive, not release evidence.
                 // Only Featured Platforms determines the magazine's compatibility.
@@ -156,6 +198,20 @@ public static class GuidevaultLaunchBoxStrategyScanner
                     .Concat(explicitPlatforms ?? Array.Empty<string>()));
                 var matchesPlatform = declared.Contains(platformKey, StringComparer.OrdinalIgnoreCase);
                 var isCrossPlatform = declared.Length > 1;
+                savedByPair.TryGetValue(pairKey, out var prior);
+                var savedStatus = prior?.MatchStatus ?? "";
+                int publicationYear = isMagazine ? MagazineYear(item) : 0;
+                int gameReleaseYear = isMagazine ? GameYear(game) : 0;
+                bool tooEarly = isMagazine && IsTooEarly(publicationYear, gameReleaseYear);
+                bool chronologyReview = isMagazine && RequiresChronologyReview(publicationYear, gameReleaseYear);
+                // Saved approvals/rejections/metadata decisions must remain in history.
+                // Explicit platform support can contradict the date, so keep those for review.
+                if (tooEarly && !matchesPlatform && string.IsNullOrWhiteSpace(savedStatus))
+                {
+                    chronologyExcludedPairs++;
+                    continue;
+                }
+                found = true;
                 // The scanner's matching key may come from the LaunchBox primary name,
                 // sort name or an alternate name. Show the exact value used to join.
                 var nameSources = new List<(string Field, string Value)> { ("Title", game.Title) };
@@ -178,14 +234,28 @@ public static class GuidevaultLaunchBoxStrategyScanner
                 var strictTitle = Key(game.Title);
                 var explicitGame = isMagazine ? Key(rawMatchedValue) == strictTitle :
                     (item.CoveredGames ?? Array.Empty<string>()).Any(t => Key(t) == strictTitle);
-                // Strong is a *proposal*, never approval. Cross-platform metadata and
-                // single-game GameTitle without explicit coverage always need review.
-                bool isStrong = (isMagazine ? Relevance(evidence) < 3 : evidence == coverageField) && explicitGame && matchesPlatform
-                    && !isCrossPlatform && (!isMagazine || coveredPlatform.Contains(platformKey, StringComparer.OrdinalIgnoreCase));
+                // Strong is a proposal, never approval. A magazine's platform list
+                // alone is not ambiguous; another actual matching release is.
+                // Look across the whole synced library, not just the selected platform.
+                // Include alternate names of the selected title as competing release clues.
+                // A release with an unknown year/platform cannot be ruled out by dates.
+                bool ambiguousMagazineRelease = isMagazine && names.Where(magazineTitleReleases.ContainsKey)
+                    .SelectMany(k => magazineTitleReleases[k])
+                    .Any(r => !string.Equals(r.Platform, platformKey, StringComparison.OrdinalIgnoreCase) &&
+                        (r.Platform.Length == 0 || declared.Length == 0 || declared.Contains(r.Platform, StringComparer.OrdinalIgnoreCase)) &&
+                        (!IsTooEarly(publicationYear, r.Year) || declared.Contains(r.Platform, StringComparer.OrdinalIgnoreCase)));
+                bool inferredMagazine = isMagazine && evidence == "Cover Game / Subject" &&
+                    (explicitGame || matchedLaunchBoxField == "Alternate Name") &&
+                    (matchesPlatform || declared.Length == 0) && !ambiguousMagazineRelease && !chronologyReview &&
+                    publicationYear > 0 && gameReleaseYear > 0 && (!matchesPlatform || !explicitGame);
+                bool isStrong = isMagazine
+                    ? !chronologyReview && !ambiguousMagazineRelease &&
+                        ((Relevance(evidence) < 3 && explicitGame && matchesPlatform) || inferredMagazine)
+                    : evidence == coverageField && explicitGame && matchesPlatform && !isCrossPlatform;
                 // A title/coverage hit with a known incompatible platform is only
                 // a candidate for review, never evidence of this particular release.
-                var platformCompatibility = declared.Length == 0 ? "Unknown" :
-                    matchesPlatform ? (isCrossPlatform ? "Multiple declared platforms" : "Target platform listed") :
+                var platformCompatibility = declared.Length == 0 ? (inferredMagazine ? "Inferred from synced LaunchBox releases" : "Unknown") :
+                    matchesPlatform ? (isMagazine ? (ambiguousMagazineRelease ? "Target platform listed; competing release found" : "Target platform listed") : (isCrossPlatform ? "Multiple declared platforms" : "Target platform listed")) :
                     "Target platform not listed";
                 var isUnlistedRelease = declared.Length > 0 && !matchesPlatform;
                 // A shared name is NOT proof of equivalent gameplay across releases.
@@ -203,14 +273,18 @@ public static class GuidevaultLaunchBoxStrategyScanner
                                     ? "Covered through an alternate game name; verify identity"
                                     : "Explicit Covered Games entry and matching specific platform";
                 if (isMagazine)
-                    reason = evidence + ": " + (isUnlistedRelease ? "issue does not list this platform; verify release" :
+                    reason = evidence + ": " + (chronologyReview ? $"issue year {publicationYear}; game release year {gameReleaseYear}; verify early preview or metadata error" :
+                        isUnlistedRelease ? "issue does not list this platform; verify release" :
                         evidence == "Mentioned Games" ? "brief mention; verify relevance and release before linking" :
-                        isStrong ? "exact game title and one matching Featured Platforms entry" :
+                        inferredMagazine ? "inferred strong candidate; matching cover title and no other plausible platform in synced LaunchBox data; verify coverage" :
+                        isStrong ? "exact game title and target platform listed in Featured Platforms" :
+                        ambiguousMagazineRelease ? "matching title has another plausible or undated platform release; verify release" :
                         !explicitGame ? "alternate or sort title; verify identity and release" :
                         declared.Length == 0 ? "Featured Platforms missing; verify release" :
-                        "multiple featured platforms; verify which release the article covers");
-                savedByPair.TryGetValue(pairKey, out var prior);
-                var savedStatus = prior?.MatchStatus ?? "";
+                        "verify game identity and release");
+                if (isMagazine && publicationYear > 0 && gameReleaseYear > 0 && !chronologyReview)
+                    reason += $" (issue {publicationYear}; game {gameReleaseYear})";
+                if (inferredMagazine && declared.Length == 0) platformBasis = "Inferred from synced LaunchBox title/platform/year";
                 var isApproved = savedStatus is "Confirmed" or "AutoMatched";
                 var isRejected = savedStatus == "Rejected";
                 var isMetadata = savedStatus == "NeedsMetadata";
@@ -229,6 +303,7 @@ public static class GuidevaultLaunchBoxStrategyScanner
                     publicationId = item.Id, publicationTitle = item.Title, publicationKind = matchType, issueNumber = isMagazine ? item.IssueNumber : "", coverDate = isMagazine ? item.CoverDate : "", publicationSystem = string.Join(", ", declared),
                     classification, reason, matchBasis = evidence,
                     relevancePriority = isMagazine ? Relevance(evidence) : 0,
+                    publicationYear, gameReleaseYear, inferredMagazine, chronologyReview,
                     // Exact evidence on BOTH sides, not just "Covered Games".
                     launchBoxMatchField = matchedLaunchBoxField, launchBoxMatchedValue = matchedLaunchBoxValue,
                     guideMatchField = evidence, guideMatchedValue = rawMatchedValue,
@@ -254,12 +329,13 @@ public static class GuidevaultLaunchBoxStrategyScanner
             games = selected.Length, strategyGuidesInLibrary = isMagazine ? 0 : guides.Length, publicationsInLibrary = guides.Length,
             candidatePairs = ordered.Length, strongCandidates = strong, needsReview = review,
             pendingPairs = pending, relatedPairs = related, approvedPairs = approved, rejectedPairs = rejected, metadataPairs = metadata,
-            gamesWithNoEligibleCandidate = gamesWithoutCandidate,
+            gamesWithNoEligibleCandidate = gamesWithoutCandidate, chronologyExcludedPairs,
             statusFilter, page, pageSize, pageCount,
             firstRow = ordered.Length == 0 ? 0 : first + 1,
             lastRow = Math.Min(ordered.Length, first + pageSize),
             rows = ordered.Skip(first).Take(pageSize).Select(r => r.Row).ToArray(),
-            note = ""
+            note = isMagazine && chronologyExcludedPairs > 0 ?
+                $"{chronologyExcludedPairs} unsaved title/issue pairs excluded because the game release was more than two years after publication and the target platform was not explicitly listed." : ""
         };
     }
 }
