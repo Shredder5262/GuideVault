@@ -9,9 +9,25 @@ public static class GuidevaultMagazineContentScanner
     public sealed record Suggestion(string Field, string Value, int Page, string Evidence, string Confidence);
     public sealed record ScanResult(int TotalPages, int Start, int Scanned, int ReadablePages, List<Suggestion> Suggestions, List<string> Warnings)
     {
-        public string ScannerRevision => "v3.3";
+        public string ScannerRevision => "v4";
+        public int CachedPages { get; init; }
     }
     private static readonly SemaphoreSlim Gate = new(1, 1);
+    // Process-local bounded OCR cache, guarded by Gate. No library files are written.
+    private static readonly Dictionary<(string Path,long Size,long Modified,int Page),string> OcrCache = new();
+    private static readonly Queue<(string Path,long Size,long Modified,int Page)> OcrOrder = new();
+    private static long OcrCharacters;
+    private const long MaxOcrCharacters = 16_000_000;
+    private static void RememberOcr((string Path,long Size,long Modified,int Page) key,string value)
+    {
+        if (value.Length > MaxOcrCharacters || OcrCache.ContainsKey(key)) return;
+        while (OcrOrder.Count > 0 && (OcrCharacters + value.Length > MaxOcrCharacters || OcrOrder.Count >= 512))
+        {
+            var expired=OcrOrder.Dequeue();
+            if(OcrCache.Remove(expired,out var previous)) OcrCharacters-=previous.Length;
+        }
+        OcrCache[key]=value; OcrOrder.Enqueue(key); OcrCharacters+=value.Length;
+    }
     private static readonly Regex Words = new(@"[\p{L}\p{N}]+", RegexOptions.Compiled);
     private static readonly Regex YearPattern = new(@"\b(?:19|20)\d{2}\b", RegexOptions.Compiled);
     private const string Months = "January|February|March|April|May|June|July|August|September|October|November|December|Jan|Feb|Mar|Apr|Jun|Jul|Aug|Sep|Sept|Oct|Nov|Dec";
@@ -22,14 +38,14 @@ public static class GuidevaultMagazineContentScanner
         (@"\bGame Boy Color\b", "Nintendo Game Boy Color"), (@"\bGame Boy\b(?!\s+(?:Advance|Color))", "Nintendo Game Boy"),
         (@"\b(?:Nintendo GameCube|GameCube)\b", "Nintendo GameCube"), (@"\bNintendo DS\b", "Nintendo DS"), (@"\bNintendo 3DS\b", "Nintendo 3DS"),
         (@"\bWii U\b", "Nintendo Wii U"), (@"\bWii\b(?!\s+U)", "Nintendo Wii"), (@"\bNintendo Switch\b", "Nintendo Switch"),
-        (@"\b(?:Sega Genesis|Mega Drive)\b", "Sega Genesis"), (@"\bSega Saturn\b", "Sega Saturn"), (@"\b(?:Sega Dreamcast|Dreamcast)\b", "Sega Dreamcast"),
+        (@"\b(?:Sega Genesis|Mega Drive|Genesis)\b", "Sega Genesis"), (@"\bSega Saturn\b", "Sega Saturn"), (@"\b(?:Sega Dreamcast|Dreamcast)\b", "Sega Dreamcast"),
         (@"\b(?:Sega CD|Mega CD)\b", "Sega CD"), (@"\b(?:Sega Game Gear|Game Gear)\b", "Sega Game Gear"), (@"\bSega Master System\b", "Sega Master System"),
         (@"\b(?:PlayStation 2|PS2)\b", "Sony PlayStation 2"), (@"\b(?:PlayStation 3|PS3)\b", "Sony PlayStation 3"), (@"\b(?:PlayStation 4|PS4)\b", "Sony PlayStation 4"),
         (@"\b(?:PlayStation 5|PS5)\b", "Sony PlayStation 5"), (@"\b(?:PlayStation Portable|PSP)\b", "Sony PSP"), (@"\b(?:PlayStation Vita|PS Vita)\b", "Sony PlayStation Vita"),
         (@"\b(?:PS1|PSX|PlayStation)\b(?!\s*(?:[2345]|Portable|Vita|Network|Store|Plus)\b)", "Sony PlayStation"),
         (@"\bXbox 360\b", "Microsoft Xbox 360"), (@"\bXbox One\b", "Microsoft Xbox One"), (@"\bXbox Series [XS]\b", "Microsoft Xbox Series X/S"),
         (@"\bXbox\b(?!\s+(?:360|One|Series|Live|Game Pass))", "Microsoft Xbox"), (@"\b(?:MS-DOS|DOS PC)\b", "MS-DOS"), (@"\b(?:Windows PC|PC Windows|PC CD-ROM)\b", "Windows"),
-        (@"\b(?:TurboGrafx-16|PC Engine)\b", "NEC TurboGrafx-16"), (@"\b(?:Atari )?Jaguar\b", "Atari Jaguar"), (@"\b(?:Sega )?32X\b", "Sega 32X"), (@"\b(?:Arcade)\b", "Arcade"), (@"\b3DO\b", "3DO Interactive Multiplayer")];
+        (@"\b(?:TurboGrafx(?:[- ]?16)?|TurboGratx|PC Engine)\b", "NEC TurboGrafx-16"), (@"\b(?:Atari )?Jaguar\b", "Atari Jaguar"), (@"\b(?:Sega )?32X\b", "Sega 32X"), (@"\b(?:Arcade)\b", "Arcade"), (@"\b3DO\b", "3DO Interactive Multiplayer")];
 
     public static async Task<ScanResult> ScanAsync(LibraryItem item, IEnumerable<GuidevaultLaunchBoxGame> games, int start, int count, CancellationToken token)
     {
@@ -49,11 +65,15 @@ public static class GuidevaultMagazineContentScanner
                 if (!pdf) await AddArchiveMetadata(item, result.Suggestions);
             }
             var dictionary = BuildDictionary(games, GetYear(item.CoverDate + " " + item.PublicationDate + " " + item.Year));
+            var sourceInfo = new FileInfo(item.Path);
             for (int i = start; i < Math.Min(start + count, total); i++)
             {
                 token.ThrowIfCancellationRequested();
                 try
                 {
+                    var cacheKey=(sourceInfo.FullName,sourceInfo.Length,sourceInfo.LastWriteTimeUtc.Ticks,i);
+                    if (!OcrCache.TryGetValue(cacheKey,out var tsv))
+                    {
                     string input;
                     if (pdf)
                     {
@@ -70,7 +90,11 @@ public static class GuidevaultMagazineContentScanner
                         input = Path.Combine(temp, "page.img");
                         await File.WriteAllBytesAsync(input, image.Value.Bytes, token);
                     }
-                    var layout = ParseLayout(await Run("tesseract", [input, "stdout", "-l", "eng", "--psm", i == 0 ? "11" : "3", "tsv"], token));
+                    tsv = await Run("tesseract", [input, "stdout", "-l", "eng", "--psm", i == 0 ? "11" : "3", "tsv"], token);
+                    if (Words.Matches(tsv).Count > 30) RememberOcr(cacheKey,tsv);
+                    }
+                    else result = result with { CachedPages = result.CachedPages + 1 };
+                    var layout = ParseLayout(tsv);
                     string text = string.Join("\n", layout.Lines.Select(l => l.Text));
                     if (pdf && Words.Matches(text).Count < 12)
                     {
@@ -356,6 +380,17 @@ public static class GuidevaultMagazineContentScanner
                     }
                 }
             }
+            if (listContext && platformIndex && !coverRegion && !platformHeading)
+            {
+                foreach (var part in headingText.Split([',',';'],StringSplitOptions.RemoveEmptyEntries))
+                {
+                    var candidate=part.Trim().TrimEnd('.');
+                    if (!LooksLikeUnresolvedTitle(candidate)) continue;
+                    if (FindGames(dictionary,candidate,true,true,true).Any(h=>h.Whole || h.Fuzzy)) continue;
+                    if (matched.Any(h=>Normalize(h.Game)==Normalize(candidate))) continue;
+                    Add("unresolvedGame",candidate,line+Geometry(l,layout),"Unresolved contents entry — verify title and coverage");
+                }
+            }
             foreach (var hit in matched)
             {
                 string evidence = (joinedEvidence.Length>0 && !Normalize(line).Contains(Normalize(hit.Game),StringComparison.Ordinal) ? joinedEvidence : line) + Geometry(l, layout);
@@ -366,7 +401,8 @@ public static class GuidevaultMagazineContentScanner
                 else if (listContext || (page > 1 && prominent(l) && hit.Whole && !departments && !hit.Fuzzy && l.Y < layout.Height*.60 && Regex.IsMatch(text,@"\b(?:review|preview|rating|graphics|sound|gameplay|publisher|developer|walkthrough)\b",RegexOptions.IgnoreCase))) Add("featuredGames", hit.Game, evidence, hit.Fuzzy ? "Possible OCR correction" : "Editorial heading");
                 else if (page > 1) Add("mentionedGames", hit.Game, evidence, hit.Fuzzy ? "Possible OCR correction" : "Contextual title match");
             }
-            if ((toc && !departments && (platformHeading || matched.Count > 0)) || (matched.Count > 0 && gameContext))
+            bool explicitPlatformLabel = matched.Count > 0 && Platforms.Any(p => Regex.IsMatch(line, @"^\s*(?:[_\-–]\s*)?(?:" + p.Pattern + @")\s*:", RegexOptions.IgnoreCase));
+            if ((toc && !departments && (platformHeading || matched.Count > 0)) || (matched.Count > 0 && (gameContext || explicitPlatformLabel)))
             {
                 foreach (var (pattern, name) in Platforms)
                 {
@@ -380,6 +416,8 @@ public static class GuidevaultMagazineContentScanner
             if ((page <= 3 || toc) && Regex.IsMatch(line, @"\b(?:free|bonus|pull[- ]out|includes?|inside|exclusive)\s+(?:a\s+)?(?:poster|demo (?:disc|disk|CD)|disc|disk|insert|sticker|map|cover disc)\b", RegexOptions.IgnoreCase)) Add("includedExtras", line, line + Geometry(l, layout));
             previous = platformHeading ? null : l;
         }
+        if (page > 1 && !toc && layout.Width > 0 && layout.Height > 0)
+            AnalyzeArticleRegions(layout,dictionary,page,suggestions);
         if (page == 1 && coverHeadings.Count > 0)
         {
             var candidates = coverHeadings.GroupBy(x => Compact(x.Game)).Select(g => g.OrderByDescending(x=>x.Line.Height).First()).OrderByDescending(x=>x.Line.Height).ToArray();
@@ -391,6 +429,81 @@ public static class GuidevaultMagazineContentScanner
         // A cover subject need not be a game; use an explicit, non-game cover-story label only.
         if (toc && !suggestions.Any(x=>x.Page==page && x.Field=="coverSubject"))
             MatchField("coverSubject", @"^\s*cover (?:story|feature)\s*:\s*([^\r\n]{3,100})", text);
+    }
+    private static bool LooksLikeUnresolvedTitle(string value)
+    {
+        if(value.Length<4 || value.Length>85 || !char.IsLetter(value[0])) return false;
+        var words=Words.Matches(value).Select(m=>m.Value).ToArray();
+        if(words.Length<1 || words.Length>9 || !words.Any(w=>char.IsUpper(w[0]))) return false;
+        if(Regex.IsMatch(value,@"\b(?:contents|reviews?|previews?|features?|departments?|magazine|publisher|presents|includes?|exclusive|subscribe|editor|copyright|news|tips|codes|page|coming soon|coming next|available|and more|the latest)\b",RegexOptions.IgnoreCase)) return false;
+        if(Platforms.Any(p=>Regex.IsMatch(value,p.Pattern,RegexOptions.IgnoreCase))) return false;
+        return words.Length==1 ? words[0].Length>=5 : words.Count(w=>char.IsUpper(w[0])||char.IsDigit(w[0])||Regex.IsMatch(w,@"^(?:a|an|the|of|and|in|on|to|for|vs)$",RegexOptions.IgnoreCase))>=words.Length-1;
+    }
+    private static bool ArticleNoise(string text) => Regex.IsMatch(text,@"\b(?:copyright|all rights[. ]+reserved|trademarks?|licensed (?:by|from|to)|official seals?|order now|mail order|special offer|grand prize|sweepstakes|send (?:your )?entries|no purchase necessary|back issues?|previous issues?|next issue|price list|third .* movie)\b|©",RegexOptions.IgnoreCase) || RetailMarkers(text)>=2;
+    private static int EditorialSignals(string text)
+    {
+        // Independent evidence categories; a repeated game name alone never establishes a feature.
+        string[] signals=[@"\b(?:graphics|animation|visuals|sprites|scrolling|sound(?:track| effects)?|music)\b",@"\b(?:gameplay|controls?|controller|joystick|difficulty|challenge|playability|responsive)\b",@"\b(?:levels?|stages?|rounds?|opponents?|characters?|weapons?|missions?|courses?|teams?)\b",@"\b(?:review|rating|rated|score|verdict|recommended|overall|pros and cons)\b",@"\b(?:you (?:can|must|have to|will)|players? (?:can|must|choose|control)|the player|game (?:offers|features|provides|has|contains))\b"];
+        return signals.Count(p=>Regex.IsMatch(text,p,RegexOptions.IgnoreCase));
+    }
+    private static void AnalyzeArticleRegions(PageLayout layout, Dictionary<string,CatalogTitle> dictionary,int page,List<Suggestion> suggestions)
+    {
+        // Each anchor gets a column-local region, with neighboring blocks included only if aligned.
+        // These are hypotheses, not reconstructed articles; page breaks are joined in the scan review layer.
+        var lines=layout.Lines.Where(l=>l.Height>0 && l.Confidence>=48 && !ArticleNoise(l.Text)).ToArray();
+        if(lines.Length==0) return;
+        var pageText=string.Join(" ",lines.Select(l=>l.Text));
+        if(Regex.IsMatch(pageText,@"\b(?:back issues?|mail order|price list|order form)\b",RegexOptions.IgnoreCase) && RetailMarkers(pageText)>=1) return;
+        var heights=lines.Select(l=>l.Height).OrderBy(h=>h).ToArray();
+        double median=heights[heights.Length/2];
+        var hits=new Dictionary<string,List<(GameHit Hit,LayoutLine Line)>>(StringComparer.Ordinal);
+        foreach(var line in lines)
+        {
+            bool headline=line.Height>=median*1.30 && Words.Matches(line.Text).Count<=12;
+            bool context=EditorialSignals(line.Text)>0 || Regex.IsMatch(line.Text,@"\b(?:game|review|preview|version|released?|play(?:ed|ing)?)\b",RegexOptions.IgnoreCase);
+            foreach(var hit in FindGames(dictionary,line.Text,headline,false,context).Where(h=>!h.Fuzzy))
+            {
+                var key=ListingKey(hit.Game); if(!hits.TryGetValue(key,out var list)) hits[key]=list=new();
+                list.Add((hit,line));
+            }
+        }
+        foreach(var (key,occurrences) in hits)
+        {
+            foreach(var occurrence in occurrences.OrderByDescending(o=>o.Line.Height).Take(4))
+            {
+                var anchor=occurrence.Line;
+                bool SameRegion(LayoutLine l)
+                {
+                    if(l.Block==anchor.Block) return Math.Abs(l.Y-anchor.Y)<=layout.Height*.30;
+                    int overlap=Math.Min(l.X+l.Width,anchor.X+anchor.Width)-Math.Max(l.X,anchor.X);
+                    bool aligned=overlap>=Math.Min(l.Width,anchor.Width)*.55 && Math.Abs(l.X-anchor.X)<layout.Width*.14;
+                    return aligned && Math.Abs(l.Y-anchor.Y)<=layout.Height*.17;
+                }
+                var region=lines.Where(SameRegion).OrderBy(l=>l.Y).ThenBy(l=>l.X).ToArray();
+                var context=string.Join(" ",region.Select(l=>l.Text));
+                if(region.Length<3 || ArticleNoise(context) || Regex.IsMatch(context,@"\b(?:cheat codes?|passwords?|game genie|high scores?|release schedule|coming next issue|top \d+|letters to the editor|readers? poll)\b",RegexOptions.IgnoreCase)) continue;
+                int words=Words.Matches(context).Count, signals=EditorialSignals(context);
+                int repeats=occurrences.Select(o=>o.Line).Distinct().Count(SameRegion);
+                bool heading=occurrence.Hit.Whole && anchor.Height>=median*1.30;
+                int rivals=hits.Count(kv=>kv.Key!=key && kv.Value.Any(o=>SameRegion(o.Line)));
+                bool focused=rivals<=1 && (heading||repeats>=2||rivals==0);
+                if(!focused||words<35||signals<2) continue;
+                var title=occurrence.Hit.Game;
+                var detail=$"{anchor.Text}{Geometry(anchor,layout)}; local article region: {words} words, {signals} editorial cues, {repeats} title lines.";
+                bool substantial=words>=65&&signals>=3&&(heading||repeats>=2||rivals==0&&words>=100);
+                if(substantial && !suggestions.Any(x=>x.Page==page&&x.Field=="featuredGames"&&ListingKey(x.Value)==key)) suggestions.Add(new("featuredGames",title,page,detail,"Article region — substantial coverage candidate"));
+                else suggestions.Add(new("articleCandidate",title,page,detail,"Article continuation candidate"));
+                // Platform association is local and independent of the magazine-wide list.
+                foreach(var (pattern,name) in Platforms)
+                {
+                    var platformLine=region.FirstOrDefault(l=>Regex.IsMatch(l.Text,pattern,RegexOptions.IgnoreCase) && (name!="Arcade"||ArcadePlatformEvidence(l.Text,false)) && (Regex.IsMatch(l.Text,@"\b(?:platform|version|for|system|cartridge)\b|[:—]",RegexOptions.IgnoreCase)||l.Text.Trim().Equals(name,StringComparison.OrdinalIgnoreCase)));
+                    if(platformLine is null) continue;
+                    suggestions.Add(new("gamePlatformEvidence",title,page,name+" — "+platformLine.Text+Geometry(platformLine,layout),"Local article platform candidate"));
+                    if(!suggestions.Any(x=>x.Page==page&&x.Field=="featuredPlatforms"&&x.Value==name)) suggestions.Add(new("featuredPlatforms",name,page,platformLine.Text+Geometry(platformLine,layout),"Local editorial platform evidence"));
+                }
+                break;
+            }
+        }
     }
     private sealed record LayoutLine(string Text, int Block, int Paragraph, int X, int Y, int Width, int Height, double Confidence);
     private sealed record PageLayout(int Width, int Height, List<LayoutLine> Lines);

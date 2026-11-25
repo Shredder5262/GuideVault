@@ -22926,3 +22926,11 @@ body.guidevault-direct-reader-pending:not(.auth-locked) #guidevaultDirectReaderL
 .gv-magscan-coverage-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(185px,1fr));gap:6px;margin-top:10px;}
 .gv-magscan-coverage-grid>div{background:#142333;padding:7px;border-radius:5px;display:grid;gap:3px;}
 .gv-magscan-coverage-grid small{color:#9bb1c7;}
+
+/* GuideVault magazine scan v4 candidate review */
+.gv-magscan-game-review{border:1px solid #345069;border-radius:8px;padding:12px;margin:12px 0;background:#101b29}
+.gv-magscan-game-list{max-height:420px;overflow:auto;margin:8px 0}
+.gv-magscan-game-row{display:grid;grid-template-columns:minmax(0,1fr) minmax(130px,190px);align-items:start;gap:12px;border-bottom:1px solid #294054;padding:10px 4px}
+.gv-magscan-game-row select{width:100%;min-width:0;background:#0d1824;color:inherit;border:1px solid #38536c;border-radius:6px;padding:7px}
+.gv-magscan-game-row details{margin-top:5px}
+@media(max-width:580px){.gv-magscan-game-row{grid-template-columns:1fr}}

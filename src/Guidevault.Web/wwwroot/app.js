@@ -18669,7 +18669,7 @@ function gvMagazineScanDialog(items, fromDetail = false, inlineHost = null) {
   if (!items.length || items.length > 5) { metadataManagerSetStatus('Select 1–5 magazine issues per scan.','error'); return; }
   const dialog = document.createElement(inlineHost ? 'div' : 'dialog');
   dialog.className = inlineHost ? 'gv-magscan-inline' : 'gv-magscan-dialog';
-  dialog.innerHTML = `<div class="gv-magscan-content"><h2>Scan magazine metadata</h2><p class="sub">${items.length} issue(s). Scanner UI v3.3 — Local OCR and LaunchBox title lookup. Nothing is saved automatically.</p><label>Scan scope <select data-scan-scope><option value="12">First 12 pages (cover, contents, masthead)</option><option value="300"${fromDetail?' selected':''}>Full issue (up to 300 pages)</option></select></label><p class="sub" data-scan-status aria-live="polite">Start a scan to review suggested fields. Layout-aware English OCR and catalog matching. All magazine fields are checked; uncertain or unavailable values are not guessed. Review all proposed editorial data.</p><progress data-scan-progress value="0" max="1"></progress><div data-scan-results></div><div class="gv-magscan-actions"><button class="ghost" type="button" data-scan-close>Close</button><button class="ghost" type="button" data-scan-stop hidden>Stop</button><button class="primary" type="button" data-scan-start>Start scan</button><button class="primary" type="button" data-scan-stage disabled>Stage selected suggestions</button></div></div>`;
+  dialog.innerHTML = `<div class="gv-magscan-content"><h2>Scan magazine metadata</h2><p class="sub">${items.length} issue(s). Scanner UI v4 — Local OCR and LaunchBox title lookup. Nothing is saved automatically.</p><label>Scan scope <select data-scan-scope><option value="12">First 12 pages (cover, contents, masthead)</option><option value="300"${fromDetail?' selected':''}>Full issue (up to 300 pages)</option></select></label><p class="sub" data-scan-status aria-live="polite">Start a scan to review suggested fields. Layout-aware English OCR and catalog matching. All magazine fields are checked; uncertain or unavailable values are not guessed. Review all proposed editorial data.</p><progress data-scan-progress value="0" max="1"></progress><div data-scan-results></div><div class="gv-magscan-actions"><button class="ghost" type="button" data-scan-close>Close</button><button class="ghost" type="button" data-scan-stop hidden>Stop</button><button class="primary" type="button" data-scan-start>Start scan</button><button class="primary" type="button" data-scan-stage disabled>Stage selected suggestions</button></div></div>`;
   (inlineHost || document.body).appendChild(dialog);
   const q = s => dialog.querySelector(s);
   const session = { controller:null, running:false, rows:[], dialog, inline:!!inlineHost, itemId:metadataManagerItemId(items[0]) };
@@ -18686,12 +18686,22 @@ function gvMagazineScanDialog(items, fromDetail = false, inlineHost = null) {
     const root = q('[data-scan-results]'); root.innerHTML = '';
     session.rows.forEach((row, rowIndex) => {
       const block = document.createElement('section'); block.className = 'gv-magscan-result';
-      block.innerHTML = `<h3>${escapeHtml(metadataManagerItemName(row.item))}</h3><p class="sub">${row.readable} of ${row.scanned} scanned pages yielded text; ${row.total || '?'} total pages. ${row.complete ? (row.scanned>=row.total ? 'Full issue scanned.' : 'Limited scan — coverage incomplete.') : 'Partial scan.'} Backend scanner: ${escapeHtml(row.revision||'not reported')}.</p>`;
+      block.innerHTML = `<h3>${escapeHtml(metadataManagerItemName(row.item))}</h3><p class="sub">${row.readable} of ${row.scanned} scanned pages yielded text; ${row.cached||0} reused from OCR cache; ${row.total || '?'} total pages. ${row.complete ? (row.scanned>=row.total ? 'Full issue scanned.' : 'Limited scan — coverage incomplete.') : 'Partial scan.'} Backend scanner: ${escapeHtml(row.revision||'not reported')}.</p>`;
       const strongCover=row.suggestions.filter(x=>x.field==='coverSubject'&&x.confidence==='Contents cover evidence');
       const coverNames=[...new Set((strongCover.length?strongCover:row.suggestions.filter(x=>x.field==='coverSubject')).map(x=>x.value))];
       const existingCover=String(row.item.coverSubject||'').trim();
       const coverConflict=coverNames.length>1 || (existingCover && coverNames.some(v=>v.toLowerCase()!==existingCover.toLowerCase()));
       const reviewWarnings=[...row.warnings];
+      const observedPlatforms=row.suggestions.filter(x=>x.field==='featuredPlatforms').map(x=>x.value);
+      const platformKey=v=>String(v??'').toLowerCase().replace(/[^a-z0-9]/g,'').replace(/^segamegadrive$|^megadrive$/,'segagenesis').replace(/^gameboy$/,'nintendogameboy').replace(/^turbografx16$/,'necturbografx16');
+      const year=Number(String(row.item.coverDate||row.item.publicationDate||row.item.year||'').match(/\b(?:19|20)\d{2}\b/)?.[0]||0);
+      const introductions={supernintendoentertainmentsystem:1990,nintendo64:1996,nintendogameboyadvance:2001,nintendogameboycolor:1998,nintendogamecube:2001,nintendods:2004,nintendo3ds:2011,sonypsp:2004,sonyplaystation:1994,sonyplaystation2:2000,segadreamcast:1998,segasaturn:1994,microsoftxbox:2001,segacd:1991,sega32x:1994};
+      if(row.complete&&row.scanned>=row.total) {
+        const unsupported=itemArray(row.item.featuredPlatforms).filter(v=>!/^multi[ -]?platform$/i.test(v)&&!observedPlatforms.some(p=>platformKey(p)===platformKey(v)));
+        if(unsupported.length)reviewWarnings.push(`Existing platform(s) not corroborated in this scan: ${unsupported.join(', ')}. Retained; OCR omissions do not prove absence.`);
+        for(const p of unsupported){const introduced=introductions[platformKey(p)];if(year&&introduced&&year<=introduced)reviewWarnings.push(`${p}: issue year ${year}, earliest commercial launch year ${introduced}. Verify preview or historical platform evidence; not removed automatically.`);}
+      }
+
       const publisherEvidence=row.suggestions.filter(x=>x.field==='publisher');
       const currentPublisher=String(metadataManagerFieldValue(row.item,'publisher')??'').trim();
       if(currentPublisher && publisherEvidence.some(x=>x.confidence==='Archive metadata' && String(x.value).trim().toLowerCase()!==currentPublisher.toLowerCase()) && !publisherEvidence.some(x=>x.confidence==='Publication-linked print')) reviewWarnings.push('Archive publisher differs from existing metadata; retained existing publisher until the magazine masthead corroborates a change.');
@@ -18704,9 +18714,9 @@ function gvMagazineScanDialog(items, fromDetail = false, inlineHost = null) {
       const proposals = gvMagazineScanProposals(row);
       const audit=document.createElement('details'); audit.className='gv-magscan-coverage';
       const available=GV_MAG_SCAN_FIELDS.filter(f=>metadataManagerFieldsForKind('Magazine').has(f));
-      const proposed=new Set(proposals.map(p=>p.field));
+      const proposed=new Set(proposals.filter(p=>!p.editorOnly).map(p=>p.field));
       const observed=new Set(row.suggestions.map(p=>p.field));
-      audit.innerHTML=`<summary>${proposals.length} proposed changes · ${available.length} fields checked (show coverage)</summary><div class="gv-magscan-coverage-grid">${available.map(f=>{const def=metadataManagerColumnDefinition(f,['Magazine']);const current=String(metadataManagerFieldValue(row.item,f)??'').trim();const present=current&&!(f==='pageCount'&&current==='0');const status=proposed.has(f)?'Proposal':(f==='publisher'||f==='pageCount')&&present?'Existing value retained':observed.has(f)?'Evidence found / unchanged':present?'Existing value retained':'No reliable evidence';return `<div><strong>${escapeHtml(def?.label||f)}</strong><small>${escapeHtml(status)}</small></div>`;}).join('')}</div>`;
+      audit.innerHTML=`<summary>${proposals.filter(p=>!p.editorOnly).length} proposed changes · ${available.length} fields checked (show coverage)</summary><div class="gv-magscan-coverage-grid">${available.map(f=>{const def=metadataManagerColumnDefinition(f,['Magazine']);const current=String(metadataManagerFieldValue(row.item,f)??'').trim();const present=current&&!(f==='pageCount'&&current==='0');const status=proposed.has(f)?'Proposal':(f==='publisher'||f==='pageCount')&&present?'Existing value retained':observed.has(f)?'Evidence found / unchanged':present?'Existing value retained':'No reliable evidence';return `<div><strong>${escapeHtml(def?.label||f)}</strong><small>${escapeHtml(status)}</small></div>`;}).join('')}</div>`;
       block.appendChild(audit);
       if (!proposals.length) { const p = document.createElement('p'); p.textContent = 'No new editable suggestions found.'; block.appendChild(p); }
       for (const proposal of proposals) {
@@ -18718,9 +18728,10 @@ function gvMagazineScanDialog(items, fromDetail = false, inlineHost = null) {
         const evidence = document.createElement('details'); evidence.innerHTML = `<summary>Evidence (${proposal.evidence.length})${proposal.conflict?' — conflicting values; edit the proposal before staging':''}</summary>${proposal.evidence.map(x=>`<p class="sub">${x.page?`Page ${x.page}: `:''}${escapeHtml(x.value)} — ${escapeHtml(x.evidence)}${x.confidence?` <small>[${escapeHtml(x.confidence)}]</small>`:''}</p>`).join('')}`; label.appendChild(evidence);
         el.append(input,label); block.appendChild(el);
       }
+      gvMagazineReviewGames(row,proposals,block);
       root.appendChild(block);
     });
-    const updateStage = () => { q('[data-scan-stage]').disabled = session.running || !root.querySelector('input:checked:not(:disabled)'); };
+    const updateStage = () => { q('[data-scan-stage]').disabled = session.running || !root.querySelector('input[data-scan-field]:checked:not(:disabled)'); };
     root.onchange = updateStage; updateStage();
   }
   q('[data-scan-start]').onclick = async () => {
@@ -18733,7 +18744,7 @@ function gvMagazineScanDialog(items, fromDetail = false, inlineHost = null) {
     try {
       for (let i=0; i<items.length; i++) {
         const item=items[i], id=metadataManagerItemId(item);
-        const row = {item, total:0, scanned:0, readable:0, suggestions:[], warnings:[], complete:false}; session.rows.push(row);
+        const row = {item, total:0, scanned:0, readable:0, cached:0, suggestions:[], warnings:[], complete:false}; session.rows.push(row);
         let start = 0;
         try {
           do {
@@ -18742,8 +18753,8 @@ function gvMagazineScanDialog(items, fromDetail = false, inlineHost = null) {
             if (!res.ok) { let msg=`HTTP ${res.status}`; try { msg=(await res.json()).error||msg; } catch {} throw new Error(msg); }
             const data=await res.json();
             row.revision=String(data.scannerRevision||'not reported');
-            if(row.revision!=='v3.3') { row.suggestions=[]; throw new Error(`Scanner backend revision ${row.revision}; expected v3.3. Deploy the matching image and reload before scanning.`); }
-            row.total=data.totalPages; row.scanned+=data.scanned; row.readable+=data.readablePages; row.suggestions.push(...(data.suggestions||[])); row.warnings.push(...(data.warnings||[]));
+            if(row.revision!=='v4') { row.suggestions=[]; throw new Error(`Scanner backend revision ${row.revision}; expected v4. Deploy the matching image and reload before scanning.`); }
+            row.total=data.totalPages; row.scanned+=data.scanned; row.readable+=data.readablePages; row.cached+=Number(data.cachedPages||0); row.suggestions.push(...(data.suggestions||[])); row.warnings.push(...(data.warnings||[]));
             if (!data.scanned) break; start+=data.scanned; progress.value=i+Math.min(1,start/Math.min(scope,row.total));
           } while(start<Math.min(scope,row.total));
           row.complete=start>=Math.min(scope,row.total); if (row.total>scope) row.warnings.push(`Only first ${scope} of ${row.total} pages scanned; game coverage is incomplete.`);
@@ -18758,10 +18769,10 @@ function gvMagazineScanDialog(items, fromDetail = false, inlineHost = null) {
     if (session.running) return;
     let count=0; const ids=new Set(); state.metadataManager.dirty=state.metadataManager.dirty||{};
     const index=metadataManagerBuildStateItemIndex();
-    for(const input of q('[data-scan-results]').querySelectorAll('input:checked:not(:disabled)')) {
+    for(const input of q('[data-scan-results]').querySelectorAll('input[data-scan-field]:checked:not(:disabled)')) {
       const row=session.rows[Number(input.dataset.scanRow)], id=metadataManagerItemId(row.item), field=input.dataset.scanField;
       const current=index.get(id)?.item; if (!current || current.kind!=='Magazine' || !metadataManagerFieldsForKind('Magazine').has(field) || (isMetadataFieldLocked(current,field)||(field==='name'&&isMetadataFieldLocked(current,'title')))) continue;
-      const value=input.closest('.gv-magscan-field').querySelector('textarea').value.trim(); if (!value || Object.hasOwn(state.metadataManager.dirty[id]||{},field) || String(metadataManagerFieldValue(current,field)??'')!==String(metadataManagerFieldValue(row.item,field)??'')) continue;
+      const value=input.closest('.gv-magscan-field').querySelector('textarea').value.trim(); if (!value || value===String(metadataManagerFieldValue(current,field)??'').trim() || Object.hasOwn(state.metadataManager.dirty[id]||{},field) || String(metadataManagerFieldValue(current,field)??'')!==String(metadataManagerFieldValue(row.item,field)??'')) continue;
       state.metadataManager.dirty[id]={...(state.metadataManager.dirty[id]||{}),[field]:value}; ids.add(id); count++;
     }
     close();
@@ -18771,6 +18782,78 @@ function gvMagazineScanDialog(items, fromDetail = false, inlineHost = null) {
   if (!inlineHost) dialog.showModal();
 }
 const GV_MAG_SCAN_FIELDS = ['name','magazineTitle','issueNumber','volume','coverDate','barcodeUpcIssn','publicationDate','year','publisher','region','languageTag','platformFocus','primarySystem','magazineCategory','coverSubject','pageCount','writer','summary','featuredGames','mentionedGames','featuredPlatforms','specialFeatures','includedExtras','tags'];
+function gvMagazineArticleEvidence(row) {
+  const key=v=>String(v??'').normalize('NFKC').toLowerCase().replace(/\band\b|&/gi,'').replace(/[^\p{L}\p{N}]/gu,'');
+  const grouped=new Map();
+  for(const s of row.suggestions.filter(x=>x.field==='articleCandidate')) {
+    const k=key(s.value);if(!k)continue;if(!grouped.has(k))grouped.set(k,[]);grouped.get(k).push(s);
+  }
+  const promoted=[];
+  for(const group of grouped.values()) {
+    const pages=[...new Set(group.map(x=>Number(x.page)))].filter(n=>n>0).sort((a,b)=>a-b);
+    if(!pages.some((n,i)=>i>0&&n===pages[i-1]+1))continue;
+    // Each page has a column-local focus and at least two editorial cues; adjacency alone is insufficient.
+    for(const x of group.filter(x=>pages.includes(x.page-1)||pages.includes(x.page+1))) promoted.push({...x,field:'featuredGames',confidence:'Adjacent article regions — review coverage'});
+  }
+  return promoted;
+}
+function gvMagazineReviewGames(row,proposals,block) {
+  const fields=['featuredGames','mentionedGames'];
+  const key=v=>String(v??'').normalize('NFKC').toLowerCase().replace(/\band\b|&/gi,'').replace(/[^\p{L}\p{N}]/gu,'');
+  const byGame=new Map();
+  const edits=new Map();
+  const baseline=new Map();
+  const existing=new Set(fields.flatMap(f=>itemArray(metadataManagerFieldValue(row.item,f))).map(key));
+  const cover=key(metadataManagerFieldValue(row.item,'coverSubject'));
+  for(const f of fields) {
+    const p=proposals.find(x=>x.field===f);
+    const input=block.querySelector(`input[data-scan-field="${f}"]`);
+    const edit=block.querySelector(`textarea[data-scan-value="${f}"]`);
+    if(!p||!input||!edit||p.locked)continue;
+    edits.set(f,{input,edit});
+    baseline.set(f,itemArray(p.current));
+    for(const v of itemArray(p.value)) {
+      if(existing.has(key(v))||key(v)===cover)continue;
+      const k=key(v);if(!k)continue;
+      if(!byGame.has(k))byGame.set(k,{name:v,field:f,evidence:[],unresolved:false});
+    }
+  }
+  const all=[...row.suggestions,...gvMagazineArticleEvidence(row)];
+  for(const x of all) {
+    if(!['featuredGames','mentionedGames','articleCandidate','unresolvedGame','gamePlatformEvidence'].includes(x.field))continue;
+    const k=key(x.value);if(!k||existing.has(k)||k===cover)continue;
+    if(x.field==='unresolvedGame'&&!byGame.has(k))byGame.set(k,{name:x.value,field:'ignore',evidence:[],unresolved:true});
+    const game=byGame.get(k);if(game)game.evidence.push(x);
+  }
+  if(!byGame.size||!edits.size)return;
+  const section=document.createElement('details');section.className='gv-magscan-game-review';
+  const title=document.createElement('summary');title.textContent=`Review individual game candidates (${byGame.size})`;section.appendChild(title);
+  const hint=document.createElement('p');hint.className='sub';hint.textContent='Adjust new game candidates individually. Existing games remain in the editable fields. Unresolved titles are ignored until selected. Apply choices updates the fields below; Stage is still required.';section.appendChild(hint);
+  const list=document.createElement('div');list.className='gv-magscan-game-list';section.appendChild(list);
+  const controls=[];
+  for(const game of [...byGame.values()].sort((a,b)=>Number(a.unresolved)-Number(b.unresolved)||(a.field==='featuredGames'?0:1)-(b.field==='featuredGames'?0:1)||a.name.localeCompare(b.name))) {
+    const item=document.createElement('div');item.className='gv-magscan-game-row';
+    const label=document.createElement('div');const name=document.createElement('strong');name.textContent=game.name;label.appendChild(name);
+    const meta=document.createElement('div');meta.className='sub';const pages=[...new Set(game.evidence.map(x=>x.page).filter(Boolean))].sort((a,b)=>a-b);meta.textContent=(game.unresolved?'Unresolved printed title · ':'')+(pages.length?'Pages '+pages.join(', '):'No page reference');label.appendChild(meta);
+    const details=document.createElement('details');details.innerHTML='<summary>Evidence</summary>';for(const x of game.evidence){const p=document.createElement('p');p.className='sub';p.textContent=`Page ${x.page||'—'}: ${x.evidence} [${x.confidence||'Review'}]`;details.appendChild(p);}label.appendChild(details);
+    const select=document.createElement('select');select.setAttribute('aria-label',`Classification for ${game.name}`);
+    for(const [v,t] of [['featuredGames','Featured game'],['mentionedGames','Mentioned game'],['ignore','Ignore']]){if(v!=='ignore'&&!edits.has(v))continue;const o=document.createElement('option');o.value=v;o.textContent=t;select.appendChild(o);}
+    select.value=edits.has(game.field)?game.field:'ignore';controls.push({game,select});item.append(label,select);list.appendChild(item);
+  }
+  const apply=document.createElement('button');apply.type='button';apply.className='ghost';apply.textContent='Apply game choices to proposals';section.appendChild(apply);
+  apply.onclick=()=>{
+    const managed=new Set(controls.map(c=>key(c.game.name)));
+    for(const [field,{input,edit}] of edits) {
+      // Preserve manual edits and existing values; only candidate entries are managed here.
+      const selected=controls.filter(c=>c.select.value===field).map(c=>c.game.name);
+      const preserved=itemArray(edit.value).filter(v=>!managed.has(key(v)));
+      const result=[...new Map([...preserved,...selected].filter(Boolean).map(v=>[key(v),v])).values()].join(', ');
+      if(result!==edit.value){edit.value=result;input.checked=!!result.trim();input.dispatchEvent(new Event('change',{bubbles:true}));}
+    }
+  };
+  const first=block.querySelector('.gv-magscan-field');block.insertBefore(section,first||null);
+}
+
 function gvMagazineScanProposals(row) {
   const fields=new Map(); const id=metadataManagerItemId(row.item), dirty=state.metadataManager.dirty[id]||{};
   const key=v=>String(v??'').normalize('NFKC').toLowerCase().replace(/[^\p{L}\p{N}]/gu,'');
@@ -18779,7 +18862,7 @@ function gvMagazineScanProposals(row) {
   const unique=values=>[...new Map(values.filter(v=>String(v??'').trim()).map(v=>[key(v),v])).values()];
   const currentOf=f=>String(dirty[f]??metadataManagerFieldValue(row.item,f)??'').trim();
   function add(x) { if(!String(x.value??'').trim())return; if(!fields.has(x.field)) fields.set(x.field,[]); const a=fields.get(x.field); if(!a.some(y=>same(y.value,x.value)&&y.page===x.page)) a.push(x); }
-  row.suggestions.forEach(x=>{
+  [...row.suggestions,...gvMagazineArticleEvidence(row)].forEach(x=>{
     if(x.field==='languageTag' && /^(?:iso|iso[- ]?639.*|tag|code|unknown|und|none|n\/a)$/i.test(String(x.value??'').trim())) return;
     add(x);
   });
@@ -18849,7 +18932,8 @@ function gvMagazineScanProposals(row) {
   const result=[];
   for(const field of GV_MAG_SCAN_FIELDS) {
     const evidence=fields.get(field)||[];
-    if(!evidence.length||!metadataManagerFieldsForKind('Magazine').has(field)||METADATA_MANAGER_READONLY_COLUMNS.has(field)) continue;
+    const candidateEditor=(field==='featuredGames'||field==='mentionedGames')&&row.suggestions.some(x=>['featuredGames','mentionedGames','unresolvedGame'].includes(x.field));
+    if((!evidence.length&&!candidateEditor)||!metadataManagerFieldsForKind('Magazine').has(field)||METADATA_MANAGER_READONLY_COLUMNS.has(field)) continue;
     const current=currentOf(field);
     const locked=Object.hasOwn(dirty,field)||isMetadataFieldLocked(row.item,field)||(field==='name'&&isMetadataFieldLocked(row.item,'title'))||(GV_MAG_SCAN_ARRAYS.has(field)&&Array.isArray(row.item[field])&&row.item[field].some(v=>/[;,|]/.test(v)));
     const values=candidates(field); const array=GV_MAG_SCAN_ARRAYS.has(field);
@@ -18861,7 +18945,7 @@ function gvMagazineScanProposals(row) {
     const comparisonKey=isGameList(field)?gameKey:key;
     const originalArray=array?itemArray(current):[];
     const equivalent=array?(field==='featuredPlatforms'?originalArray.map(key).sort().join('|')===itemArray(value).map(key).sort().join('|'):isGameList(field)?originalArray.map(gameKey).sort().join('|')===itemArray(value).map(gameKey).sort().join('|'):uniqueField(field,originalArray).map(comparisonKey).sort().join('|')===uniqueField(field,itemArray(value)).map(comparisonKey).sort().join('|')):same(value,current);
-    if(!value||equivalent) continue;
+    if(!value||equivalent) { if(candidateEditor&&!locked) result.push({field,current,value:current,evidence,conflict:false,locked,safe:false,editorOnly:true}); continue; }
     const safe=!locked&&!conflict&&(!current.trim()||(field==='pageCount'&&current.trim()==='0'))&&evidence.every(x=>['Measured','Checksum valid'].includes(x.confidence));
     result.push({field,current,value,evidence,conflict,locked,safe});
   }
