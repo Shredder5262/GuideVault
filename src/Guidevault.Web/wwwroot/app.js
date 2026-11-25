@@ -27573,29 +27573,57 @@ function launchBoxStrategyRowActions(r) {
 function launchBoxStrategySelected() {
   return [...($('launchBoxControlledScanResults')?.querySelectorAll('.launchbox-strategy-select:checked') || [])];
 }
+function launchBoxStrategyBulkState(selected, reason, note) {
+  const allStrong = selected.length > 0 && selected.every(x => x.dataset.classification === 'Strong candidate');
+  const allReview = selected.length > 0 && selected.every(x => ['Needs review','Related release'].includes(x.dataset.classification));
+  const hasUnlisted = selected.some(x => x.dataset.unlisted === 'true');
+  const isReview = launchBoxStrategyReviewReasons.some(([value]) => value === reason);
+  const isReject = launchBoxStrategyRejectReasons.some(([value]) => value === reason);
+  const approveAction = allStrong && !reason ? 'approve' :
+    allReview && isReview && launchBoxStrategyReviewValid(reason,note,hasUnlisted) ? 'approve-reviewed' : '';
+  const rejectAllowed = selected.length > 0 && isReject && launchBoxStrategyRejectValid(reason,note);
+  let hint = 'Select candidates to take a bulk action.';
+  if (selected.length) {
+    if (isReject) hint = rejectAllowed ? 'Ready to mark the selection Not a Match.' : 'This rejection reason requires a note of at least 8 characters.';
+    else if (!allStrong && !allReview) hint = 'For approval, select strong or review candidates separately. Rejection and Needs Metadata support mixed selections.';
+    else if (allStrong) hint = reason ? 'Clear the reason to approve strong candidates directly.' : 'Strong candidates can be approved without a reason.';
+    else if (!isReview) hint = 'Choose a verification reason to approve reviewed candidates.';
+    else if (hasUnlisted && !['cross-platform','coverage-inspected','other-verified'].includes(reason)) hint = 'For an unlisted platform, choose cross-platform, content inspection or other verified evidence and add a note.';
+    else if (!approveAction) hint = 'Add a verification note of at least 8 characters.';
+    else hint = 'Ready to approve the reviewed selection.';
+  }
+  const noteRequired = reason === 'other-rejection' || (isReview && (hasUnlisted || ['cross-platform','other-verified'].includes(reason)));
+  return {approveAction,rejectAllowed,hint,noteRequired};
+}
 function launchBoxStrategyUpdateBulk() {
   const host = $('launchBoxControlledScanResults');
   if (!host) return;
   const selected = launchBoxStrategySelected();
-  const allStrong = selected.length && selected.every(x => x.dataset.classification === 'Strong candidate');
-  const allReview = selected.length && selected.every(x => ['Needs review','Related release'].includes(x.dataset.classification));
-  const reason = host.querySelector('#launchBoxStrategyBulkReason')?.value || '';
-  const note = (host.querySelector('#launchBoxStrategyBulkNote')?.value || '').trim();
-  const hasUnlisted = selected.some(x => x.dataset.unlisted === 'true');
+  const reasonField = host.querySelector('#launchBoxStrategyBulkReason');
+  const noteField = host.querySelector('#launchBoxStrategyBulkNote');
+  const reason = reasonField?.value || '';
+  const note = (noteField?.value || '').trim();
+  const state = launchBoxStrategyBulkState(selected,reason,note);
   const count = host.querySelector('#launchBoxStrategySelectedCount');
   if (count) count.textContent = `${selected.length} selected on this page`;
   const approve = host.querySelector('#launchBoxStrategyBulkApprove');
-  const reviewed = host.querySelector('#launchBoxStrategyBulkReviewed');
   const reject = host.querySelector('#launchBoxStrategyBulkReject');
   const metadata = host.querySelector('#launchBoxStrategyBulkMetadata');
-  const rejectReason = host.querySelector('#launchBoxStrategyBulkRejectReason')?.value || '';
-  const rejectNote = (host.querySelector('#launchBoxStrategyBulkRejectNote')?.value || '').trim();
-  if (approve) approve.disabled = launchBoxStrategyBusy || !allStrong;
-  if (reviewed) reviewed.disabled = launchBoxStrategyBusy || !allReview || !launchBoxStrategyReviewValid(reason,note,hasUnlisted);
-  if (reject) reject.disabled = launchBoxStrategyBusy || !selected.length || !launchBoxStrategyRejectValid(rejectReason,rejectNote);
+  const hint = host.querySelector('#launchBoxStrategyBulkHint');
+  if (approve) approve.disabled = launchBoxStrategyBusy || !state.approveAction;
+  if (reject) reject.disabled = launchBoxStrategyBusy || !state.rejectAllowed;
   if (metadata) metadata.disabled = launchBoxStrategyBusy || !selected.length;
-  host.querySelectorAll('.launchbox-strategy-select').forEach(x =>
-    x.closest('.launchbox-strategy-pair')?.classList.toggle('is-selected', x.checked));
+  if (reasonField) reasonField.disabled = launchBoxStrategyBusy || !selected.length;
+  if (noteField) {
+    noteField.disabled = launchBoxStrategyBusy || !selected.length || !reason;
+    noteField.placeholder = state.noteRequired ? 'Required (8–240 characters)' : 'Optional note';
+  }
+  if (hint) hint.textContent = state.hint;
+  host.querySelectorAll('[data-guide-select]').forEach(b => { b.disabled = launchBoxStrategyBusy; });
+  host.querySelectorAll('.launchbox-strategy-select').forEach(x => {
+    x.disabled = launchBoxStrategyBusy;
+    x.closest('.launchbox-strategy-pair')?.classList.toggle('is-selected', x.checked);
+  });
 }
 function launchBoxStrategySelectPage(mode) {
   if (launchBoxStrategyBusy) return;
@@ -27604,6 +27632,12 @@ function launchBoxStrategySelectPage(mode) {
     box.checked = mode === 'all' || (mode === 'strong' && box.dataset.classification === 'Strong candidate') ||
       (mode === 'review' && ['Needs review','Related release'].includes(box.dataset.classification));
   });
+  if (mode === 'none') {
+    const reason = host?.querySelector('#launchBoxStrategyBulkReason');
+    const note = host?.querySelector('#launchBoxStrategyBulkNote');
+    if (reason) reason.value = '';
+    if (note) note.value = '';
+  }
   launchBoxStrategyUpdateBulk();
 }
 async function launchBoxStrategySubmit(action, pairs, reviewReason = '', reviewNote = '') {
@@ -27655,21 +27689,18 @@ async function launchBoxStrategyRowDecision(button) {
 function launchBoxStrategySubmitSelection(action) {
   const host = $('launchBoxControlledScanResults');
   const boxes = launchBoxStrategySelected();
-  if (!boxes.length) return;
-  if (action === 'approve' && boxes.some(b => b.dataset.classification !== 'Strong candidate'))
-    return launchBoxControlledMessage('launchBoxControlledScanStatus', 'Select only Strong candidates for standard approval.');
-  if (action === 'approve-reviewed' && boxes.some(b => !['Needs review','Related release'].includes(b.dataset.classification)))
-    return launchBoxControlledMessage('launchBoxControlledScanStatus', 'Select only Needs Review or Related Release candidates for shared reviewed approval.');
-  const reason = action === 'approve-reviewed' ? host.querySelector('#launchBoxStrategyBulkReason')?.value || '' :
-    action === 'reject' ? host.querySelector('#launchBoxStrategyBulkRejectReason')?.value || '' : '';
-  const note = action === 'approve-reviewed' ? (host.querySelector('#launchBoxStrategyBulkNote')?.value || '').trim() :
-    action === 'reject' ? (host.querySelector('#launchBoxStrategyBulkRejectNote')?.value || '').trim() : '';
-  const hasUnlisted = boxes.some(x => x.dataset.unlisted === 'true');
-  if (action === 'approve-reviewed' && !launchBoxStrategyReviewValid(reason,note,hasUnlisted))
-    return launchBoxControlledMessage('launchBoxControlledScanStatus', 'Select a verification reason and document applicability for unlisted platforms.');
-  if (action === 'reject' && !launchBoxStrategyRejectValid(reason,note))
-    return launchBoxControlledMessage('launchBoxControlledScanStatus', 'Choose one rejection reason for the selected pairs.');
-  return launchBoxStrategySubmit(action,boxes.map(x=>({gameId:x.dataset.gameId,publicationId:x.dataset.guideId})),reason,note);
+  if (!host || !boxes.length || launchBoxStrategyBusy) return;
+  const reason = host.querySelector('#launchBoxStrategyBulkReason')?.value || '';
+  const note = (host.querySelector('#launchBoxStrategyBulkNote')?.value || '').trim();
+  const state = launchBoxStrategyBulkState(boxes,reason,note);
+  if (action === 'approve') {
+    if (!state.approveAction) return launchBoxControlledMessage('launchBoxControlledScanStatus', state.hint);
+    action = state.approveAction;
+  } else if (action === 'reject') {
+    if (!state.rejectAllowed) return launchBoxControlledMessage('launchBoxControlledScanStatus', 'Choose a rejection reason and add a note when required.');
+  } else if (action !== 'needs-metadata') return;
+  const useReason = action === 'approve-reviewed' || action === 'reject';
+  return launchBoxStrategySubmit(action,boxes.map(x=>({gameId:x.dataset.gameId,publicationId:x.dataset.guideId})),useReason ? reason : '',useReason ? note : '');
 }
 async function runLaunchBoxStrategyScan(page = 1) {
   updateLaunchBoxMatchingDocumentTypeUI();
@@ -27700,18 +27731,17 @@ async function runLaunchBoxStrategyScan(page = 1) {
     const pending = ['pending','related'].includes(launchBoxStrategyStatusFilter);
     const toolbar = `<div class="launchbox-scan-queuebar"><label>Show <select id="launchBoxStrategyStatus">${filters}</select></label>` +
       `<span>${Number(data.pendingPairs||0)} pending · ${Number(data.relatedPairs||0)} related · ${Number(data.approvedPairs||0)} approved · ${Number(data.rejectedPairs||0)} rejected · ${Number(data.metadataPairs||0)} need metadata</span></div>`;
-    const bulk = pending ? `<div class="launchbox-strategy-bulkbar">` +
+    const bulk = pending ? `<div class="launchbox-strategy-bulkbar launchbox-publication-bulk-unified">` +
       `<div class="launchbox-scan-bulkselect"><button type="button" data-guide-select="all">Select page</button><button type="button" data-guide-select="strong">Select strong</button>` +
-      `<button type="button" data-guide-select="review">Select needs review</button><button type="button" data-guide-select="none">Clear</button></div>` +
-      `<div class="launchbox-strategy-bulk-actions"><span id="launchBoxStrategySelectedCount">0 selected on this page</span>` +
+      `<button type="button" data-guide-select="review">Select needs review</button><button type="button" data-guide-select="none">Clear</button><span id="launchBoxStrategySelectedCount" aria-live="polite">0 selected on this page</span></div>` +
+      `<div class="launchbox-publication-bulk-fields"><label>Reason<select id="launchBoxStrategyBulkReason" disabled><option value="">No reason selected</option>` +
+      `<optgroup label="Approve after verification">${launchBoxStrategyReasonOptions().replace('<option value="">Choose verification reason</option>','')}</optgroup>` +
+      `<optgroup label="Not a Match">${launchBoxStrategyRejectOptions().replace('<option value="">Choose why not a match</option>','')}</optgroup></select></label>` +
+      `<label>Note<input id="launchBoxStrategyBulkNote" type="text" maxlength="240" placeholder="Optional note" disabled></label></div>` +
+      `<div class="launchbox-publication-bulk-footer"><span id="launchBoxStrategyBulkHint" aria-live="polite">Select candidates to take a bulk action.</span><div class="launchbox-strategy-bulk-actions">` +
       `<button type="button" class="guide-approve" id="launchBoxStrategyBulkApprove" disabled>Approve selected</button>` +
       `<button type="button" id="launchBoxStrategyBulkReject" disabled>Not a Match</button>` +
-      `<button type="button" id="launchBoxStrategyBulkMetadata" disabled>Needs Metadata</button></div>` +
-      `<div class="launchbox-strategy-bulk-rejection"><label>Shared rejection reason<select id="launchBoxStrategyBulkRejectReason">${launchBoxStrategyRejectOptions()}</select></label>` +
-      `<label>Optional note<input id="launchBoxStrategyBulkRejectNote" type="text" maxlength="240" placeholder="Required for Other"></label></div>` +
-      `<div class="launchbox-strategy-bulk-review"><label>Shared review reason<select id="launchBoxStrategyBulkReason">${launchBoxStrategyReasonOptions()}</select></label>` +
-      `<label>Shared note<input id="launchBoxStrategyBulkNote" type="text" maxlength="240" placeholder="Required for cross-platform approvals"></label>` +
-      `<button type="button" class="guide-approve" id="launchBoxStrategyBulkReviewed" disabled>Approve reviewed selection</button></div></div>` : '';
+      `<button type="button" id="launchBoxStrategyBulkMetadata" title="Flags selected relationships for metadata work without saving a reason or note" disabled>Needs Metadata</button></div></div></div>` : '';
     host.innerHTML = toolbar + `<div class="launchbox-controlled-summary"><strong>${Number(data.candidatePairs||0)} ${escapeHtml(launchBoxStrategyStatusFilter)} relationships</strong> · ` +
       `${Number(data.strongCandidates||0)} strong · ${Number(data.needsReview||0)} need review · ${Number(data.publicationsInLibrary??data.strategyGuidesInLibrary??0)} ${plural} in library</div>` +
       bulk + pager + `<div class="launchbox-controlled-table">` +
@@ -27752,7 +27782,11 @@ async function runLaunchBoxStrategyScan(page = 1) {
     });
     host.querySelectorAll('.launchbox-strategy-select').forEach(box=>box.addEventListener('change',launchBoxStrategyUpdateBulk));
     host.querySelectorAll('[data-guide-select]').forEach(button=>button.addEventListener('click',()=>launchBoxStrategySelectPage(button.dataset.guideSelect)));
-    host.querySelector('#launchBoxStrategyBulkReason')?.addEventListener('change',launchBoxStrategyUpdateBulk);
+    host.querySelector('#launchBoxStrategyBulkReason')?.addEventListener('change',()=>{
+      const note = host.querySelector('#launchBoxStrategyBulkNote');
+      if (note) note.value = '';
+      launchBoxStrategyUpdateBulk();
+    });
     host.querySelector('#launchBoxStrategyBulkNote')?.addEventListener('input',launchBoxStrategyUpdateBulk);
     host.querySelector('#launchBoxStrategyBulkRejectReason')?.addEventListener('change',launchBoxStrategyUpdateBulk);
     host.querySelector('#launchBoxStrategyBulkRejectNote')?.addEventListener('input',launchBoxStrategyUpdateBulk);

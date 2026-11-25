@@ -22839,3 +22839,15 @@ body.guidevault-direct-reader-pending:not(.auth-locked) #guidevaultDirectReaderL
 .launchbox-recovery-actions{display:flex;flex-wrap:wrap;gap:12px;align-items:center}
 .launchbox-recovery-actions .sub{margin:0;flex:1 1 280px;font-size:.85rem}
 @media(max-width:920px){.launchbox-recovery-columns{grid-template-columns:1fr}.launchbox-recovery-searchbox button{justify-self:start}.launchbox-strategy-bulk-review{align-items:stretch}}
+
+/* GuideVault: unified publication bulk decisions. */
+.launchbox-publication-bulk-unified .launchbox-scan-bulkselect{padding-bottom:0}
+.launchbox-publication-bulk-unified #launchBoxStrategySelectedCount{margin-left:auto;color:#bcd5eb;font-size:.85rem}
+.launchbox-publication-bulk-fields{display:grid;grid-template-columns:minmax(220px,1fr) minmax(0,2.3fr);gap:10px;align-items:end}
+.launchbox-publication-bulk-fields label{display:grid;gap:5px;min-width:0;color:#c4d6eb;font-size:.79rem}
+.launchbox-publication-bulk-fields :disabled{opacity:.55}
+.launchbox-publication-bulk-footer{display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap}
+.launchbox-publication-bulk-footer #launchBoxStrategyBulkHint{color:#a9bfd5;font-size:.79rem;flex:1 1 240px}
+.launchbox-publication-bulk-footer .launchbox-strategy-bulk-actions{margin-left:auto;justify-content:flex-end}
+.launchbox-publication-bulk-footer #launchBoxStrategyBulkReject{border-color:rgba(207,126,140,.44);color:#f1bbc0}
+@media(max-width:700px){.launchbox-publication-bulk-fields{grid-template-columns:minmax(0,1fr)}.launchbox-publication-bulk-unified #launchBoxStrategySelectedCount{margin-left:0}.launchbox-publication-bulk-footer .launchbox-strategy-bulk-actions{margin-left:0;justify-content:flex-start}}
