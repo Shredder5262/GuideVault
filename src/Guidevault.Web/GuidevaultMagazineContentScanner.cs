@@ -9,7 +9,7 @@ public static class GuidevaultMagazineContentScanner
     public sealed record Suggestion(string Field, string Value, int Page, string Evidence, string Confidence);
     public sealed record ScanResult(int TotalPages, int Start, int Scanned, int ReadablePages, List<Suggestion> Suggestions, List<string> Warnings)
     {
-        public string ScannerRevision => "v3.2";
+        public string ScannerRevision => "v3.3";
     }
     private static readonly SemaphoreSlim Gate = new(1, 1);
     private static readonly Regex Words = new(@"[\p{L}\p{N}]+", RegexOptions.Compiled);
@@ -228,8 +228,24 @@ public static class GuidevaultMagazineContentScanner
                     Add("coverDate", value, date.Value); var y = GetYear(value); if (y > 0) Add("year", y.ToString(), date.Value);
                 }
             }
-            MatchField("publisher", @"^\s*(?:published by|publisher\s*:)\s*([^\r\n]{3,100})", text);
-            MatchField("publisher", @"\bis published[^\r\n]{0,180}?\bby\s+([\p{L}][^,;\r\n]{2,80})", text);
+            // The subject of a game advertisement can also be "Published by".
+            // Require the actual publication name in the same local OCR context.
+            var publicationKey = Normalize(item.MagazineTitle ?? "");
+            if (publicationKey.Length > 2 && !likelyAd)
+            {
+                for (int pi = 0; pi < layout.Lines.Count; pi++)
+                {
+                    var pubLine = layout.Lines[pi];
+                    var local = layout.Lines.Skip(Math.Max(0, pi - 2)).Take(Math.Min(3, pi + 1))
+                        .Where(l => l.Block == pubLine.Block && l.Paragraph == pubLine.Paragraph)
+                        .Select(l => l.Text);
+                    var context = string.Join(" ", local);
+                    if (!(" " + Normalize(context) + " ").Contains(" " + publicationKey + " ", StringComparison.Ordinal)) continue;
+                    if (IsLegal(pubLine.Text) && !Regex.IsMatch(context, @"\b(?:subscription|published (?:monthly|weekly|quarterly)|ISSN)\b", RegexOptions.IgnoreCase)) continue;
+                    var pub = Regex.Match(pubLine.Text, @"\b(?:is published[^\r\n]{0,180}?\bby|published by|publisher[ \t]*:)[ \t]*[:–-]?[ \t]*([\p{L}][^,;\r\n]{2,80})", RegexOptions.IgnoreCase);
+                    if (pub.Success) Add("publisher", pub.Groups[1].Value, context, "Publication-linked print");
+                }
+            }
             var masthead = Regex.Match(text, @"^\s*([\p{L}][\p{L}\p{N} &'.-]{2,70}?)\s*\(ISSN\b", RegexOptions.IgnoreCase|RegexOptions.Multiline);
             if(masthead.Success)
             {

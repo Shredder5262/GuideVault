@@ -18669,7 +18669,7 @@ function gvMagazineScanDialog(items, fromDetail = false, inlineHost = null) {
   if (!items.length || items.length > 5) { metadataManagerSetStatus('Select 1–5 magazine issues per scan.','error'); return; }
   const dialog = document.createElement(inlineHost ? 'div' : 'dialog');
   dialog.className = inlineHost ? 'gv-magscan-inline' : 'gv-magscan-dialog';
-  dialog.innerHTML = `<div class="gv-magscan-content"><h2>Scan magazine metadata</h2><p class="sub">${items.length} issue(s). Scanner UI v3.2 — Local OCR and LaunchBox title lookup. Nothing is saved automatically.</p><label>Scan scope <select data-scan-scope><option value="12">First 12 pages (cover, contents, masthead)</option><option value="300">Full issue (up to 300 pages)</option></select></label><p class="sub" data-scan-status aria-live="polite">Start a scan to review suggested fields. Layout-aware English OCR and catalog matching. All magazine fields are checked; uncertain or unavailable values are not guessed. Review all proposed editorial data.</p><progress data-scan-progress value="0" max="1"></progress><div data-scan-results></div><div class="gv-magscan-actions"><button class="ghost" type="button" data-scan-close>Close</button><button class="ghost" type="button" data-scan-stop hidden>Stop</button><button class="primary" type="button" data-scan-start>Start scan</button><button class="primary" type="button" data-scan-stage disabled>Stage selected suggestions</button></div></div>`;
+  dialog.innerHTML = `<div class="gv-magscan-content"><h2>Scan magazine metadata</h2><p class="sub">${items.length} issue(s). Scanner UI v3.3 — Local OCR and LaunchBox title lookup. Nothing is saved automatically.</p><label>Scan scope <select data-scan-scope><option value="12">First 12 pages (cover, contents, masthead)</option><option value="300"${fromDetail?' selected':''}>Full issue (up to 300 pages)</option></select></label><p class="sub" data-scan-status aria-live="polite">Start a scan to review suggested fields. Layout-aware English OCR and catalog matching. All magazine fields are checked; uncertain or unavailable values are not guessed. Review all proposed editorial data.</p><progress data-scan-progress value="0" max="1"></progress><div data-scan-results></div><div class="gv-magscan-actions"><button class="ghost" type="button" data-scan-close>Close</button><button class="ghost" type="button" data-scan-stop hidden>Stop</button><button class="primary" type="button" data-scan-start>Start scan</button><button class="primary" type="button" data-scan-stage disabled>Stage selected suggestions</button></div></div>`;
   (inlineHost || document.body).appendChild(dialog);
   const q = s => dialog.querySelector(s);
   const session = { controller:null, running:false, rows:[], dialog, inline:!!inlineHost, itemId:metadataManagerItemId(items[0]) };
@@ -18686,12 +18686,17 @@ function gvMagazineScanDialog(items, fromDetail = false, inlineHost = null) {
     const root = q('[data-scan-results]'); root.innerHTML = '';
     session.rows.forEach((row, rowIndex) => {
       const block = document.createElement('section'); block.className = 'gv-magscan-result';
-      block.innerHTML = `<h3>${escapeHtml(metadataManagerItemName(row.item))}</h3><p class="sub">${row.readable} of ${row.scanned} scanned pages yielded text; ${row.total || '?'} total pages. ${row.complete ? 'Scan scope completed.' : 'Partial scan.'} Backend scanner: ${escapeHtml(row.revision||'not reported')}.</p>`;
+      block.innerHTML = `<h3>${escapeHtml(metadataManagerItemName(row.item))}</h3><p class="sub">${row.readable} of ${row.scanned} scanned pages yielded text; ${row.total || '?'} total pages. ${row.complete ? (row.scanned>=row.total ? 'Full issue scanned.' : 'Limited scan — coverage incomplete.') : 'Partial scan.'} Backend scanner: ${escapeHtml(row.revision||'not reported')}.</p>`;
       const strongCover=row.suggestions.filter(x=>x.field==='coverSubject'&&x.confidence==='Contents cover evidence');
       const coverNames=[...new Set((strongCover.length?strongCover:row.suggestions.filter(x=>x.field==='coverSubject')).map(x=>x.value))];
       const existingCover=String(row.item.coverSubject||'').trim();
       const coverConflict=coverNames.length>1 || (existingCover && coverNames.some(v=>v.toLowerCase()!==existingCover.toLowerCase()));
       const reviewWarnings=[...row.warnings];
+      const publisherEvidence=row.suggestions.filter(x=>x.field==='publisher');
+      const currentPublisher=String(metadataManagerFieldValue(row.item,'publisher')??'').trim();
+      if(currentPublisher && publisherEvidence.some(x=>x.confidence==='Archive metadata' && String(x.value).trim().toLowerCase()!==currentPublisher.toLowerCase()) && !publisherEvidence.some(x=>x.confidence==='Publication-linked print')) reviewWarnings.push('Archive publisher differs from existing metadata; retained existing publisher until the magazine masthead corroborates a change.');
+      const storedPages=Number(metadataManagerFieldValue(row.item,'pageCount'));
+      if(storedPages>0 && row.total>0 && storedPages!==row.total) reviewWarnings.push(`Stored page count ${storedPages} retained; document contains ${row.total} digital pages/images. Verify printed page count separately.`);
       const printedIssues=[...new Set(row.suggestions.filter(x=>x.field==='issueNumber'&&x.confidence==='Printed number').map(x=>x.value))];
       if(row.item.issueNumber&&printedIssues.some(v=>String(v)!==String(row.item.issueNumber))) reviewWarnings.push(`Printed issue number(s): ${printedIssues.join(', ')}. Existing overall issue #${row.item.issueNumber} retained.`);
       if(coverConflict) reviewWarnings.push(`Cover headings detected: ${coverNames.join(', ')}. ${existingCover?'Existing cover subject retained: '+existingCover+'. ':''}OCR headings do not establish the primary cover story; edit Metadata after checking the cover.`);
@@ -18701,7 +18706,7 @@ function gvMagazineScanDialog(items, fromDetail = false, inlineHost = null) {
       const available=GV_MAG_SCAN_FIELDS.filter(f=>metadataManagerFieldsForKind('Magazine').has(f));
       const proposed=new Set(proposals.map(p=>p.field));
       const observed=new Set(row.suggestions.map(p=>p.field));
-      audit.innerHTML=`<summary>${proposals.length} proposed changes · ${available.length} fields checked (show coverage)</summary><div class="gv-magscan-coverage-grid">${available.map(f=>{const def=metadataManagerColumnDefinition(f,['Magazine']);const current=String(metadataManagerFieldValue(row.item,f)??'').trim();const present=current&&!(f==='pageCount'&&current==='0');const status=proposed.has(f)?'Proposal':observed.has(f)?'Evidence found / unchanged':present?'Existing value retained':'No reliable evidence';return `<div><strong>${escapeHtml(def?.label||f)}</strong><small>${escapeHtml(status)}</small></div>`;}).join('')}</div>`;
+      audit.innerHTML=`<summary>${proposals.length} proposed changes · ${available.length} fields checked (show coverage)</summary><div class="gv-magscan-coverage-grid">${available.map(f=>{const def=metadataManagerColumnDefinition(f,['Magazine']);const current=String(metadataManagerFieldValue(row.item,f)??'').trim();const present=current&&!(f==='pageCount'&&current==='0');const status=proposed.has(f)?'Proposal':(f==='publisher'||f==='pageCount')&&present?'Existing value retained':observed.has(f)?'Evidence found / unchanged':present?'Existing value retained':'No reliable evidence';return `<div><strong>${escapeHtml(def?.label||f)}</strong><small>${escapeHtml(status)}</small></div>`;}).join('')}</div>`;
       block.appendChild(audit);
       if (!proposals.length) { const p = document.createElement('p'); p.textContent = 'No new editable suggestions found.'; block.appendChild(p); }
       for (const proposal of proposals) {
@@ -18737,7 +18742,7 @@ function gvMagazineScanDialog(items, fromDetail = false, inlineHost = null) {
             if (!res.ok) { let msg=`HTTP ${res.status}`; try { msg=(await res.json()).error||msg; } catch {} throw new Error(msg); }
             const data=await res.json();
             row.revision=String(data.scannerRevision||'not reported');
-            if(row.revision!=='v3.2') { row.suggestions=[]; throw new Error(`Scanner backend revision ${row.revision}; expected v3.2. Deploy the matching image and reload before scanning.`); }
+            if(row.revision!=='v3.3') { row.suggestions=[]; throw new Error(`Scanner backend revision ${row.revision}; expected v3.3. Deploy the matching image and reload before scanning.`); }
             row.total=data.totalPages; row.scanned+=data.scanned; row.readable+=data.readablePages; row.suggestions.push(...(data.suggestions||[])); row.warnings.push(...(data.warnings||[]));
             if (!data.scanned) break; start+=data.scanned; progress.value=i+Math.min(1,start/Math.min(scope,row.total));
           } while(start<Math.min(scope,row.total));
@@ -18787,6 +18792,14 @@ function gvMagazineScanProposals(row) {
   const concretePlatform = v => !/^(?:multi[ -]?platform|unknown|unspecified|not specified)$/i.test(String(v).trim());
   const editorialPlatforms=uniqueField('featuredPlatforms',candidates('featuredPlatforms').filter(concretePlatform));
   const platforms=uniqueField('featuredPlatforms',[...itemArray(row.item.featuredPlatforms),...editorialPlatforms].filter(concretePlatform));
+  // A digital image count is not proof of a different printed page count.
+  if(Number(currentOf('pageCount'))>0) fields.delete('pageCount');
+  // Archive-only evidence must not propose replacing a populated publisher.
+  if(currentOf('publisher')) {
+    const print=(fields.get('publisher')||[]).filter(x=>x.confidence==='Publication-linked print');
+    if(!print.length) fields.delete('publisher');
+    else fields.set('publisher',print.concat((fields.get('publisher')||[]).filter(x=>x.confidence==='Archive metadata'&&print.some(y=>same(x.value,y.value)))));
+  }
   const existingCover=currentOf('coverSubject');
   const cover=fields.get('coverSubject')||[];
   const explicitCover=unique(cover.filter(x=>x.confidence==='Contents cover evidence').map(x=>x.value));
