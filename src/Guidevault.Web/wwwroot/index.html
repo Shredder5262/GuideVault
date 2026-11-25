@@ -6,7 +6,7 @@
   <title>Guidevault</title>
   <link rel="icon" type="image/x-icon" href="/assets/favicon.ico?v=0.9.228" />
   <link rel="shortcut icon" type="image/x-icon" href="/assets/favicon.ico?v=0.9.228" />
-  <link rel="stylesheet" href="/styles.css?v=1.3.2-controlled-v1&amp;rev=launchbox-magazine-1&amp;bulk=publication-actions-v1&amp;mm=workspace-v1&amp;mmimport=v1&amp;magscan=v1" />
+  <link rel="stylesheet" href="/styles.css?v=1.3.2-controlled-v1&amp;rev=launchbox-magazine-1&amp;bulk=publication-actions-v1&amp;mm=workspace-v1&amp;mmimport=v1&amp;magscan=v1&amp;magscantab=v1" />
 </head>
 <body class="right-collapsed auth-locked">
   <section id="loginView" class="login-view" aria-labelledby="loginTitle">
@@ -190,13 +190,12 @@
               <img id="detailCover" class="detail-cover" alt="Selected cover" />
               <div class="detail-action-stack">
                 <button id="readBtn" class="primary full" type="button">Open Reader</button>
-                <button id="detailMagazineScan" class="ghost full hidden" type="button">Scan Magazine Metadata</button>
                 <button id="downloadBtn" class="ghost full" type="button">Open / Download File</button>
                 <button id="deleteBtn" class="danger full" type="button">Remove from Library</button>
               </div>
             </aside>
             <div class="detail-main-column">
-              <div class="tabs"><button class="tab active" data-tab="overview">Overview</button><button class="tab" data-tab="reviews">Reviews</button><button class="tab" data-tab="metadata">Metadata</button><button class="tab" data-tab="launchbox-links">LaunchBox Links</button><button class="tab" data-tab="reading-profile">Reading Profile</button><button class="tab" data-tab="notes">Notes</button><button class="tab" data-tab="library-data">Library Data</button></div>
+              <div class="tabs"><button class="tab active" data-tab="overview">Overview</button><button class="tab" data-tab="reviews">Reviews</button><button class="tab" data-tab="metadata">Metadata</button><button id="detailMagazineScan" class="tab hidden" data-tab="magazine-scan" type="button" aria-controls="magazine-scanPanel">Scan Magazine Metadata</button><button class="tab" data-tab="launchbox-links">LaunchBox Links</button><button class="tab" data-tab="reading-profile">Reading Profile</button><button class="tab" data-tab="notes">Notes</button><button class="tab" data-tab="library-data">Library Data</button></div>
               <section id="overviewPanel" class="tab-panel">
                 <p id="description"></p>
                 <div id="meta" class="detail-meta-list"></div>
@@ -327,6 +326,9 @@
                   <button id="igdbSearchBtn" class="metadata-lookup-button" type="button" title="Find a game on IGDB and import game metadata">IGDB</button>
                   <button id="esrbSearchBtn" class="metadata-lookup-button" type="button" title="Search ESRB rating">ESRB</button>
                 </div>
+              </section>
+              <section id="magazine-scanPanel" class="tab-panel hidden">
+                <div id="detailMagazineScanHost"></div>
               </section>
               <section id="launchbox-linksPanel" class="tab-panel hidden">
                 <article class="detail-launchbox-links-card">
@@ -3743,6 +3745,6 @@
   </dialog>
 
 
-  <script src="/app.js?v=1.3.2-controlled-v1&amp;rev=launchbox-magazine-1&amp;bulk=publication-actions-v1&amp;mm=workspace-v1&amp;mmsections=v1&amp;mmfields=v1&amp;mmimport=v1&amp;magscan=v1"></script>
+  <script src="/app.js?v=1.3.2-controlled-v1&amp;rev=launchbox-magazine-1&amp;bulk=publication-actions-v1&amp;mm=workspace-v1&amp;mmsections=v1&amp;mmfields=v1&amp;mmimport=v1&amp;magscan=v1&amp;magscantab=v1"></script>
 </body>
 </html>

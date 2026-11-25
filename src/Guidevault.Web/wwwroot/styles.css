@@ -22900,3 +22900,14 @@ body.guidevault-direct-reader-pending:not(.auth-locked) #guidevaultDirectReaderL
 .gv-magscan-field textarea{width:100%;box-sizing:border-box;margin:5px 0;resize:vertical;}
 .gv-magscan-field details{font-size:12px;overflow-wrap:anywhere;}
 .gv-magscan-actions{position:sticky;bottom:0;background:#101d2b;display:flex;justify-content:flex-end;gap:8px;flex-wrap:wrap;padding:12px 0 0;}
+
+/* GuideVault magazine scanner detail tab v1 */
+.gv-magscan-inline{color-scheme:dark;min-width:0;border:1px solid var(--line,#42617d);border-radius:12px;background:#101d2b;color:var(--text,#eaf1f8);}
+.gv-magscan-inline .gv-magscan-content{padding:16px;min-width:0;}
+.gv-magscan-inline .gv-magscan-content>label{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin:0;}
+.gv-magscan-inline .gv-magscan-content>label select{width:auto;max-width:100%;margin:0;}
+.gv-magscan-inline .gv-magscan-actions{position:static;background:transparent;}
+.gv-magscan-inline .gv-magscan-field textarea{background:#0b1521;color:#eaf1f8;border:1px solid #36536f;border-radius:7px;padding:9px 11px;font:inherit;line-height:1.5;min-height:44px;}
+.gv-magscan-inline .gv-magscan-field textarea:focus{outline:2px solid #5da8f2;outline-offset:1px;}
+.gv-magscan-inline .gv-magscan-field details[open]{max-height:280px;overflow:auto;padding:5px 8px;background:#0c1723;border-radius:6px;}
+.gv-magscan-inline .gv-magscan-field details p{padding:3px 0;line-height:1.45;}

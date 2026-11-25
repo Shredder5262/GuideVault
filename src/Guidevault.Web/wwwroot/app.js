@@ -8090,10 +8090,12 @@ function toggleRightPanel(forceOpen = null) {
   });
 }
 function activateTab(tab) {
+  if (tab === 'magazine-scan' && (state.selected?.kind !== 'Magazine' || !currentUserIsAdmin())) tab = 'overview';
   state.activeTab = tab || 'overview';
   document.querySelectorAll('.tab').forEach(b => b.classList.toggle('active', b.dataset.tab === state.activeTab));
   document.querySelectorAll('.tab-panel').forEach(p => p.classList.toggle('hidden', p.id !== `${state.activeTab}Panel`));
   if (state.activeTab === 'library-data') { updateMetadataFileMaintenance(); }
+  if (state.activeTab === 'magazine-scan') gvOpenInlineMagazineScan();
   if (state.activeTab === 'reviews' && state.selected) loadPublicReviewsForItem(state.selected, true);
 }
 
@@ -18644,19 +18646,39 @@ async function metadataManagerImportFile(file, format = 'json') {
 // GuideVault magazine scanner v1: read-only scan, explicit staging, existing save path.
 let gvMagazineScanSession = null;
 const GV_MAG_SCAN_ARRAYS = new Set(['featuredGames','mentionedGames','featuredPlatforms','specialFeatures','includedExtras','tags']);
-function gvMagazineScanDialog(items, fromDetail = false) {
+function gvDisposeInlineMagazineScan() {
+  const session = gvMagazineScanSession;
+  if (!session?.inline) return;
+  session.controller?.abort();
+  session.dialog.remove();
+  gvMagazineScanSession = null;
+}
+function gvOpenInlineMagazineScan() {
+  const host = $('detailMagazineScanHost');
+  const item = state.selected;
+  if (!host || item?.kind !== 'Magazine' || !currentUserIsAdmin()) return;
+  if (gvMagazineScanSession?.inline && gvMagazineScanSession.itemId === metadataManagerItemId(item)) return;
+  gvDisposeInlineMagazineScan();
+  if (gvMagazineScanSession) { host.textContent = 'Close the active batch scan before starting a magazine scan.'; return; }
+  host.replaceChildren();
+  gvMagazineScanDialog([item], true, host);
+}
+function gvMagazineScanDialog(items, fromDetail = false, inlineHost = null) {
   if (!currentUserIsAdmin() || gvMagazineScanSession) return;
   items = items.filter(item => item?.kind === 'Magazine');
   if (!items.length || items.length > 5) { metadataManagerSetStatus('Select 1–5 magazine issues per scan.','error'); return; }
-  const dialog = document.createElement('dialog');
-  dialog.className = 'gv-magscan-dialog';
+  const dialog = document.createElement(inlineHost ? 'div' : 'dialog');
+  dialog.className = inlineHost ? 'gv-magscan-inline' : 'gv-magscan-dialog';
   dialog.innerHTML = `<div class="gv-magscan-content"><h2>Scan magazine metadata</h2><p class="sub">${items.length} issue(s). Local OCR and LaunchBox title lookup. Nothing is saved automatically.</p><label>Scan scope <select data-scan-scope><option value="12">First 12 pages (cover, contents, masthead)</option><option value="300">Full issue (up to 300 pages)</option></select></label><p class="sub" data-scan-status aria-live="polite">Start a scan to review suggested fields. English OCR; game mentions and platform references may include ads. Titles containing list separators are omitted from automatic list proposals; review evidence.</p><progress data-scan-progress value="0" max="1"></progress><div data-scan-results></div><div class="gv-magscan-actions"><button class="ghost" type="button" data-scan-close>Close</button><button class="ghost" type="button" data-scan-stop hidden>Stop</button><button class="primary" type="button" data-scan-start>Start scan</button><button class="primary" type="button" data-scan-stage disabled>Stage selected suggestions</button></div></div>`;
-  document.body.appendChild(dialog);
+  (inlineHost || document.body).appendChild(dialog);
   const q = s => dialog.querySelector(s);
-  const session = { controller:null, running:false, rows:[], dialog };
+  const session = { controller:null, running:false, rows:[], dialog, inline:!!inlineHost, itemId:metadataManagerItemId(items[0]) };
   gvMagazineScanSession = session;
-  function close() { if (session.running) return; dialog.close(); }
-  q('[data-scan-close]').onclick = close;
+  function close() { if (session.running) return; if (inlineHost) gvDisposeInlineMagazineScan(); else dialog.close(); }
+  if (inlineHost) {
+    q('[data-scan-close]').textContent = 'Back to Metadata';
+    q('[data-scan-close]').onclick = () => activateTab('metadata');
+  } else q('[data-scan-close]').onclick = close;
   q('[data-scan-stop]').onclick = () => session.controller?.abort();
   dialog.addEventListener('cancel', e => { if (session.running) { e.preventDefault(); session.controller?.abort(); } });
   dialog.addEventListener('close', () => { gvMagazineScanSession = null; dialog.remove(); });
@@ -18724,7 +18746,7 @@ function gvMagazineScanDialog(items, fromDetail = false) {
     if(fromDetail) { Object.assign(state.metadataManager,{kindFilters:['Magazine'],category:'',seriesFilter:'',search:'',statusFilter:'',missing:'',selectedIds:[]}); metadataManagerResetRenderLimit(); showSettingsScreen('metadata-manager'); }
     renderMetadataManager(); metadataManagerSetStatus(`Staged ${count} field(s) for ${ids.size} issue(s). Existing staged edits and locked fields were skipped. Review and click Save Edited Rows.`,'success');
   };
-  dialog.showModal();
+  if (!inlineHost) dialog.showModal();
 }
 function gvMagazineScanProposals(row) {
   const fields=new Map(); const id=metadataManagerItemId(row.item), dirty=state.metadataManager.dirty[id]||{};
@@ -18752,7 +18774,7 @@ function gvMagazineScanProposals(row) {
   }
   return result;
 }
-if ($('detailMagazineScan')) $('detailMagazineScan').addEventListener('click',()=>{if(state.selected) gvMagazineScanDialog([state.selected],true);});
+
 
 function mergeSavedMetadataClientSide(baseItem, serverItem, payload) {
   const merged = { ...(baseItem || {}), ...(serverItem || {}) };
@@ -19807,6 +19829,13 @@ function renderDetails(item) {
   document.body.classList.toggle('strategy-detail-mode', item.kind === 'Strategy Guide');
   document.body.classList.toggle('magazine-detail-mode', item.kind === 'Magazine');
   $('detailMagazineScan')?.classList.toggle('hidden', item.kind !== 'Magazine' || !currentUserIsAdmin());
+  if (item.kind !== 'Magazine' || !currentUserIsAdmin()) {
+    gvDisposeInlineMagazineScan();
+    if (state.activeTab === 'magazine-scan') activateTab('overview');
+  } else if (gvMagazineScanSession?.inline && gvMagazineScanSession.itemId !== metadataManagerItemId(item)) {
+    gvDisposeInlineMagazineScan();
+    if (state.activeTab === 'magazine-scan') activateTab('overview');
+  }
   document.body.classList.toggle('manual-detail-mode', item.kind === 'Manual');
   setDetailCoverPreview(item);
   applyColorscapeToDetail(item);
@@ -20273,6 +20302,7 @@ function hideAppView(id) {
 }
 
 function cleanupInactiveViewsForNavigation(nextView = '') {
+  gvDisposeInlineMagazineScan();
   if (nextView !== 'reader' && (state.reader?.pages?.length || state.reader?.item)) cleanupReaderResources();
   if (nextView !== 'dossier') {
     document.body.classList.remove('dossier-page-mode');
@@ -20307,6 +20337,7 @@ async function openReader(item, options = {}) {
     return;
   }
   recordReadingActivity(liveItem, 'read');
+  gvDisposeInlineMagazineScan();
   clearColorscapeDetailTheme();
   document.body.classList.remove('detail-page-mode', 'settings-sidebar-mode', 'profile-page-mode', 'strategy-detail-mode', 'magazine-detail-mode', 'manual-detail-mode');
   document.body.classList.add('reader-page-mode');
