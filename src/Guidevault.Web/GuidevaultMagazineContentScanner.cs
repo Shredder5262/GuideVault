@@ -11,7 +11,7 @@ public static class GuidevaultMagazineContentScanner
     public sealed record Suggestion(string Field, string Value, int Page, string Evidence, string Confidence);
     public sealed record ScanResult(int TotalPages, int Start, int Scanned, int ReadablePages, List<Suggestion> Suggestions, List<string> Warnings)
     {
-        public string ScannerRevision => "v5.4";
+        public string ScannerRevision => "v6.0";
         public int CachedPages { get; init; }
     }
     private static readonly SemaphoreSlim Gate = new(1, 1);
@@ -49,7 +49,7 @@ public static class GuidevaultMagazineContentScanner
         (@"\bXbox\b(?!\s+(?:360|One|Series|Live|Game Pass))", "Microsoft Xbox"), (@"\b(?:MS-DOS|DOS PC)\b", "MS-DOS"), (@"\b(?:Windows PC|PC Windows|PC CD-ROM)\b", "Windows"),
         (@"\b(?:TurboGrafx|PC Engine)[- ]?CD(?:-ROM)?\b", "NEC TurboGrafx-CD"), (@"\b(?:TurboGrafx(?:[- ]?16)?|TurboGratx|PC Engine)\b(?![- ]?CD\b)", "NEC TurboGrafx-16"), (@"\b(?:Atari )?Jaguar\b", "Atari Jaguar"), (@"\b(?:Sega )?32X\b", "Sega 32X"), (@"\b(?:Arcade)\b", "Arcade"), (@"\b3DO\b", "3DO Interactive Multiplayer")];
 
-    public static async Task<ScanResult> ScanAsync(LibraryItem item, IEnumerable<GuidevaultLaunchBoxGame> games, int start, int count, CancellationToken token)
+    public static async Task<ScanResult> ScanAsync(LibraryItem item, IEnumerable<GuidevaultLaunchBoxGame> games, int start, int count, CancellationToken token, bool vision = false)
     {
         if (!await Gate.WaitAsync(0, token)) throw new InvalidOperationException("Another magazine scan is running. Retry after it finishes.");
         string temp = Path.Combine(Path.GetTempPath(), "guidevault-magscan-" + Guid.NewGuid().ToString("N"));
@@ -191,6 +191,42 @@ public static class GuidevaultMagazineContentScanner
                 }
                 catch (Exception ex) when (ex is not OperationCanceledException) { result.Warnings.Add($"Page {i + 1}: {ex.Message}"); }
                 result = result with { Scanned = result.Scanned + 1 };
+            }
+            if (vision && start == 0)
+            {
+                try
+                {
+                    var visionKey=(sourceInfo.FullName,sourceInfo.Length,sourceInfo.LastWriteTimeUtc.Ticks,-1);
+                    if(!OcrCache.TryGetValue(visionKey,out var visionJson))
+                    {
+                        string input;
+                        if(pdf)
+                        {
+                            var prefix=Path.Combine(temp,"vision-cover");
+                            await Run("pdftoppm",["-f","1","-l","1","-scale-to","1800","-singlefile","-png",item.Path,prefix],token);
+                            input=prefix+".png";
+                        }
+                        else
+                        {
+                            var image=await ArchiveReader.GetImagePageAsync(item.Path,0);
+                            if(image is null||image.Value.Bytes.Length>40_000_000)throw new InvalidOperationException("Cover unavailable or too large.");
+                            input=Path.Combine(temp,"vision-cover.img");
+                            await File.WriteAllBytesAsync(input,image.Value.Bytes,token);
+                        }
+                        visionJson=await Run("/opt/guidevault-vision/bin/python",["/opt/guidevault-vision/cover_ocr.py",input],token,600);
+                        AnalyzeVisionCover(item,coverDictionary,visionJson,result.Suggestions);
+                        RememberOcr(visionKey,visionJson);
+                    }
+                    else
+                    {
+                        result.Suggestions.Add(new("coverDiagnostic","Florence-2","Reused process-local cover result","Vision cache hit"));
+                        AnalyzeVisionCover(item,coverDictionary,visionJson,result.Suggestions);
+                    }
+                }
+                catch(Exception ex) when(ex is not OperationCanceledException)
+                {
+                    result.Warnings.Add($"Experimental vision failed; standard OCR retained: {ex.Message}");
+                }
             }
             // Offer canonical replacements for previously saved abbreviations only when
             // the same canonical game is independently detected in this scan chunk.
@@ -1205,6 +1241,46 @@ public static class GuidevaultMagazineContentScanner
     }
     private sealed record LayoutLine(string Text, int Block, int Paragraph, int X, int Y, int Width, int Height, double Confidence);
     private sealed record PageLayout(int Width, int Height, List<LayoutLine> Lines);
+    // Model regions are evidence, not calibrated OCR confidence. Do not feed them
+    // into the Tesseract confidence gates or overwrite existing metadata.
+    private static void AnalyzeVisionCover(LibraryItem item, Dictionary<string,CatalogTitle> dictionary, string json, List<Suggestion> suggestions)
+    {
+        using var doc=System.Text.Json.JsonDocument.Parse(json);
+        var root=doc.RootElement;
+        int width=root.GetProperty("width").GetInt32(),height=root.GetProperty("height").GetInt32();
+        if(width<=0||height<=0)throw new InvalidOperationException("Invalid vision dimensions.");
+        var lines=root.GetProperty("regions").EnumerateArray().Take(200).Select(r=>new LayoutLine(r.GetProperty("text").GetString()??"",0,0,r.GetProperty("x").GetInt32(),r.GetProperty("y").GetInt32(),r.GetProperty("width").GetInt32(),r.GetProperty("height").GetInt32(),0)).Where(l=>l.Height>0&&l.Width>0&&!string.IsNullOrWhiteSpace(l.Text)).ToArray();
+        void Log(string value,string evidence,string status)=>suggestions.Add(new("coverDiagnostic",value,1,evidence,status));
+        Log("Florence-2 Base",$"{lines.Length} regions; {root.GetProperty("seconds").GetDouble():F1}s; peak process RSS {root.GetProperty("peakMb").GetDouble():F0} MiB; geometry {width}x{height}","Vision runtime");
+        foreach(var l in lines)Log(l.Text,$"box {l.X},{l.Y},{l.Width},{l.Height}; model confidence not available","Vision region");
+        if(lines.Length==0)return;
+        var confirmed=suggestions.Where(s=>s.Field=="featuredGames"&&s.Page==1).Select(s=>ListingKey(s.Value)).ToHashSet();
+        var candidates=new List<(string Name,double Size,string Evidence)>();
+        var median=lines.Select(l=>l.Height).OrderBy(v=>v).ElementAt(lines.Length/2);
+        void Candidate(string printed,LayoutLine first,LayoutLine last)
+        {
+            printed=Regex.Replace(printed.Trim(),@"\s+(?:solution|reviewed|review|walkthrough|strategy guide)[!:.]*$","",RegexOptions.IgnoreCase);
+            if(!dictionary.TryGetValue(Normalize(printed),out var match)&&!dictionary.TryGetValue("\0"+ListingKey(printed),out match))return;
+            if(!ValidCoverSubject(match.Display,item.MagazineTitle))return;
+            double size=(double)Math.Max(first.Height,last.Height)/height;
+            var evidence=$"Florence-2 region '{printed}' | box {first.X},{first.Y},{first.Width},{first.Height} | normalized height {size:F3}";
+            // Require an independently detected cover feature and a large logo.
+            if(!confirmed.Contains(ListingKey(match.Display))||size<.035||Math.Max(first.Height,last.Height)<median*1.5){Log(match.Display,evidence,"Vision candidate — insufficient independent or prominence evidence");return;}
+            candidates.Add((match.Display,size,evidence));Log(match.Display,evidence,"Vision candidate — corroborated");
+        }
+        foreach(var l in lines)
+        {
+            Candidate(l.Text,l,l);
+            foreach(var n in lines.Where(n=>n!=l&&n.Y>l.Y&&n.Y-(l.Y+l.Height)<=Math.Max(l.Height,n.Height)*1.5&&Math.Min(l.X+l.Width,n.X+n.Width)>Math.Max(l.X,n.X)).OrderBy(n=>n.Y).Take(4))
+                Candidate(l.Text+" "+n.Text,l,n);
+        }
+        var ranked=candidates.GroupBy(c=>ListingKey(c.Name)).Select(g=>g.OrderByDescending(c=>c.Size).First()).OrderByDescending(c=>c.Size).ToArray();
+        if(ranked.Length==0 || (ranked.Length>1&&ranked[0].Size<ranked[1].Size*1.6)){Log("Vision ranking",string.Join("; ",ranked.Select(c=>$"{c.Name}: {c.Size:F3}")),"Vision inconclusive — retain OCR");return;}
+        var best=ranked[0];
+        suggestions.Add(new("coverSubject",best.Name,1,best.Evidence+" | independently recognized cover feature","Dominant cover headline — verify"));
+        suggestions.Add(new("featuredGames",best.Name,1,best.Evidence,"Cover story — verify"));
+    }
+
     private static string RemapCoverTsv(string tsv,int offsetX,int offsetY,int width,int height)
     {
         var rows=tsv.Split('\n');
@@ -1443,15 +1519,15 @@ public static class GuidevaultMagazineContentScanner
         if(Math.Abs(a.Length-b.Length)>1)return false;if(a.Length>b.Length)(a,b)=(b,a);
         int i=0,j=0,edits=0;while(i<a.Length&&j<b.Length){if(a[i]==b[j]){i++;j++;continue;}if(++edits>1)return false;if(a.Length==b.Length)i++;j++;}return edits+b.Length-j<=1;
     }
-    private static async Task<string> Run(string executable, string[] args, CancellationToken token)
+    private static async Task<string> Run(string executable, string[] args, CancellationToken token, int timeoutSeconds = 35)
     {
         using var process = new Process { StartInfo = new ProcessStartInfo(executable) { RedirectStandardOutput = true, RedirectStandardError = true, UseShellExecute = false, CreateNoWindow = true } };
         foreach (var arg in args) process.StartInfo.ArgumentList.Add(arg);
         process.StartInfo.Environment["OMP_THREAD_LIMIT"] = "2";
         process.Start();
-        using var timeout = CancellationTokenSource.CreateLinkedTokenSource(token); timeout.CancelAfter(TimeSpan.FromSeconds(35));
+        using var timeout = CancellationTokenSource.CreateLinkedTokenSource(token); timeout.CancelAfter(TimeSpan.FromSeconds(timeoutSeconds));
         var output = process.StandardOutput.ReadToEndAsync(timeout.Token); var error = process.StandardError.ReadToEndAsync(timeout.Token);
-        try { await process.WaitForExitAsync(timeout.Token); var stdout = await output; await error; if (process.ExitCode != 0) throw new InvalidOperationException($"{executable} returned exit code {process.ExitCode}."); return stdout; }
+        try { await process.WaitForExitAsync(timeout.Token); var stdout = await output; var stderr = await error; if (process.ExitCode != 0) throw new InvalidOperationException($"{executable} returned exit code {process.ExitCode}." + (timeoutSeconds>35 ? " "+stderr.Substring(Math.Max(0,stderr.Length-1800)) : "")); return stdout; }
         catch (OperationCanceledException) { try { if (!process.HasExited) process.Kill(true); } catch { } if (token.IsCancellationRequested) throw; throw new InvalidOperationException($"{executable} timed out."); }
         finally { try { if (!process.HasExited) process.Kill(true); } catch { } }
     }
