@@ -2958,7 +2958,7 @@ app.MapPut("/api/items/{id}/metadata", (string id, JsonElement payload) =>
 });
 
 // Magazine OCR scan v1: admin-only, read-only suggestions, bounded page chunks.
-app.MapPost("/api/items/{id}/magazine-scan", async (HttpRequest request, string id, int? start, int? count, bool? vision) =>
+app.MapPost("/api/items/{id}/magazine-scan", async (HttpRequest request, string id, int? start, int? count, bool? vision, string? engine) =>
 {
     if (CurrentGuidevaultUser(request)?.IsAdmin != true) return Results.StatusCode(403);
     if (GuidevaultLibraryIoGate.ShouldDeferArchiveReads) return Results.Conflict(new { error = "A library scan or file rewrite is running. Try again afterward." });
@@ -2968,7 +2968,7 @@ app.MapPost("/api/items/{id}/magazine-scan", async (HttpRequest request, string 
     if (start is < 0 or >= 300) return Results.BadRequest(new { error = "Scan start must be between 0 and 299." });
     try
     {
-        var result = await GuidevaultMagazineContentScanner.ScanAsync(item, launchBoxIntegrationStore.GetSnapshot().Games, start ?? 0, Math.Min(count ?? 3, 300 - (start ?? 0)), request.HttpContext.RequestAborted, vision == true);
+        var result = await GuidevaultMagazineContentScanner.ScanAsync(item, launchBoxIntegrationStore.GetSnapshot().Games, start ?? 0, Math.Min(count ?? 3, 300 - (start ?? 0)), request.HttpContext.RequestAborted, vision == true, engine);
         return Results.Ok(result);
     }
     catch (OperationCanceledException) { return Results.StatusCode(499); }

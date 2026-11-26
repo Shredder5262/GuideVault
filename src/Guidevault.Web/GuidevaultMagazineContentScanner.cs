@@ -11,7 +11,7 @@ public static class GuidevaultMagazineContentScanner
     public sealed record Suggestion(string Field, string Value, int Page, string Evidence, string Confidence);
     public sealed record ScanResult(int TotalPages, int Start, int Scanned, int ReadablePages, List<Suggestion> Suggestions, List<string> Warnings)
     {
-        public string ScannerRevision => "v6.2";
+        public string ScannerRevision => "v7.0";
         public int CachedPages { get; init; }
     }
     private static readonly SemaphoreSlim Gate = new(1, 1);
@@ -49,7 +49,7 @@ public static class GuidevaultMagazineContentScanner
         (@"\bXbox\b(?!\s+(?:360|One|Series|Live|Game Pass))", "Microsoft Xbox"), (@"\b(?:MS-DOS|DOS PC)\b", "MS-DOS"), (@"\b(?:Windows PC|PC Windows|PC CD-ROM)\b", "Windows"),
         (@"\b(?:TurboGrafx|PC Engine)[- ]?CD(?:-ROM)?\b", "NEC TurboGrafx-CD"), (@"\b(?:TurboGrafx(?:[- ]?16)?|TurboGratx|PC Engine)\b(?![- ]?CD\b)", "NEC TurboGrafx-16"), (@"\b(?:Atari )?Jaguar\b", "Atari Jaguar"), (@"\b(?:Sega )?32X\b", "Sega 32X"), (@"\b(?:Arcade)\b", "Arcade"), (@"\b3DO\b", "3DO Interactive Multiplayer")];
 
-    public static async Task<ScanResult> ScanAsync(LibraryItem item, IEnumerable<GuidevaultLaunchBoxGame> games, int start, int count, CancellationToken token, bool vision = false)
+    public static async Task<ScanResult> ScanAsync(LibraryItem item, IEnumerable<GuidevaultLaunchBoxGame> games, int start, int count, CancellationToken token, bool vision = false, string? engine = null)
     {
         if (!await Gate.WaitAsync(0, token)) throw new InvalidOperationException("Another magazine scan is running. Retry after it finishes.");
         string temp = Path.Combine(Path.GetTempPath(), "guidevault-magscan-" + Guid.NewGuid().ToString("N"));
@@ -73,7 +73,9 @@ public static class GuidevaultMagazineContentScanner
             var local = catalog.Where(g => focus.Any(v => Normalize(v) == Normalize(g.Platform))).ToArray();
             var coverDictionary = local.Length > 0 ? BuildDictionary(local, year) : dictionary;
             var sourceInfo = new FileInfo(item.Path);
-            for (int i = start; i < Math.Min(start + count, total); i++)
+            bool fullVision = engine is "full" or "vision";
+            bool visionOnly = engine == "vision";
+            for (int i = start; !visionOnly && i < Math.Min(start + count, total); i++)
             {
                 token.ThrowIfCancellationRequested();
                 try
@@ -192,7 +194,24 @@ public static class GuidevaultMagazineContentScanner
                 catch (Exception ex) when (ex is not OperationCanceledException) { result.Warnings.Add($"Page {i + 1}: {ex.Message}"); }
                 result = result with { Scanned = result.Scanned + 1 };
             }
-            if (vision && start == 0)
+            if (fullVision)
+            {
+                var batch = await ReadVisionBatch(item, sourceInfo, pdf, temp, start, Math.Min(start + count, total), result.Warnings, token);
+                foreach(var (index, json, cached) in batch)
+                {
+                    token.ThrowIfCancellationRequested();
+                    if(visionOnly) result = result with { Scanned = result.Scanned + 1, CachedPages = result.CachedPages + (cached ? 1 : 0) };
+                    if(json is null) continue;
+                    try
+                    {
+                        if(index==0) AnalyzeVisionCover(item,coverDictionary,json,result.Suggestions);
+                        if(AnalyzeVisionPage(item,index==0?coverDictionary:dictionary,json,index+1,total,result.Suggestions,result.Warnings) && visionOnly)
+                            result = result with { ReadablePages = result.ReadablePages + 1 };
+                    }
+                    catch(Exception ex) when(ex is not OperationCanceledException) { result.Warnings.Add($"Page {index+1}: vision analysis failed: {ex.Message}"); }
+                }
+            }
+            if (vision && !fullVision && start == 0)
             {
                 try
                 {
@@ -266,6 +285,127 @@ public static class GuidevaultMagazineContentScanner
             return result;
         }
         finally { try { Directory.Delete(temp, true); } catch { } Gate.Release(); }
+    }
+
+    // Cache only extracted regions, never source images. Source identity and pipeline version invalidate stale results.
+    private static async Task<List<(int Index,string? Json,bool Cached)>> ReadVisionBatch(LibraryItem item,FileInfo source,bool pdf,string temp,int start,int end,List<string> warnings,CancellationToken token)
+    {
+        var output=new List<(int Index,string? Json,bool Cached)>();
+        var pending=new List<(int Index,string Input,string Cache)>();
+        var cacheRoot=Path.Combine(Environment.GetEnvironmentVariable("GUIDEVAULT_DATA")??"/data","vision-page-cache","v7.0");
+        bool cacheEnabled=true;
+        try { Directory.CreateDirectory(cacheRoot); } catch(Exception ex) { cacheEnabled=false; warnings.Add("Vision disk cache unavailable: "+ex.Message); }
+        for(int i=start;i<end;i++)
+        {
+            token.ThrowIfCancellationRequested();
+            var identity=$"{source.FullName}\n{source.Length}\n{source.LastWriteTimeUtc.Ticks}\n{i}\nflorence-base-00921df-1800-768";
+            var key=Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(Encoding.UTF8.GetBytes(identity)));
+            var cachePath=Path.Combine(cacheRoot,key+".json");
+            try
+            {
+                if(cacheEnabled && File.Exists(cachePath) && new FileInfo(cachePath).Length<2_000_000)
+                {
+                    try
+                    {
+                        var cached=await File.ReadAllTextAsync(cachePath,token);
+                        using var check=System.Text.Json.JsonDocument.Parse(cached);
+                        if(check.RootElement.TryGetProperty("regions",out var regions)&&regions.ValueKind==System.Text.Json.JsonValueKind.Array)
+                        {output.Add((i,cached,true));continue;}
+                    }
+                    catch(Exception ex) when(ex is not OperationCanceledException) { warnings.Add($"Page {i+1}: invalid vision cache; rescanning."); }
+                }
+                string input;
+                if(pdf)
+                {
+                    var prefix=Path.Combine(temp,$"vision-{i}");var page=(i+1).ToString(CultureInfo.InvariantCulture);
+                    await Run("pdftoppm",["-f",page,"-l",page,"-scale-to","2400","-singlefile","-png",item.Path,prefix],token);
+                    input=prefix+".png";
+                }
+                else
+                {
+                    var image=await ArchiveReader.GetImagePageAsync(item.Path,i);
+                    if(image is null || image.Value.Bytes.Length>40_000_000)throw new InvalidOperationException("Page unavailable or exceeds 40 MB limit.");
+                    input=Path.Combine(temp,$"vision-{i}.img");await File.WriteAllBytesAsync(input,image.Value.Bytes,token);
+                }
+                pending.Add((i,input,cachePath));
+            }
+            catch(Exception ex) when(ex is not OperationCanceledException) { warnings.Add($"Page {i+1}: vision input failed: {ex.Message}");output.Add((i,null,false)); }
+        }
+        if(pending.Count>0)
+        {
+            try
+            {
+                var args=new[]{"/opt/guidevault-vision/cover_ocr.py","--batch"}.Concat(pending.Select(p=>p.Input)).ToArray();
+                var raw=await Run("/opt/guidevault-vision/bin/python",args,token,600);
+                using var doc=System.Text.Json.JsonDocument.Parse(raw);
+                var pages=doc.RootElement.EnumerateArray().ToArray();
+                if(pages.Length!=pending.Count)throw new InvalidOperationException("Vision batch result count mismatch.");
+                for(int j=0;j<pending.Count;j++)
+                {
+                    var p=pending[j];var page=pages[j];
+                    if(!page.TryGetProperty("regions",out var regions)||regions.ValueKind!=System.Text.Json.JsonValueKind.Array)
+                    {warnings.Add($"Page {p.Index+1}: vision failed: {page.GetRawText()}");output.Add((p.Index,null,false));continue;}
+                    var json=page.GetRawText();output.Add((p.Index,json,false));
+                    if(cacheEnabled && json.Length<2_000_000 && regions.GetArrayLength()>0)
+                    {
+                        try { var tmp=p.Cache+".tmp";await File.WriteAllTextAsync(tmp,json,token);File.Move(tmp,p.Cache,true); }
+                        catch(Exception ex) when(ex is not OperationCanceledException) { warnings.Add($"Page {p.Index+1}: vision cache write failed: {ex.Message}"); }
+                    }
+                }
+            }
+            catch(Exception ex) when(ex is not OperationCanceledException)
+            {
+                warnings.Add("Vision batch failed: "+ex.Message);
+                foreach(var p in pending.Where(p=>!output.Any(o=>o.Index==p.Index)))output.Add((p.Index,null,false));
+            }
+        }
+        return output.OrderBy(p=>p.Index).ToList();
+    }
+
+    private static bool AnalyzeVisionPage(LibraryItem item,Dictionary<string,CatalogTitle> dictionary,string json,int page,int total,List<Suggestion> suggestions,List<string> warnings)
+    {
+        using var doc=System.Text.Json.JsonDocument.Parse(json);var root=doc.RootElement;
+        int width=root.GetProperty("width").GetInt32(),height=root.GetProperty("height").GetInt32();
+        if(width<=0||height<=0)throw new InvalidOperationException("Invalid vision dimensions.");
+        // 101 is an internal eligibility sentinel for legacy geometry heuristics, NOT calibrated model confidence.
+        // Geometry() explicitly labels these lines as vision without a percentage.
+        var lines=root.GetProperty("regions").EnumerateArray().Take(200).Select(r=>new LayoutLine(r.GetProperty("text").GetString()??"",0,0,r.GetProperty("x").GetInt32(),r.GetProperty("y").GetInt32(),r.GetProperty("width").GetInt32(),r.GetProperty("height").GetInt32(),101)).Where(l=>l.Height>0&&l.Width>0&&!string.IsNullOrWhiteSpace(l.Text)).OrderBy(l=>l.Y).ThenBy(l=>l.X).ToList();
+        var text=string.Join("\n",lines.Select(l=>l.Text));
+        if(Words.Matches(text).Count<3){warnings.Add($"Page {page}: little or no vision text.");return false;}
+        var excluded=ExcludedPageReason(text,page,total);
+        if(excluded.Length>0){warnings.Add($"Page {page}: vision {excluded}; excluded from current-issue evidence.");return true;}
+        var found=new List<Suggestion>();
+        AnalyzePage(item,dictionary,text,new PageLayout(width,height,lines),page,found);
+        AddPrintedPeriod(item,text,page,found);
+        if(page==1)
+        {
+            // Seasonal dates are valid printed issue periods; not actual release dates.
+            foreach(Match m in Regex.Matches(text,@"\b(?:Spring|Summer|Autumn|Fall|Winter)[,\s]+(?:19|20)\d{2}\b",RegexOptions.IgnoreCase))
+            {
+                var date=Regex.Replace(m.Value,@"[,\s]+"," ");
+                found.Add(new("coverDate",date,page,m.Value,"Printed publication period"));
+                found.Add(new("year",GetYear(date).ToString(CultureInfo.InvariantCulture),page,m.Value,"Printed publication period"));
+            }
+        }
+        foreach(var hit in found)
+        {
+            // Cover subject ranking is handled by the dedicated vision cover analyzer, not generic text matching.
+            if(page==1 && hit.Field=="coverSubject")continue;
+            if(hit.Field is "featuredGames" or "mentionedGames" or "articleCandidate" or "unresolvedGame")
+            {
+                if(!ValidCoverSubject(hit.Value,item.MagazineTitle)||Regex.IsMatch(Normalize(hit.Value),@"^(?:sega game|video game|game|games|challenge|victory|soccer|grand prix|kung fu)$",RegexOptions.IgnoreCase))
+                {
+                    // Generic words can be real games: retain as manual-review evidence rather than assert coverage.
+                    if(!suggestions.Any(s=>s.Field=="unresolvedGame"&&s.Page==page&&ListingKey(s.Value)==ListingKey(hit.Value)))
+                        suggestions.Add(hit with {Field="unresolvedGame",Evidence="Florence-2: "+hit.Evidence,Confidence="Ambiguous short or generic title — verify"});
+                    continue;
+                }
+                if(hit.Confidence=="Possible OCR correction") { suggestions.Add(hit with {Field="unresolvedGame",Evidence="Florence-2: "+hit.Evidence,Confidence="Possible recognition correction — verify"});continue; }
+            }
+            if(!suggestions.Any(s=>s.Field==hit.Field&&s.Page==page&&ListingKey(s.Value)==ListingKey(hit.Value)))
+                suggestions.Add(hit with {Evidence="Florence-2 region evidence (confidence unavailable): "+hit.Evidence});
+        }
+        return true;
     }
 
     private static void AddPrintedPeriod(LibraryItem item,string text,int page,List<Suggestion> suggestions)
@@ -1309,11 +1449,12 @@ public static class GuidevaultMagazineContentScanner
             bool NearbyLabel(LayoutLine n) => n!=first && n!=last && n.Y>=bottom-height*.025 && n.Y<=bottom+height*.12 && Math.Min(right,n.X+n.Width)>Math.Max(left,n.X);
             bool strategy=lines.Any(n=>NearbyLabel(n)&&Regex.IsMatch(n.Text,@"\b(?:solution|walk[ -]?through|strategy guide|play guide|exclusive maps)\b",RegexOptions.IgnoreCase));
             bool teaser=lines.Any(n=>NearbyLabel(n)&&Regex.IsMatch(n.Text,@"\b(?:new pics|new pictures|first look)\b",RegexOptions.IgnoreCase));
-            bool editorial=lines.Any(n=>NearbyLabel(n)&&Regex.IsMatch(n.Text,@"\b(?:is here|has arrived|exclusive(?: review| preview)?|first look|full review|in depth|see page \d+(?: for details)?)\b",RegexOptions.IgnoreCase));
+            bool editorial=lines.Any(n=>NearbyLabel(n)&&Regex.IsMatch(n.Text,@"\b(?:is here|has arrived|exclusive(?: review| preview)?|first look|full review|in depth|see pages?\s+\d+(?:\s*[-–—]\s*\d+)?(?: for details)?)\b",RegexOptions.IgnoreCase));
             // A prominent exact catalog match plus local editorial copy is independent of Tesseract success.
             bool independent=confirmed.Contains(ListingKey(match.Display));
             evidence+=$" | strategy {strategy}; editorial {editorial}; teaser {teaser}; independent cover OCR {independent}";
-            if(size<.035||Math.Max(first.Height,last.Height)<median*1.5||(!independent&&!strategy&&!(editorial&&size>=.06))){Log(match.Display,evidence,"Vision candidate — insufficient independent or prominence evidence");return;}
+            bool pageReference=lines.Any(n=>NearbyLabel(n)&&Regex.IsMatch(n.Text,@"\bsee pages?\s+\d+(?:\s*[-–—]\s*\d+)?\b",RegexOptions.IgnoreCase));
+            if(size<.035||Math.Max(first.Height,last.Height)<median*1.5||(!independent&&!strategy&&!(editorial&&(size>=.06||pageReference)))){Log(match.Display,evidence,"Vision candidate — insufficient independent or prominence evidence");return;}
             double score=size*(strategy?1.5:editorial?1.35:1.0)*(teaser&&!editorial?.70:1.0);
             candidates.Add((match.Display,score,evidence,strategy,editorial));Log(match.Display,evidence,"Vision candidate — corroborated");
         }
@@ -1370,7 +1511,7 @@ public static class GuidevaultMagazineContentScanner
         var lines=groups.Select(g=>{var a=g.Value; int x=a.Min(t=>t.X),y=a.Min(t=>t.Y);return new LayoutLine(string.Join(" ",a.Select(t=>t.Text)),g.Key.Item1,g.Key.Item2,x,y,a.Max(t=>t.X+t.W)-x,a.Select(t=>t.H).OrderBy(v=>v).ElementAt(a.Count/2),a.Average(t=>t.Conf));}).ToList();
         return new(width,height,lines);
     }
-    private static string Geometry(LayoutLine l, PageLayout p) => p.Width>0&&p.Height>0 ? $" [x={100*l.X/p.Width}%, y={100*l.Y/p.Height}%, OCR {l.Confidence:0}%]" : "";
+    private static string Geometry(LayoutLine l, PageLayout p) => p.Width>0&&p.Height>0 ? $" [x={100*l.X/p.Width}%, y={100*l.Y/p.Height}%, {(l.Confidence==101?"vision; confidence unavailable":$"OCR {l.Confidence:0}%")}]" : "";
     private static string Compact(string s) => Normalize(s).Replace(" ", "");
     private static string NormalizeCoverDate(string value)
     {
