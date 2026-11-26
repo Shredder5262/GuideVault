@@ -1,4 +1,6 @@
 using System.Diagnostics;
+using SixLabors.ImageSharp;
+using SixLabors.ImageSharp.Processing;
 using System.Globalization;
 using System.Text;
 using System.Text.RegularExpressions;
@@ -9,7 +11,7 @@ public static class GuidevaultMagazineContentScanner
     public sealed record Suggestion(string Field, string Value, int Page, string Evidence, string Confidence);
     public sealed record ScanResult(int TotalPages, int Start, int Scanned, int ReadablePages, List<Suggestion> Suggestions, List<string> Warnings)
     {
-        public string ScannerRevision => "v5.1";
+        public string ScannerRevision => "v5.2";
         public int CachedPages { get; init; }
     }
     private static readonly SemaphoreSlim Gate = new(1, 1);
@@ -105,10 +107,28 @@ public static class GuidevaultMagazineContentScanner
                             catch (Exception ex) when (ex is not OperationCanceledException) { completeOcr = false; result.Warnings.Add($"Cover OCR mode {mode}: {ex.Message}"); }
                         }
                     }
+                    if(i<4)
+                    {
+                        try
+                        {
+                            using var image=await Image.LoadAsync(input,token);
+                            int w=Math.Max(1,image.Width/8);
+                            foreach(int x in new[]{0,image.Width-w})
+                            foreach(int angle in new[]{90,270})
+                            {
+                                using var margin=image.Clone(c=>c.Crop(new Rectangle(x,0,w,image.Height)).Rotate(angle));
+                                var marginPath=Path.Combine(temp,"margin.png");
+                                await margin.SaveAsPngAsync(marginPath,token);
+                                tsv += "\u001e" + await Run("tesseract",[marginPath,"stdout","-l","eng","--psm","11"],token);
+                            }
+                        }
+                        catch(Exception ex) when(ex is not OperationCanceledException){completeOcr=false;result.Warnings.Add($"Page {i+1} margin OCR: {ex.Message}");}
+                    }
                     if (completeOcr && Words.Matches(tsv).Count > 30) RememberOcr(cacheKey,tsv);
                     }
                     else result = result with { CachedPages = result.CachedPages + 1 };
-                    var passes = tsv.Split('\f', StringSplitOptions.RemoveEmptyEntries).Select(x => ParseLayout(x.TrimStart('\r','\n'))).ToArray();
+                    var sections=tsv.Split('\u001e');
+                    var passes = sections[0].Split('\f', StringSplitOptions.RemoveEmptyEntries).Select(x => ParseLayout(x.TrimStart('\r','\n'))).ToArray();
                     var layout = passes.OrderByDescending(p => p.Lines.Sum(l => Words.Matches(l.Text).Count * Math.Max(0,l.Confidence))).First();
                     string text = string.Join("\n", layout.Lines.Select(l => l.Text));
                     if (pdf && Words.Matches(text).Count < 12)
@@ -137,6 +157,8 @@ public static class GuidevaultMagazineContentScanner
                         {
                             AnalyzePage(item, dictionary, text, layout, i + 1, result.Suggestions);
                             if (i == 0) AnalyzeCover(item, coverDictionary, passes, result.Suggestions);
+                            if(i<4) foreach(var source in passes.Select(p=>string.Join("\n",p.Lines.Select(l=>l.Text))).Concat(sections.Skip(1)))
+                                AddPrintedPeriod(item,source,i+1,result.Suggestions);
                         }
                         result = result with { ReadablePages = result.ReadablePages + 1 };
                     }
@@ -165,6 +187,12 @@ public static class GuidevaultMagazineContentScanner
             }
             result.Suggestions.RemoveAll(s => s.Field == "coverSubject" && !ValidCoverSubject(s.Value,item.MagazineTitle));
             result.Suggestions.RemoveAll(s => s.Field == "publisher" && MissingPublisher(s.Value));
+            if(Normalize((item.MagazineTitle??"").Replace("+"," plus"))=="saturn plus")
+                for(int k=0;k<result.Suggestions.Count;k++)
+                {
+                    var p=result.Suggestions[k];
+                    if(p.Field=="publisher" && Normalize(p.Value)=="paragon")result.Suggestions[k]=p with { Value="Paragon Publishing", Evidence=p.Evidence+" | Publication-specific publisher alias" };
+                }
             if (MissingPublisher(item.Publisher) && !result.Suggestions.Any(s => s.Field == "publisher"))
             {
                 var publication = Normalize((item.MagazineTitle ?? "").Replace("+", " plus"));
@@ -177,6 +205,29 @@ public static class GuidevaultMagazineContentScanner
             return result;
         }
         finally { try { Directory.Delete(temp, true); } catch { } Gate.Release(); }
+    }
+
+    private static void AddPrintedPeriod(LibraryItem item,string text,int page,List<Suggestion> suggestions)
+    {
+        foreach(var line in text.Split('\n'))
+        {
+            var pub=Normalize((item.MagazineTitle??"").Replace("+"," plus"));
+            var context=Normalize(line.Replace("+"," plus"));
+            if(page!=1 && !Regex.IsMatch(line,@"\bmagazine\b",RegexOptions.IgnoreCase) && (pub.Length<3 || !context.Contains(pub,StringComparison.Ordinal)))continue;
+            var m=Regex.Match(line,$@"\b(?<a>{Months})\s*[/–-]\s*(?<b>{Months})\s+(?<y>(?:19|20)\d{{2}})\s*[/–-]\s*(?<z>(?:(?:19|20)\d{{2}}|\d{{2}}))\b",RegexOptions.IgnoreCase);
+            if(!m.Success)continue;
+            int y=int.Parse(m.Groups["y"].Value), z=int.Parse(m.Groups["z"].Value);
+            if(z<100)z=y/100*100+z;
+            if(z<y)z+=100;
+            if(z!=y+1)continue;
+            int Month(string v)=>Array.FindIndex(CultureInfo.InvariantCulture.DateTimeFormat.MonthNames,n=>n.Length>0&&n.StartsWith(v,StringComparison.OrdinalIgnoreCase))+1;
+            int a=Month(m.Groups["a"].Value), b=Month(m.Groups["b"].Value);
+            if(a==0||b==0||a<=b)continue;
+            var value=$"{CultureInfo.InvariantCulture.DateTimeFormat.GetMonthName(a)} {y} – {CultureInfo.InvariantCulture.DateTimeFormat.GetMonthName(b)} {z}";
+            foreach(var pair in new[]{(Field:"coverDate",Value:value),(Field:"year",Value:y.ToString(CultureInfo.InvariantCulture))})
+                if(!suggestions.Any(s=>s.Field==pair.Field&&s.Value==pair.Value&&s.Confidence=="Printed publication period"))
+                    suggestions.Add(new(pair.Field,pair.Value,page,line.Trim(),"Printed publication period"));
+        }
     }
 
     private static async Task AddArchiveMetadata(LibraryItem item, List<Suggestion> suggestions)
@@ -719,7 +770,26 @@ public static class GuidevaultMagazineContentScanner
         }
         foreach(var c in distinct.Where(c=>c.Editorial))
             Add("featuredGames",c.Name,"Cover editorial: "+c.Evidence,c.Resolved?"Cover editorial listing":"Cover editorial listing — catalog unresolved");
-        var ranked=candidates.Where(c=>c.Resolved&&c.Size>0&&distinct.Any(d=>ListingKey(d.Name)==ListingKey(c.Name))).GroupBy(c=>ListingKey(c.Name)).Select(g=>g.OrderByDescending(c=>c.Size).First()).OrderByDescending(c=>c.Size).ToArray();
+        // Reconnect a large partial logo to a complete title printed elsewhere on the cover.
+        // A featured title alone is not sufficient: require a unique word and local strategy text.
+        var fullTitles = suggestions.Where(x=>x.Page==1 && x.Field=="featuredGames").Select(x=>x.Value)
+            .Concat(distinct.Where(x=>x.Editorial).Select(x=>x.Name)).Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
+        foreach (var pass in passes.Where(p=>p.Width>0&&p.Height>0))
+        {
+            var lines=pass.Lines.Where(l=>l.Height>0&&l.Confidence>=35).ToArray();
+            foreach(var l in lines.Where(l=>l.Height>=pass.Height*.035))
+            {
+                var word=Normalize(Clean(l.Text));
+                if(word.Length<5 || word.Contains(' '))continue;
+                var matches=fullTitles.Where(t=>Normalize(t).Split(' ').Contains(word) && Normalize(t).Contains(' ')).ToArray();
+                if(matches.Length!=1 || !ValidCoverSubject(matches[0],item.MagazineTitle))continue;
+                bool strategy=lines.Any(n=>n.Y>=l.Y-l.Height && n.Y<=l.Y+l.Height*4 &&
+                    Math.Min(n.X+n.Width,l.X+l.Width)>Math.Max(n.X,l.X) && Regex.IsMatch(n.Text,@"\b(?:solution|walk[ -]?through|exclusive maps|strategy guide)\b",RegexOptions.IgnoreCase));
+                if(!strategy)continue;
+                candidates.Add((matches[0],matches[0],l.Text+Geometry(l,pass)+" | Full title independently detected on cover | Nearby strategy headline",(double)l.Height/pass.Height*1.5,true,true));
+            }
+        }
+        var ranked=candidates.Where(c=>c.Resolved&&c.Size>0&&(distinct.Any(d=>ListingKey(d.Name)==ListingKey(c.Name)) || fullTitles.Any(t=>ListingKey(t)==ListingKey(c.Name)))).GroupBy(c=>ListingKey(c.Name)).Select(g=>g.OrderByDescending(c=>c.Size).First()).OrderByDescending(c=>c.Size).ToArray();
         if(ranked.Length>0 && (ranked.Length==1 || ranked[0].Size>=ranked[1].Size*1.6))
         {
             var primary=ranked[0];
