@@ -9,7 +9,7 @@ public static class GuidevaultMagazineContentScanner
     public sealed record Suggestion(string Field, string Value, int Page, string Evidence, string Confidence);
     public sealed record ScanResult(int TotalPages, int Start, int Scanned, int ReadablePages, List<Suggestion> Suggestions, List<string> Warnings)
     {
-        public string ScannerRevision => "v4.6";
+        public string ScannerRevision => "v4.7";
         public int CachedPages { get; init; }
     }
     private static readonly SemaphoreSlim Gate = new(1, 1);
@@ -619,9 +619,26 @@ public static class GuidevaultMagazineContentScanner
         int numbers=layout.Lines.Count(l=>l.Height>0&&Regex.IsMatch(l.Text.Trim(),@"^\d{1,3}$")&&columns.Any(g=>Math.Abs(g.Average(h=>h.X+h.Width/2.0)-(l.X+l.Width/2.0))<=Math.Max(10,layout.Width*.035)&&g.Any(h=>h.Y>l.Y&&h.Y-l.Y<=Math.Max(h.Height,l.Height)*3)));
         return sections>=2&&numbers>=4;
     }
+    private static string IndexTitleKey(string value)
+    {
+        string key=Normalize(value);
+        // Only complete-title equivalents: ordinal spelling and leading/sort articles.
+        key=Regex.Replace(key,@"^(?:the|a|an)\s+|\s+(?:the|a|an)$", "");
+        var ordinals=new Dictionary<string,string>(StringComparer.Ordinal) {
+            ["first"]="1st",["second"]="2nd",["third"]="3rd",["fourth"]="4th",["fifth"]="5th",["sixth"]="6th",["seventh"]="7th",["eighth"]="8th",["ninth"]="9th",["tenth"]="10th"
+        };
+        key=Regex.Replace(key,@"\b(?:first|second|third|fourth|fifth|sixth|seventh|eighth|ninth|tenth)\b",m=>ordinals[m.Value]);
+        key=Regex.Replace(key,@"\b(\d+)\s+(st|nd|rd|th)\b", "$1$2");
+        return ListingKey(key);
+    }
     private static void AnalyzeCenteredIndex(PageLayout layout,Dictionary<string,CatalogTitle> dictionary,int page,List<Suggestion> suggestions)
     {
         var columns=CenteredIndexColumns(layout);
+        // Index resolution must not depend on finding every printed string as an exact catalog key.
+        // Only retain unambiguous full-title equivalents, preserving the catalog display spelling.
+        var indexNames=dictionary.Where(kv=>!kv.Key.StartsWith("\0",StringComparison.Ordinal))
+            .SelectMany(kv=>new[]{(Key:IndexTitleKey(kv.Key),Title:kv.Value.Display),(Key:IndexTitleKey(kv.Value.Display),Title:kv.Value.Display)})
+            .Where(x=>x.Key.Length>=3).GroupBy(x=>x.Key).ToDictionary(g=>g.Key,g=>g.Select(x=>x.Title).Distinct(StringComparer.OrdinalIgnoreCase).ToArray(),StringComparer.Ordinal);
         string section="";
         void Add(string field,string value,string evidence,string confidence)
         {
@@ -654,11 +671,24 @@ public static class GuidevaultMagazineContentScanner
                 // complete heading in evidence and never substitute a partial game hit.
                 string title=Regex.Replace(printed,@"^.*?\b(?:the making of|sneak preview\s*:|(?:game |exclusive )?preview\s*:|review\s*:|walkthrough\s*:|solution\s*:)\s*", "",RegexOptions.IgnoreCase).Trim(' ','.',',','‘','’','"');
                 title=Regex.Replace(title,@"(?<=\s)[‘’](?=\p{L})"," ").Trim();
-                var exact=FindGames(dictionary,title,true,true,true).Where(h=>h.Whole&&!h.Fuzzy).Select(h=>h.Game).Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
+                // Complete heading matching only. A match to one word inside a long
+                // heading must never replace that heading's actual title.
+                var exact=dictionary.TryGetValue(Normalize(title),out var direct)?new[]{direct.Display}:Array.Empty<string>();
                 if(exact.Length==0&&dictionary.TryGetValue("\0"+ListingKey(title),out var spelling))exact=new[]{spelling.Display};
-                // A single-character OCR correction of the COMPLETE heading is reviewable.
-                if(exact.Length==0)exact=FindGames(dictionary,title,true,true,true).Where(h=>h.Fuzzy).Select(h=>h.Game).Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
-                if(exact.Length==1&&!columnFeature&&fragments.All(l=>l.Confidence>=40))
+                if(exact.Length==0&&indexNames.TryGetValue(IndexTitleKey(title),out var equivalents))exact=equivalents;
+                bool fuzzy=false;
+                if(exact.Length==0&&title.IndexOfAny([',',';'])<0){exact=FindGames(dictionary,title,true,true,true).Where(h=>h.Fuzzy).Select(h=>h.Game).Distinct(StringComparer.OrdinalIgnoreCase).ToArray();fuzzy=exact.Length>0;}
+                if(!columnFeature)
+                {
+                    string status=exact.Length==1?(fuzzy?"Possible OCR correction: ":"Catalog match: ")+exact[0]:exact.Length>1?"Ambiguous catalog title: "+string.Join(" / ",exact.Take(5)):"No complete catalog match";
+                    Add("indexEntry",title,printed+Geometry(first,layout),status);
+                    bool mainFeature=Regex.IsMatch(section,@"^features?$",RegexOptions.IgnoreCase)&&Regex.IsMatch(printed,@"\bthe making of\b",RegexOptions.IgnoreCase);
+                    // A major feature is not proof of cover artwork. Surface a weak,
+                    // unchecked cover proposal only; explicit cover evidence still wins.
+                    if(mainFeature&&exact.Length==1&&!fuzzy&&fragments.All(l=>l.Confidence>=40))
+                        Add("coverSubject",exact[0],printed+Geometry(first,layout),"Contents main feature — cover unverified");
+                }
+                if(exact.Length==1&&!columnFeature&&!fuzzy&&fragments.All(l=>l.Confidence>=40))
                 {
                     Add("featuredGames",exact[0],printed+Geometry(first,layout),"Centered index full heading — review");continue;
                 }
@@ -675,7 +705,8 @@ public static class GuidevaultMagazineContentScanner
                 }
                 // Do not reduce an unresolved long title to a shorter game or a franchise.
                 if(exact.Length==1)Add("unresolvedGame",exact[0],printed+Geometry(first,layout),"Low-confidence centered index title — verify full title");
-                else if(LooksLikeUnresolvedTitle(title))Add("unresolvedGame",title,printed+Geometry(first,layout),"Unresolved centered index title — verify full title");
+                else if(LooksLikeUnresolvedTitle(title)||(title.Length>=3&&title.Length<=85&&Words.Matches(title).Count==1&&title.All(char.IsLetter)&&!IndexSection(title)&&!IndexDepartment(title)))
+                    Add("unresolvedGame",title,printed+Geometry(first,layout),"Unresolved centered index title — verify full title");
             }
         }
     }
