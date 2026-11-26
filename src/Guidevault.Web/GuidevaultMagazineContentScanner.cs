@@ -11,7 +11,7 @@ public static class GuidevaultMagazineContentScanner
     public sealed record Suggestion(string Field, string Value, int Page, string Evidence, string Confidence);
     public sealed record ScanResult(int TotalPages, int Start, int Scanned, int ReadablePages, List<Suggestion> Suggestions, List<string> Warnings)
     {
-        public string ScannerRevision => "v6.0";
+        public string ScannerRevision => "v6.1";
         public int CachedPages { get; init; }
     }
     private static readonly SemaphoreSlim Gate = new(1, 1);
@@ -254,7 +254,7 @@ public static class GuidevaultMagazineContentScanner
                     var p=result.Suggestions[k];
                     if(p.Field=="publisher" && Normalize(p.Value)=="paragon")result.Suggestions[k]=p with { Value="Paragon Publishing", Evidence=p.Evidence+" | Publication-specific publisher alias" };
                 }
-            if (MissingPublisher(item.Publisher) && !result.Suggestions.Any(s => s.Field == "publisher"))
+            if ((MissingPublisher(item.Publisher) || (Normalize((item.MagazineTitle??"").Replace("+"," plus"))=="saturn plus" && Normalize(item.Publisher??"")=="paragon")) && !result.Suggestions.Any(s => s.Field == "publisher"))
             {
                 var publication = Normalize((item.MagazineTitle ?? "").Replace("+", " plus"));
                 var issueYear = GetYear(item.CoverDate + " " + item.PublicationDate + " " + item.Year);
@@ -799,8 +799,29 @@ public static class GuidevaultMagazineContentScanner
                 // Preserve an explicit unresolved subtitle instead of reducing it to a franchise.
                 bool strategy = lines.Any(n => n.Y >= l.Y - l.Height && n.Y <= l.Y + Math.Max(l.Height, size)*4 &&
                     Math.Min(n.X+n.Width,l.X+l.Width)-Math.Max(n.X,l.X)>0 &&
-                    Regex.IsMatch(n.Text,@"\b(?:solution|walk[ -]?through|exclusive maps|strategy guide)\b",RegexOptions.IgnoreCase));
+                    Regex.IsMatch(n.Text,@"\b(?:solution|walk[ -]?through|exclusive maps|strategy guide|play guide)\b",RegexOptions.IgnoreCase));
                 candidates.Add((name??printed,printed,printed+Geometry(l,pass)+(strategy?" | Nearby strategy headline":""),size>0?size/pass.Height*(strategy?1.5:1):0,editorial,name is not null));
+            }
+            // A stacked REVIEWED / INSIDE badge can sit above a narrow review column.
+            // Only promote complete catalog entries in a contiguous small-print column.
+            foreach(var header in lines.Where(l=>Regex.IsMatch(l.Text,@"\b(?:reviewed|review)\b",RegexOptions.IgnoreCase)))
+            {
+                var inside=lines.FirstOrDefault(n=>n.Y>=header.Y&&n.Y-header.Y<pass.Height*.09&&Regex.IsMatch(n.Text,@"^\s*inside\s*$",RegexOptions.IgnoreCase));
+                if(inside is null&&!Regex.IsMatch(header.Text,@"\breviewed\s+inside\b",RegexOptions.IgnoreCase))continue;
+                int start=(inside??header).Y+(inside??header).Height;
+                var small=lines.Where(n=>n.Y>=start&&n.Y-start<pass.Height*.42&&n.Height<=pass.Height*.022&&n.Confidence>=75&&n.X<header.X+header.Width).OrderBy(n=>n.Y).ToArray();
+                foreach(var seed in small.Where(n=>n.Y-start<pass.Height*.09).Take(4))
+                {
+                    var column=small.Where(n=>n.Y>=seed.Y&&Math.Abs(n.X-seed.X)<=pass.Width*.018).OrderBy(n=>n.Y).ToArray();
+                    var run=new List<LayoutLine>();
+                    foreach(var entry in column)
+                    {
+                        if(run.Count>0&&entry.Y-(run[^1].Y+run[^1].Height)>pass.Height*.022)break;
+                        if(Resolve(Clean(entry.Text)) is null&&!TitleLike(Clean(entry.Text)))break;
+                        run.Add(entry);
+                    }
+                    if(run.Count>=3)foreach(var entry in run.Take(30))Candidate(entry.Text,entry,true,0);
+                }
             }
             foreach(var l in lines)
             {
@@ -814,13 +835,13 @@ public static class GuidevaultMagazineContentScanner
                     if(Resolve(joined) is not null && (Resolve(printed) is null || Resolve(Clean(next.Text)) is null) && Math.Max(l.Height,next.Height)>=median*1.15)
                         Candidate(joined,l,labelled||Regex.IsMatch(next.Text,@"\b(?:reviewed|solution|walkthrough)\b",RegexOptions.IgnoreCase),Math.Max(l.Height,next.Height));
                 }
-                var header=Regex.Match(l.Text,@"^\s*(?:reviewed|reviews?|previewed|previews?|featured games?)\s*[:!]?\s*(?<tail>.*)$",RegexOptions.IgnoreCase);
+                var header=Regex.Match(l.Text,@"^\s*(?:reviewed(?:\s+inside)?|reviews?|previewed|previews?|featured games?)\s*[:!]?\s*(?<tail>.*)$",RegexOptions.IgnoreCase);
                 if(!header.Success)continue;
-                if(header.Groups["tail"].Value.Trim().Length>0) Candidate(header.Groups["tail"].Value,l,true,0);
+                if(header.Groups["tail"].Value.Trim().Length>0 && Normalize(header.Groups["tail"].Value)!="inside") Candidate(header.Groups["tail"].Value,l,true,0);
                 // Follow the heading's column, not global Tesseract reading order.
-                var list=lines.Where(n=>n.Y>l.Y && n.Y-l.Y<pass.Height*.34 && n.X>=l.X-l.Height*1.5 && n.X<l.X+Math.Max(l.Width,l.Height*7) && n.Height<=Math.Max(l.Height*1.5,median*1.6)).OrderBy(n=>n.Y).ToArray();
+                var list=lines.Where(n=>n.Y>l.Y && n.Y-l.Y<pass.Height*.46 && n.X>=l.X-l.Height*1.5 && n.X<l.X+Math.Max(l.Width,l.Height*7) && n.Height<=Math.Max(l.Height*1.5,median*1.6)).OrderBy(n=>n.Y).ToArray();
                 var prev=l;
-                for(int j=0;j<Math.Min(14,list.Length);j++)
+                for(int j=0;j<Math.Min(30,list.Length);j++)
                 {
                     var entry=list[j];
                     if(entry.Y-(prev.Y+prev.Height)>Math.Max(prev.Height,entry.Height)*2.8)break;
@@ -860,7 +881,7 @@ public static class GuidevaultMagazineContentScanner
                 if(word.Length<5 || word.Contains(' '))continue;
                 var matches=fullTitles.Where(t=>Normalize(t).Split(' ').Contains(word) && Normalize(t).Contains(' ')).ToArray();
                 bool strategy=lines.Any(n=>n.Y>=l.Y-l.Height && n.Y<=l.Y+l.Height*4 &&
-                    Math.Min(n.X+n.Width,l.X+l.Width)>Math.Max(n.X,l.X) && Regex.IsMatch(n.Text,@"\b(?:solution|walk[ -]?through|exclusive maps|strategy guide)\b",RegexOptions.IgnoreCase));
+                    Math.Min(n.X+n.Width,l.X+l.Width)>Math.Max(n.X,l.X) && Regex.IsMatch(n.Text,@"\b(?:solution|walk[ -]?through|exclusive maps|strategy guide|play guide)\b",RegexOptions.IgnoreCase));
                 Diagnostic(word,Geometry(l,pass)+$" | local matches: {string.Join(", ",matches)} | strategy context: {strategy}", "Prominent fragment");
                 if(strategy && !Regex.IsMatch(word,@"^(?:solution|walkthrough|exclusive|strategy|reviewed|previewed|definitive|magazine)$",RegexOptions.IgnoreCase))
                     suggestions.Add(new("coverFragment",word,1,l.Text+Geometry(l,pass),"Prominent fragment with nearby strategy text"));
@@ -874,7 +895,7 @@ public static class GuidevaultMagazineContentScanner
         foreach(var pass in passes.Where(p=>p.Width>0&&p.Height>0))
         {
             var lines=pass.Lines.Where(l=>l.Height>0&&l.Confidence>=55).ToArray();
-            foreach(var strategy in lines.Where(l=>Regex.IsMatch(l.Text,@"\b(?:solution|walk[ -]?through|strategy guide|exclusive maps)\b",RegexOptions.IgnoreCase)))
+            foreach(var strategy in lines.Where(l=>Regex.IsMatch(l.Text,@"\b(?:solution|walk[ -]?through|strategy guide|exclusive maps|play guide)\b",RegexOptions.IgnoreCase)))
             {
                 var nearby=lines.Where(l=>l!=strategy && l.Y<strategy.Y && strategy.Y-l.Y<=pass.Height*.25 && l.Height>=pass.Height*.022 && l.X+l.Width>=strategy.X-pass.Width*.35 && l.X<=strategy.X+strategy.Width+pass.Width*.05).ToArray();
                 bool Fragment(string fragment,string word)=>fragment.Length>=3 && fragment.Length<=word.Length && (word.StartsWith(fragment,StringComparison.Ordinal)||word.EndsWith(fragment,StringComparison.Ordinal));
@@ -1255,7 +1276,7 @@ public static class GuidevaultMagazineContentScanner
         foreach(var l in lines)Log(l.Text,$"box {l.X},{l.Y},{l.Width},{l.Height}; model confidence not available","Vision region");
         if(lines.Length==0)return;
         var confirmed=suggestions.Where(s=>s.Field=="featuredGames"&&s.Page==1).Select(s=>ListingKey(s.Value)).ToHashSet();
-        var candidates=new List<(string Name,double Size,string Evidence)>();
+        var candidates=new List<(string Name,double Size,string Evidence,bool Strategy)>();
         var median=lines.Select(l=>l.Height).OrderBy(v=>v).ElementAt(lines.Length/2);
         void Candidate(string printed,LayoutLine first,LayoutLine last)
         {
@@ -1264,9 +1285,16 @@ public static class GuidevaultMagazineContentScanner
             if(!ValidCoverSubject(match.Display,item.MagazineTitle))return;
             double size=(double)Math.Max(first.Height,last.Height)/height;
             var evidence=$"Florence-2 region '{printed}' | box {first.X},{first.Y},{first.Width},{first.Height} | normalized height {size:F3}";
-            // Require an independently detected cover feature and a large logo.
-            if(!confirmed.Contains(ListingKey(match.Display))||size<.035||Math.Max(first.Height,last.Height)<median*1.5){Log(match.Display,evidence,"Vision candidate — insufficient independent or prominence evidence");return;}
-            candidates.Add((match.Display,size,evidence));Log(match.Display,evidence,"Vision candidate — corroborated");
+            int left=Math.Min(first.X,last.X), right=Math.Max(first.X+first.Width,last.X+last.Width);
+            int bottom=Math.Max(first.Y+first.Height,last.Y+last.Height);
+            bool NearbyLabel(LayoutLine n) => n!=first && n!=last && n.Y>=bottom-height*.025 && n.Y<=bottom+height*.12 && Math.Min(right,n.X+n.Width)>Math.Max(left,n.X);
+            bool strategy=lines.Any(n=>NearbyLabel(n)&&Regex.IsMatch(n.Text,@"\b(?:solution|walk[ -]?through|strategy guide|play guide|exclusive maps)\b",RegexOptions.IgnoreCase));
+            bool teaser=lines.Any(n=>NearbyLabel(n)&&Regex.IsMatch(n.Text,@"\b(?:new pics|new pictures|first look)\b",RegexOptions.IgnoreCase));
+            bool independent=confirmed.Contains(ListingKey(match.Display));
+            evidence+=$" | strategy {strategy}; teaser {teaser}; independent cover OCR {independent}";
+            if(size<.035||Math.Max(first.Height,last.Height)<median*1.5||(!independent&&!strategy)){Log(match.Display,evidence,"Vision candidate — insufficient independent or prominence evidence");return;}
+            double score=size*(strategy?1.5:1.0)*(teaser?.70:1.0);
+            candidates.Add((match.Display,score,evidence,strategy));Log(match.Display,evidence,"Vision candidate — corroborated");
         }
         foreach(var l in lines)
         {
@@ -1277,7 +1305,17 @@ public static class GuidevaultMagazineContentScanner
         var ranked=candidates.GroupBy(c=>ListingKey(c.Name)).Select(g=>g.OrderByDescending(c=>c.Size).First()).OrderByDescending(c=>c.Size).ToArray();
         if(ranked.Length==0 || (ranked.Length>1&&ranked[0].Size<ranked[1].Size*1.6)){Log("Vision ranking",string.Join("; ",ranked.Select(c=>$"{c.Name}: {c.Size:F3}")),"Vision inconclusive — retain OCR");return;}
         var best=ranked[0];
-        suggestions.Add(new("coverSubject",best.Name,1,best.Evidence+" | independently recognized cover feature","Dominant cover headline — verify"));
+        // A unique, prominent vision title with local strategy evidence can supersede a weaker OCR-only callout.
+        // Keep previous OCR evidence in diagnostics and retain manual approval.
+        if(best.Strategy)
+        {
+            foreach(var previous in suggestions.Where(x=>x.Field=="coverSubject"&&x.Page==1&&x.Confidence=="Dominant cover headline — verify"&&ListingKey(x.Value)!=ListingKey(best.Name)).ToArray())
+            {
+                Log(previous.Value,previous.Evidence,"OCR headline superseded by dominant vision strategy evidence");
+                suggestions.Remove(previous);
+            }
+        }
+        suggestions.Add(new("coverSubject",best.Name,1,best.Evidence,"Dominant cover headline — verify"));
         suggestions.Add(new("featuredGames",best.Name,1,best.Evidence,"Cover story — verify"));
     }
 
