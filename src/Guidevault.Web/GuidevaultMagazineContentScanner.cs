@@ -9,7 +9,7 @@ public static class GuidevaultMagazineContentScanner
     public sealed record Suggestion(string Field, string Value, int Page, string Evidence, string Confidence);
     public sealed record ScanResult(int TotalPages, int Start, int Scanned, int ReadablePages, List<Suggestion> Suggestions, List<string> Warnings)
     {
-        public string ScannerRevision => "v4.4";
+        public string ScannerRevision => "v4.4.1";
         public int CachedPages { get; init; }
     }
     private static readonly SemaphoreSlim Gate = new(1, 1);
@@ -281,8 +281,23 @@ public static class GuidevaultMagazineContentScanner
                     var context = string.Join(" ", local);
                     if (!(" " + Normalize(context) + " ").Contains(" " + publicationKey + " ", StringComparison.Ordinal)) continue;
                     if (IsLegal(pubLine.Text) && !Regex.IsMatch(context, @"\b(?:subscription|published (?:monthly|weekly|quarterly)|ISSN)\b", RegexOptions.IgnoreCase)) continue;
-                    var pub = Regex.Match(pubLine.Text, @"\b(?:is published[^\r\n]{0,180}?\bby|published by|publisher[ \t]*:)[ \t]*[:–-]?[ \t]*([\p{L}][^,;\r\n]{2,80})", RegexOptions.IgnoreCase);
-                    if (pub.Success) Add("publisher", pub.Groups[1].Value, context, "Publication-linked print");
+                    // A publisher name may wrap onto the next OCR line. Never propose a dangling
+                    // fragment or replace a longer stored name with its shorter prefix.
+                    var pub = PublisherName(pubLine.Text);
+                    if (pub.Length == 0) continue;
+                    if (IncompletePublisher(pub))
+                    {
+                        if (pi + 1 >= layout.Lines.Count) continue;
+                        var next = layout.Lines[pi + 1];
+                        if (!PublisherContinuation(pubLine, next, layout) || IsLegal(next.Text)) continue;
+                        var continuation = Regex.Split(next.Text.Trim(), @"[,;]|\s+(?:ISSN|ISBN|editor|telephone|tel|fax|address|subscription)\b", RegexOptions.IgnoreCase)[0].Trim();
+                        if (!Regex.IsMatch(continuation, @"^[\p{L}][\p{L}\p{M}\p{N} &'’().\-]{0,49}$") ||
+                            Regex.IsMatch(continuation, @"^(?:editor|editorial|publisher|published|subscription|address|telephone|fax|printed|copyright|all rights|www|http|contact|contents|reviews)\b", RegexOptions.IgnoreCase)) continue;
+                        pub += " " + continuation;
+                        context += " " + next.Text;
+                    }
+                    if (pub.Length > 80 || IncompletePublisher(pub) || ShorterPublisherPrefix(pub, item.Publisher)) continue;
+                    Add("publisher", pub, context, "Publication-linked print");
                 }
             }
             var masthead = Regex.Match(text, @"^\s*([\p{L}][\p{L}\p{N} &'.-]{2,70}?)\s*\(ISSN\b", RegexOptions.IgnoreCase|RegexOptions.Multiline);
@@ -661,6 +676,28 @@ public static class GuidevaultMagazineContentScanner
     private static string NormalizeCoverDate(string value)
     {
         return Regex.Replace(value, $@"\b(?:{Months})\b", m => CultureInfo.InvariantCulture.TextInfo.ToTitleCase(m.Value.ToLowerInvariant()), RegexOptions.IgnoreCase);
+    }
+    private static string PublisherName(string line)
+    {
+        var match = Regex.Match(line, @"\b(?:is published[^\r\n]{0,180}?\bby|published by|publisher[ \t]*:)[ \t]*[:–-]?[ \t]*([\p{L}][^,;\r\n]{0,80})", RegexOptions.IgnoreCase);
+        return match.Success ? match.Groups[1].Value.Trim() : "";
+    }
+    private static bool IncompletePublisher(string value) =>
+        Regex.IsMatch(value.Trim(), @"(?:\b(?:of|the|and|for|de|del|du|des|la|le|van|von|di|da)\s*|[&/–-])$", RegexOptions.IgnoreCase);
+    private static bool ShorterPublisherPrefix(string proposed, string? existing)
+    {
+        var a = Normalize(proposed); var b = Normalize(existing ?? "");
+        return a.Length > 0 && b.StartsWith(a + " ", StringComparison.Ordinal);
+    }
+    private static bool PublisherContinuation(LayoutLine first, LayoutLine next, PageLayout layout)
+    {
+        // No geometry means no reliable continuation: preserve the existing value instead.
+        if (layout.Width <= 0 || layout.Height <= 0 || first.Height <= 0 || next.Height <= 0 ||
+            first.Block != next.Block || first.Paragraph != next.Paragraph || next.Confidence < 55) return false;
+        int h = Math.Max(first.Height, next.Height);
+        return next.Y > first.Y && next.Y - first.Y <= 3 * h &&
+            Math.Abs(first.X - next.X) <= Math.Max(2 * h, layout.Width / 50) &&
+            next.Height <= 2 * first.Height && first.Height <= 2 * next.Height;
     }
     private static bool LooksLikePerson(string value)
     {
