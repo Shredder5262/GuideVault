@@ -18669,7 +18669,7 @@ function gvMagazineScanDialog(items, fromDetail = false, inlineHost = null) {
   if (!items.length || items.length > 5) { metadataManagerSetStatus('Select 1–5 magazine issues per scan.','error'); return; }
   const dialog = document.createElement(inlineHost ? 'div' : 'dialog');
   dialog.className = inlineHost ? 'gv-magscan-inline' : 'gv-magscan-dialog';
-  dialog.innerHTML = `<div class="gv-magscan-content"><h2>Scan magazine metadata</h2><p class="sub">${items.length} issue(s). Scanner UI v4 — Local OCR and LaunchBox title lookup. Nothing is saved automatically.</p><label>Scan scope <select data-scan-scope><option value="12">First 12 pages (cover, contents, masthead)</option><option value="300"${fromDetail?' selected':''}>Full issue (up to 300 pages)</option></select></label><p class="sub" data-scan-status aria-live="polite">Start a scan to review suggested fields. Layout-aware English OCR and catalog matching. All magazine fields are checked; uncertain or unavailable values are not guessed. Review all proposed editorial data.</p><progress data-scan-progress value="0" max="1"></progress><div data-scan-results></div><div class="gv-magscan-actions"><button class="ghost" type="button" data-scan-close>Close</button><button class="ghost" type="button" data-scan-stop hidden>Stop</button><button class="primary" type="button" data-scan-start>Start scan</button><button class="primary" type="button" data-scan-stage disabled>Stage selected suggestions</button></div></div>`;
+  dialog.innerHTML = `<div class="gv-magscan-content"><h2>Scan magazine metadata</h2><p class="sub">${items.length} issue(s). Scanner UI v4.1 — Local OCR and LaunchBox title lookup. Nothing is saved automatically.</p><label>Scan scope <select data-scan-scope><option value="12">First 12 pages (cover, contents, masthead)</option><option value="300"${fromDetail?' selected':''}>Full issue (up to 300 pages)</option></select></label><p class="sub" data-scan-status aria-live="polite">Start a scan to review suggested fields. Layout-aware English OCR and catalog matching. All magazine fields are checked; uncertain or unavailable values are not guessed. Review all proposed editorial data.</p><progress data-scan-progress value="0" max="1"></progress><div data-scan-results></div><div class="gv-magscan-actions"><button class="ghost" type="button" data-scan-close>Close</button><button class="ghost" type="button" data-scan-stop hidden>Stop</button><button class="primary" type="button" data-scan-start>Start scan</button><button class="primary" type="button" data-scan-stage disabled>Stage selected suggestions</button></div></div>`;
   (inlineHost || document.body).appendChild(dialog);
   const q = s => dialog.querySelector(s);
   const session = { controller:null, running:false, rows:[], dialog, inline:!!inlineHost, itemId:metadataManagerItemId(items[0]) };
@@ -18693,7 +18693,7 @@ function gvMagazineScanDialog(items, fromDetail = false, inlineHost = null) {
       const coverConflict=coverNames.length>1 || (existingCover && coverNames.some(v=>v.toLowerCase()!==existingCover.toLowerCase()));
       const reviewWarnings=[...row.warnings];
       const observedPlatforms=row.suggestions.filter(x=>x.field==='featuredPlatforms').map(x=>x.value);
-      const platformKey=v=>String(v??'').toLowerCase().replace(/[^a-z0-9]/g,'').replace(/^segamegadrive$|^megadrive$/,'segagenesis').replace(/^gameboy$/,'nintendogameboy').replace(/^turbografx16$/,'necturbografx16');
+      const platformKey=gvMagazinePlatformKey;
       const year=Number(String(row.item.coverDate||row.item.publicationDate||row.item.year||'').match(/\b(?:19|20)\d{2}\b/)?.[0]||0);
       const introductions={supernintendoentertainmentsystem:1990,nintendo64:1996,nintendogameboyadvance:2001,nintendogameboycolor:1998,nintendogamecube:2001,nintendods:2004,nintendo3ds:2011,sonypsp:2004,sonyplaystation:1994,sonyplaystation2:2000,segadreamcast:1998,segasaturn:1994,microsoftxbox:2001,segacd:1991,sega32x:1994};
       if(row.complete&&row.scanned>=row.total) {
@@ -18753,7 +18753,7 @@ function gvMagazineScanDialog(items, fromDetail = false, inlineHost = null) {
             if (!res.ok) { let msg=`HTTP ${res.status}`; try { msg=(await res.json()).error||msg; } catch {} throw new Error(msg); }
             const data=await res.json();
             row.revision=String(data.scannerRevision||'not reported');
-            if(row.revision!=='v4') { row.suggestions=[]; throw new Error(`Scanner backend revision ${row.revision}; expected v4. Deploy the matching image and reload before scanning.`); }
+            if(row.revision!=='v4.1') { row.suggestions=[]; throw new Error(`Scanner backend revision ${row.revision}; expected v4.1. Deploy the matching image and reload before scanning.`); }
             row.total=data.totalPages; row.scanned+=data.scanned; row.readable+=data.readablePages; row.cached+=Number(data.cachedPages||0); row.suggestions.push(...(data.suggestions||[])); row.warnings.push(...(data.warnings||[]));
             if (!data.scanned) break; start+=data.scanned; progress.value=i+Math.min(1,start/Math.min(scope,row.total));
           } while(start<Math.min(scope,row.total));
@@ -18782,6 +18782,12 @@ function gvMagazineScanDialog(items, fromDetail = false, inlineHost = null) {
   if (!inlineHost) dialog.showModal();
 }
 const GV_MAG_SCAN_FIELDS = ['name','magazineTitle','issueNumber','volume','coverDate','barcodeUpcIssn','publicationDate','year','publisher','region','languageTag','platformFocus','primarySystem','magazineCategory','coverSubject','pageCount','writer','summary','featuredGames','mentionedGames','featuredPlatforms','specialFeatures','includedExtras','tags'];
+function gvMagazinePlatformCanonical(value) {
+  const k=String(value??'').normalize('NFKC').toLowerCase().replace(/[^a-z0-9]/g,'');
+  const aliases={nes:'Nintendo Entertainment System',snes:'Super Nintendo Entertainment System',superfamicom:'Super Nintendo Entertainment System',supernintendo:'Super Nintendo Entertainment System',gameboy:'Nintendo Game Boy',gameboycolor:'Nintendo Game Boy Color',gameboyadvance:'Nintendo Game Boy Advance',megadrive:'Sega Genesis',segamegadrive:'Sega Genesis',genesis:'Sega Genesis',megacd:'Sega CD',segamegacd:'Sega CD',turbografx:'NEC TurboGrafx-16',turbografx16:'NEC TurboGrafx-16',pcengine:'NEC TurboGrafx-16',necturbografx16:'NEC TurboGrafx-16',gamegear:'Sega Game Gear',mastersystem:'Sega Master System',ps1:'Sony PlayStation',psx:'Sony PlayStation',playstation:'Sony PlayStation',psp:'Sony PSP',n64:'Nintendo 64'};
+  return Object.hasOwn(aliases,k)?aliases[k]:String(value??'').trim();
+}
+function gvMagazinePlatformKey(value) { return gvMagazinePlatformCanonical(value).normalize('NFKC').toLowerCase().replace(/[^a-z0-9]/g,''); }
 function gvMagazineArticleEvidence(row) {
   const key=v=>String(v??'').normalize('NFKC').toLowerCase().replace(/\band\b|&/gi,'').replace(/[^\p{L}\p{N}]/gu,'');
   const grouped=new Map();
@@ -18792,6 +18798,8 @@ function gvMagazineArticleEvidence(row) {
   for(const group of grouped.values()) {
     const pages=[...new Set(group.map(x=>Number(x.page)))].filter(n=>n>0).sort((a,b)=>a-b);
     if(!pages.some((n,i)=>i>0&&n===pages[i-1]+1))continue;
+    const substantial=group.some(x=>{const m=String(x.evidence||'').match(/(\d+) words, (\d+) editorial cues, (\d+) title lines/);return m&&Number(m[1])>=55&&Number(m[2])>=3;});
+    if(!substantial)continue;
     // Each page has a column-local focus and at least two editorial cues; adjacency alone is insufficient.
     for(const x of group.filter(x=>pages.includes(x.page-1)||pages.includes(x.page+1))) promoted.push({...x,field:'featuredGames',confidence:'Adjacent article regions — review coverage'});
   }
@@ -18822,7 +18830,7 @@ function gvMagazineReviewGames(row,proposals,block) {
   for(const x of all) {
     if(!['featuredGames','mentionedGames','articleCandidate','unresolvedGame','gamePlatformEvidence'].includes(x.field))continue;
     const k=key(x.value);if(!k||existing.has(k)||k===cover)continue;
-    if(x.field==='unresolvedGame'&&!byGame.has(k))byGame.set(k,{name:x.value,field:'ignore',evidence:[],unresolved:true});
+    if((x.field==='unresolvedGame'||x.field==='articleCandidate')&&!byGame.has(k))byGame.set(k,{name:x.value,field:'ignore',evidence:[],unresolved:x.field==='unresolvedGame'});
     const game=byGame.get(k);if(game)game.evidence.push(x);
   }
   if(!byGame.size||!edits.size)return;
@@ -18831,10 +18839,10 @@ function gvMagazineReviewGames(row,proposals,block) {
   const hint=document.createElement('p');hint.className='sub';hint.textContent='Adjust new game candidates individually. Existing games remain in the editable fields. Unresolved titles are ignored until selected. Apply choices updates the fields below; Stage is still required.';section.appendChild(hint);
   const list=document.createElement('div');list.className='gv-magscan-game-list';section.appendChild(list);
   const controls=[];
-  for(const game of [...byGame.values()].sort((a,b)=>Number(a.unresolved)-Number(b.unresolved)||(a.field==='featuredGames'?0:1)-(b.field==='featuredGames'?0:1)||a.name.localeCompare(b.name))) {
+  for(const game of [...byGame.values()].sort((a,b)=>Number(a.unresolved)-Number(b.unresolved)||(a.field==='featuredGames'?0:a.evidence.some(x=>x.field==='articleCandidate')?1:2)-(b.field==='featuredGames'?0:b.evidence.some(x=>x.field==='articleCandidate')?1:2)||a.name.localeCompare(b.name))) {
     const item=document.createElement('div');item.className='gv-magscan-game-row';
     const label=document.createElement('div');const name=document.createElement('strong');name.textContent=game.name;label.appendChild(name);
-    const meta=document.createElement('div');meta.className='sub';const pages=[...new Set(game.evidence.map(x=>x.page).filter(Boolean))].sort((a,b)=>a-b);meta.textContent=(game.unresolved?'Unresolved printed title · ':'')+(pages.length?'Pages '+pages.join(', '):'No page reference');label.appendChild(meta);
+    const meta=document.createElement('div');meta.className='sub';const pages=[...new Set(game.evidence.map(x=>x.page).filter(Boolean))].sort((a,b)=>a-b);meta.textContent=(game.unresolved?'Unresolved printed title · ':game.field==='mentionedGames'&&game.evidence.some(x=>x.field==='articleCandidate')?'Possible featured coverage · ':'')+(pages.length?'Pages '+pages.join(', '):'No page reference');label.appendChild(meta);
     const details=document.createElement('details');details.innerHTML='<summary>Evidence</summary>';for(const x of game.evidence){const p=document.createElement('p');p.className='sub';p.textContent=`Page ${x.page||'—'}: ${x.evidence} [${x.confidence||'Review'}]`;details.appendChild(p);}label.appendChild(details);
     const select=document.createElement('select');select.setAttribute('aria-label',`Classification for ${game.name}`);
     for(const [v,t] of [['featuredGames','Featured game'],['mentionedGames','Mentioned game'],['ignore','Ignore']]){if(v!=='ignore'&&!edits.has(v))continue;const o=document.createElement('option');o.value=v;o.textContent=t;select.appendChild(o);}
@@ -18867,7 +18875,7 @@ function gvMagazineScanProposals(row) {
     add(x);
   });
   const isGameList=f=>f==='featuredGames'||f==='mentionedGames';
-  const platformCanonical=v=>{const k=key(v);if(['segamegadrive','megadrive','segagenesis','genesis'].includes(k))return 'Sega Genesis';if(['segamegacd','megacd','segacd'].includes(k))return 'Sega CD';return v;};
+  const platformCanonical=gvMagazinePlatformCanonical;
   const genericGame=v=>/^(?:magazine|video game magazine|video games|gaming|news|reviews|previews|unknown|unspecified|not specified)$/i.test(String(v??'').trim());
   const uniqueField=(f,values)=>isGameList(f)?[...new Map(values.filter(v=>String(v??'').trim()&&!genericGame(v)).map(v=>[gameKey(v),v])).values()]:f==='featuredPlatforms'?unique(values.map(platformCanonical)):unique(values);
   const candidates=f=>uniqueField(f,(fields.get(f)||[]).map(x=>x.value));
@@ -18898,10 +18906,10 @@ function gvMagazineScanProposals(row) {
   if(fields.has('mentionedGames')) fields.set('mentionedGames',fields.get('mentionedGames').filter(x=>!covered.has(gameKey(x.value))));
   const full=row.complete&&row.scanned>=row.total&&row.readable===row.total;
   if(editorialPlatforms.length&&platforms.length) {
-    if(platforms.length>1) {
-      infer('primarySystem','Multi-platform','More than one editorial platform is supported by scan or existing metadata.');
+    if(editorialPlatforms.length>1) {
+      infer('primarySystem','Multi-platform','More than one editorial platform is supported by scan evidence.');
       if(!currentOf('platformFocus')||same(currentOf('platformFocus'),'Multi-platform')) infer('platformFocus','Multi-platform','Multiple editorial platforms; inferred audience scope, not a printed declaration.');
-    } else if(full&&!/multi[ -]?platform/i.test(currentOf('primarySystem'))) {
+    } else if(full&&platforms.length===1&&!/multi[ -]?platform/i.test(currentOf('primarySystem'))) {
       infer('primarySystem',platforms[0],'One concrete editorial platform detected in the complete readable issue; verify focus.');
       if(!currentOf('platformFocus')) infer('platformFocus',platforms[0],'Inferred from detected editorial platform coverage.');
     }
@@ -18932,7 +18940,7 @@ function gvMagazineScanProposals(row) {
   const result=[];
   for(const field of GV_MAG_SCAN_FIELDS) {
     const evidence=fields.get(field)||[];
-    const candidateEditor=(field==='featuredGames'||field==='mentionedGames')&&row.suggestions.some(x=>['featuredGames','mentionedGames','unresolvedGame'].includes(x.field));
+    const candidateEditor=(field==='featuredGames'||field==='mentionedGames')&&row.suggestions.some(x=>['featuredGames','mentionedGames','unresolvedGame','articleCandidate'].includes(x.field));
     if((!evidence.length&&!candidateEditor)||!metadataManagerFieldsForKind('Magazine').has(field)||METADATA_MANAGER_READONLY_COLUMNS.has(field)) continue;
     const current=currentOf(field);
     const locked=Object.hasOwn(dirty,field)||isMetadataFieldLocked(row.item,field)||(field==='name'&&isMetadataFieldLocked(row.item,'title'))||(GV_MAG_SCAN_ARRAYS.has(field)&&Array.isArray(row.item[field])&&row.item[field].some(v=>/[;,|]/.test(v)));

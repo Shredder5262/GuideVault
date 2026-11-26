@@ -9,7 +9,7 @@ public static class GuidevaultMagazineContentScanner
     public sealed record Suggestion(string Field, string Value, int Page, string Evidence, string Confidence);
     public sealed record ScanResult(int TotalPages, int Start, int Scanned, int ReadablePages, List<Suggestion> Suggestions, List<string> Warnings)
     {
-        public string ScannerRevision => "v4";
+        public string ScannerRevision => "v4.1";
         public int CachedPages { get; init; }
     }
     private static readonly SemaphoreSlim Gate = new(1, 1);
@@ -220,7 +220,7 @@ public static class GuidevaultMagazineContentScanner
         bool NumberedLine(string line) => Regex.IsMatch(line, @"(?:^\s*\d{1,3}[.\s]+|\.{2,}\s*\d{1,3}\s*$|\s+\d{1,3}\s*$)");
         bool PlatformIndexLine(string line) => Regex.IsMatch(line, @"^\s*\d{1,3}[A-Za-z]?\s+", RegexOptions.IgnoreCase) &&
             (Platforms.Any(p => Regex.IsMatch(line, p.Pattern, RegexOptions.IgnoreCase)) || Regex.IsMatch(line, @"\b(?:Genesis|Saturn|PC|DOS)\b", RegexOptions.IgnoreCase));
-        bool toc = page > 1 && (lines.Any(l => Regex.IsMatch(l, @"^(?:table of\s+)?contents\s*[:.!]?\s*$", RegexOptions.IgnoreCase)) || (lines.Count(PlatformIndexLine) >= 3 && lines.Any(l => Regex.IsMatch(l, @"\b(?:reviews|features|departments|previews)\b", RegexOptions.IgnoreCase))));
+        bool toc = page > 1 && (lines.Any(l => Regex.IsMatch(l, @"^(?:table of\s+)?contents\s*[:.!]?\s*$", RegexOptions.IgnoreCase)) || (lines.Count(PlatformIndexLine) >= 3 && lines.Any(l => Regex.IsMatch(l, @"\b(?:reviews|features|departments|previews)\b", RegexOptions.IgnoreCase))) || (lines.Count(l => Regex.IsMatch(l, @"(?:^\s*\d{1,3}\s+[A-Z][\p{L}]|\.{2,}\s*\d{1,3}\s*$)")) >= 5 && lines.Any(l=>Regex.IsMatch(l,@"^\s*(?:reviews|features|departments|previews|in this issue)\s*[:.!]?\s*$",RegexOptions.IgnoreCase))));
         bool retailPage = !toc && RetailMarkers(text) >= 2;
         bool otherIssuePage = !toc && Regex.IsMatch(text, @"\b(?:back issues?|previous issues?|past issues?|next issue|order (?:this|your|an) issue)\b", RegexOptions.IgnoreCase) && (Regex.Matches(text, @"\b(?:issue|no\.)\s*#?\d{1,4}\b", RegexOptions.IgnoreCase).Count >= 2 || RetailMarkers(text) >= 1);
         bool likelyAd = retailPage || otherIssuePage || !toc && lines.Any(IsLegal) && Regex.IsMatch(text, @"\b(?:order now|call toll.free|available at participating|ask your retailer|for a limited time|send check or money order|suggested retail price|visit your local retailer)\b", RegexOptions.IgnoreCase);
@@ -356,6 +356,14 @@ public static class GuidevaultMagazineContentScanner
             bool titleContext = listContext || (prominent(l) && Words.Matches(line).Count <= 12) || page == 1;
             bool gameContext = Regex.IsMatch(line, @"\b(?:game|review|preview|version|cheat|code|password|released?|play(?:ed|ing)?|for (?:the )?(?:SNES|NES|Genesis|Game Boy|3DO|Sega CD))\b", RegexOptions.IgnoreCase);
             var matched = FindGames(dictionary, line, titleContext, listContext, gameContext).ToList();
+            // A platform-labelled list is evidence of a game reference, not a dedicated article.
+            var labelled = Platforms.Any(p => Regex.IsMatch(line, @"^\s*(?:[_\-–]\s*)?(?:" + p.Pattern + @")\s*:", RegexOptions.IgnoreCase));
+            if (labelled && line.Contains(':'))
+            {
+                var entries = line[(line.IndexOf(':') + 1)..];
+                foreach (var hit in FindGames(dictionary, entries, true, true, true).Where(h=>!h.Fuzzy && h.Whole))
+                    if (!matched.Any(x=>ListingKey(x.Game)==ListingKey(hit.Game))) matched.Add(hit);
+            }
             if (explicitCoverage)
                 foreach (var hit in FindGames(dictionary, coverageText, true, true, true).Where(h=>!h.Fuzzy))
                     if (!matched.Any(x=>Compact(x.Game)==Compact(hit.Game))) matched.Add(hit);
@@ -443,7 +451,7 @@ public static class GuidevaultMagazineContentScanner
     private static int EditorialSignals(string text)
     {
         // Independent evidence categories; a repeated game name alone never establishes a feature.
-        string[] signals=[@"\b(?:graphics|animation|visuals|sprites|scrolling|sound(?:track| effects)?|music)\b",@"\b(?:gameplay|controls?|controller|joystick|difficulty|challenge|playability|responsive)\b",@"\b(?:levels?|stages?|rounds?|opponents?|characters?|weapons?|missions?|courses?|teams?)\b",@"\b(?:review|rating|rated|score|verdict|recommended|overall|pros and cons)\b",@"\b(?:you (?:can|must|have to|will)|players? (?:can|must|choose|control)|the player|game (?:offers|features|provides|has|contains))\b"];
+        string[] signals=[@"\b(?:graphics|animation|visuals|sprites|scrolling|sound(?:track| effects)?|music)\b",@"\b(?:gameplay|controls?|controller|joystick|difficulty|challenge|playability|responsive)\b",@"\b(?:levels?|stages?|rounds?|opponents?|characters?|weapons?|missions?|courses?|teams?)\b",@"\b(?:review|rating|rated|score|verdict|recommended|overall|pros and cons)\b",@"\b(?:you (?:can|must|have to|will)|players? (?:can|must|choose|control)|the player|game (?:offers|features|provides|has|contains))\b", @"\b(?:select|choose|move|jump|shoot|pass|tackle|drive|swing|aim|steer|defend|attack|race|score)\w*\b", @"\b(?:excellent|impressive|enjoyable|frustrating|realistic|challenging|addictive|unfortunately|however|worth playing)\b"];
         return signals.Count(p=>Regex.IsMatch(text,p,RegexOptions.IgnoreCase));
     }
     private static void AnalyzeArticleRegions(PageLayout layout, Dictionary<string,CatalogTitle> dictionary,int page,List<Suggestion> suggestions)
@@ -472,14 +480,33 @@ public static class GuidevaultMagazineContentScanner
             foreach(var occurrence in occurrences.OrderByDescending(o=>o.Line.Height).Take(4))
             {
                 var anchor=occurrence.Line;
-                bool SameRegion(LayoutLine l)
+                // Join neighboring OCR blocks in the same column, stopping at large
+                // vertical gaps, competing whole-title headings and section boundaries.
+                var boundaries=lines.Where(l=>l != anchor && (Regex.IsMatch(l.Text,@"^\s*(?:contents|news|letters|advertisement|cheats?|tips(?: and tricks)?|passwords?|high scores?|release schedule|order form)\s*[:.!]?\s*$",RegexOptions.IgnoreCase) || (l.Height>=median*1.30 && hits.Any(kv=>kv.Key!=key && kv.Value.Any(o=>o.Line==l && o.Hit.Whole))))).ToHashSet();
+                bool Boundary(LayoutLine l)=>boundaries.Contains(l);
+                bool Aligned(LayoutLine a,LayoutLine b)
                 {
-                    if(l.Block==anchor.Block) return Math.Abs(l.Y-anchor.Y)<=layout.Height*.30;
-                    int overlap=Math.Min(l.X+l.Width,anchor.X+anchor.Width)-Math.Max(l.X,anchor.X);
-                    bool aligned=overlap>=Math.Min(l.Width,anchor.Width)*.55 && Math.Abs(l.X-anchor.X)<layout.Width*.14;
-                    return aligned && Math.Abs(l.Y-anchor.Y)<=layout.Height*.17;
+                    int overlap=Math.Min(a.X+a.Width,b.X+b.Width)-Math.Max(a.X,b.X);
+                    return overlap>=Math.Min(a.Width,b.Width)*.45 && (Math.Abs(a.X-b.X)<=layout.Width*.10 || a.Block==b.Block);
                 }
-                var region=lines.Where(SameRegion).OrderBy(l=>l.Y).ThenBy(l=>l.X).ToArray();
+                var connected=new HashSet<LayoutLine>{anchor};
+                var pending=new Queue<LayoutLine>(); pending.Enqueue(anchor);
+                while(pending.Count>0 && connected.Count<90)
+                {
+                    var a=pending.Dequeue();
+                    foreach(var b in lines)
+                    {
+                        if(connected.Contains(b)||Boundary(b)||Math.Abs(b.Y-anchor.Y)>layout.Height*.38||!Aligned(a,b)) continue;
+                        int gap=Math.Max(0,Math.Max(a.Y,b.Y)-Math.Min(a.Y+a.Height,b.Y+b.Height));
+                        if(gap>Math.Max(median*2.8,Math.Max(a.Height,b.Height)*1.2)) continue;
+                        // Do not cross a heading or a clearly different section in this column.
+                        if(boundaries.Any(l=>l.Y>Math.Min(a.Y,b.Y)&&l.Y<Math.Max(a.Y,b.Y)&&Aligned(a,l))) continue;
+                        connected.Add(b);pending.Enqueue(b);
+                        if(connected.Count>=90) break;
+                    }
+                }
+                bool SameRegion(LayoutLine l)=>connected.Contains(l);
+                var region=connected.OrderBy(l=>l.Y).ThenBy(l=>l.X).ToArray();
                 var context=string.Join(" ",region.Select(l=>l.Text));
                 if(region.Length<3 || ArticleNoise(context) || Regex.IsMatch(context,@"\b(?:cheat codes?|passwords?|game genie|high scores?|release schedule|coming next issue|top \d+|letters to the editor|readers? poll)\b",RegexOptions.IgnoreCase)) continue;
                 int words=Words.Matches(context).Count, signals=EditorialSignals(context);
@@ -487,21 +514,22 @@ public static class GuidevaultMagazineContentScanner
                 bool heading=occurrence.Hit.Whole && anchor.Height>=median*1.30;
                 int rivals=hits.Count(kv=>kv.Key!=key && kv.Value.Any(o=>SameRegion(o.Line)));
                 bool focused=rivals<=1 && (heading||repeats>=2||rivals==0);
-                if(!focused||words<35||signals<2) continue;
+                if(!focused||words<30||signals<2) continue;
                 var title=occurrence.Hit.Game;
-                var detail=$"{anchor.Text}{Geometry(anchor,layout)}; local article region: {words} words, {signals} editorial cues, {repeats} title lines.";
-                bool substantial=words>=65&&signals>=3&&(heading||repeats>=2||rivals==0&&words>=100);
-                if(substantial && !suggestions.Any(x=>x.Page==page&&x.Field=="featuredGames"&&ListingKey(x.Value)==key)) suggestions.Add(new("featuredGames",title,page,detail,"Article region — substantial coverage candidate"));
-                else suggestions.Add(new("articleCandidate",title,page,detail,"Article continuation candidate"));
+                var detail=$"{anchor.Text}{Geometry(anchor,layout)}; connected article region: {words} words, {signals} editorial cues, {repeats} title lines, {rivals} other titles.";
+                // A focused body paragraph can establish substantial coverage even if
+                // a stylized headline was missed. Weak regions are only review evidence.
+                bool substantial=(heading&&words>=45&&signals>=2)||(repeats>=2&&words>=55&&signals>=3)||(rivals==0&&words>=90&&signals>=3);
+                if(substantial && !suggestions.Any(x=>x.Page==page&&x.Field=="featuredGames"&&ListingKey(x.Value)==key)) suggestions.Add(new("featuredGames",title,page,detail,"Connected article region — review substantial coverage"));
+                else if(!suggestions.Any(x=>x.Page==page&&x.Field=="articleCandidate"&&ListingKey(x.Value)==key)) suggestions.Add(new("articleCandidate",title,page,detail,"Possible article coverage — review context"));
                 // Platform association is local and independent of the magazine-wide list.
                 foreach(var (pattern,name) in Platforms)
                 {
                     var platformLine=region.FirstOrDefault(l=>Regex.IsMatch(l.Text,pattern,RegexOptions.IgnoreCase) && (name!="Arcade"||ArcadePlatformEvidence(l.Text,false)) && (Regex.IsMatch(l.Text,@"\b(?:platform|version|for|system|cartridge)\b|[:—]",RegexOptions.IgnoreCase)||l.Text.Trim().Equals(name,StringComparison.OrdinalIgnoreCase)));
                     if(platformLine is null) continue;
-                    suggestions.Add(new("gamePlatformEvidence",title,page,name+" — "+platformLine.Text+Geometry(platformLine,layout),"Local article platform candidate"));
+                    if(!suggestions.Any(x=>x.Page==page&&x.Field=="gamePlatformEvidence"&&ListingKey(x.Value)==key&&x.Evidence.StartsWith(name+" — ",StringComparison.Ordinal))) suggestions.Add(new("gamePlatformEvidence",title,page,name+" — "+platformLine.Text+Geometry(platformLine,layout),"Local article platform candidate"));
                     if(!suggestions.Any(x=>x.Page==page&&x.Field=="featuredPlatforms"&&x.Value==name)) suggestions.Add(new("featuredPlatforms",name,page,platformLine.Text+Geometry(platformLine,layout),"Local editorial platform evidence"));
                 }
-                break;
             }
         }
     }
