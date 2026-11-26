@@ -9,7 +9,7 @@ public static class GuidevaultMagazineContentScanner
     public sealed record Suggestion(string Field, string Value, int Page, string Evidence, string Confidence);
     public sealed record ScanResult(int TotalPages, int Start, int Scanned, int ReadablePages, List<Suggestion> Suggestions, List<string> Warnings)
     {
-        public string ScannerRevision => "v4.5";
+        public string ScannerRevision => "v4.6";
         public int CachedPages { get; init; }
     }
     private static readonly SemaphoreSlim Gate = new(1, 1);
@@ -248,7 +248,8 @@ public static class GuidevaultMagazineContentScanner
         // Numbered title listings and review/solution descriptions can identify an index
         // even when graphical section labels are missing from OCR.
         bool graphicalIndex = page > 1 && page <= 16 && LooksLikeGraphicalIndex(layout, text);
-        toc = toc || graphicalIndex;
+        bool centeredIndex = page > 1 && page <= 16 && LooksLikeCenteredIndex(layout);
+        toc = toc || graphicalIndex || centeredIndex;
         bool retailPage = !toc && RetailMarkers(text) >= 2;
         bool otherIssuePage = !toc && Regex.IsMatch(text, @"\b(?:back issues?|previous issues?|past issues?|next issue|order (?:this|your|an) issue)\b", RegexOptions.IgnoreCase) && (Regex.Matches(text, @"\b(?:issue|no\.)\s*#?\d{1,4}\b", RegexOptions.IgnoreCase).Count >= 2 || RetailMarkers(text) >= 1);
         bool likelyAd = retailPage || otherIssuePage || !toc && lines.Any(IsLegal) && Regex.IsMatch(text, @"\b(?:order now|call toll.free|available at participating|ask your retailer|for a limited time|send check or money order|suggested retail price|visit your local retailer)\b", RegexOptions.IgnoreCase);
@@ -370,7 +371,7 @@ public static class GuidevaultMagazineContentScanner
             }
         }
         if (page > 1 && page <= 12) AnalyzeEditorialIntroduction(layout,dictionary,page,suggestions);
-        if (graphicalIndex || toc) AnalyzeNumberedFeatures(layout,dictionary,page,suggestions);
+        if (toc && !centeredIndex) AnalyzeNumberedFeatures(layout,dictionary,page,suggestions);
         // A cover story can be indexed even when the artwork/logo has no readable text.
         // Never assume that the first feature or largest OCR line is the artwork subject.
         if (toc || (page > 1 && page <= 12 && lines.Count(NumberedLine) >= 2 && lines.Any(l=>Regex.IsMatch(l,@"^\s*(?:index|in this issue|on the cover|cover story|cover feature)\b",RegexOptions.IgnoreCase))))
@@ -427,6 +428,7 @@ public static class GuidevaultMagazineContentScanner
         var coverHeadings = new List<(string Game, LayoutLine Line)>();
         var section = "";
         var previous = (LayoutLine?)null;
+        if(centeredIndex) { AnalyzeCenteredIndex(layout,dictionary,page,suggestions); return; }
         var coverRegion = toc; // Leading contents entries are not automatically cover stories.
         var platformIndex = false;
         foreach (var l in layout.Lines)
@@ -585,6 +587,97 @@ public static class GuidevaultMagazineContentScanner
         if ((prices>=5 && promos>=3) || (order && prices>=3 && promos>=1) || (order && prices>=2 && Regex.IsMatch(text,@"\b(?:cheque|postal order|postage|payment|credit card|order form)\b",RegexOptions.IgnoreCase)))
             return "Probable back-issue/order catalogue (prices and promotional listings)";
         return "";
+    }
+    // A second general index layout: centered page numbers above uppercase headings.
+    // Infer columns from repeated heading centers, never from publication names or fixed offsets.
+    private static bool CenteredIndexHeading(LayoutLine l)
+    {
+        var letters=l.Text.Where(char.IsLetter).ToArray();
+        return l.Height>0 && ((l.Confidence>=30 && (IndexSection(l.Text)||IndexDepartment(l.Text))) ||
+            (l.Confidence>=35 && letters.Length>=4 && letters.Count(char.IsUpper)>=letters.Length*.80 && Words.Matches(l.Text).Count<=12));
+    }
+    private static bool IndexSection(string value) => Regex.IsMatch(value.Trim(),@"^(?:table of contents|contents|features?|reviews?|previews?|columns?|departments?|regulars?|solutions?|walkthroughs?|strategy guides?|news|letters|editorial|cheats?|tips|codes|hardware|directory|index)\s*[:.!]?\s*$",RegexOptions.IgnoreCase);
+    private static bool IndexDepartment(string value) => Regex.IsMatch(value.Trim(),@"^(?:editor['’]?s notes|letter from the editor|editorial|gamebytes|directory|(?:pc |industry |game )?news|back issues?|order form|subscriptions?)\s*[:.!]?\s*$",RegexOptions.IgnoreCase);
+    private static List<List<LayoutLine>> CenteredIndexColumns(PageLayout layout)
+    {
+        var groups=new List<List<LayoutLine>>();
+        if(layout.Width<=0||layout.Height<=0)return groups;
+        double Center(LayoutLine l)=>l.X+l.Width/2.0;
+        foreach(var l in layout.Lines.Where(CenteredIndexHeading).OrderBy(Center))
+        {
+            var group=groups.LastOrDefault();
+            if(group is null||Math.Abs(group.Average(Center)-Center(l))>Math.Max(10,layout.Width*.025))groups.Add(new List<LayoutLine>{l});
+            else group.Add(l);
+        }
+        return groups.Where(g=>g.Count>=3).ToList();
+    }
+    private static bool LooksLikeCenteredIndex(PageLayout layout)
+    {
+        var columns=CenteredIndexColumns(layout);
+        if(columns.Count<2||columns.Sum(g=>g.Count)<12)return false;
+        int sections=columns.Sum(g=>g.Count(l=>IndexSection(l.Text)));
+        int numbers=layout.Lines.Count(l=>l.Height>0&&Regex.IsMatch(l.Text.Trim(),@"^\d{1,3}$")&&columns.Any(g=>Math.Abs(g.Average(h=>h.X+h.Width/2.0)-(l.X+l.Width/2.0))<=Math.Max(10,layout.Width*.035)&&g.Any(h=>h.Y>l.Y&&h.Y-l.Y<=Math.Max(h.Height,l.Height)*3)));
+        return sections>=2&&numbers>=4;
+    }
+    private static void AnalyzeCenteredIndex(PageLayout layout,Dictionary<string,CatalogTitle> dictionary,int page,List<Suggestion> suggestions)
+    {
+        var columns=CenteredIndexColumns(layout);
+        string section="";
+        void Add(string field,string value,string evidence,string confidence)
+        {
+            if(value.Length==0||suggestions.Any(s=>s.Page==page&&s.Field==field&&ListingKey(s.Value)==ListingKey(value)))return;
+            suggestions.Add(new(field,value,page,evidence,confidence));
+        }
+        foreach(var column in columns)
+        {
+            var headings=column.OrderBy(l=>l.Y).ToArray();
+            double center=column.Average(l=>l.X+l.Width/2.0);
+            for(int i=0;i<headings.Length;i++)
+            {
+                var first=headings[i];
+                if(IndexSection(first.Text)) {section=first.Text.Trim();Add("specialFeatures",section,first.Text+Geometry(first,layout),"Centered index section");continue;}
+                if(IndexDepartment(first.Text)){Add("specialFeatures",first.Text.Trim(),first.Text+Geometry(first,layout),"Centered index department");continue;}
+                var fragments=new List<LayoutLine>{first};
+                // Adjacent uppercase lines of comparable size form one heading. A normal
+                // gap between entries (or a small page-number line) terminates the heading.
+                while(i+1<headings.Length)
+                {
+                    var prev=fragments[^1];var next=headings[i+1];
+                    if(IndexSection(next.Text)||IndexDepartment(next.Text)||next.Y-prev.Y>Math.Max(prev.Height,next.Height)*1.85||next.Y<=prev.Y||next.Height>prev.Height*1.6||prev.Height>next.Height*1.6)break;
+                    if(layout.Lines.Any(l=>l.Y>prev.Y&&l.Y<next.Y&&Math.Abs(l.X+l.Width/2.0-center)<=Math.Max(10,layout.Width*.035)&&Regex.IsMatch(l.Text.Trim(),@"^\d{1,3}$")))break;
+                    fragments.Add(next);i++;
+                }
+                string printed=string.Join(" ",fragments.Select(l=>l.Text)).Trim(' ','.',',','‘','’','"');
+                if(!Regex.IsMatch(section,@"^(?:features?|reviews?|previews?|solutions?|walkthroughs?|strategy guides?|columns?)$",RegexOptions.IgnoreCase))continue;
+                bool columnFeature=Regex.IsMatch(section,@"^columns?$",RegexOptions.IgnoreCase);
+                // Editorial wrappers are not part of the game title. Keep the original
+                // complete heading in evidence and never substitute a partial game hit.
+                string title=Regex.Replace(printed,@"^.*?\b(?:the making of|sneak preview\s*:|(?:game |exclusive )?preview\s*:|review\s*:|walkthrough\s*:|solution\s*:)\s*", "",RegexOptions.IgnoreCase).Trim(' ','.',',','‘','’','"');
+                title=Regex.Replace(title,@"(?<=\s)[‘’](?=\p{L})"," ").Trim();
+                var exact=FindGames(dictionary,title,true,true,true).Where(h=>h.Whole&&!h.Fuzzy).Select(h=>h.Game).Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
+                if(exact.Length==0&&dictionary.TryGetValue("\0"+ListingKey(title),out var spelling))exact=new[]{spelling.Display};
+                // A single-character OCR correction of the COMPLETE heading is reviewable.
+                if(exact.Length==0)exact=FindGames(dictionary,title,true,true,true).Where(h=>h.Fuzzy).Select(h=>h.Game).Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
+                if(exact.Length==1&&!columnFeature&&fragments.All(l=>l.Confidence>=40))
+                {
+                    Add("featuredGames",exact[0],printed+Geometry(first,layout),"Centered index full heading — review");continue;
+                }
+                if(columnFeature)
+                {
+                    Add("specialFeatures",printed,printed+Geometry(first,layout),"Centered index column heading");
+                    // A column title may not be the game. Inspect the short description
+                    // and surface catalog matches as possible coverage, not automatic features.
+                    int bottom=i+1<headings.Length?headings[i+1].Y:first.Y+Math.Max(first.Height*7,layout.Height/12);
+                    var body=layout.Lines.Where(l=>l.Y>fragments[^1].Y&&l.Y<bottom&&!CenteredIndexHeading(l)&&Math.Abs(l.X+l.Width/2.0-center)<layout.Width*.065&&Words.Matches(l.Text).Count>=2).OrderBy(l=>l.Y).Select(l=>l.Text);
+                    string description=string.Join(" ",body);
+                    foreach(var hit in FindGames(dictionary,description,false,false,true).Where(h=>!h.Fuzzy&&Words.Matches(h.Game).Count>=2))Add("articleCandidate",hit.Game,printed+" — "+description+Geometry(first,layout),"Centered index column description — verify coverage");
+                    continue;
+                }
+                // Do not reduce an unresolved long title to a shorter game or a franchise.
+                if(exact.Length==1)Add("unresolvedGame",exact[0],printed+Geometry(first,layout),"Low-confidence centered index title — verify full title");
+                else if(LooksLikeUnresolvedTitle(title))Add("unresolvedGame",title,printed+Geometry(first,layout),"Unresolved centered index title — verify full title");
+            }
+        }
     }
     private static bool LooksLikeGraphicalIndex(PageLayout layout,string text)
     {
