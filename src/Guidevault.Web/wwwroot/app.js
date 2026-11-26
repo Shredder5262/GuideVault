@@ -26252,6 +26252,15 @@ function serverFilesModeConfig(mode = serverFilesCurrentMode()) {
 function renderServerFilesModeChrome() {
   const mode = serverFilesCurrentMode();
   const config = serverFilesModeConfig(mode);
+  const converting = mode === 'convert';
+  $('settingsFilesPanel')?.classList.toggle('gv-format-conversion', converting);
+  const selectionLabels = {
+    serverFilesSelectVisible: converting ? 'Select Visible' : 'Select Visible',
+    serverFilesSelectMatching: converting ? 'Select All Matching' : 'Select All Matching',
+    serverFilesClearSelection: converting ? 'Clear' : 'Clear Selection',
+    serverFilesUseMetadataSelection: converting ? 'From Metadata Manager' : 'Use Metadata Manager Selection'
+  };
+  Object.entries(selectionLabels).forEach(([id, label]) => { if ($(id)) $(id).textContent = label; });
   if ($('serverFilesPageTitle')) $('serverFilesPageTitle').textContent = config.title;
   if ($('serverFilesPageSub')) $('serverFilesPageSub').textContent = config.subtitle;
   if ($('serverFilesPageKicker')) $('serverFilesPageKicker').textContent = 'LIBRARY TOOLS';
@@ -26281,6 +26290,9 @@ function serverFilesEnsureState() {
 
 function serverFilesSelectedKinds() {
   const files = serverFilesEnsureState();
+  if (serverFilesModeFromTab(state.settingsActiveTab) === 'convert') {
+    return METADATA_MANAGER_KIND_FILTERS.includes(files.convertKind) ? [files.convertKind] : [];
+  }
   return (files.kindFilters || []).filter(kind => METADATA_MANAGER_KIND_FILTERS.includes(kind));
 }
 
@@ -26512,6 +26524,7 @@ function renderServerFilesWorkspace() {
   const files = serverFilesEnsureState();
   if ($('serverFilesSearch')) $('serverFilesSearch').value = files.search || '';
   const selectedKinds = new Set(serverFilesSelectedKinds());
+  if ($('serverFilesConvertKind')) $('serverFilesConvertKind').value = METADATA_MANAGER_KIND_FILTERS.includes(files.convertKind) ? files.convertKind : '';
   document.querySelectorAll('[data-server-files-kind]').forEach(input => { input.checked = selectedKinds.has(input.dataset.serverFilesKind || ''); });
   syncServerFilesKindDropdown();
   const allItems = serverFilesMatchingItems();
@@ -26522,6 +26535,14 @@ function renderServerFilesWorkspace() {
   if (body) body.innerHTML = serverFilesRowsHtml(rendered) + (hidden ? `<tr><td colspan="8" class="metadata-manager-empty metadata-manager-hidden-note">${hidden} more matching file${hidden === 1 ? ' is' : 's are'} hidden by the display limit.</td></tr>` : '');
   const selected = new Set(serverFilesCurrentSelectedIds());
   const renderedIds = rendered.map(metadataManagerItemId).filter(Boolean);
+  const conversionCount = $('serverFilesConvertSelectionCount');
+  if (conversionCount && serverFilesCurrentMode() === 'convert') {
+    const validSelected = new Set(serverFilesSelectedItemsFromState().map(metadataManagerItemId));
+    const matchingSelected = allItems.reduce((count, item) => count + Number(validSelected.has(metadataManagerItemId(item))), 0);
+    const outside = validSelected.size - matchingSelected;
+    conversionCount.textContent = `${validSelected.size} selected${outside ? ` · ${outside} outside filters` : ''}`;
+    conversionCount.classList.toggle('has-outside', outside > 0);
+  }
   const header = $('serverFilesHeaderCheck');
   if (header) {
     header.checked = renderedIds.length > 0 && renderedIds.every(id => selected.has(id));
@@ -27265,9 +27286,9 @@ function serverFilesFormatLabel(item) {
 }
 
 function serverFilesFormatSummaryHtml(items = []) {
-  if (!items.length) return '<strong>Current Format</strong><span>Select files above to see their current formats.</span>';
+  if (!items.length) return '<span class="gv-convert-format-empty">Source formats: —</span>';
   const counts = items.reduce((map, item) => {
-    const label = serverFilesFormatLabel(item);
+    const label = serverFilesFileFormat(item);
     map[label] = (map[label] || 0) + 1;
     return map;
   }, {});
@@ -27275,7 +27296,7 @@ function serverFilesFormatSummaryHtml(items = []) {
     .sort((a, b) => a[0].localeCompare(b[0]))
     .map(([format, count]) => `<span class="server-files-format-chip"><b>${escapeHtml(format)}</b>${count} file${count === 1 ? '' : 's'}</span>`)
     .join('');
-  return `<strong>Current Format</strong><div class="server-files-format-chip-row">${chips}</div><em>${items.length} selected file${items.length === 1 ? '' : 's'} ready for conversion actions.</em>`;
+  return `<span class="gv-convert-format-label">Source formats</span><div class="server-files-format-chip-row">${chips}</div>`;
 }
 
 function renderServerFilesFormatTools() {
@@ -27283,7 +27304,7 @@ function renderServerFilesFormatTools() {
   if (!summary) return;
   const items = serverFilesSelectedItemsFromState();
   summary.innerHTML = serverFilesFormatSummaryHtml(items);
-  const hasSelection = items.length > 0;
+  const hasSelection = items.length > 0 && !serverFilesEnsureState().conversionBusy;
   ['serverFilesConvertCbz','serverFilesConvertPdf'].forEach(id => { if ($(id)) $(id).disabled = !hasSelection; });
 }
 
@@ -27337,7 +27358,9 @@ async function serverFilesPollConversionJob(taskId) {
 }
 
 async function serverFilesConvertSelected(targetFormat = 'cbz') {
-  const ids = serverFilesCurrentSelectedIds();
+  const files = serverFilesEnsureState();
+  if (files.conversionBusy) return;
+  const ids = serverFilesSelectedItemsFromState().map(metadataManagerItemId).filter(Boolean);
   if (!ids.length) {
     serverFilesSetStatus('serverFilesConvertStatus', 'Select one or more target files first.', 'error');
     return;
@@ -27350,7 +27373,8 @@ async function serverFilesConvertSelected(targetFormat = 'cbz') {
     okText: `Create ${actionLabel}`,
     cancelText: 'Cancel'
   });
-  if (!confirmed) return;
+  if (!confirmed || files.conversionBusy) return;
+  files.conversionBusy = true;
   const buttons = ['serverFilesConvertCbz','serverFilesConvertPdf'].map(id => $(id)).filter(Boolean);
   buttons.forEach(btn => { btn.disabled = true; });
   serverFilesSetStatus('serverFilesConvertStatus', `Starting ${actionLabel} conversion task for ${ids.length} selected item(s)...`, '');
@@ -27376,6 +27400,7 @@ async function serverFilesConvertSelected(targetFormat = 'cbz') {
   } catch (err) {
     serverFilesSetStatus('serverFilesConvertStatus', err?.message || 'Conversion failed.', 'error');
   } finally {
+    files.conversionBusy = false;
     renderServerFilesFormatTools();
   }
 }
@@ -27514,6 +27539,12 @@ if ($('metadataManagerOpenFilesWorkspace')) $('metadataManagerOpenFilesWorkspace
 if ($('serverFilesRefreshSelection')) $('serverFilesRefreshSelection').addEventListener('click', renderServerFilesWorkspace);
 if ($('serverFilesSearch')) $('serverFilesSearch').addEventListener('input', e => serverFilesUpdateSearch(e.currentTarget.value));
 document.querySelectorAll('[data-server-files-kind]').forEach(input => input.addEventListener('change', serverFilesUpdateKinds));
+if ($('serverFilesConvertKind')) $('serverFilesConvertKind').addEventListener('change', e => {
+  const files = serverFilesEnsureState();
+  files.convertKind = METADATA_MANAGER_KIND_FILTERS.includes(e.currentTarget.value) ? e.currentTarget.value : '';
+  files.renderLimit = metadataManagerDefaultRenderLimit();
+  renderServerFilesWorkspace();
+});
 if ($('serverFilesTemplateKindSelect')) $('serverFilesTemplateKindSelect').addEventListener('change', e => serverFilesSetActiveTemplateKind(e.currentTarget.value, { focusInput: true }));
 if ($('serverFilesTemplatePresetSelect')) $('serverFilesTemplatePresetSelect').addEventListener('change', serverFilesApplySelectedTemplatePreset);
 if ($('serverFilesSaveTemplatePreset')) $('serverFilesSaveTemplatePreset').addEventListener('click', e => { e.preventDefault(); serverFilesSaveTemplatePreset(); });

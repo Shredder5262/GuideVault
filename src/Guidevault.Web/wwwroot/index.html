@@ -6,7 +6,7 @@
   <title>Guidevault</title>
   <link rel="icon" type="image/x-icon" href="/assets/favicon.ico?v=0.9.228" />
   <link rel="shortcut icon" type="image/x-icon" href="/assets/favicon.ico?v=0.9.228" />
-  <link rel="stylesheet" href="/styles.css?v=1.3.2-controlled-v1&amp;rev=launchbox-magazine-1&amp;bulk=publication-actions-v1&amp;mm=workspace-v1&amp;mmimport=v1&amp;magscan=v4.2&amp;magscantab=v1&amp;magoverview=v1&amp;magdetailpolish=v1" />
+  <link rel="stylesheet" href="/styles.css?v=1.3.2-controlled-v1&amp;rev=launchbox-magazine-1&amp;bulk=publication-actions-v1&amp;mm=workspace-v1&amp;mmimport=v1&amp;magscan=v4.2&amp;magscantab=v1&amp;magoverview=v1&amp;magdetailpolish=v1&amp;formatui=v1" />
 </head>
 <body class="right-collapsed auth-locked">
   <section id="loginView" class="login-view" aria-labelledby="loginTitle">
@@ -1483,12 +1483,21 @@
                     </div>
                   </details>
                 </div>
+                <label for="serverFilesConvertKind" class="gv-convert-only gv-convert-kind">Content Type
+                  <select id="serverFilesConvertKind">
+                    <option value="">All Content Types</option>
+                    <option value="Manual">Manuals</option>
+                    <option value="Strategy Guide">Strategy Guides</option>
+                    <option value="Magazine">Magazines</option>
+                  </select>
+                </label>
               </div>
               <div class="settings-actions inline-actions server-files-selection-actions">
                 <button id="serverFilesSelectVisible" class="ghost" type="button">Select Visible</button>
                 <button id="serverFilesSelectMatching" class="ghost" type="button">Select All Matching</button>
                 <button id="serverFilesClearSelection" class="ghost" type="button">Clear Selection</button>
                 <button id="serverFilesUseMetadataSelection" class="ghost" type="button">Use Metadata Manager Selection</button>
+                <span id="serverFilesConvertSelectionCount" class="gv-convert-only gv-convert-count" aria-live="polite">0 selected</span>
               </div>
               <p id="serverFilesSelectionStatus" class="sub account-status" aria-live="polite"></p>
               <div class="server-files-select-table">
@@ -1513,6 +1522,13 @@
                 <div class="settings-actions inline-actions">
                   <button id="serverFilesLoadMore" class="ghost" type="button" hidden>Load More</button>
                   <button id="serverFilesShowAll" class="ghost" type="button" hidden>Show All</button>
+                </div>
+              </div>
+              <div class="gv-convert-only gv-convert-actionbar">
+                <div id="serverFilesFormatSummary" class="gv-convert-format-summary" aria-live="polite"></div>
+                <div class="gv-convert-actions">
+                  <button id="serverFilesConvertCbz" class="ghost" type="button" disabled>Convert to CBZ</button>
+                  <button id="serverFilesConvertPdf" class="primary" type="button" disabled>Convert to PDF</button>
                 </div>
               </div>
             </article>
@@ -1649,25 +1665,8 @@
                 <div id="serverFilesWriteBackResults" class="server-files-preview-table compact"></div>
               </article>
 
-              <article class="settings-card server-files-card file-conversion-card" data-server-files-action-card="convert">
-                <div class="file-metadata-card-heading">
-                  <h3>Format Conversion</h3>
-                  <p class="sub">Show the current source format for the selected files and create converted copies beside the original packages.</p>
-                </div>
-                <div id="serverFilesFormatSummary" class="server-files-format-summary" aria-live="polite">
-                  <strong>Current Format</strong>
-                  <span>Select files above to see their current formats.</span>
-                </div>
-                <div class="server-files-writeback-callout">
-                  <strong>Conversions are copy-first.</strong>
-                  <span>GuideVault creates a new CBZ or PDF beside the source file and leaves the original untouched. PDF to CBZ needs a PDF rasterizer in the runtime. Run a rescan when you want the new copy indexed.</span>
-                </div>
-                <div class="settings-actions inline-actions server-files-actions">
-                  <button id="serverFilesConvertCbz" class="primary" type="button">Convert Selected to CBZ</button>
-                  <button id="serverFilesConvertPdf" class="ghost" type="button">Convert Selected to PDF</button>
-                  <button class="ghost" type="button" disabled title="CBR/RAR creation requires external RAR tooling and is intentionally not bundled.">Convert to CBR</button>
-                </div>
-                <p class="field-help">PDF to CBZ rasterizes PDF pages into numbered images when a runtime rasterizer is available. CBZ and PDF conversions are copy-first and never replace the original source file.</p>
+              <article class="settings-card server-files-card file-conversion-card gv-convert-results" data-server-files-action-card="convert">
+                <h3>Conversion Results</h3>
                 <p id="serverFilesConvertStatus" class="sub account-status" aria-live="polite"></p>
                 <div id="serverFilesConvertResults" class="server-files-preview-table compact"></div>
               </article>
@@ -3745,6 +3744,6 @@
   </dialog>
 
 
-  <script src="/app.js?v=1.3.2-controlled-v1&amp;rev=launchbox-magazine-1&amp;bulk=publication-actions-v1&amp;mm=workspace-v1&amp;mmsections=v1&amp;mmfields=v1&amp;mmimport=v1&amp;magscan=v4.7.1&amp;magscantab=v1&amp;magapply=v1&amp;magoverview=v1&amp;magdetailpolish=v1"></script>
+  <script src="/app.js?v=1.3.2-controlled-v1&amp;rev=launchbox-magazine-1&amp;bulk=publication-actions-v1&amp;mm=workspace-v1&amp;mmsections=v1&amp;mmfields=v1&amp;mmimport=v1&amp;magscan=v4.7.1&amp;magscantab=v1&amp;magapply=v1&amp;magoverview=v1&amp;magdetailpolish=v1&amp;formatui=v1"></script>
 </body>
 </html>

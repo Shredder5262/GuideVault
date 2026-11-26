@@ -22981,3 +22981,54 @@ body.colorscape-active.detail-page-mode #detailMagazineScanHost input[type=check
 .detail-launchbox-link-evidence summary{cursor:pointer;}
 .detail-launchbox-link-evidence p{margin:5px 0 0;line-height:1.45;}
 
+
+/* GuideVault format conversion workspace v1 — scoped to Format Conversion only. */
+#settingsFilesPanel .gv-convert-only { display:none; }
+#settingsFilesPanel.gv-format-conversion #serverFilesSummary,
+#settingsFilesPanel.gv-format-conversion #serverFilesWorkflowStrip,
+#settingsFilesPanel.gv-format-conversion #serverFilesPageSub,
+#settingsFilesPanel.gv-format-conversion .server-files-selector-card .file-metadata-card-heading,
+#settingsFilesPanel.gv-format-conversion .server-files-kind-filter { display:none!important; }
+#settingsFilesPanel.gv-format-conversion .server-files-title-row {padding:6px 2px 12px;background:none;box-shadow:none;border:0;border-radius:0;margin-bottom:5px;align-items:center;}
+#settingsFilesPanel.gv-format-conversion .server-files-selector-card {padding:16px!important;border-radius:16px!important;margin-bottom:14px;}
+#settingsFilesPanel.gv-format-conversion .server-files-filter-bar {grid-template-columns:minmax(0,1fr) minmax(180px,245px);gap:14px;background:none;border:0;padding:0;margin:0 0 12px;}
+#settingsFilesPanel.gv-format-conversion .server-files-filter-bar label {margin:0;gap:6px;font-size:.76rem;font-weight:750;text-transform:uppercase;letter-spacing:.055em;min-width:0;}
+#settingsFilesPanel.gv-format-conversion .gv-convert-kind {display:flex;}
+#settingsFilesPanel.gv-format-conversion #serverFilesConvertKind {width:100%;min-height:42px;padding:0 12px;border:1px solid rgba(255,255,255,.15);border-radius:10px;background:#0c1729;color:#edf4ff;font:inherit;text-transform:none;letter-spacing:normal;}
+#settingsFilesPanel.gv-format-conversion .server-files-selection-actions {display:flex;align-items:center;gap:7px;padding:9px 0;border-top:1px solid rgba(255,255,255,.09);margin:0;}
+#settingsFilesPanel.gv-format-conversion .server-files-selection-actions button {min-height:34px;font-size:.79rem;padding:6px 10px;border-radius:8px!important;font-weight:650!important;}
+#settingsFilesPanel.gv-format-conversion #serverFilesUseMetadataSelection {margin-left:4px;}
+#settingsFilesPanel.gv-format-conversion .gv-convert-count {display:block;margin-left:auto;color:#c3d9f5;font-size:.82rem;font-weight:750;white-space:nowrap;}
+#settingsFilesPanel.gv-format-conversion .gv-convert-count.has-outside {color:#f5cb80;}
+#settingsFilesPanel.gv-format-conversion #serverFilesSelectionStatus:empty {display:none;}
+#settingsFilesPanel.gv-format-conversion #serverFilesSelectionStatus {margin:0 0 8px;}
+#settingsFilesPanel.gv-format-conversion .server-files-select-table {margin-top:0;border-radius:10px;max-height:clamp(280px,51vh,690px);}
+#settingsFilesPanel.gv-format-conversion .server-files-select-table table {min-width:980px;table-layout:fixed;}
+#settingsFilesPanel.gv-format-conversion .server-files-select-table th,
+#settingsFilesPanel.gv-format-conversion .server-files-select-table td {vertical-align:middle;padding:9px 10px;}
+#settingsFilesPanel.gv-format-conversion .server-files-select-table th:nth-child(1) {width:40px;}
+#settingsFilesPanel.gv-format-conversion .server-files-select-table th:nth-child(2) {width:112px;}
+#settingsFilesPanel.gv-format-conversion .server-files-select-table th:nth-child(3) {width:23%;}
+#settingsFilesPanel.gv-format-conversion .server-files-select-table th:nth-child(4) {width:15%;}
+#settingsFilesPanel.gv-format-conversion .server-files-select-table th:nth-child(5) {width:92px;}
+#settingsFilesPanel.gv-format-conversion .server-files-select-table th:nth-child(6) {width:20%;}
+#settingsFilesPanel.gv-format-conversion .server-files-select-table th:nth-child(8) {width:78px;}
+#settingsFilesPanel.gv-format-conversion .server-files-select-table td:nth-child(7) {min-width:0;}
+#settingsFilesPanel.gv-format-conversion .server-files-select-table td {overflow-wrap:anywhere;}
+#settingsFilesPanel.gv-format-conversion .server-files-select-table td code {display:block;max-width:100%;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+#settingsFilesPanel.gv-format-conversion .server-files-select-table tbody tr:nth-child(even) td {background:rgba(255,255,255,.025);}
+#settingsFilesPanel.gv-format-conversion .server-files-select-table tbody tr:hover td {background:rgba(88,166,255,.08);}
+#settingsFilesPanel.gv-format-conversion .server-files-select-table tbody tr:has(.server-files-row-check:checked) td {background:rgba(88,166,255,.13);}
+#settingsFilesPanel.gv-format-conversion .server-files-select-table tbody tr:has(.server-files-row-check:checked) td:first-child {box-shadow:inset 3px 0 #58a6ff;}
+#settingsFilesPanel.gv-format-conversion .server-files-select-table input[type=checkbox] {accent-color:#58a6ff;}
+#settingsFilesPanel.gv-format-conversion .server-files-format-pill {padding:3px 7px;min-width:45px;font-size:.75rem;border-radius:6px;}
+#settingsFilesPanel.gv-format-conversion .server-files-footer-row {margin-top:10px;}
+#settingsFilesPanel.gv-format-conversion .gv-convert-actionbar {display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap;border-top:1px solid rgba(255,255,255,.1);margin-top:12px;padding-top:12px;}
+#settingsFilesPanel.gv-format-conversion .gv-convert-format-summary {display:flex;flex-wrap:wrap;align-items:center;gap:8px;color:#a8bad2;font-size:.82rem;}
+#settingsFilesPanel.gv-format-conversion .gv-convert-actions {display:flex;gap:8px;flex-wrap:wrap;margin-left:auto;}
+#settingsFilesPanel.gv-format-conversion .gv-convert-actions button {min-height:38px;}
+#settingsFilesPanel.gv-format-conversion .gv-convert-actions button:disabled {opacity:.45;cursor:not-allowed;}
+#settingsFilesPanel.gv-format-conversion .gv-convert-results:not(:has(#serverFilesConvertStatus:not(:empty),#serverFilesConvertResults:not(:empty))) {display:none!important;}
+#settingsFilesPanel.gv-format-conversion .gv-convert-results h3 {margin:0 0 8px;}
+#settingsFilesPanel.gv-format-conversion .gv-convert-results #serverFilesConvertStatus:empty {display:none;}
+@media(max-width:800px){#settingsFilesPanel.gv-format-conversion .server-files-filter-bar{grid-template-columns:1fr;}#settingsFilesPanel.gv-format-conversion .gv-convert-count{margin-left:0;} }
