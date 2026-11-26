@@ -18669,7 +18669,7 @@ function gvMagazineScanDialog(items, fromDetail = false, inlineHost = null) {
   if (!items.length || items.length > 5) { metadataManagerSetStatus('Select 1–5 magazine issues per scan.','error'); return; }
   const dialog = document.createElement(inlineHost ? 'div' : 'dialog');
   dialog.className = inlineHost ? 'gv-magscan-inline' : 'gv-magscan-dialog';
-  dialog.innerHTML = `<div class="gv-magscan-content"><h2>Scan magazine metadata</h2><p class="sub">${items.length} issue(s). Scanner UI v4.7 — Local OCR and LaunchBox title lookup. Nothing is saved automatically.</p><label>Scan scope <select data-scan-scope><option value="12">First 12 pages (cover, contents, masthead)</option><option value="300"${fromDetail?' selected':''}>Full issue (up to 300 pages)</option></select></label><p class="sub" data-scan-status aria-live="polite">Start a scan to review suggested fields. Layout-aware English OCR and catalog matching. All magazine fields are checked; uncertain or unavailable values are not guessed. Review all proposed editorial data.</p><progress data-scan-progress value="0" max="1"></progress><div data-scan-results></div><div class="gv-magscan-actions"><button class="ghost" type="button" data-scan-close>Close</button><button class="ghost" type="button" data-scan-stop hidden>Stop</button><button class="ghost" type="button" data-scan-copy disabled>Copy Scan Report</button><button class="primary" type="button" data-scan-start>Start scan</button><button class="primary" type="button" data-scan-stage disabled>${fromDetail?'Apply selected suggestions':'Stage selected suggestions'}</button></div></div>`;
+  dialog.innerHTML = `<div class="gv-magscan-content"><h2>Scan magazine metadata</h2><p class="sub">${items.length} issue(s). Scanner UI v4.7.1 — Local OCR and LaunchBox title lookup. Nothing is saved automatically.</p><label>Scan scope <select data-scan-scope><option value="12">First 12 pages (cover, contents, masthead)</option><option value="300"${fromDetail?' selected':''}>Full issue (up to 300 pages)</option></select></label><p class="sub" data-scan-status aria-live="polite">Start a scan to review suggested fields. Layout-aware English OCR and catalog matching. All magazine fields are checked; uncertain or unavailable values are not guessed. Review all proposed editorial data.</p><progress data-scan-progress value="0" max="1"></progress><div data-scan-results></div><div class="gv-magscan-actions"><button class="ghost" type="button" data-scan-close>Close</button><button class="ghost" type="button" data-scan-stop hidden>Stop</button><button class="ghost" type="button" data-scan-copy disabled>Copy Scan Report</button><button class="primary" type="button" data-scan-start>Start scan</button><button class="primary" type="button" data-scan-stage disabled>${fromDetail?'Apply selected suggestions':'Stage selected suggestions'}</button></div></div>`;
   (inlineHost || document.body).appendChild(dialog);
   const q = s => dialog.querySelector(s);
   const session = { controller:null, running:false, rows:[], dialog, inline:!!inlineHost, itemId:metadataManagerItemId(items[0]) };
@@ -18741,7 +18741,7 @@ function gvMagazineScanDialog(items, fromDetail = false, inlineHost = null) {
       if(row.item.issueNumber&&printedIssues.some(v=>String(v)!==String(row.item.issueNumber))) reviewWarnings.push(`Printed issue number(s): ${printedIssues.join(', ')}. Existing overall issue #${row.item.issueNumber} retained.`);
       if(coverConflict) reviewWarnings.push(`Cover headings detected: ${coverNames.join(', ')}. ${existingCover?'Existing cover subject retained: '+existingCover+'. ':''}OCR headings do not establish the primary cover story; edit Metadata after checking the cover.`);
       if (reviewWarnings.length) { const w = document.createElement('details'); w.innerHTML = `<summary>${reviewWarnings.length} scan warning(s)</summary><p>${reviewWarnings.map(escapeHtml).join('<br>')}</p>`; block.appendChild(w); }
-      if(row.revision!=='v4.7'){root.appendChild(block);return;}
+      if(row.revision!=='v4.7.1'){root.appendChild(block);return;}
       const proposals = gvMagazineScanProposals(row);
       const corrections=[];
       const coverProposal=proposals.find(p=>p.field==='coverSubject');
@@ -18767,7 +18767,7 @@ function gvMagazineScanDialog(items, fromDetail = false, inlineHost = null) {
       if(indexEntries.length){
         const details=document.createElement('details');details.className='gv-magscan-coverage';
         const heading=document.createElement('summary');heading.textContent=`Extracted index headings (${indexEntries.length})`;details.appendChild(heading);
-        const intro=document.createElement('p');intro.className='sub';intro.textContent='Printed index titles and their catalog resolution. Unresolved titles remain review-only; this list is not saved as metadata.';details.appendChild(intro);
+        const intro=document.createElement('p');intro.className='sub';intro.textContent='Printed index titles and their catalog resolution. Clear printed headings may be proposed as featured games even without a catalog match; uncertain titles remain pending review. This diagnostic list is not saved as metadata.';details.appendChild(intro);
         for(const entry of indexEntries){const p=document.createElement('p');p.className='sub';p.textContent=`Page ${entry.page}: ${entry.value} — ${entry.confidence}. ${entry.evidence}`;details.appendChild(p);}
         block.appendChild(details);
       }
@@ -18816,7 +18816,7 @@ function gvMagazineScanDialog(items, fromDetail = false, inlineHost = null) {
             if (!res.ok) { let msg=`HTTP ${res.status}`; try { msg=(await res.json()).error||msg; } catch {} throw new Error(msg); }
             const data=await res.json();
             row.revision=String(data.scannerRevision||'not reported');
-            if(row.revision!=='v4.7') { row.suggestions=[]; throw new Error(`Scanner backend revision ${row.revision}; expected v4.7. Deploy the matching image and reload before scanning.`); }
+            if(row.revision!=='v4.7.1') { row.suggestions=[]; throw new Error(`Scanner backend revision ${row.revision}; expected v4.7.1. Deploy the matching image and reload before scanning.`); }
             row.total=data.totalPages; row.scanned+=data.scanned; row.readable+=data.readablePages; row.cached+=Number(data.cachedPages||0); row.suggestions.push(...(data.suggestions||[])); row.warnings.push(...(data.warnings||[]));
             if (!data.scanned) break; start+=data.scanned; progress.value=i+Math.min(1,start/Math.min(scope,row.total));
           } while(start<Math.min(scope,row.total));
@@ -18930,7 +18930,7 @@ function gvMagazineEditableCorrection(row,field,value,reason) {
   return {field,current,value,evidence:[{value:value||'Clear field',page:0,evidence:reason,confidence:'Manual correction — review required'}],conflict:false,locked:false,safe:false};
 }
 function gvMagazineScanReport(rows,root) {
-  const report=['GuideVault magazine scan report — UI v4.7'];
+  const report=['GuideVault magazine scan report — UI v4.7.1'];
   const blocks=[...root.querySelectorAll('.gv-magscan-result')];
   rows.forEach((row,i)=>{
     const block=blocks[i];if(!block)return;
@@ -18993,25 +18993,25 @@ function gvMagazineReviewGames(row,proposals,block) {
   for(const x of all) {
     if(!['featuredGames','mentionedGames','articleCandidate','unresolvedGame','gamePlatformEvidence','catalogAlias'].includes(x.field))continue;
     const k=key(x.value);if(!k||k===cover||protectedGames.has(k))continue;
-    if((x.field==='unresolvedGame'||x.field==='articleCandidate')&&!byGame.has(k))byGame.set(k,{name:x.value,field:'ignore',evidence:[],unresolved:x.field==='unresolvedGame'});
-    const game=byGame.get(k);if(game)game.evidence.push(x.field==='catalogAlias'?{...x,evidence:`Previously stored alternate name: ${x.evidence}; catalog title: ${x.value}.`}:x);
+    if((x.field==='unresolvedGame'||x.field==='articleCandidate')&&!byGame.has(k))byGame.set(k,{name:x.value,field:'review',evidence:[],unresolved:x.field==='unresolvedGame'});
+    const game=byGame.get(k);if(game){if(x.field==='unresolvedGame'||String(x.confidence||'').includes('catalog unresolved'))game.unresolved=true;game.evidence.push(x.field==='catalogAlias'?{...x,evidence:`Previously stored alternate name: ${x.evidence}; catalog title: ${x.value}.`}:x);}
   }
   for(const k of protectedGames)byGame.delete(k);
   if(!byGame.size||!edits.size)return;
   const section=document.createElement('details');section.className='gv-magscan-game-review';
   const title=document.createElement('summary');title.textContent=`Review game coverage (${byGame.size})`;section.appendChild(title);
-  const hint=document.createElement('p');hint.className='sub';hint.textContent='Review existing and new game entries. Remove only after checking evidence; unresolved titles are ignored until selected. Changes are not saved until Apply or Stage. Locked lists are protected.';section.appendChild(hint);
+  const hint=document.createElement('p');hint.className='sub';hint.textContent='Review existing and new game entries. Clear printed index titles can be proposed as featured without a catalog match. Uncertain titles stay in Needs review until classified. Nothing is saved until Apply or Stage. Locked lists are protected.';section.appendChild(hint);
   const filter=document.createElement('select');filter.setAttribute('aria-label','Filter game coverage');for(const [v,t] of [['all','All games'],['existing','Existing games'],['new','New candidates'],['unresolved','Unresolved titles']]){const o=document.createElement('option');o.value=v;o.textContent=t;filter.appendChild(o);}section.appendChild(filter);
   const list=document.createElement('div');list.className='gv-magscan-game-list';section.appendChild(list);
   const controls=[];
-  for(const game of [...byGame.values()].sort((a,b)=>Number(a.unresolved)-Number(b.unresolved)||(a.field==='featuredGames'?0:a.evidence.some(x=>x.field==='articleCandidate')?1:2)-(b.field==='featuredGames'?0:b.evidence.some(x=>x.field==='articleCandidate')?1:2)||a.name.localeCompare(b.name))) {
+  for(const game of [...byGame.values()].sort((a,b)=>(a.field==='featuredGames'?0:a.field==='review'?1:a.evidence.some(x=>x.field==='articleCandidate')?2:3)-(b.field==='featuredGames'?0:b.field==='review'?1:b.evidence.some(x=>x.field==='articleCandidate')?2:3)||Number(a.unresolved)-Number(b.unresolved)||a.name.localeCompare(b.name))) {
     const item=document.createElement('div');item.className='gv-magscan-game-row';
     const label=document.createElement('div');const name=document.createElement('strong');name.textContent=game.name;label.appendChild(name);
-    const meta=document.createElement('div');meta.className='sub';const pages=[...new Set(game.evidence.map(x=>x.page).filter(Boolean))].sort((a,b)=>a-b);meta.textContent=(game.existing?'Existing · ':'')+(game.unresolved?'Unresolved printed title · ':game.field==='mentionedGames'&&game.evidence.some(x=>x.field==='articleCandidate')?'Possible featured coverage · ':'')+(pages.length?'Pages '+pages.join(', '):'No page reference');label.appendChild(meta);
+    const meta=document.createElement('div');meta.className='sub';const pages=[...new Set(game.evidence.map(x=>x.page).filter(Boolean))].sort((a,b)=>a-b);meta.textContent=(game.existing?'Existing · ':'')+(game.unresolved?(game.field==='featuredGames'?'Printed featured title · Catalog unresolved · ':'Unresolved printed title · '):game.field==='mentionedGames'&&game.evidence.some(x=>x.field==='articleCandidate')?'Possible featured coverage · ':'')+(pages.length?'Pages '+pages.join(', '):'No page reference');label.appendChild(meta);
     const details=document.createElement('details');details.innerHTML='<summary>Evidence</summary>';for(const x of game.evidence){const p=document.createElement('p');p.className='sub';p.textContent=`Page ${x.page||'—'}: ${x.evidence} [${x.confidence||'Review'}]`;details.appendChild(p);}label.appendChild(details);
     const select=document.createElement('select');select.setAttribute('aria-label',`Classification for ${game.name}`);
-    for(const [v,t] of [['featuredGames','Featured game'],['mentionedGames','Mentioned game'],['ignore',game.existing?'Remove':'Ignore']]){if(v!=='ignore'&&!edits.has(v))continue;const o=document.createElement('option');o.value=v;o.textContent=t;select.appendChild(o);}
-    select.value=edits.has(game.field)?game.field:'ignore';controls.push({game,select,item});item.append(label,select);list.appendChild(item);
+    for(const [v,t] of [['featuredGames','Featured game'],['mentionedGames','Mentioned game'],['review','Needs review — not included'],['ignore',game.existing?'Remove':'Ignore']]){if(v==='review'&&(game.existing||(!game.unresolved&&game.field!=='review')))continue;if(v!=='ignore'&&v!=='review'&&!edits.has(v))continue;const o=document.createElement('option');o.value=v;o.textContent=t;select.appendChild(o);}
+    select.value=edits.has(game.field)?game.field:game.field==='review'&&!game.existing?'review':'ignore';controls.push({game,select,item});item.append(label,select);list.appendChild(item);
   }
   filter.onchange=()=>controls.forEach(({game,item})=>item.style.display=filter.value!=='all'&&(filter.value==='existing'?!game.existing:filter.value==='unresolved'?!game.unresolved:game.existing)?'none':'');
   const apply=document.createElement('button');apply.type='button';apply.className='ghost';apply.textContent='Apply game choices to proposals';section.appendChild(apply);

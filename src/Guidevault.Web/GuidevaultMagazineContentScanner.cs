@@ -9,7 +9,7 @@ public static class GuidevaultMagazineContentScanner
     public sealed record Suggestion(string Field, string Value, int Page, string Evidence, string Confidence);
     public sealed record ScanResult(int TotalPages, int Start, int Scanned, int ReadablePages, List<Suggestion> Suggestions, List<string> Warnings)
     {
-        public string ScannerRevision => "v4.7";
+        public string ScannerRevision => "v4.7.1";
         public int CachedPages { get; init; }
     }
     private static readonly SemaphoreSlim Gate = new(1, 1);
@@ -703,9 +703,23 @@ public static class GuidevaultMagazineContentScanner
                     foreach(var hit in FindGames(dictionary,description,false,false,true).Where(h=>!h.Fuzzy&&Words.Matches(h.Game).Count>=2))Add("articleCandidate",hit.Game,printed+" — "+description+Geometry(first,layout),"Centered index column description — verify coverage");
                     continue;
                 }
-                // Do not reduce an unresolved long title to a shorter game or a franchise.
-                if(exact.Length==1)Add("unresolvedGame",exact[0],printed+Geometry(first,layout),"Low-confidence centered index title — verify full title");
-                else if(LooksLikeUnresolvedTitle(title)||(title.Length>=3&&title.Length<=85&&Words.Matches(title).Count==1&&title.All(char.IsLetter)&&!IndexSection(title)&&!IndexDepartment(title)))
+                // Editorial coverage and catalog identity are independent. A legible
+                // complete heading in a recognized feature/review index is useful
+                // metadata even when no catalog title resolves. Never substitute a
+                // fuzzy match, choose among ambiguous titles, or auto-save it.
+                bool plausiblePrintedTitle=LooksLikeUnresolvedTitle(title)||(title.Length>=3&&title.Length<=85&&Words.Matches(title).Count==1&&title.All(char.IsLetter)&&!IndexSection(title)&&!IndexDepartment(title));
+                bool clearPrintedTitle=exact.Length==0 && !fuzzy && plausiblePrintedTitle && fragments.All(l=>l.Confidence>=65)
+                    && title.IndexOfAny([',',';','|'])<0 && ValidCoverSubject(title,"") && !IndexSection(title) && !IndexDepartment(title);
+                if(clearPrintedTitle)
+                {
+                    // Preserve printed spelling; do not fabricate canonical capitalization or identity.
+                    Add("featuredGames",title,printed+Geometry(first,layout),"Printed index feature — catalog unresolved; review before applying");
+                    Add("unresolvedGame",title,printed+Geometry(first,layout),"Catalog unresolved — printed index supports featured coverage");
+                    if(Regex.IsMatch(section,@"^features?$",RegexOptions.IgnoreCase)&&Regex.IsMatch(printed,@"\bthe making of\b",RegexOptions.IgnoreCase))
+                        Add("coverSubject",title,printed+Geometry(first,layout),"Contents main feature — cover unverified");
+                }
+                else if(exact.Length==1)Add("unresolvedGame",fuzzy?title:exact[0],printed+Geometry(first,layout),fuzzy?"Possible OCR correction — verify printed title and catalog candidate":"Low-confidence centered index title — verify full title");
+                else if(plausiblePrintedTitle)
                     Add("unresolvedGame",title,printed+Geometry(first,layout),"Unresolved centered index title — verify full title");
             }
         }
