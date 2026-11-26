@@ -9,7 +9,7 @@ public static class GuidevaultMagazineContentScanner
     public sealed record Suggestion(string Field, string Value, int Page, string Evidence, string Confidence);
     public sealed record ScanResult(int TotalPages, int Start, int Scanned, int ReadablePages, List<Suggestion> Suggestions, List<string> Warnings)
     {
-        public string ScannerRevision => "v4.7.1";
+        public string ScannerRevision => "v4.7.2";
         public int CachedPages { get; init; }
     }
     private static readonly SemaphoreSlim Gate = new(1, 1);
@@ -137,6 +137,13 @@ public static class GuidevaultMagazineContentScanner
                 var evidence = observedGames.FirstOrDefault(s => Normalize(s.Value) == Normalize(resolved.Display) && s.Confidence != "Possible OCR correction");
                 if (evidence is not null) result.Suggestions.Add(new("catalogAlias", resolved.Display, evidence.Page, stored, "Catalog alternate name — normalize existing title (review)"));
             }
+            foreach(var stored in storedNames.Where(v=>!string.IsNullOrWhiteSpace(v)).Distinct(StringComparer.OrdinalIgnoreCase))
+            {
+                var prefix=Normalize(stored);
+                if(!BareFranchise(dictionary,prefix))continue;
+                var numbered=observedGames.Where(g=>Normalize(g.Value).StartsWith(prefix+" ",StringComparison.Ordinal)&&SequelNumber(Normalize(g.Value).Split(' ')[prefix.Split(' ').Length])>0).Select(g=>g.Value).Distinct(StringComparer.OrdinalIgnoreCase).Take(6).ToArray();
+                if(numbered.Length>0)result.Warnings.Add($"Stored title '{stored}' may be an original game or a series reference; numbered coverage found: {string.Join(", ",numbered)}. Review independently; no automatic replacement or removal.");
+            }
             if (dictionary.Count == 0) result.Warnings.Add("No usable LaunchBox game names; game coverage suggestions are unavailable.");
             return result;
         }
@@ -220,6 +227,27 @@ public static class GuidevaultMagazineContentScanner
             if(group.Select(kv=>ListingKey(kv.Value.Display)).Distinct(StringComparer.Ordinal).Count()!=1) continue;
             var best=group.OrderBy(kv=>kv.Value.Alias).ThenBy(kv=>kv.Value.Display.Length).ThenBy(kv=>kv.Value.Display,StringComparer.Ordinal).First().Value;
             result["\0"+group.Key]=best;
+        }
+        // Only unambiguous, complete numbered title equivalents may share a lookup.
+        // Internal keys are not actual titles and must never participate in fuzzy matching.
+        var titles = result.Where(kv=>!kv.Key.StartsWith("\0",StringComparison.Ordinal)).ToArray();
+        foreach(var group in titles.Where(kv=>NumberedTitleKey(kv.Key)!=kv.Key || kv.Key.Split(' ').Skip(1).Any(t=>SequelNumber(t)>0)).GroupBy(kv=>NumberedTitleKey(kv.Key)))
+        {
+            if(group.Select(kv=>NumberedTitleKey(kv.Value.Display)).Distinct(StringComparer.Ordinal).Count()!=1 || group.Any(kv=>!SameNumbers(kv.Key,kv.Value.Display)))continue;
+            var displays=group.Where(kv=>!kv.Value.Alias).Select(kv=>kv.Value.Display).Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
+            if(displays.Length==0)displays=group.Select(kv=>kv.Value.Display).Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
+            if(displays.Length==1)result["\0number:"+group.Key]=new(displays[0],true);
+        }
+        // A bare franchise name in prose is not proof of the original game.
+        foreach(var kv in titles)
+        {
+            var parts=kv.Key.Split(' ');
+            for(int i=1;i<parts.Length;i++)
+                if(SequelNumber(parts[i])>0)
+                {
+                    var prefix=string.Join(" ",parts,0,i);
+                    result["\0family:"+prefix]=new(prefix,true);
+                }
         }
         return result;
         static bool Usable(string key) => key.Length >= 3 && key.Split(' ').Length <= 12;
@@ -433,7 +461,7 @@ public static class GuidevaultMagazineContentScanner
         var platformIndex = false;
         foreach (var l in layout.Lines)
         {
-            string line = l.Text;
+            string line = SequelLineText(dictionary,l,layout);
             if (IsLegal(line) || RetailMarkers(line) >= 2 || Regex.IsMatch(line, @"\b(?:grand prize|send (?:your )?entries|sweepstakes|win this|no purchase necessary|order now|(?:cd|poster) contest|third .* movie)\b", RegexOptions.IgnoreCase)) { previous = null; continue; }
             if (l.Height > 0 && l.Confidence < 38) { previous = null; continue; }
             var headingText = Regex.Replace(line, @"^\d{1,3}[A-Za-z]?[.\s]+|\.{2,}\s*\d{1,3}$", "").Trim();
@@ -536,6 +564,14 @@ public static class GuidevaultMagazineContentScanner
                     if (matched.Any(h=>Normalize(h.Game)==Normalize(candidate))) continue;
                     Add("unresolvedGame",candidate,line+Geometry(l,layout),"Unresolved contents entry — verify title and coverage");
                 }
+            }
+            if (matched.Count==0 && (page==1 || listContext) && prominent(l))
+            {
+                var printed=headingText.Trim();
+                var titleKey=Normalize(RepairRomanGlyphs(printed));
+                int lastSpace=titleKey.LastIndexOf(' ');
+                if(lastSpace>0 && BareFranchise(dictionary,titleKey[..lastSpace]) && SequelNumber(titleKey[(lastSpace+1)..])>0 && !TryNumberedTitle(dictionary,printed,out _))
+                    Add("unresolvedGame",printed,line+Geometry(l,layout),"Numbered printed heading — catalog unresolved; review full title");
             }
             foreach (var hit in matched)
             {
@@ -673,7 +709,7 @@ public static class GuidevaultMagazineContentScanner
                 title=Regex.Replace(title,@"(?<=\s)[‘’](?=\p{L})"," ").Trim();
                 // Complete heading matching only. A match to one word inside a long
                 // heading must never replace that heading's actual title.
-                var exact=dictionary.TryGetValue(Normalize(title),out var direct)?new[]{direct.Display}:Array.Empty<string>();
+                var exact=TryNumberedTitle(dictionary,title,out var direct)?new[]{direct.Display}:Array.Empty<string>();
                 if(exact.Length==0&&dictionary.TryGetValue("\0"+ListingKey(title),out var spelling))exact=new[]{spelling.Display};
                 if(exact.Length==0&&indexNames.TryGetValue(IndexTitleKey(title),out var equivalents))exact=equivalents;
                 bool fuzzy=false;
@@ -823,7 +859,7 @@ public static class GuidevaultMagazineContentScanner
     {
         // Each anchor gets a column-local region, with neighboring blocks included only if aligned.
         // These are hypotheses, not reconstructed articles; page breaks are joined in the scan review layer.
-        var lines=layout.Lines.Where(l=>l.Height>0 && l.Confidence>=48 && !ArticleNoise(l.Text)).ToArray();
+        var lines=layout.Lines.Where(l=>l.Height>0 && l.Confidence>=48 && !ArticleNoise(l.Text)).Select(l=>l with {Text=SequelLineText(dictionary,l,layout)}).ToArray();
         if(lines.Length==0) return;
         var pageText=string.Join(" ",lines.Select(l=>l.Text));
         if(Regex.IsMatch(pageText,@"\b(?:back issues?|mail order|price list|order form)\b",RegexOptions.IgnoreCase) && RetailMarkers(pageText)>=1) return;
@@ -1003,10 +1039,67 @@ public static class GuidevaultMagazineContentScanner
         // Normalize conjunctions and hyphens only for complete printed entries.
         return Compact(Regex.Replace(value, @"\band\b|&", " ", RegexOptions.IgnoreCase));
     }
+    private static int SequelNumber(string token)
+    {
+        if(int.TryParse(token,NumberStyles.None,CultureInfo.InvariantCulture,out int value))return value>0?value:0;
+        if(!Regex.IsMatch(token,@"^[ivxl]+$",RegexOptions.IgnoreCase))return 0;
+        value=RomanOrNumber(token);
+        return value is >=1 and <=39?value:0;
+    }
+    private static string NumberedTitleKey(string value)
+    {
+        var tokens=Normalize(value).Split(' ',StringSplitOptions.RemoveEmptyEntries);
+        for(int i=1;i<tokens.Length;i++)
+        {
+            int number=SequelNumber(tokens[i]);
+            if(number>0)tokens[i]=number.ToString(CultureInfo.InvariantCulture);
+        }
+        return string.Join(" ",tokens);
+    }
+    private static string RepairRomanGlyphs(string value)
+    {
+        // Uppercase Roman typography only; retain raw OCR separately as evidence.
+        // A catalog lookup must still verify the resulting complete title.
+        value=Regex.Replace(value,@"\b([VX])([Il1]{1,3})\b",m=>m.Groups[1].Value+new string('I',m.Groups[2].Length));
+        return Regex.Replace(value,@"\b([VX])(?:[ \t]+[I1l]){1,3}\b|\bI(?:[ \t]+I){1,2}\b",m=>Regex.Replace(m.Value,@"[ \t]"," ").Replace(" ","").Replace('1','I').Replace('l','I'));
+    }
+    private static bool TryNumberedTitle(Dictionary<string,CatalogTitle> dictionary,string text,out CatalogTitle hit)
+    {
+        var key=Normalize(text);
+        if(dictionary.TryGetValue(key,out var exact)) {hit=exact;return true;}
+        var repaired=Normalize(RepairRomanGlyphs(text));
+        if(repaired!=key && dictionary.TryGetValue(repaired,out var repairedHit)) {hit=repairedHit;return true;}
+        if(dictionary.TryGetValue("\0number:"+NumberedTitleKey(repaired),out var numbered)) {hit=numbered;return true;}
+        hit=null!;return false;
+    }
+    private static bool TryNumberedKey(Dictionary<string,CatalogTitle> dictionary,string key,out CatalogTitle hit)
+    {
+        if(dictionary.TryGetValue(key,out var direct)){hit=direct;return true;}
+        var tokens=key.Split(' ');
+        if(tokens.Skip(1).Any(t=>t.Length>0&&(char.IsAsciiDigit(t[0]) || (t.Length<=7 && t.All(c=>c is 'i' or 'v' or 'x' or 'l')))) && dictionary.TryGetValue("\0number:"+NumberedTitleKey(key),out var numbered)){hit=numbered;return true;}
+        hit=null!;return false;
+    }
+    private static bool BareFranchise(Dictionary<string,CatalogTitle> dictionary,string key) => dictionary.ContainsKey("\0family:"+key);
+    private static string SequelLineText(Dictionary<string,CatalogTitle> dictionary,LayoutLine first,PageLayout layout)
+    {
+        if(first.Height<=0 || first.Confidence<40 || !BareFranchise(dictionary,Normalize(first.Text)))return first.Text;
+        foreach(var next in layout.Lines.Where(l=>l.Y>first.Y&&l.Height>0&&l.Confidence>=40).OrderBy(l=>l.Y))
+        {
+            if(next.Y-first.Y>Math.Max(first.Height,next.Height)*2.6)continue;
+            if(next.Height<first.Height*.55 || next.Height>first.Height*1.8)continue;
+            if(Math.Abs(first.X-next.X)>Math.Max(first.Height,next.Height)*1.5 && Math.Abs(first.X+first.Width/2.0-next.X-next.Width/2.0)>Math.Max(first.Height,next.Height)*1.5)continue;
+            var numeral=RepairRomanGlyphs(next.Text.Trim());
+            if(!Regex.IsMatch(numeral,@"^[IVXL]+$") || SequelNumber(numeral)==0)continue;
+            var joined=first.Text+" "+next.Text;
+            if(TryNumberedTitle(dictionary,joined,out var hit)&&SameNumbers(RepairRomanGlyphs(joined),hit.Display))return joined;
+        }
+        return first.Text;
+    }
     private static IEnumerable<GameHit> FindGames(Dictionary<string,CatalogTitle> dictionary,string line,bool titleContext,bool listing,bool context)
     {
-        var original=Words.Matches(line.Normalize(NormalizationForm.FormKC)).Select(m=>m.Value).ToArray();var tokens=original.Select(x=>x.ToLowerInvariant()).ToArray();
-        var whole=Normalize(listing?Regex.Replace(line,@"^\d{1,3}[A-Za-z]?[.\s]+|\.{2,}\s*\d{1,3}$",""):line);
+        var matchingLine=RepairRomanGlyphs(line.Normalize(NormalizationForm.FormKC));
+        var original=Words.Matches(matchingLine).Select(m=>m.Value).ToArray();var tokens=original.Select(x=>x.ToLowerInvariant()).ToArray();
+        var whole=Normalize(listing?Regex.Replace(matchingLine,@"^\d{1,3}[A-Za-z]?[.\s]+|\.{2,}\s*\d{1,3}$",""):matchingLine);
         var used=new HashSet<string>(StringComparer.Ordinal);
         var exactRanges = new List<string>();
         var parts=listing?line.Split([',',';'],StringSplitOptions.RemoveEmptyEntries):new[]{line};
@@ -1015,8 +1108,9 @@ public static class GuidevaultMagazineContentScanner
             var clean=part.Trim();
             var partKey=Normalize(clean);
             if(partKey.Length==0)continue;
-            if(dictionary.TryGetValue(partKey,out var direct))
+            if(TryNumberedTitle(dictionary,clean,out var direct))
             {
+                if(BareFranchise(dictionary,partKey)&&!listing&&!titleContext)continue;
                 if((listing||titleContext||context)&&used.Add(Compact(direct.Display))) {exactRanges.Add(partKey);yield return new(direct.Display,true,false);}
                 continue;
             }
@@ -1035,10 +1129,11 @@ public static class GuidevaultMagazineContentScanner
             for(int n=Math.Min(12,tokens.Length-i);n>=1;n--)
             {
                 string key=string.Join(" ",tokens,i,n);
-                if(!dictionary.TryGetValue(key,out var hit))continue;
+                if(!TryNumberedKey(dictionary,key,out var hit))continue;
                 bool entire=key==whole;
+                if(BareFranchise(dictionary,key)&&(!entire||(!titleContext&&!listing)))continue;
                 if(!entire && exactRanges.Any(r=>r!=key && (" "+r+" ").Contains(" "+key+" ",StringComparison.Ordinal)))continue;
-                bool sequel=i+n<tokens.Length&&Regex.IsMatch(tokens[i+n],@"^(?:[0-9]{1,4}|i{1,3}|l{2,3}|iv|v|vi{1,3}|ix|x|xi{1,3})$");
+                bool sequel=i+n<tokens.Length&&(SequelNumber(tokens[i+n])>0||Regex.IsMatch(tokens[i+n],@"^(?:[0-9]{1,4}|l{2,3})$"));
                 if(sequel || (i+n<tokens.Length && Regex.IsMatch(tokens[i+n],@"^(?:vs|versus|series|franchise|movie|film|saga|meat|contest|universe)$")))continue;
                 // A single common word or character name in prose is insufficient evidence.
                 // Single-word games remain eligible as complete headings or exact listing entries.
@@ -1058,11 +1153,11 @@ public static class GuidevaultMagazineContentScanner
         foreach(var part in parts)
         {
             var key=Normalize(part); if(exactRanges.Contains(key)||key.Length<5||key.Length>70||key.Split(' ').Length>9||dictionary.ContainsKey(key)||key.Split(' ').Length<2)continue;
-            var candidates=dictionary.Where(kv=>!kv.Value.Alias&&Math.Abs(kv.Key.Length-key.Length)<=1&&kv.Key[0]==key[0]&&SameNumbers(kv.Key,key)&&OneEdit(kv.Key,key)).Select(kv=>kv.Value.Display).Distinct(StringComparer.OrdinalIgnoreCase).Take(2).ToArray();
+            var candidates=dictionary.Where(kv=>!kv.Key.StartsWith("\0",StringComparison.Ordinal)&&!kv.Value.Alias&&Math.Abs(kv.Key.Length-key.Length)<=1&&kv.Key[0]==key[0]&&SameNumbers(kv.Key,key)&&OneEdit(kv.Key,key)).Select(kv=>kv.Value.Display).Distinct(StringComparer.OrdinalIgnoreCase).Take(2).ToArray();
             if(candidates.Length==1&&used.Add(Compact(candidates[0])))yield return new(candidates[0],false,true);
         }
     }
-    private static bool SameNumbers(string a,string b) => Regex.Matches(a,@"\b(?:\d+|i{1,3}|iv|v|vi{1,3}|ix|x)\b").Select(m=>m.Value).SequenceEqual(Regex.Matches(b,@"\b(?:\d+|i{1,3}|iv|v|vi{1,3}|ix|x)\b").Select(m=>m.Value));
+    private static bool SameNumbers(string a,string b) => Normalize(a).Split(' ').Select(SequelNumber).Where(n=>n>0).SequenceEqual(Normalize(b).Split(' ').Select(SequelNumber).Where(n=>n>0));
     private static bool OneEdit(string a,string b)
     {
         if(Math.Abs(a.Length-b.Length)>1)return false;if(a.Length>b.Length)(a,b)=(b,a);
