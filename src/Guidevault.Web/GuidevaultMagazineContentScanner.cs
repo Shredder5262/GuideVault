@@ -9,7 +9,7 @@ public static class GuidevaultMagazineContentScanner
     public sealed record Suggestion(string Field, string Value, int Page, string Evidence, string Confidence);
     public sealed record ScanResult(int TotalPages, int Start, int Scanned, int ReadablePages, List<Suggestion> Suggestions, List<string> Warnings)
     {
-        public string ScannerRevision => "v5.0";
+        public string ScannerRevision => "v5.1";
         public int CachedPages { get; init; }
     }
     private static readonly SemaphoreSlim Gate = new(1, 1);
@@ -162,6 +162,16 @@ public static class GuidevaultMagazineContentScanner
                 if(!BareFranchise(dictionary,prefix))continue;
                 var numbered=observedGames.Where(g=>Normalize(g.Value).StartsWith(prefix+" ",StringComparison.Ordinal)&&SequelNumber(Normalize(g.Value).Split(' ')[prefix.Split(' ').Length])>0).Select(g=>g.Value).Distinct(StringComparer.OrdinalIgnoreCase).Take(6).ToArray();
                 if(numbered.Length>0)result.Warnings.Add($"Stored title '{stored}' may be an original game or a series reference; numbered coverage found: {string.Join(", ",numbered)}. Review independently; no automatic replacement or removal.");
+            }
+            result.Suggestions.RemoveAll(s => s.Field == "coverSubject" && !ValidCoverSubject(s.Value,item.MagazineTitle));
+            result.Suggestions.RemoveAll(s => s.Field == "publisher" && MissingPublisher(s.Value));
+            if (MissingPublisher(item.Publisher) && !result.Suggestions.Any(s => s.Field == "publisher"))
+            {
+                var publication = Normalize((item.MagazineTitle ?? "").Replace("+", " plus"));
+                var issueYear = GetYear(item.CoverDate + " " + item.PublicationDate + " " + item.Year);
+                // Explicit series identity and publication era; no guesses for similarly named magazines.
+                if (publication == "saturn plus" && issueYear >= 1995 && issueYear <= 1997)
+                    result.Suggestions.Add(new("publisher", "Paragon Publishing", 0, "Publication reference: UK Games Magazines, Saturn Plus Issue Three (ukgamesmags.com/issues/saturn-plus-issue-three); verify against issue credits.", "Publication reference — verify"));
             }
             if (dictionary.Count == 0) result.Warnings.Add("No usable LaunchBox game names; game coverage suggestions are unavailable.");
             return result;
@@ -336,7 +346,7 @@ public static class GuidevaultMagazineContentScanner
                 for (int pi = 0; pi < layout.Lines.Count; pi++)
                 {
                     var pubLine = layout.Lines[pi];
-                    var local = layout.Lines.Skip(Math.Max(0, pi - 2)).Take(Math.Min(3, pi + 1))
+                    var local = layout.Lines.Skip(Math.Max(0, pi - 3)).Take(7)
                         .Where(l => l.Block == pubLine.Block && l.Paragraph == pubLine.Paragraph)
                         .Select(l => l.Text);
                     var context = string.Join(" ", local);
@@ -345,7 +355,7 @@ public static class GuidevaultMagazineContentScanner
                     // A publisher name may wrap onto the next OCR line. Never propose a dangling
                     // fragment or replace a longer stored name with its shorter prefix.
                     var pub = PublisherName(pubLine.Text);
-                    if (pub.Length == 0) continue;
+                    if (MissingPublisher(pub)) continue;
                     if (IncompletePublisher(pub))
                     {
                         if (pi + 1 >= layout.Lines.Count) continue;
@@ -657,9 +667,12 @@ public static class GuidevaultMagazineContentScanner
             {
                 printed=Clean(printed);
                 var name=Resolve(printed);
-                if(!ValidCoverSubject(printed,item.MagazineTitle) || (!editorial&&name is null) || (name is null&&!TitleLike(printed)))return;
+                if(!ValidCoverSubject(printed,item.MagazineTitle) || (name is not null && !ValidCoverSubject(name,item.MagazineTitle)) || (!editorial&&name is null) || (name is null&&!TitleLike(printed)))return;
                 // Preserve an explicit unresolved subtitle instead of reducing it to a franchise.
-                candidates.Add((name??printed,printed,printed+Geometry(l,pass),size,editorial,name is not null));
+                bool strategy = lines.Any(n => n.Y >= l.Y - l.Height && n.Y <= l.Y + Math.Max(l.Height, size)*4 &&
+                    Math.Min(n.X+n.Width,l.X+l.Width)-Math.Max(n.X,l.X)>0 &&
+                    Regex.IsMatch(n.Text,@"\b(?:solution|walk[ -]?through|exclusive maps|strategy guide)\b",RegexOptions.IgnoreCase));
+                candidates.Add((name??printed,printed,printed+Geometry(l,pass)+(strategy?" | Nearby strategy headline":""),size>0?size/pass.Height*(strategy?1.5:1):0,editorial,name is not null));
             }
             foreach(var l in lines)
             {
@@ -939,7 +952,7 @@ public static class GuidevaultMagazineContentScanner
     private static bool ValidCoverSubject(string value,string? publication)
     {
         var key=Normalize(value);
-        return key.Length>=3 && key.Length<=100 && key!=Normalize(publication??"") && !Regex.IsMatch(key,@"^(?:(?:issue|volume|vol|number|no)(?:\s+\d+)?|magazine|cover|cover story|cover feature|featured games?|features?|special edition|contents|table of contents|reviews?|previews?|news|unknown|unspecified|not identified|none|n a)$",RegexOptions.IgnoreCase);
+        return Regex.IsMatch(key,@"\p{L}") && !Regex.IsMatch(key,$@"^(?:(?:{Months})\s+)?(?:19|20)\d{{2}}(?:\s+(?:19|20)\d{{2}})?$",RegexOptions.IgnoreCase) && key.Length>=3 && key.Length<=100 && key!=Normalize(publication??"") && !Regex.IsMatch(key,@"^(?:(?:issue|volume|vol|number|no)(?:\s+\d+)?|magazine|cover|cover story|cover feature|featured games?|features?|special edition|contents|table of contents|reviews?|previews?|news|unknown|unspecified|not identified|none|n a)$",RegexOptions.IgnoreCase);
     }
     private static bool LooksLikeUnresolvedTitle(string value)
     {
@@ -1064,6 +1077,7 @@ public static class GuidevaultMagazineContentScanner
     {
         return Regex.Replace(value, $@"\b(?:{Months})\b", m => CultureInfo.InvariantCulture.TextInfo.ToTitleCase(m.Value.ToLowerInvariant()), RegexOptions.IgnoreCase);
     }
+    private static bool MissingPublisher(string? value) => Regex.IsMatch(Normalize(value ?? ""), @"^(?:|unknown|unspecified|not specified|not identified|none|n a)$", RegexOptions.IgnoreCase);
     private static string PublisherName(string line)
     {
         var match = Regex.Match(line, @"\b(?:is published[^\r\n]{0,180}?\bby|published by|publisher[ \t]*:)[ \t]*[:–-]?[ \t]*([\p{L}][^,;\r\n]{0,80})", RegexOptions.IgnoreCase);
