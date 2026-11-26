@@ -9,7 +9,7 @@ public static class GuidevaultMagazineContentScanner
     public sealed record Suggestion(string Field, string Value, int Page, string Evidence, string Confidence);
     public sealed record ScanResult(int TotalPages, int Start, int Scanned, int ReadablePages, List<Suggestion> Suggestions, List<string> Warnings)
     {
-        public string ScannerRevision => "v4.3";
+        public string ScannerRevision => "v4.4";
         public int CachedPages { get; init; }
     }
     private static readonly SemaphoreSlim Gate = new(1, 1);
@@ -117,6 +117,17 @@ public static class GuidevaultMagazineContentScanner
                 catch (Exception ex) when (ex is not OperationCanceledException) { result.Warnings.Add($"Page {i + 1}: {ex.Message}"); }
                 result = result with { Scanned = result.Scanned + 1 };
             }
+            // Offer canonical replacements for previously saved abbreviations only when
+            // the same canonical game is independently detected in this scan chunk.
+            var observedGames = result.Suggestions.Where(s => s.Field == "featuredGames" || s.Field == "mentionedGames" || s.Field == "coverSubject").ToArray();
+            var storedNames = (item.FeaturedGames ?? Array.Empty<string>()).Concat(item.MentionedGames ?? Array.Empty<string>()).Append(item.CoverSubject ?? "");
+            foreach (var stored in storedNames.Where(v => !string.IsNullOrWhiteSpace(v)).Distinct(StringComparer.OrdinalIgnoreCase))
+            {
+                if (!dictionary.TryGetValue(Normalize(stored), out var resolved) || !resolved.Alias || Normalize(stored) == Normalize(resolved.Display)) continue;
+                if (resolved.Display.IndexOfAny([',',';','|']) >= 0) continue;
+                var evidence = observedGames.FirstOrDefault(s => Normalize(s.Value) == Normalize(resolved.Display) && s.Confidence != "Possible OCR correction");
+                if (evidence is not null) result.Suggestions.Add(new("catalogAlias", resolved.Display, evidence.Page, stored, "Catalog alternate name — normalize existing title (review)"));
+            }
             if (dictionary.Count == 0) result.Warnings.Add("No usable LaunchBox game names; game coverage suggestions are unavailable.");
             return result;
         }
@@ -145,8 +156,8 @@ public static class GuidevaultMagazineContentScanner
     private static int ParsePdfPages(string text) => int.TryParse(Regex.Match(text, @"(?im)^Pages:\s*(\d+)").Groups[1].Value, out int n) ? n : 0;
     private static int GetYear(string value) => int.TryParse(YearPattern.Match(value ?? "").Value, out int n) ? n : 0;
     private static string Normalize(string value) => string.Join(" ", Words.Matches((value ?? "").Normalize(NormalizationForm.FormKC)).Select(m => m.Value.ToLowerInvariant()));
-    // Exact catalog names outrank aliases. Alias matches preserve the printed name;
-    // do not silently rename an article to a different regional or unrelated game.
+    // Exact catalog names outrank aliases. Unambiguous full-title expansions use the
+    // catalog title; unrelated or ambiguous regional aliases retain printed wording for review.
     private sealed record CatalogTitle(string Display, bool Alias);
     private static Dictionary<string, CatalogTitle> BuildDictionary(IEnumerable<GuidevaultLaunchBoxGame> games, int year)
     {
@@ -182,7 +193,11 @@ public static class GuidevaultMagazineContentScanner
             if (exact.ContainsKey(key) || values.Select(v => v.Owner).Distinct(StringComparer.OrdinalIgnoreCase).Count() != 1) continue;
             var owner = values[0].Owner;
             var printed = values.Select(v => v.Alias).OrderBy(v => v, StringComparer.Ordinal).First();
-            result[key] = new((Compact(owner) == Compact(printed) || (Normalize(owner).StartsWith(key + " ", StringComparison.Ordinal) && key.Split(' ').Length >= 2 && SameNumbers(Normalize(owner), key))) ? owner : printed, true);
+            // A contiguous abbreviation can occur at either end or inside the full name.
+            // Require a known alternate name, not a fuzzy substring match, and preserve sequel numbers.
+            var ownerKey = Normalize(owner);
+            bool expansion = SameNumbers(ownerKey, key) && (" " + ownerKey + " ").Contains(" " + key + " ", StringComparison.Ordinal);
+            result[key] = new((Compact(owner) == Compact(printed) || expansion) ? owner : printed, true);
         }
         // Punctuation-only spelling variants share the same display when unambiguous.
         foreach(var group in result.ToArray().GroupBy(kv=>Compact(kv.Key)))
