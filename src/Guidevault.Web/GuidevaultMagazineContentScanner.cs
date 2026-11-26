@@ -11,7 +11,7 @@ public static class GuidevaultMagazineContentScanner
     public sealed record Suggestion(string Field, string Value, int Page, string Evidence, string Confidence);
     public sealed record ScanResult(int TotalPages, int Start, int Scanned, int ReadablePages, List<Suggestion> Suggestions, List<string> Warnings)
     {
-        public string ScannerRevision => "v6.1";
+        public string ScannerRevision => "v6.2";
         public int CachedPages { get; init; }
     }
     private static readonly SemaphoreSlim Gate = new(1, 1);
@@ -1275,14 +1275,33 @@ public static class GuidevaultMagazineContentScanner
         Log("Florence-2 Base",$"{lines.Length} regions; {root.GetProperty("seconds").GetDouble():F1}s; peak process RSS {root.GetProperty("peakMb").GetDouble():F0} MiB; geometry {width}x{height}","Vision runtime");
         foreach(var l in lines)Log(l.Text,$"box {l.X},{l.Y},{l.Width},{l.Height}; model confidence not available","Vision region");
         if(lines.Length==0)return;
+        // A top headline linked to a publication subtitle is a masthead, not a game.
+        var mastheads=lines.Where(l=>l.Y<height*.16 && l.Width>width*.35 && l.Height>height*.035 &&
+            lines.Any(n=>n.Y>=l.Y+l.Height-height*.03 && n.Y<=l.Y+l.Height+height*.09 &&
+                Math.Min(l.X+l.Width,n.X+n.Width)>Math.Max(l.X,n.X) &&
+                Regex.IsMatch(n.Text,@"\b(?:newsletter|magazine|journal|fanzine)\b",RegexOptions.IgnoreCase))).ToArray();
+        var mastheadKeys=new HashSet<string>();
+        foreach(var l in mastheads)
+        {
+            mastheadKeys.Add(ListingKey(l.Text));
+            if(dictionary.TryGetValue(Normalize(l.Text),out var resolvedMasthead)||dictionary.TryGetValue("\0"+ListingKey(l.Text),out resolvedMasthead))mastheadKeys.Add(ListingKey(resolvedMasthead.Display));
+            Log(l.Text,$"box {l.X},{l.Y},{l.Width},{l.Height} | publication subtitle below masthead","Publication masthead excluded");
+        }
+        foreach(var previous in suggestions.Where(x=>x.Page==1 && mastheadKeys.Contains(ListingKey(x.Value)) &&
+            (x.Field=="coverSubject" || (x.Field=="featuredGames" && x.Confidence=="Cover story — verify"))).ToArray())
+        {
+            Log(previous.Value,previous.Evidence,"Publication masthead excluded");
+            suggestions.Remove(previous);
+        }
         var confirmed=suggestions.Where(s=>s.Field=="featuredGames"&&s.Page==1).Select(s=>ListingKey(s.Value)).ToHashSet();
-        var candidates=new List<(string Name,double Size,string Evidence,bool Strategy)>();
+        var candidates=new List<(string Name,double Size,string Evidence,bool Strategy,bool Editorial)>();
         var median=lines.Select(l=>l.Height).OrderBy(v=>v).ElementAt(lines.Length/2);
         void Candidate(string printed,LayoutLine first,LayoutLine last)
         {
             printed=Regex.Replace(printed.Trim(),@"\s+(?:solution|reviewed|review|walkthrough|strategy guide)[!:.]*$","",RegexOptions.IgnoreCase);
             if(!dictionary.TryGetValue(Normalize(printed),out var match)&&!dictionary.TryGetValue("\0"+ListingKey(printed),out match))return;
-            if(!ValidCoverSubject(match.Display,item.MagazineTitle))return;
+            if(!ValidCoverSubject(match.Display,item.MagazineTitle)||mastheads.Contains(first)||mastheads.Contains(last))return;
+            if(mastheadKeys.Contains(ListingKey(match.Display)) && first.Y<height*.25){Log(match.Display,printed,"Publication masthead excluded");return;}
             double size=(double)Math.Max(first.Height,last.Height)/height;
             var evidence=$"Florence-2 region '{printed}' | box {first.X},{first.Y},{first.Width},{first.Height} | normalized height {size:F3}";
             int left=Math.Min(first.X,last.X), right=Math.Max(first.X+first.Width,last.X+last.Width);
@@ -1290,11 +1309,13 @@ public static class GuidevaultMagazineContentScanner
             bool NearbyLabel(LayoutLine n) => n!=first && n!=last && n.Y>=bottom-height*.025 && n.Y<=bottom+height*.12 && Math.Min(right,n.X+n.Width)>Math.Max(left,n.X);
             bool strategy=lines.Any(n=>NearbyLabel(n)&&Regex.IsMatch(n.Text,@"\b(?:solution|walk[ -]?through|strategy guide|play guide|exclusive maps)\b",RegexOptions.IgnoreCase));
             bool teaser=lines.Any(n=>NearbyLabel(n)&&Regex.IsMatch(n.Text,@"\b(?:new pics|new pictures|first look)\b",RegexOptions.IgnoreCase));
+            bool editorial=lines.Any(n=>NearbyLabel(n)&&Regex.IsMatch(n.Text,@"\b(?:is here|has arrived|exclusive(?: review| preview)?|first look|full review|in depth|see page \d+(?: for details)?)\b",RegexOptions.IgnoreCase));
+            // A prominent exact catalog match plus local editorial copy is independent of Tesseract success.
             bool independent=confirmed.Contains(ListingKey(match.Display));
-            evidence+=$" | strategy {strategy}; teaser {teaser}; independent cover OCR {independent}";
-            if(size<.035||Math.Max(first.Height,last.Height)<median*1.5||(!independent&&!strategy)){Log(match.Display,evidence,"Vision candidate — insufficient independent or prominence evidence");return;}
-            double score=size*(strategy?1.5:1.0)*(teaser?.70:1.0);
-            candidates.Add((match.Display,score,evidence,strategy));Log(match.Display,evidence,"Vision candidate — corroborated");
+            evidence+=$" | strategy {strategy}; editorial {editorial}; teaser {teaser}; independent cover OCR {independent}";
+            if(size<.035||Math.Max(first.Height,last.Height)<median*1.5||(!independent&&!strategy&&!(editorial&&size>=.06))){Log(match.Display,evidence,"Vision candidate — insufficient independent or prominence evidence");return;}
+            double score=size*(strategy?1.5:editorial?1.35:1.0)*(teaser&&!editorial?.70:1.0);
+            candidates.Add((match.Display,score,evidence,strategy,editorial));Log(match.Display,evidence,"Vision candidate — corroborated");
         }
         foreach(var l in lines)
         {
