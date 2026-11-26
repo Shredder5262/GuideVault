@@ -35,7 +35,7 @@ RUN apt-get update \
 RUN apt-get update \
     && apt-get install -y --no-install-recommends python3 python3-venv \
     && python3 -m venv /opt/guidevault-vision \
-    && /opt/guidevault-vision/bin/pip install --no-cache-dir torch==2.7.1 torchvision==0.22.1 --index-url https://download.pytorch.org/whl/cpu \
+    && /opt/guidevault-vision/bin/pip install --no-cache-dir torch==2.7.1+cpu torchvision==0.22.1+cpu --index-url https://pypi.org/simple --extra-index-url https://download.pytorch.org/whl/cpu \
     && /opt/guidevault-vision/bin/pip install --no-cache-dir transformers==4.57.2 pillow==11.3.0 \
     && rm -rf /var/lib/apt/lists/*
 COPY vision/cover_ocr.py /opt/guidevault-vision/cover_ocr.py
