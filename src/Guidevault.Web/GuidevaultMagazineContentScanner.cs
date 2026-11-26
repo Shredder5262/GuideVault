@@ -75,6 +75,16 @@ public static class GuidevaultMagazineContentScanner
             var sourceInfo = new FileInfo(item.Path);
             bool fullVision = engine is "full" or "vision";
             bool visionOnly = engine == "vision";
+            if (fullVision)
+            {
+                const string script = "/opt/guidevault-vision/cover_ocr.py";
+                const string protocol = "guidevault-vision-deep-v7.1.1";
+                if (!File.Exists(script) || !(await File.ReadAllTextAsync(script, token)).Contains(protocol, StringComparison.Ordinal))
+                    throw new InvalidOperationException("Incompatible vision runtime: rebuild and deploy the matching v7.1.1 Docker image. No magazine recognition was started.");
+                var verified = await Run("/opt/guidevault-vision/bin/python", [script, "--self-test"], token);
+                if (!string.Equals(verified.Trim(), protocol, StringComparison.Ordinal))
+                    throw new InvalidOperationException("Vision runtime compatibility self-test failed. Rebuild and deploy the matching Docker image.");
+            }
             for (int i = start; !visionOnly && i < Math.Min(start + count, total); i++)
             {
                 token.ThrowIfCancellationRequested();
@@ -197,6 +207,8 @@ public static class GuidevaultMagazineContentScanner
             if (fullVision)
             {
                 var batch = await ReadVisionBatch(item, sourceInfo, pdf, temp, start, Math.Min(start + count, total), result.Warnings, token);
+                if (batch.Count > 0 && batch.All(p => p.Json is null))
+                    throw new InvalidOperationException("All vision pages in this batch failed. No metadata suggestions returned for this batch. " + string.Join(" | ", result.Warnings.TakeLast(3)));
                 foreach(var (index, json, cached) in batch)
                 {
                     token.ThrowIfCancellationRequested();

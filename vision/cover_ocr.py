@@ -6,6 +6,38 @@ os.environ["HF_HUB_DISABLE_XET"] = "1"
 os.environ["TOKENIZERS_PARALLELISM"] = "false"
 os.environ["OMP_NUM_THREADS"] = "2"
 os.environ["MKL_NUM_THREADS"] = "2"
+RUNTIME_PROTOCOL = "guidevault-vision-deep-v7.1.1"
+
+def dispatch(args, recognize_page):
+    if not args:
+        raise ValueError("A page path or batch option is required.")
+    if args[0] in ("--batch", "--deep-batch"):
+        if len(args) < 2:
+            raise ValueError("Batch requires at least one page path.")
+        results = []
+        for path in args[1:]:
+            try:
+                results.append(recognize_page(path, deep=args[0] == "--deep-batch"))
+            except Exception as exc:
+                results.append({"error": str(exc)[:500]})
+        return results
+    if args[0].startswith("--") or len(args) != 1:
+        raise ValueError("Unknown option or invalid page arguments.")
+    return recognize_page(args[0])
+
+# Check the actual CLI routing without loading PyTorch or downloading weights.
+if sys.argv[1:] == ["--self-test"]:
+    def probe(path, deep=False):
+        return {"path": path, "deep": deep}
+    if dispatch(["--deep-batch", "a", "b"], probe) != [{"path":"a","deep":True},{"path":"b","deep":True}]:
+        raise RuntimeError("Deep batch routing failed")
+    if dispatch(["--batch", "a"], probe) != [{"path":"a","deep":False}]:
+        raise RuntimeError("Batch routing failed")
+    if dispatch(["a"], probe) != {"path":"a","deep":False}:
+        raise RuntimeError("Single page routing failed")
+    print(RUNTIME_PROTOCOL)
+    sys.exit(0)
+
 import torch
 from PIL import Image
 from transformers import AutoProcessor, Florence2ForConditionalGeneration
@@ -74,13 +106,4 @@ def scan_region(image, limit):
             regions.append(dict(text=str(label)[:500], x=round(x), y=round(y), width=round(right-x), height=round(bottom-y)))
     return regions, ids.shape[-1] >= limit
 
-if len(sys.argv) > 2 and sys.argv[1] in ("--batch", "--deep-batch"):
-    results = []
-    for path in sys.argv[2:]:
-        try:
-            results.append(recognize(path, deep=sys.argv[1] == "--deep-batch"))
-        except Exception as exc:
-            results.append({"error": str(exc)[:500]})
-    print(json.dumps(results))
-else:
-    print(json.dumps(recognize(sys.argv[1])))
+print(json.dumps(dispatch(sys.argv[1:], recognize)))
