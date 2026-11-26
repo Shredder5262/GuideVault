@@ -11,7 +11,7 @@ public static class GuidevaultMagazineContentScanner
     public sealed record Suggestion(string Field, string Value, int Page, string Evidence, string Confidence);
     public sealed record ScanResult(int TotalPages, int Start, int Scanned, int ReadablePages, List<Suggestion> Suggestions, List<string> Warnings)
     {
-        public string ScannerRevision => "v7.0";
+        public string ScannerRevision => "v7.1";
         public int CachedPages { get; init; }
     }
     private static readonly SemaphoreSlim Gate = new(1, 1);
@@ -265,6 +265,21 @@ public static class GuidevaultMagazineContentScanner
                 var numbered=observedGames.Where(g=>Normalize(g.Value).StartsWith(prefix+" ",StringComparison.Ordinal)&&SequelNumber(Normalize(g.Value).Split(' ')[prefix.Split(' ').Length])>0).Select(g=>g.Value).Distinct(StringComparer.OrdinalIgnoreCase).Take(6).ToArray();
                 if(numbered.Length>0)result.Warnings.Add($"Stored title '{stored}' may be an original game or a series reference; numbered coverage found: {string.Join(", ",numbered)}. Review independently; no automatic replacement or removal.");
             }
+            var publicationWords=Normalize((item.MagazineTitle??"").Replace("+"," plus")).Split(' ',StringSplitOptions.RemoveEmptyEntries);
+            bool PublicationNoise(string value)
+            {
+                var k=Normalize(value); if(k.Length==0)return true;
+                if(k==Normalize(item.MagazineTitle??""))return true;
+                if(k.Contains(' '))return false;
+                return k.Length>=4 && publicationWords.Any(w=>w.Length>=5 && (w==k || (k.Length>=5 && w.EndsWith(k,StringComparison.Ordinal) && w.Length-k.Length<=3)));
+            }
+            result.Suggestions.RemoveAll(s => (s.Field is "featuredGames" or "mentionedGames" or "articleCandidate" or "unresolvedGame") && PublicationNoise(s.Value));
+            for(int k=0;k<result.Suggestions.Count;k++)
+            {
+                var hit=result.Suggestions[k];
+                if((hit.Field is "featuredGames" or "mentionedGames" or "articleCandidate") && Regex.IsMatch(Normalize(hit.Value),@"^(?:family games|sega game|video game|video games|game|games)$",RegexOptions.IgnoreCase))
+                    result.Suggestions[k]=hit with {Field="unresolvedGame",Confidence="Generic phrase — verify actual game title"};
+            }
             result.Suggestions.RemoveAll(s => s.Field == "coverSubject" && !ValidCoverSubject(s.Value,item.MagazineTitle));
             result.Suggestions.RemoveAll(s => s.Field == "publisher" && MissingPublisher(s.Value));
             if(Normalize((item.MagazineTitle??"").Replace("+"," plus"))=="saturn plus")
@@ -292,13 +307,13 @@ public static class GuidevaultMagazineContentScanner
     {
         var output=new List<(int Index,string? Json,bool Cached)>();
         var pending=new List<(int Index,string Input,string Cache)>();
-        var cacheRoot=Path.Combine(Environment.GetEnvironmentVariable("GUIDEVAULT_DATA")??"/data","vision-page-cache","v7.0");
+        var cacheRoot=Path.Combine(Environment.GetEnvironmentVariable("GUIDEVAULT_DATA")??"/data","vision-page-cache","v7.1");
         bool cacheEnabled=true;
         try { Directory.CreateDirectory(cacheRoot); } catch(Exception ex) { cacheEnabled=false; warnings.Add("Vision disk cache unavailable: "+ex.Message); }
         for(int i=start;i<end;i++)
         {
             token.ThrowIfCancellationRequested();
-            var identity=$"{source.FullName}\n{source.Length}\n{source.LastWriteTimeUtc.Ticks}\n{i}\nflorence-base-00921df-1800-768";
+            var identity=$"{source.FullName}\n{source.Length}\n{source.LastWriteTimeUtc.Ticks}\n{i}\nflorence-base-00921df-deep4-1800-768-1024";
             var key=Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(Encoding.UTF8.GetBytes(identity)));
             var cachePath=Path.Combine(cacheRoot,key+".json");
             try
@@ -335,8 +350,8 @@ public static class GuidevaultMagazineContentScanner
         {
             try
             {
-                var args=new[]{"/opt/guidevault-vision/cover_ocr.py","--batch"}.Concat(pending.Select(p=>p.Input)).ToArray();
-                var raw=await Run("/opt/guidevault-vision/bin/python",args,token,600);
+                var args=new[]{"/opt/guidevault-vision/cover_ocr.py","--deep-batch"}.Concat(pending.Select(p=>p.Input)).ToArray();
+                var raw=await Run("/opt/guidevault-vision/bin/python",args,token,1200);
                 using var doc=System.Text.Json.JsonDocument.Parse(raw);
                 var pages=doc.RootElement.EnumerateArray().ToArray();
                 if(pages.Length!=pending.Count)throw new InvalidOperationException("Vision batch result count mismatch.");
@@ -369,13 +384,33 @@ public static class GuidevaultMagazineContentScanner
         if(width<=0||height<=0)throw new InvalidOperationException("Invalid vision dimensions.");
         // 101 is an internal eligibility sentinel for legacy geometry heuristics, NOT calibrated model confidence.
         // Geometry() explicitly labels these lines as vision without a percentage.
-        var lines=root.GetProperty("regions").EnumerateArray().Take(200).Select(r=>new LayoutLine(r.GetProperty("text").GetString()??"",0,0,r.GetProperty("x").GetInt32(),r.GetProperty("y").GetInt32(),r.GetProperty("width").GetInt32(),r.GetProperty("height").GetInt32(),101)).Where(l=>l.Height>0&&l.Width>0&&!string.IsNullOrWhiteSpace(l.Text)).OrderBy(l=>l.Y).ThenBy(l=>l.X).ToList();
+        var lines=root.GetProperty("regions").EnumerateArray().Take(800).Select(r=>new LayoutLine(r.GetProperty("text").GetString()??"",0,0,r.GetProperty("x").GetInt32(),r.GetProperty("y").GetInt32(),r.GetProperty("width").GetInt32(),r.GetProperty("height").GetInt32(),101)).Where(l=>l.Height>0&&l.Width>0&&!string.IsNullOrWhiteSpace(l.Text)).OrderBy(l=>l.Y).ThenBy(l=>l.X).ToList();
         var text=string.Join("\n",lines.Select(l=>l.Text));
         if(Words.Matches(text).Count<3){warnings.Add($"Page {page}: little or no vision text.");return false;}
         var excluded=ExcludedPageReason(text,page,total);
         if(excluded.Length>0){warnings.Add($"Page {page}: vision {excluded}; excluded from current-issue evidence.");return true;}
         var found=new List<Suggestion>();
+        if(root.TryGetProperty("truncated",out var cut) && cut.ValueKind==System.Text.Json.JsonValueKind.True)
+            warnings.Add($"Page {page}: at least one vision region reached its generation limit; coverage may be incomplete.");
+        var passes=root.TryGetProperty("passes",out var passCount)?passCount.GetInt32():1;
+        suggestions.Add(new("pageVisionDiagnostic",$"Page {page}",page,$"{lines.Count} regions; {passes} passes; {root.GetProperty("seconds").GetDouble():F1}s; peak process RSS {root.GetProperty("peakMb").GetDouble():F0} MiB","Vision page recognition"));
         AnalyzePage(item,dictionary,text,new PageLayout(width,height,lines),page,found);
+        // A cover teaser with a printed page reference is evidence of dedicated editorial coverage.
+        // Restrict matching to nearby aligned lines; a page number elsewhere is not corroboration.
+        if(page==1)
+        {
+            foreach(var reference in lines.Where(l=>Regex.IsMatch(l.Text,@"\b(?:see\s+)?pages?\s+\d{1,3}(?:\s*[-–—]\s*\d{1,3})?\b",RegexOptions.IgnoreCase)))
+            {
+                var nearby=lines.Where(l=>l.Y>=reference.Y-height*.13 && l.Y<=reference.Y+reference.Height && Math.Min(l.X+l.Width,reference.X+reference.Width)>Math.Max(l.X,reference.X)).OrderBy(l=>l.Y).ThenBy(l=>l.X).ToArray();
+                var joined=string.Join(" ",nearby.Select(l=>l.Text));
+                if(!Regex.IsMatch(joined,@"\b(?:review|preview|guide|tips|master|latest|walkthrough|solution|details)\b",RegexOptions.IgnoreCase))continue;
+                foreach(var hit in FindGames(dictionary,joined,true,false,true).Where(h=>!h.Fuzzy))
+                    if(ValidCoverSubject(hit.Game,item.MagazineTitle) && (Words.Matches(hit.Game).Count>1 || nearby.Any(l=>ListingKey(l.Text)==ListingKey(hit.Game)) || Regex.IsMatch(joined,@"\b(?:latest on|review of|guide to|guide for|tips for|and)\s+"+Regex.Escape(hit.Game)+@"\b",RegexOptions.IgnoreCase)) && !found.Any(x=>x.Field=="featuredGames"&&ListingKey(x.Value)==ListingKey(hit.Game)))
+                        found.Add(new("featuredGames",hit.Game,page,joined[..Math.Min(joined.Length,420)],"Cover editorial page reference — verify"));
+            }
+            foreach(var (pattern,label) in new[]{(@"\b(?:mailbag|reader letters)\b","Reader letters"),(@"\b(?:art contest|reader contest)\b","Reader contests"),(@"\b(?:play guide|gameplay guide|walkthrough|solution|strategy guide)\b","Strategy guides"),(@"\b(?:reviewed|reviews?)\b","Reviews"),(@"\b(?:preview|first look)\b","Previews")})
+                if(Regex.IsMatch(text,pattern,RegexOptions.IgnoreCase))found.Add(new("specialFeatures",label,page,Regex.Match(text,pattern,RegexOptions.IgnoreCase).Value,"Cover editorial evidence"));
+        }
         AddPrintedPeriod(item,text,page,found);
         if(page==1)
         {
@@ -385,6 +420,10 @@ public static class GuidevaultMagazineContentScanner
                 var date=Regex.Replace(m.Value,@"[,\s]+"," ");
                 found.Add(new("coverDate",date,page,m.Value,"Printed publication period"));
                 found.Add(new("year",GetYear(date).ToString(CultureInfo.InvariantCulture),page,m.Value,"Printed publication period"));
+                // A seasonal dateline followed by #N is an explicit cover issue number.
+                var issue=Regex.Match(text,@"\b"+Regex.Escape(m.Value)+@"\s*#\s*(\d{1,3})\b",RegexOptions.IgnoreCase);
+                if(issue.Success && int.TryParse(issue.Groups[1].Value,out int issueNumber) && issueNumber>0)
+                    found.Add(new("issueNumber",issueNumber.ToString(CultureInfo.InvariantCulture),page,issue.Value,"Explicit cover issue number"));
             }
         }
         foreach(var hit in found)
@@ -1410,7 +1449,7 @@ public static class GuidevaultMagazineContentScanner
         var root=doc.RootElement;
         int width=root.GetProperty("width").GetInt32(),height=root.GetProperty("height").GetInt32();
         if(width<=0||height<=0)throw new InvalidOperationException("Invalid vision dimensions.");
-        var lines=root.GetProperty("regions").EnumerateArray().Take(200).Select(r=>new LayoutLine(r.GetProperty("text").GetString()??"",0,0,r.GetProperty("x").GetInt32(),r.GetProperty("y").GetInt32(),r.GetProperty("width").GetInt32(),r.GetProperty("height").GetInt32(),0)).Where(l=>l.Height>0&&l.Width>0&&!string.IsNullOrWhiteSpace(l.Text)).ToArray();
+        var lines=root.GetProperty("regions").EnumerateArray().Take(800).Select(r=>new LayoutLine(r.GetProperty("text").GetString()??"",0,0,r.GetProperty("x").GetInt32(),r.GetProperty("y").GetInt32(),r.GetProperty("width").GetInt32(),r.GetProperty("height").GetInt32(),0)).Where(l=>l.Height>0&&l.Width>0&&!string.IsNullOrWhiteSpace(l.Text)).ToArray();
         void Log(string value,string evidence,string status)=>suggestions.Add(new("coverDiagnostic",value,1,evidence,status));
         Log("Florence-2 Base",$"{lines.Length} regions; {root.GetProperty("seconds").GetDouble():F1}s; peak process RSS {root.GetProperty("peakMb").GetDouble():F0} MiB; geometry {width}x{height}","Vision runtime");
         foreach(var l in lines)Log(l.Text,$"box {l.X},{l.Y},{l.Width},{l.Height}; model confidence not available","Vision region");
