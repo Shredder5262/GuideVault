@@ -9,7 +9,7 @@ public static class GuidevaultMagazineContentScanner
     public sealed record Suggestion(string Field, string Value, int Page, string Evidence, string Confidence);
     public sealed record ScanResult(int TotalPages, int Start, int Scanned, int ReadablePages, List<Suggestion> Suggestions, List<string> Warnings)
     {
-        public string ScannerRevision => "v4.2";
+        public string ScannerRevision => "v4.3";
         public int CachedPages { get; init; }
     }
     private static readonly SemaphoreSlim Gate = new(1, 1);
@@ -45,7 +45,7 @@ public static class GuidevaultMagazineContentScanner
         (@"\b(?:PS1|PSX|PlayStation)\b(?!\s*(?:[2345]|Portable|Vita|Network|Store|Plus)\b)", "Sony PlayStation"),
         (@"\bXbox 360\b", "Microsoft Xbox 360"), (@"\bXbox One\b", "Microsoft Xbox One"), (@"\bXbox Series [XS]\b", "Microsoft Xbox Series X/S"),
         (@"\bXbox\b(?!\s+(?:360|One|Series|Live|Game Pass))", "Microsoft Xbox"), (@"\b(?:MS-DOS|DOS PC)\b", "MS-DOS"), (@"\b(?:Windows PC|PC Windows|PC CD-ROM)\b", "Windows"),
-        (@"\b(?:TurboGrafx(?:[- ]?16)?|TurboGratx|PC Engine)\b", "NEC TurboGrafx-16"), (@"\b(?:Atari )?Jaguar\b", "Atari Jaguar"), (@"\b(?:Sega )?32X\b", "Sega 32X"), (@"\b(?:Arcade)\b", "Arcade"), (@"\b3DO\b", "3DO Interactive Multiplayer")];
+        (@"\b(?:TurboGrafx|PC Engine)[- ]?CD(?:-ROM)?\b", "NEC TurboGrafx-CD"), (@"\b(?:TurboGrafx(?:[- ]?16)?|TurboGratx|PC Engine)\b(?![- ]?CD\b)", "NEC TurboGrafx-16"), (@"\b(?:Atari )?Jaguar\b", "Atari Jaguar"), (@"\b(?:Sega )?32X\b", "Sega 32X"), (@"\b(?:Arcade)\b", "Arcade"), (@"\b3DO\b", "3DO Interactive Multiplayer")];
 
     public static async Task<ScanResult> ScanAsync(LibraryItem item, IEnumerable<GuidevaultLaunchBoxGame> games, int start, int count, CancellationToken token)
     {
@@ -318,7 +318,7 @@ public static class GuidevaultMagazineContentScanner
         if (likelyAd) return;
         // A cover story can be indexed even when the artwork/logo has no readable text.
         // Never assume that the first feature or largest OCR line is the artwork subject.
-        if (toc || (page > 1 && lines.Count(NumberedLine) >= 3 && lines.Any(l=>Regex.IsMatch(l,@"^\s*(?:index|in this issue|on the cover|cover story|cover feature)\b",RegexOptions.IgnoreCase))))
+        if (toc || (page > 1 && page <= 12 && lines.Count(NumberedLine) >= 2 && lines.Any(l=>Regex.IsMatch(l,@"^\s*(?:index|in this issue|on the cover|cover story|cover feature)\b",RegexOptions.IgnoreCase))))
         {
             var explicitLabel = @"(?:cover\s+(?:story|feature|game)|on\s+the\s+cover|this\s+(?:month|issue)['’]s\s+cover)";
             var weakLabel = @"(?:featured\s+games?|main\s+feature|special\s+feature)";
@@ -413,6 +413,37 @@ public static class GuidevaultMagazineContentScanner
                 var entries = line[(line.IndexOf(':') + 1)..];
                 foreach (var hit in FindGames(dictionary, entries, true, true, true).Where(h=>!h.Fuzzy && h.Whole))
                     if (!matched.Any(x=>ListingKey(x.Game)==ListingKey(hit.Game))) matched.Add(hit);
+                var entryParts = entries.Split([',',';'], StringSplitOptions.RemoveEmptyEntries).SelectMany(part => FindGames(dictionary,part.Trim(),true,true,true).Any(h=>h.Whole&&!h.Fuzzy) ? new[]{part} : Regex.Split(part,@"\s+and\s+",RegexOptions.IgnoreCase));
+                foreach(var rawEntry in entryParts)
+                {
+                    var entry=rawEntry.Trim().Trim('.', '"', '“', '”', '’', ':');
+                    if(!LooksLikeUnresolvedTitle(entry)) continue;
+                    var exactHits=FindGames(dictionary,entry,true,true,true).Where(h=>h.Whole&&!h.Fuzzy).ToArray();
+                    if(exactHits.Length>0) { foreach(var hit in exactHits) if(!matched.Any(x=>ListingKey(x.Game)==ListingKey(hit.Game))) matched.Add(hit); }
+                    else if(!matched.Any(x=>ListingKey(x.Game)==ListingKey(entry))) Add("unresolvedGame",entry,line+Geometry(l,layout),"Unresolved platform-labelled entry — verify printed title");
+                }
+            }
+            if(page>1 && !departments && !listContext)
+            {
+                foreach(Match quoted in Regex.Matches(line,@"[“""]([^“”""\r\n]{4,75})[”""]"))
+                {
+                    var printed=quoted.Groups[1].Value.Trim();
+                    if(!LooksLikeUnresolvedTitle(printed))continue;
+                    foreach(var hit in FindGames(dictionary,printed,true,true,true).Where(h=>h.Whole&&!h.Fuzzy))
+                        if(!matched.Any(x=>ListingKey(x.Game)==ListingKey(hit.Game)))matched.Add(hit);
+                }
+                // OCR often preserves a closing quotation mark but drops the opening one.
+                var quotedTail=Regex.Match(line,@"^\s*([A-Z][\p{L}\p{N} &'’:\-]{3,65})[”""](?:[.!?,; ]|$)");
+                if(quotedTail.Success)
+                {
+                    var printed=quotedTail.Groups[1].Value.Trim();
+                    if(LooksLikeUnresolvedTitle(printed))
+                    {
+                        var quotedHits=FindGames(dictionary,printed,true,true,true).Where(h=>h.Whole&&!h.Fuzzy).ToArray();
+                        foreach(var hit in quotedHits)if(!matched.Any(x=>ListingKey(x.Game)==ListingKey(hit.Game)))matched.Add(hit);
+                        if(quotedHits.Length==0 && gameContext)Add("unresolvedGame",printed,line+Geometry(l,layout),"Unresolved quoted game-context title — verify printed title");
+                    }
+                }
             }
             if (explicitCoverage)
                 foreach (var hit in FindGames(dictionary, coverageText, true, true, true).Where(h=>!h.Fuzzy))
@@ -456,7 +487,7 @@ public static class GuidevaultMagazineContentScanner
                 else if (toc && coverRegion && Regex.IsMatch(line, @"\b(?:game for|in.depth)\b", RegexOptions.IgnoreCase) && !hit.Fuzzy && ValidCoverSubject(hit.Game,item.MagazineTitle))
                 { Add("coverSubject", hit.Game, evidence, "Contents main feature — cover unverified"); Add("featuredGames", hit.Game, evidence, "Contents main feature"); }
                 else if (explicitCoverage && coverageHits.Contains(Compact(hit.Game))) Add("featuredGames", hit.Game, evidence, "Explicit review/feature reference");
-                else if (listContext || (page > 1 && prominent(l) && hit.Whole && !departments && !hit.Fuzzy && l.Y < layout.Height*.60 && Regex.IsMatch(text,@"\b(?:review|preview|rating|graphics|sound|gameplay|publisher|developer|walkthrough)\b",RegexOptions.IgnoreCase))) Add("featuredGames", hit.Game, evidence, hit.Fuzzy ? "Possible OCR correction" : "Editorial heading");
+                else if (listContext || (page > 1 && prominent(l) && hit.Whole && !departments && !hit.Fuzzy && !(Words.Matches(line).Count<=3 && line.TrimEnd().EndsWith('!')) && l.Y < layout.Height*.60 && Regex.IsMatch(text,@"\b(?:review|preview|rating|graphics|sound|gameplay|publisher|developer|walkthrough)\b",RegexOptions.IgnoreCase))) Add("featuredGames", hit.Game, evidence, hit.Fuzzy ? "Possible OCR correction" : "Editorial heading");
                 else if (page > 1) Add("mentionedGames", hit.Game, evidence, hit.Fuzzy ? "Possible OCR correction" : "Contextual title match");
             }
             bool explicitPlatformLabel = matched.Count > 0 && Platforms.Any(p => Regex.IsMatch(line, @"^\s*(?:[_\-–]\s*)?(?:" + p.Pattern + @")\s*:", RegexOptions.IgnoreCase));
@@ -471,6 +502,8 @@ public static class GuidevaultMagazineContentScanner
                 if (toc && Regex.IsMatch(line, @"\bGenesis\b", RegexOptions.IgnoreCase)) Add("featuredPlatforms", "Sega Genesis", line + Geometry(l, layout), "Editorial platform evidence");
             }
             if (toc && departments && numbered && Words.Matches(headingText).Count <= 6 && !IsLegal(headingText) && !Regex.IsMatch(headingText,@"\b(?:presents|includes?|exclusive codes|hot news from)\b",RegexOptions.IgnoreCase)) Add("specialFeatures", headingText, line + Geometry(l, layout), "Department listing");
+            if(toc && !platformHeading && matched.Count==0 && numbered && prominent(l) && Words.Matches(headingText).Count is >=2 and <=6 && Regex.IsMatch(headingText,@"\b(?:letters?|editor|mail|news|poll|scores?|talk|corner|access|tips|codes|shop|community|reader|hardware|interview|preview|review)\b",RegexOptions.IgnoreCase) && !Regex.IsMatch(headingText,@"\b(?:includes?|presents|new from|available)\b",RegexOptions.IgnoreCase))
+                Add("specialFeatures",headingText,line+Geometry(l,layout),"Possible contents department — review heading");
             if ((page <= 3 || toc) && Regex.IsMatch(line, @"\b(?:free|bonus|pull[- ]out|includes?|inside|exclusive)\s+(?:a\s+)?(?:poster|demo (?:disc|disk|CD)|disc|disk|insert|sticker|map|cover disc)\b", RegexOptions.IgnoreCase)) Add("includedExtras", line, line + Geometry(l, layout));
             previous = platformHeading ? null : l;
         }
@@ -573,6 +606,9 @@ public static class GuidevaultMagazineContentScanner
                 // A focused body paragraph can establish substantial coverage even if
                 // a stylized headline was missed. Weak regions are only review evidence.
                 bool substantial=(heading&&words>=45&&signals>=2)||(repeats>=2&&words>=55&&signals>=3)||(rivals==0&&words>=90&&signals>=3);
+                // A short exclamatory heading can be an ordinary phrase rather than a game title.
+                bool ambiguousHeadline=occurrence.Hit.Whole && Words.Matches(anchor.Text).Count<=3 && anchor.Text.TrimEnd().EndsWith('!') && repeats<2;
+                if(ambiguousHeadline)substantial=false;
                 if(substantial && !suggestions.Any(x=>x.Page==page&&x.Field=="featuredGames"&&ListingKey(x.Value)==key)) suggestions.Add(new("featuredGames",title,page,detail,"Connected article region — review substantial coverage"));
                 else if(!suggestions.Any(x=>x.Page==page&&x.Field=="articleCandidate"&&ListingKey(x.Value)==key)) suggestions.Add(new("articleCandidate",title,page,detail,"Possible article coverage — review context"));
                 // Platform association is local and independent of the magazine-wide list.

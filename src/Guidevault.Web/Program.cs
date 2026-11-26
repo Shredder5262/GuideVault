@@ -14499,7 +14499,7 @@ public static class ItemMetadataJsonReader
         var edition = FirstText(GetString(payload, "edition"), GetString(payload, "editionType"));
         var franchise = FirstText(GetString(payload, "franchise"), GetString(payload, "gameFranchise"));
         var developer = FirstText(GetString(payload, "developer"), GetString(payload, "gameDeveloper"));
-        var coverSubject = FirstText(GetString(payload, "coverSubject"), GetString(payload, "coverStory"));
+        var coverSubject = TryGetProperty(payload, "coverSubject", out var explicitCoverSubject) && explicitCoverSubject.ValueKind == JsonValueKind.String ? explicitCoverSubject.GetString()?.Trim() : FirstText(GetString(payload, "coverSubject"), GetString(payload, "coverStory"));
         var issueNumber = FirstText(GetString(payload, "issueNumber"), GetString(payload, "issue"));
         var kind = GetString(payload, "kind");
         var gameReleaseYear = GetString(payload, "gameReleaseYear");
@@ -15265,7 +15265,7 @@ public sealed class MetadataStore
                 Publisher = First(o.Publisher, item.Publisher),
                 Year = year,
                 Tags = o.Tags is { Length: > 0 } ? o.Tags.Where(t => !string.IsNullOrWhiteSpace(t)).Select(t => t.Trim()).Distinct(StringComparer.OrdinalIgnoreCase).ToArray() : item.Tags,
-                Summary = First(o.Summary, item.Summary),
+                Summary = kind == "Magazine" ? (o.Summary?.Trim() ?? item.Summary) : First(o.Summary, item.Summary),
                 Series = First(o.Series, item.Series),
                 Writer = First(o.Writer, item.Writer),
                 IssueNumber = kind == "Magazine" ? First(o.IssueNumber, item.IssueNumber) : string.Empty,
@@ -15287,7 +15287,7 @@ public sealed class MetadataStore
                 PlatformFocus = kind == "Magazine" ? First(o.PlatformFocus, item.PlatformFocus) : string.Empty,
                 PrimarySystem = kind == "Magazine" ? First(o.PrimarySystem, item.PrimarySystem) : string.Empty,
                 MagazineCategory = kind == "Magazine" ? First(o.MagazineCategory, item.MagazineCategory) : string.Empty,
-                CoverSubject = kind == "Magazine" ? First(o.CoverSubject, item.CoverSubject) : string.Empty,
+                CoverSubject = kind == "Magazine" ? (o.CoverSubject?.Trim() ?? item.CoverSubject) : string.Empty,
                 BarcodeUpcIssn = kind == "Magazine" ? First(o.BarcodeUpcIssn, item.BarcodeUpcIssn) : string.Empty,
                 FeaturedGames = kind == "Magazine" && o.FeaturedGames is not null ? CleanDistinct(o.FeaturedGames) : item.FeaturedGames,
                 MentionedGames = kind == "Magazine" && o.MentionedGames is not null ? CleanDistinct(o.MentionedGames) : item.MentionedGames,
@@ -15348,7 +15348,7 @@ public sealed class MetadataStore
             Publisher = Keep(update.Publisher, item.Publisher),
             Year = year,
             Tags = update.Tags is not null ? CleanDistinct(update.Tags) : item.Tags,
-            Summary = Keep(update.Summary, item.Summary),
+            Summary = kind == "Magazine" ? (update.Summary?.Trim() ?? item.Summary) : Keep(update.Summary, item.Summary),
             Series = Keep(update.Series, item.Series),
             Writer = Keep(update.Writer, item.Writer),
             IssueNumber = kind == "Magazine" ? Keep(update.IssueNumber, item.IssueNumber) : item.IssueNumber,
@@ -15370,7 +15370,7 @@ public sealed class MetadataStore
             PlatformFocus = kind == "Magazine" ? Keep(update.PlatformFocus, item.PlatformFocus) : item.PlatformFocus,
             PrimarySystem = kind == "Magazine" ? Keep(update.PrimarySystem, item.PrimarySystem) : item.PrimarySystem,
             MagazineCategory = kind == "Magazine" ? Keep(update.MagazineCategory, item.MagazineCategory) : item.MagazineCategory,
-            CoverSubject = kind == "Magazine" ? Keep(update.CoverSubject, item.CoverSubject) : item.CoverSubject,
+            CoverSubject = kind == "Magazine" ? (update.CoverSubject?.Trim() ?? item.CoverSubject) : item.CoverSubject,
             BarcodeUpcIssn = kind == "Magazine" ? Keep(update.BarcodeUpcIssn, item.BarcodeUpcIssn) : item.BarcodeUpcIssn,
             FeaturedGames = kind == "Magazine" && update.FeaturedGames is not null ? CleanDistinct(update.FeaturedGames) : item.FeaturedGames,
             MentionedGames = kind == "Magazine" && update.MentionedGames is not null ? CleanDistinct(update.MentionedGames) : item.MentionedGames,

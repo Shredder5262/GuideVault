@@ -18669,7 +18669,7 @@ function gvMagazineScanDialog(items, fromDetail = false, inlineHost = null) {
   if (!items.length || items.length > 5) { metadataManagerSetStatus('Select 1–5 magazine issues per scan.','error'); return; }
   const dialog = document.createElement(inlineHost ? 'div' : 'dialog');
   dialog.className = inlineHost ? 'gv-magscan-inline' : 'gv-magscan-dialog';
-  dialog.innerHTML = `<div class="gv-magscan-content"><h2>Scan magazine metadata</h2><p class="sub">${items.length} issue(s). Scanner UI v4.2 — Local OCR and LaunchBox title lookup. Nothing is saved automatically.</p><label>Scan scope <select data-scan-scope><option value="12">First 12 pages (cover, contents, masthead)</option><option value="300"${fromDetail?' selected':''}>Full issue (up to 300 pages)</option></select></label><p class="sub" data-scan-status aria-live="polite">Start a scan to review suggested fields. Layout-aware English OCR and catalog matching. All magazine fields are checked; uncertain or unavailable values are not guessed. Review all proposed editorial data.</p><progress data-scan-progress value="0" max="1"></progress><div data-scan-results></div><div class="gv-magscan-actions"><button class="ghost" type="button" data-scan-close>Close</button><button class="ghost" type="button" data-scan-stop hidden>Stop</button><button class="primary" type="button" data-scan-start>Start scan</button><button class="primary" type="button" data-scan-stage disabled>${fromDetail?'Apply selected suggestions':'Stage selected suggestions'}</button></div></div>`;
+  dialog.innerHTML = `<div class="gv-magscan-content"><h2>Scan magazine metadata</h2><p class="sub">${items.length} issue(s). Scanner UI v4.3 — Local OCR and LaunchBox title lookup. Nothing is saved automatically.</p><label>Scan scope <select data-scan-scope><option value="12">First 12 pages (cover, contents, masthead)</option><option value="300"${fromDetail?' selected':''}>Full issue (up to 300 pages)</option></select></label><p class="sub" data-scan-status aria-live="polite">Start a scan to review suggested fields. Layout-aware English OCR and catalog matching. All magazine fields are checked; uncertain or unavailable values are not guessed. Review all proposed editorial data.</p><progress data-scan-progress value="0" max="1"></progress><div data-scan-results></div><div class="gv-magscan-actions"><button class="ghost" type="button" data-scan-close>Close</button><button class="ghost" type="button" data-scan-stop hidden>Stop</button><button class="ghost" type="button" data-scan-copy disabled>Copy Scan Report</button><button class="primary" type="button" data-scan-start>Start scan</button><button class="primary" type="button" data-scan-stage disabled>${fromDetail?'Apply selected suggestions':'Stage selected suggestions'}</button></div></div>`;
   (inlineHost || document.body).appendChild(dialog);
   const q = s => dialog.querySelector(s);
   const session = { controller:null, running:false, rows:[], dialog, inline:!!inlineHost, itemId:metadataManagerItemId(items[0]) };
@@ -18682,6 +18682,21 @@ function gvMagazineScanDialog(items, fromDetail = false, inlineHost = null) {
   q('[data-scan-stop]').onclick = () => session.controller?.abort();
   dialog.addEventListener('cancel', e => { if (session.running) { e.preventDefault(); session.controller?.abort(); } });
   dialog.addEventListener('close', () => { gvMagazineScanSession = null; dialog.remove(); });
+  q('[data-scan-copy]').onclick = async () => {
+    const report=gvMagazineScanReport(session.rows,q('[data-scan-results]'));
+    try {
+      if(navigator.clipboard?.writeText) await navigator.clipboard.writeText(report);
+      else throw new Error('Clipboard unavailable');
+      q('[data-scan-status]').textContent='Scan report copied to clipboard.';
+    } catch {
+      // HTTP deployments may not expose the Clipboard API. A selectable report is always available.
+      const reportBox=document.createElement('textarea');reportBox.value=report;reportBox.readOnly=true;reportBox.rows=12;reportBox.style.width='100%';
+      reportBox.setAttribute('aria-label','Scan report — select and copy');
+      const previous=dialog.querySelector('[data-scan-copy-fallback]');if(previous)previous.remove();
+      const panel=document.createElement('div');panel.dataset.scanCopyFallback='1';panel.className='gv-magscan-field';panel.appendChild(reportBox);q('[data-scan-results]').before(panel);reportBox.focus();reportBox.select();
+      q('[data-scan-status]').textContent='Select and copy the report text (Ctrl+C).';
+    }
+  };
   function render() {
     const root = q('[data-scan-results]'); root.innerHTML = '';
     session.rows.forEach((row, rowIndex) => {
@@ -18693,7 +18708,7 @@ function gvMagazineScanDialog(items, fromDetail = false, inlineHost = null) {
       const existingCover=gvMagazineValidCover(storedCover,row.item.magazineTitle||row.item.series)?storedCover:'';
       const coverConflict=coverNames.length>1 || (existingCover && coverNames.some(v=>v.toLowerCase()!==existingCover.toLowerCase()));
       const reviewWarnings=[...row.warnings];
-      if(storedCover&&!existingCover)reviewWarnings.push(`Invalid or generic existing cover subject: ${storedCover}. Verify and clear or replace it in Metadata; no automatic deletion.`);
+      if(storedCover&&!existingCover)reviewWarnings.push(`Invalid or generic existing cover subject: ${storedCover}. Review the optional clear or replacement below; no automatic deletion.`);
       if(coverEvidence.some(x=>/unverified|verify printed title/i.test(x.confidence||'')))reviewWarnings.push('Contents feature evidence does not prove the cover artwork subject. Check the cover before accepting.');
       const observedPlatforms=row.suggestions.filter(x=>x.field==='featuredPlatforms').map(x=>x.value);
       const platformKey=gvMagazinePlatformKey;
@@ -18714,7 +18729,22 @@ function gvMagazineScanDialog(items, fromDetail = false, inlineHost = null) {
       if(row.item.issueNumber&&printedIssues.some(v=>String(v)!==String(row.item.issueNumber))) reviewWarnings.push(`Printed issue number(s): ${printedIssues.join(', ')}. Existing overall issue #${row.item.issueNumber} retained.`);
       if(coverConflict) reviewWarnings.push(`Cover headings detected: ${coverNames.join(', ')}. ${existingCover?'Existing cover subject retained: '+existingCover+'. ':''}OCR headings do not establish the primary cover story; edit Metadata after checking the cover.`);
       if (reviewWarnings.length) { const w = document.createElement('details'); w.innerHTML = `<summary>${reviewWarnings.length} scan warning(s)</summary><p>${reviewWarnings.map(escapeHtml).join('<br>')}</p>`; block.appendChild(w); }
+      if(row.revision!=='v4.3'){root.appendChild(block);return;}
       const proposals = gvMagazineScanProposals(row);
+      const corrections=[];
+      const coverProposal=proposals.find(p=>p.field==='coverSubject');
+      if(storedCover&&!existingCover&&!coverProposal) {
+        const p=gvMagazineEditableCorrection(row,'coverSubject','', 'Generic existing cover subject. Clear only after reviewing the issue.');
+        if(p)proposals.push(p);
+      }
+      if(row.complete&&row.total>0&&row.scanned>=row.total) {
+        const missing=itemArray(row.item.featuredPlatforms).filter(v=>!/^multi[ -]?platform$/i.test(v)&&!observedPlatforms.some(p=>platformKey(p)===platformKey(v)));
+        if(missing.length) {
+          let p=proposals.find(x=>x.field==='featuredPlatforms');
+          if(!p) {p=gvMagazineEditableCorrection(row,'featuredPlatforms',itemArray(row.item.featuredPlatforms).join(', '),'Review existing platforms. Absence of OCR evidence does not establish absence of coverage.');if(p){p.editorOnly=true;proposals.push(p);}}
+          if(p&&!p.locked) for(const name of missing) corrections.push(name);
+        }
+      }
       const audit=document.createElement('details'); audit.className='gv-magscan-coverage';
       const available=GV_MAG_SCAN_FIELDS.filter(f=>metadataManagerFieldsForKind('Magazine').has(f));
       const proposed=new Set(proposals.filter(p=>!p.editorOnly).map(p=>p.field));
@@ -18722,24 +18752,33 @@ function gvMagazineScanDialog(items, fromDetail = false, inlineHost = null) {
       audit.innerHTML=`<summary>${proposals.filter(p=>!p.editorOnly).length} proposed changes · ${available.length} fields checked (show coverage)</summary><div class="gv-magscan-coverage-grid">${available.map(f=>{const def=metadataManagerColumnDefinition(f,['Magazine']);const current=String(metadataManagerFieldValue(row.item,f)??'').trim();const present=current&&!(f==='pageCount'&&current==='0');const status=proposed.has(f)?'Proposal':(f==='publisher'||f==='pageCount')&&present?'Existing value retained':observed.has(f)?'Evidence found / not independently verified':present?'Existing value retained — unverified':'No reliable evidence';return `<div><strong>${escapeHtml(def?.label||f)}</strong><small>${escapeHtml(status)}</small></div>`;}).join('')}</div>`;
       block.appendChild(audit);
       if (!proposals.length) { const p = document.createElement('p'); p.textContent = 'No new editable suggestions found.'; block.appendChild(p); }
+      const unchanged=document.createElement('details');unchanged.className='gv-magscan-coverage';
+      unchanged.innerHTML='<summary>Existing values / unchanged evidence</summary>';
       for (const proposal of proposals) {
         const field = metadataManagerColumnDefinition(proposal.field,['Magazine'])?.label || proposal.field;
         const el = document.createElement('div'); el.className = 'gv-magscan-field';
         const input = document.createElement('input'); input.type = 'checkbox'; input.checked = proposal.safe; input.disabled = proposal.locked; input.dataset.scanRow = rowIndex; input.dataset.scanField = proposal.field; input.setAttribute('aria-label', `${fromDetail?'Apply':'Stage'} ${field}`);
         const label = document.createElement('div'); label.innerHTML = `<strong>${escapeHtml(field)}</strong>${proposal.locked?' <small>Locked</small>':''}<div class="sub">Current: ${escapeHtml(proposal.current || '—')}</div>`;
-        const edit = document.createElement('textarea'); edit.rows = GV_MAG_SCAN_ARRAYS.has(proposal.field) ? Math.min(9, Math.max(4, Math.ceil(proposal.value.length / 85))) : (proposal.field === 'summary' ? 5 : 2); edit.value = proposal.value; edit.dataset.scanValue = proposal.field; edit.disabled = proposal.locked; edit.setAttribute('aria-label', `Proposed ${field}`); label.appendChild(edit);
+        const edit = document.createElement('textarea'); edit.rows = GV_MAG_SCAN_ARRAYS.has(proposal.field) ? Math.min(9, Math.max(4, Math.ceil(proposal.value.length / 85))) : (proposal.field === 'summary' ? 5 : 2); edit.value = proposal.value; if(proposal.field==='coverSubject'&&!proposal.value&&proposal.current)edit.placeholder='Clear invalid cover subject (select checkbox to apply)'; edit.dataset.scanValue = proposal.field; edit.disabled = proposal.locked; edit.setAttribute('aria-label', `Proposed ${field}`); label.appendChild(edit);
         const evidence = document.createElement('details'); evidence.innerHTML = `<summary>Evidence (${proposal.evidence.length})${proposal.conflict?' — conflicting values; edit the proposal before staging':''}</summary>${proposal.evidence.map(x=>`<p class="sub">${x.page?`Page ${x.page}: `:''}${escapeHtml(x.value)} — ${escapeHtml(x.evidence)}${x.confidence?` <small>[${escapeHtml(x.confidence)}]</small>`:''}</p>`).join('')}`; label.appendChild(evidence);
-        el.append(input,label); block.appendChild(el);
+        el.append(input,label); (proposal.editorOnly?unchanged:block).appendChild(el);
+      }
+      if(unchanged.children.length>1)block.appendChild(unchanged);
+      if(corrections.length) {
+        const section=document.createElement('details');section.className='gv-magscan-game-review';section.innerHTML='<summary>Review uncorroborated existing platforms</summary><p class="sub">Remove only after checking the magazine. No removal is preselected.</p>';
+        const edit=block.querySelector('textarea[data-scan-value="featuredPlatforms"]');const check=block.querySelector('input[data-scan-field="featuredPlatforms"]');
+        for(const name of corrections){const button=document.createElement('button');button.type='button';button.className='ghost';button.textContent='Remove '+name;button.onclick=()=>{if(!edit||edit.disabled||!check||check.disabled)return;edit.value=itemArray(edit.value).filter(v=>platformKey(v)!==platformKey(name)).join(', ');check.checked=true;const parent=edit.closest('details');if(parent)parent.open=true;check.dispatchEvent(new Event('change',{bubbles:true}));button.disabled=true;};section.appendChild(button);}
+        block.appendChild(section);
       }
       gvMagazineReviewGames(row,proposals,block);
       root.appendChild(block);
     });
     const updateStage = () => { q('[data-scan-stage]').disabled = session.running || !root.querySelector('input[data-scan-field]:checked:not(:disabled)'); };
-    root.onchange = updateStage; updateStage();
+    root.onchange = updateStage; updateStage(); q('[data-scan-copy]').disabled=!session.rows.length||session.running;
   }
   q('[data-scan-start]').onclick = async () => {
     if (session.running) return;
-    session.running = true; session.rows = []; session.controller = new AbortController();
+    session.running = true; session.rows = []; session.controller = new AbortController(); q('[data-scan-copy]').disabled=true; dialog.querySelector('[data-scan-copy-fallback]')?.remove();
     const scope = Number(q('[data-scan-scope]').value);
     q('[data-scan-scope]').disabled = true; q('[data-scan-start]').disabled = true; q('[data-scan-close]').disabled = true; q('[data-scan-stop]').hidden = false; q('[data-scan-stage]').disabled = true;
     q('[data-scan-results]').innerHTML = '';
@@ -18756,7 +18795,7 @@ function gvMagazineScanDialog(items, fromDetail = false, inlineHost = null) {
             if (!res.ok) { let msg=`HTTP ${res.status}`; try { msg=(await res.json()).error||msg; } catch {} throw new Error(msg); }
             const data=await res.json();
             row.revision=String(data.scannerRevision||'not reported');
-            if(row.revision!=='v4.2') { row.suggestions=[]; throw new Error(`Scanner backend revision ${row.revision}; expected v4.2. Deploy the matching image and reload before scanning.`); }
+            if(row.revision!=='v4.3') { row.suggestions=[]; throw new Error(`Scanner backend revision ${row.revision}; expected v4.3. Deploy the matching image and reload before scanning.`); }
             row.total=data.totalPages; row.scanned+=data.scanned; row.readable+=data.readablePages; row.cached+=Number(data.cachedPages||0); row.suggestions.push(...(data.suggestions||[])); row.warnings.push(...(data.warnings||[]));
             if (!data.scanned) break; start+=data.scanned; progress.value=i+Math.min(1,start/Math.min(scope,row.total));
           } while(start<Math.min(scope,row.total));
@@ -18782,8 +18821,9 @@ function gvMagazineScanDialog(items, fromDetail = false, inlineHost = null) {
       const current=index.get(id)?.item;
       if (!current || current.kind!=='Magazine' || !metadataManagerFieldsForKind('Magazine').has(field) || METADATA_MANAGER_READONLY_COLUMNS.has(field) || (isMetadataFieldLocked(current,field)||(field==='name'&&isMetadataFieldLocked(current,'title'))) || (fromDetail && id!==session.itemId)) { skipped++; continue; }
       const value=input.closest('.gv-magscan-field').querySelector('textarea').value.trim();
-      if (field==='coverSubject'&&!gvMagazineValidCover(value,current.magazineTitle||current.series)) { skipped++; continue; }
-      if (!value || value===String(metadataManagerFieldValue(current,field)??'').trim() || Object.hasOwn(state.metadataManager.dirty[id]||{},field) || String(metadataManagerFieldValue(current,field)??'')!==String(metadataManagerFieldValue(row.item,field)??'')) { skipped++; continue; }
+      if (field==='coverSubject'&&value&&!gvMagazineValidCover(value,current.magazineTitle||current.series)) { skipped++; continue; }
+      const allowClear=field==='coverSubject'||field==='summary'||['featuredGames','mentionedGames','featuredPlatforms'].includes(field);
+      if ((!value&&!allowClear) || value===String(metadataManagerFieldValue(current,field)??'').trim() || Object.hasOwn(state.metadataManager.dirty[id]||{},field) || String(metadataManagerFieldValue(current,field)??'')!==String(metadataManagerFieldValue(row.item,field)??'')) { skipped++; continue; }
       if(fromDetail) directChanges[field]=value;
       else state.metadataManager.dirty[id]={...(state.metadataManager.dirty[id]||{}),[field]:value};
       ids.add(id); count++;
@@ -18797,6 +18837,7 @@ function gvMagazineScanDialog(items, fromDetail = false, inlineHost = null) {
     const id=session.itemId, item=index.get(id).item;
     const raw=metadataManagerRowPayload(item,directChanges);
     raw.metadataSource='Magazine content scanner';
+    for(const f of ['featuredGames','mentionedGames','featuredPlatforms'])if(Object.hasOwn(directChanges,f))raw[f]=itemArray(directChanges[f]);
     const filtered=filterLockedMetadataPayload(item,raw);
     const payload=normalizeClientMetadataPayload(filtered.payload,'Magazine');
     if(!Object.keys(payload).some(k=>k!=='metadataSource')) { q('[data-scan-status]').textContent='No writable metadata changes remain.'; return; }
@@ -18860,9 +18901,29 @@ function gvMagazineScanDialog(items, fromDetail = false, inlineHost = null) {
   if (!inlineHost) dialog.showModal();
 }
 const GV_MAG_SCAN_FIELDS = ['name','magazineTitle','issueNumber','volume','coverDate','barcodeUpcIssn','publicationDate','year','publisher','region','languageTag','platformFocus','primarySystem','magazineCategory','coverSubject','pageCount','writer','summary','featuredGames','mentionedGames','featuredPlatforms','specialFeatures','includedExtras','tags'];
+function gvMagazineEditableCorrection(row,field,value,reason) {
+  const dirty=state.metadataManager.dirty[metadataManagerItemId(row.item)]||{};
+  if(Object.hasOwn(dirty,field)||isMetadataFieldLocked(row.item,field)||!metadataManagerFieldsForKind('Magazine').has(field)||METADATA_MANAGER_READONLY_COLUMNS.has(field))return null;
+  if(Array.isArray(row.item[field])&&row.item[field].some(v=>/[;,|]/.test(v)))return null;
+  const current=String(metadataManagerFieldValue(row.item,field)??'').trim();
+  return {field,current,value,evidence:[{value:value||'Clear field',page:0,evidence:reason,confidence:'Manual correction — review required'}],conflict:false,locked:false,safe:false};
+}
+function gvMagazineScanReport(rows,root) {
+  const report=['GuideVault magazine scan report — UI v4.3'];
+  const blocks=[...root.querySelectorAll('.gv-magscan-result')];
+  rows.forEach((row,i)=>{
+    const block=blocks[i];if(!block)return;
+    report.push('',metadataManagerItemName(row.item),`${row.readable} of ${row.scanned} scanned pages yielded text; ${row.cached||0} reused from OCR cache; ${row.total} total pages. ${row.complete&&row.scanned>=row.total?'Full issue scanned.':'Partial or limited scan.'} Backend scanner: ${row.revision||'not reported'}.`);
+    const warning=[...block.children].find(el=>el.tagName==='DETAILS'&&el.querySelector('summary')?.textContent.includes('scan warning'));
+    if(warning)report.push(warning.querySelector('summary').textContent,[...(warning.querySelector('p')?.childNodes||[])].map(n=>n.nodeName==='BR'?'\n':n.textContent).join(''));
+    const coverage=block.querySelector('.gv-magscan-coverage-grid');if(coverage)report.push('Field coverage:',...[...coverage.children].map(el=>`${el.querySelector('strong')?.textContent}: ${el.querySelector('small')?.textContent}`));
+    for(const game of block.querySelectorAll('.gv-magscan-game-row'))report.push('',game.querySelector('strong')?.textContent||'',game.querySelector('.sub')?.textContent||'',`Classification: ${game.querySelector('select')?.selectedOptions[0]?.textContent||''}`,...[...game.querySelectorAll('details p')].map(el=>el.textContent));
+    for(const input of block.querySelectorAll('input[data-scan-field]')){const el=input.closest('.gv-magscan-field');report.push('',`${el.querySelector('strong')?.textContent||input.dataset.scanField} — ${input.checked?'selected':'not selected'}${input.disabled?' (locked)':''}`,el.querySelector('.sub')?.textContent||'',`Proposed: ${el.querySelector('textarea').value||'(empty)'}`,...[...el.querySelectorAll('details p')].map(el=>el.textContent));}
+  });return report.join('\n');
+}
 function gvMagazinePlatformCanonical(value) {
   const k=String(value??'').normalize('NFKC').toLowerCase().replace(/[^a-z0-9]/g,'');
-  const aliases={nes:'Nintendo Entertainment System',snes:'Super Nintendo Entertainment System',superfamicom:'Super Nintendo Entertainment System',supernintendo:'Super Nintendo Entertainment System',gameboy:'Nintendo Game Boy',gameboycolor:'Nintendo Game Boy Color',gameboyadvance:'Nintendo Game Boy Advance',megadrive:'Sega Genesis',segamegadrive:'Sega Genesis',genesis:'Sega Genesis',megacd:'Sega CD',segamegacd:'Sega CD',turbografx:'NEC TurboGrafx-16',turbografx16:'NEC TurboGrafx-16',pcengine:'NEC TurboGrafx-16',necturbografx16:'NEC TurboGrafx-16',gamegear:'Sega Game Gear',mastersystem:'Sega Master System',ps1:'Sony PlayStation',psx:'Sony PlayStation',playstation:'Sony PlayStation',psp:'Sony PSP',n64:'Nintendo 64'};
+  const aliases={nes:'Nintendo Entertainment System',snes:'Super Nintendo Entertainment System',superfamicom:'Super Nintendo Entertainment System',supernintendo:'Super Nintendo Entertainment System',gameboy:'Nintendo Game Boy',gameboycolor:'Nintendo Game Boy Color',gameboyadvance:'Nintendo Game Boy Advance',megadrive:'Sega Genesis',segamegadrive:'Sega Genesis',genesis:'Sega Genesis',megacd:'Sega CD',segamegacd:'Sega CD',turbografxcd:'NEC TurboGrafx-CD',necturbografxcd:'NEC TurboGrafx-CD',pcenginecd:'NEC TurboGrafx-CD',turbografx:'NEC TurboGrafx-16',turbografx16:'NEC TurboGrafx-16',pcengine:'NEC TurboGrafx-16',necturbografx16:'NEC TurboGrafx-16',gamegear:'Sega Game Gear',mastersystem:'Sega Master System',ps1:'Sony PlayStation',psx:'Sony PlayStation',playstation:'Sony PlayStation',psp:'Sony PSP',n64:'Nintendo 64'};
   return Object.hasOwn(aliases,k)?aliases[k]:String(value??'').trim();
 }
 function gvMagazinePlatformKey(value) { return gvMagazinePlatformCanonical(value).normalize('NFKC').toLowerCase().replace(/[^a-z0-9]/g,''); }
@@ -18890,64 +18951,68 @@ function gvMagazineReviewGames(row,proposals,block) {
   const edits=new Map();
   const baseline=new Map();
   const existing=new Set(fields.flatMap(f=>itemArray(metadataManagerFieldValue(row.item,f))).map(key));
+  const protectedGames=new Set();
   const cover=key(metadataManagerFieldValue(row.item,'coverSubject'));
   for(const f of fields) {
     const p=proposals.find(x=>x.field===f);
     const input=block.querySelector(`input[data-scan-field="${f}"]`);
     const edit=block.querySelector(`textarea[data-scan-value="${f}"]`);
-    if(!p||!input||!edit||p.locked)continue;
+    if(!p||!input||!edit||p.locked){for(const v of itemArray(metadataManagerFieldValue(row.item,f)))protectedGames.add(key(v));continue;}
     edits.set(f,{input,edit});
     baseline.set(f,itemArray(p.current));
     for(const v of itemArray(p.value)) {
-      if(existing.has(key(v))||key(v)===cover)continue;
+      if(key(v)===cover)continue;
       const k=key(v);if(!k)continue;
-      if(!byGame.has(k))byGame.set(k,{name:v,field:f,evidence:[],unresolved:false});
+      if(!byGame.has(k))byGame.set(k,{name:v,field:f,evidence:[],unresolved:false,existing:existing.has(k)});
     }
   }
   const all=[...row.suggestions,...gvMagazineArticleEvidence(row)];
   for(const x of all) {
     if(!['featuredGames','mentionedGames','articleCandidate','unresolvedGame','gamePlatformEvidence'].includes(x.field))continue;
-    const k=key(x.value);if(!k||existing.has(k)||k===cover)continue;
+    const k=key(x.value);if(!k||k===cover||protectedGames.has(k))continue;
     if((x.field==='unresolvedGame'||x.field==='articleCandidate')&&!byGame.has(k))byGame.set(k,{name:x.value,field:'ignore',evidence:[],unresolved:x.field==='unresolvedGame'});
     const game=byGame.get(k);if(game)game.evidence.push(x);
   }
+  for(const k of protectedGames)byGame.delete(k);
   if(!byGame.size||!edits.size)return;
   const section=document.createElement('details');section.className='gv-magscan-game-review';
-  const title=document.createElement('summary');title.textContent=`Review individual game candidates (${byGame.size})`;section.appendChild(title);
-  const hint=document.createElement('p');hint.className='sub';hint.textContent='Adjust new game candidates individually. Existing games remain in the editable fields. Unresolved titles are ignored until selected. Apply choices updates the fields below; select the field and use the final Apply or Stage button.';section.appendChild(hint);
+  const title=document.createElement('summary');title.textContent=`Review game coverage (${byGame.size})`;section.appendChild(title);
+  const hint=document.createElement('p');hint.className='sub';hint.textContent='Review existing and new game entries. Remove only after checking evidence; unresolved titles are ignored until selected. Changes are not saved until Apply or Stage. Locked lists are protected.';section.appendChild(hint);
+  const filter=document.createElement('select');filter.setAttribute('aria-label','Filter game coverage');for(const [v,t] of [['all','All games'],['existing','Existing games'],['new','New candidates'],['unresolved','Unresolved titles']]){const o=document.createElement('option');o.value=v;o.textContent=t;filter.appendChild(o);}section.appendChild(filter);
   const list=document.createElement('div');list.className='gv-magscan-game-list';section.appendChild(list);
   const controls=[];
   for(const game of [...byGame.values()].sort((a,b)=>Number(a.unresolved)-Number(b.unresolved)||(a.field==='featuredGames'?0:a.evidence.some(x=>x.field==='articleCandidate')?1:2)-(b.field==='featuredGames'?0:b.evidence.some(x=>x.field==='articleCandidate')?1:2)||a.name.localeCompare(b.name))) {
     const item=document.createElement('div');item.className='gv-magscan-game-row';
     const label=document.createElement('div');const name=document.createElement('strong');name.textContent=game.name;label.appendChild(name);
-    const meta=document.createElement('div');meta.className='sub';const pages=[...new Set(game.evidence.map(x=>x.page).filter(Boolean))].sort((a,b)=>a-b);meta.textContent=(game.unresolved?'Unresolved printed title · ':game.field==='mentionedGames'&&game.evidence.some(x=>x.field==='articleCandidate')?'Possible featured coverage · ':'')+(pages.length?'Pages '+pages.join(', '):'No page reference');label.appendChild(meta);
+    const meta=document.createElement('div');meta.className='sub';const pages=[...new Set(game.evidence.map(x=>x.page).filter(Boolean))].sort((a,b)=>a-b);meta.textContent=(game.existing?'Existing · ':'')+(game.unresolved?'Unresolved printed title · ':game.field==='mentionedGames'&&game.evidence.some(x=>x.field==='articleCandidate')?'Possible featured coverage · ':'')+(pages.length?'Pages '+pages.join(', '):'No page reference');label.appendChild(meta);
     const details=document.createElement('details');details.innerHTML='<summary>Evidence</summary>';for(const x of game.evidence){const p=document.createElement('p');p.className='sub';p.textContent=`Page ${x.page||'—'}: ${x.evidence} [${x.confidence||'Review'}]`;details.appendChild(p);}label.appendChild(details);
     const select=document.createElement('select');select.setAttribute('aria-label',`Classification for ${game.name}`);
-    for(const [v,t] of [['featuredGames','Featured game'],['mentionedGames','Mentioned game'],['ignore','Ignore']]){if(v!=='ignore'&&!edits.has(v))continue;const o=document.createElement('option');o.value=v;o.textContent=t;select.appendChild(o);}
-    select.value=edits.has(game.field)?game.field:'ignore';controls.push({game,select});item.append(label,select);list.appendChild(item);
+    for(const [v,t] of [['featuredGames','Featured game'],['mentionedGames','Mentioned game'],['ignore',game.existing?'Remove':'Ignore']]){if(v!=='ignore'&&!edits.has(v))continue;const o=document.createElement('option');o.value=v;o.textContent=t;select.appendChild(o);}
+    select.value=edits.has(game.field)?game.field:'ignore';controls.push({game,select,item});item.append(label,select);list.appendChild(item);
   }
+  filter.onchange=()=>controls.forEach(({game,item})=>item.style.display=filter.value!=='all'&&(filter.value==='existing'?!game.existing:filter.value==='unresolved'?!game.unresolved:game.existing)?'none':'');
   const apply=document.createElement('button');apply.type='button';apply.className='ghost';apply.textContent='Apply game choices to proposals';section.appendChild(apply);
   const summaryEdit=block.querySelector('textarea[data-scan-value="summary"]');
   let lastGeneratedSummary=summaryEdit?.value;
   apply.onclick=()=>{
     const managed=new Set(controls.map(c=>key(c.game.name)));
     for(const [field,{input,edit}] of edits) {
-      // Preserve manual edits and existing values; only candidate entries are managed here.
+      // Preserve manual edits outside the managed review list.
       const selected=controls.filter(c=>c.select.value===field).map(c=>c.game.name);
       const preserved=itemArray(edit.value).filter(v=>!managed.has(key(v)));
       const result=[...new Map([...preserved,...selected].filter(Boolean).map(v=>[key(v),v])).values()].join(', ');
-      if(result!==edit.value){edit.value=result;input.checked=!!result.trim();input.dispatchEvent(new Event('change',{bubbles:true}));}
+      if(result!==edit.value){edit.value=result;input.checked=true;const parent=edit.closest('details');if(parent)parent.open=true;input.dispatchEvent(new Event('change',{bubbles:true}));}
     }
     if(summaryEdit&&!summaryEdit.disabled&&summaryEdit.value===lastGeneratedSummary){
       const featured=edits.get('featuredGames')?.edit;
       if(featured){const draft=gvMagazineCoverageSummary(metadataManagerFieldValue(row.item,'summary'),itemArray(featured.value));
         const check=block.querySelector('input[data-scan-field="summary"]');
-        if(draft){summaryEdit.value=draft;lastGeneratedSummary=draft;}
-        else if(check){check.checked=false;summaryEdit.value='';lastGeneratedSummary='';}
+        if(draft){summaryEdit.value=draft;lastGeneratedSummary=draft;if(check&&draft!==String(metadataManagerFieldValue(row.item,'summary')??'').trim()){check.checked=true;const parent=summaryEdit.closest('details');if(parent)parent.open=true;check.dispatchEvent(new Event('change',{bubbles:true}));}}
+        else if(check){summaryEdit.value='';lastGeneratedSummary='';check.checked=!!String(metadataManagerFieldValue(row.item,'summary')??'').trim();const parent=summaryEdit.closest('details');if(parent)parent.open=true;check.dispatchEvent(new Event('change',{bubbles:true}));}
       }
     }
   };
-  const first=block.querySelector('.gv-magscan-field');block.insertBefore(section,first||null);
+  const first=[...block.children].find(el=>el.classList.contains('gv-magscan-field')||el.matches('details.gv-magscan-coverage:not(:has(.gv-magscan-coverage-grid))'));block.insertBefore(section,first||null);
 }
 
 function gvMagazineValidCover(value,publication='') {
@@ -19049,8 +19114,9 @@ function gvMagazineScanProposals(row) {
   const result=[];
   for(const field of GV_MAG_SCAN_FIELDS) {
     const evidence=fields.get(field)||[];
-    const candidateEditor=(field==='featuredGames'||field==='mentionedGames')&&row.suggestions.some(x=>['featuredGames','mentionedGames','unresolvedGame','articleCandidate'].includes(x.field));
-    if((!evidence.length&&!candidateEditor)||!metadataManagerFieldsForKind('Magazine').has(field)||METADATA_MANAGER_READONLY_COLUMNS.has(field)) continue;
+    const candidateEditor=(field==='featuredGames'||field==='mentionedGames')&&(row.suggestions.some(x=>['featuredGames','mentionedGames','unresolvedGame','articleCandidate'].includes(x.field))||itemArray(row.item.featuredGames).length||itemArray(row.item.mentionedGames).length);
+    const summaryEditor=field==='summary'&&row.suggestions.some(x=>['featuredGames','mentionedGames','unresolvedGame','articleCandidate'].includes(x.field));
+    if((!evidence.length&&!candidateEditor&&!summaryEditor)||!metadataManagerFieldsForKind('Magazine').has(field)||METADATA_MANAGER_READONLY_COLUMNS.has(field)) continue;
     const current=currentOf(field);
     const locked=Object.hasOwn(dirty,field)||isMetadataFieldLocked(row.item,field)||(field==='name'&&isMetadataFieldLocked(row.item,'title'))||(GV_MAG_SCAN_ARRAYS.has(field)&&Array.isArray(row.item[field])&&row.item[field].some(v=>/[;,|]/.test(v)));
     const values=candidates(field); const array=GV_MAG_SCAN_ARRAYS.has(field);
@@ -19062,7 +19128,7 @@ function gvMagazineScanProposals(row) {
     const comparisonKey=isGameList(field)?gameKey:key;
     const originalArray=array?itemArray(current):[];
     const equivalent=array?(field==='featuredPlatforms'?originalArray.map(key).sort().join('|')===itemArray(value).map(key).sort().join('|'):isGameList(field)?originalArray.map(gameKey).sort().join('|')===itemArray(value).map(gameKey).sort().join('|'):uniqueField(field,originalArray).map(comparisonKey).sort().join('|')===uniqueField(field,itemArray(value)).map(comparisonKey).sort().join('|')):same(value,current);
-    if(!value||equivalent) { if(candidateEditor&&!locked) result.push({field,current,value:current,evidence,conflict:false,locked,safe:false,editorOnly:true}); continue; }
+    if(!value||equivalent) { if((candidateEditor||summaryEditor)&&!locked) result.push({field,current,value:current,evidence,conflict:false,locked,safe:false,editorOnly:true}); continue; }
     const safe=!locked&&!conflict&&(!current.trim()||(field==='pageCount'&&current.trim()==='0'))&&evidence.every(x=>['Measured','Checksum valid'].includes(x.confidence));
     result.push({field,current,value,evidence,conflict,locked,safe});
   }
