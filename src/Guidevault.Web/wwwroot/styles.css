@@ -22945,3 +22945,39 @@ body.guidevault-direct-reader-pending:not(.auth-locked) #guidevaultDirectReaderL
 .magazine-issue-lower-v42>.magazine-overview-column{display:grid;grid-template-columns:minmax(0,1fr);align-content:start;gap:14px;min-width:0}
 @media(max-width:760px){.magazine-issue-overview-v42 .magazine-issue-overview-fields-v42{grid-template-columns:repeat(2,minmax(0,1fr))}.magazine-issue-lower-v42{grid-template-columns:minmax(0,1fr)}}
 @media(max-width:450px){.magazine-issue-overview-v42 .magazine-issue-overview-fields-v42{grid-template-columns:minmax(0,1fr)}}
+
+/* GuideVault magazine detail polish v1 — use the existing active Colorscape palette. */
+body.colorscape-active.detail-page-mode #detailMagazineScanHost .gv-magscan-inline,
+body.colorscape-active.detail-page-mode #detailMagazineScanHost .gv-magscan-result,
+body.colorscape-active.detail-page-mode #detailMagazineScanHost .gv-magscan-coverage,
+body.colorscape-active.detail-page-mode #detailMagazineScanHost .gv-magscan-game-review {
+  border-color:rgba(var(--colorscape-rgb),.44)!important;
+  background:linear-gradient(135deg,rgba(var(--colorscape-rgb),.24),rgba(13,23,33,.94) 48%,rgba(7,14,21,.96))!important;
+  box-shadow:0 12px 32px rgba(0,0,0,.20),0 0 24px rgba(var(--colorscape-rgb),.08)!important;
+}
+body.colorscape-active.detail-page-mode #detailMagazineScanHost .gv-magscan-coverage-grid>div,
+body.colorscape-active.detail-page-mode #detailMagazineScanHost .gv-magscan-field details[open],
+body.colorscape-active.detail-page-mode #detailMagazineScanHost .gv-magscan-result>details:not(.gv-magscan-coverage):not(.gv-magscan-game-review) {
+  border:1px solid rgba(var(--colorscape-rgb),.26);border-radius:7px;padding:7px 9px;
+  background:linear-gradient(145deg,rgba(var(--colorscape-rgb),.13),rgba(7,14,21,.88))!important;
+}
+body.colorscape-active.detail-page-mode #detailMagazineScanHost .gv-magscan-field,
+body.colorscape-active.detail-page-mode #detailMagazineScanHost .gv-magscan-game-row {
+  border-color:rgba(var(--colorscape-rgb),.26)!important;
+}
+body.colorscape-active.detail-page-mode #detailMagazineScanHost .gv-magscan-field textarea,
+body.colorscape-active.detail-page-mode #detailMagazineScanHost .gv-magscan-inline select {
+  border-color:rgba(var(--colorscape-rgb),.38)!important;
+  background:linear-gradient(145deg,rgba(var(--colorscape-rgb),.09),rgba(7,14,21,.96))!important;
+  color:#eaf1f8;
+}
+body.colorscape-active.detail-page-mode #detailMagazineScanHost .gv-magscan-field textarea:focus,
+body.colorscape-active.detail-page-mode #detailMagazineScanHost .gv-magscan-inline select:focus {
+  outline:2px solid rgba(var(--colorscape-rgb),.85);outline-offset:1px;
+}
+body.colorscape-active.detail-page-mode #detailMagazineScanHost progress,
+body.colorscape-active.detail-page-mode #detailMagazineScanHost input[type=checkbox] {accent-color:rgb(var(--colorscape-rgb));}
+.detail-launchbox-link-evidence{margin-top:5px;font-size:11px;color:#91adca;overflow-wrap:anywhere;}
+.detail-launchbox-link-evidence summary{cursor:pointer;}
+.detail-launchbox-link-evidence p{margin:5px 0 0;line-height:1.45;}
+

@@ -18838,7 +18838,16 @@ function gvMagazineScanDialog(items, fromDetail = false, inlineHost = null) {
         const input=[...root.querySelectorAll('input[data-scan-field]')].find(el=>el.dataset.scanField===p.field);
         if(input&&!input.disabled) { input.checked=p.checked;input.closest('.gv-magscan-field').querySelector('textarea').value=p.value; }
       }
-      q('[data-scan-status]').textContent=`Saved to this magazine: ${applied} field(s) updated.${count-applied+skipped?` ${count-applied+skipped} selected field(s) unchanged or skipped.`:''} Review remaining suggestions or return to Metadata.`;
+      const notApplied=Math.max(0,count-applied+skipped);
+      const saveMessage=`Saved to this magazine: ${applied} field(s) updated.${notApplied?` ${notApplied} selected field(s) unchanged or skipped.`:''}`;
+      q('[data-scan-status]').textContent=saveMessage+(applied?' Unsubmitted suggestions remain available in the scanner.':' Review the remaining suggestions before retrying.');
+      // Return to the same issue's overview only after a verified change, and do not hijack later navigation.
+      if(applied>0 && state.activeTab==='magazine-scan') {
+        activateTab('overview');
+        const main=document.querySelector('.main');
+        if(main) main.scrollTop=0;
+        showGuidevaultMessageToast(saveMessage,notApplied?'warning':'success',{title:'Magazine metadata updated'});
+      }
     } catch(err) {
       q('[data-scan-status]').textContent=`Unable to confirm metadata save: ${err.message||err}. Selections retained; refresh if the save outcome is uncertain.`;
     } finally {
@@ -19989,6 +19998,29 @@ function detailLaunchBoxIntroText(item = {}, total = null) {
   return `This ${noun} can show LaunchBox relationships when it is matched by the LaunchBox integration.`;
 }
 
+// Display relationship status independently from a scanner's numerical confidence.
+function detailLaunchBoxConnectionDisplay(item, connection, title, type, status) {
+  const reason=String(connection.matchReason||'').trim();
+  const source=String(connection.source||connection.matchSource||'').trim();
+  const confirmed=/^confirmed$/i.test(String(status));
+  const manual=/^(?:manual|manualreviewed|humanreviewed|userapproved)$/i.test(source)||/approved from platform.scoped manual review|human.reviewed batch approval|manually approved|manual approval|not a numeric confidence score/i.test(reason);
+  const score=Number(connection.confidenceScore);
+  // A manual decision is not a score; zero in legacy links means no useful score was stored.
+  const scoreLabel=!manual&&!confirmed&&Number.isFinite(score)&&score>0&&score<=100?` · ${Math.round(score)}% confidence`:'';
+  const statusLabel=(confirmed&&manual?'Manually approved':String(status||'Matched'))+scoreLabel;
+  const key=v=>String(v??'').normalize('NFKC').toLowerCase().replace(/&/g,' and ').replace(/[^\p{L}\p{N}]+/gu,'');
+  const titleKey=key(title);
+  let kindLabel=type;
+  if(String(item.kind||'').toLowerCase()==='magazine'&&titleKey) {
+    if(itemArray(item.coverSubject).some(x=>key(x)===titleKey))kindLabel='Cover game / subject';
+    else if(itemArray(item.featuredGames).some(x=>key(x)===titleKey))kindLabel='Featured game';
+    else if(itemArray(item.mentionedGames).some(x=>key(x)===titleKey))kindLabel='Mentioned game';
+    else kindLabel='Magazine connection';
+  }
+  // Keep real diagnostic/reviewer evidence accessible, but never repeat the legacy boilerplate.
+  const detail=reason.replace(/\b(?:Approved from platform-scoped manual review; not a numeric confidence score\.?|not a numeric confidence score\.?)\s*/ig,'').trim();
+  return {kindLabel,statusLabel,detail};
+}
 function renderDetailLaunchBoxLinks(item = {}, payload = null, loading = false) {
   const host = $('detailLaunchBoxLinks');
   const summary = $('detailLaunchBoxLinksSummary');
@@ -20014,8 +20046,7 @@ function renderDetailLaunchBoxLinks(item = {}, payload = null, loading = false) 
     const platform = connection.launchBoxPlatform || 'Unknown platform';
     const status = connection.matchStatus || 'Matched';
     const type = connection.matchType || item.kind || 'Match';
-    const score = Math.round(Number(connection.confidenceScore || 0));
-    const reason = connection.matchReason ? ` \u00B7 ${connection.matchReason}` : '';
+    const display = detailLaunchBoxConnectionDisplay(item, connection, title, type, status);
     const details = [platform, connection.launchBoxReleaseYear, connection.launchBoxDeveloper || connection.launchBoxPublisher].filter(Boolean).join(' \u00B7 ');
     const gameId = connection.launchBoxGameId || '';
     const itemId = item.id || payload?.itemId || connection.guideVaultItemId || '';
@@ -20025,8 +20056,8 @@ function renderDetailLaunchBoxLinks(item = {}, payload = null, loading = false) 
         <span>${escapeHtml(details || platform)}</span>
       </div>
       <div class="detail-launchbox-link-meta">
-        <b>${escapeHtml(type)}</b>
-        <span>${escapeHtml(status)} \u00B7 ${score}%${escapeHtml(reason)}</span>
+        <b>${escapeHtml(display.kindLabel)}</b>
+        <span>${escapeHtml(display.statusLabel)}</span>${display.detail ? `<details class="detail-launchbox-link-evidence"><summary>Match details</summary><p>${escapeHtml(display.detail)}</p></details>` : ''}
       </div>
       <div class="detail-launchbox-link-actions">
         <button type="button" class="ghost mini danger" data-detail-launchbox-remove-link="1" data-guidevault-item-id="${escapeForAttribute(itemId)}" data-launchbox-game-id="${escapeForAttribute(gameId)}" data-match-type="${escapeForAttribute(type)}" data-launchbox-game-title="${escapeForAttribute(title)}">Remove</button>
