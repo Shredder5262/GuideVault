@@ -6,7 +6,7 @@
   <title>Guidevault</title>
   <link rel="icon" type="image/x-icon" href="/assets/favicon.ico?v=0.9.228" />
   <link rel="shortcut icon" type="image/x-icon" href="/assets/favicon.ico?v=0.9.228" />
-  <link rel="stylesheet" href="/styles.css?v=1.3.2-controlled-v1&amp;rev=launchbox-magazine-1&amp;bulk=publication-actions-v1&amp;mm=workspace-v1&amp;mmimport=v1&amp;magscan=v4.2&amp;magscantab=v1&amp;magoverview=v1&amp;magdetailpolish=v1&amp;formatui=v1" />
+  <link rel="stylesheet" href="/styles.css?v=1.3.2-controlled-v1&amp;rev=launchbox-magazine-1&amp;bulk=publication-actions-v1&amp;mm=workspace-v1&amp;mmimport=v1&amp;magscan=v4.2&amp;magscantab=v1&amp;magoverview=v1&amp;magdetailpolish=v1&amp;formatui=v1&amp;libraryfileui=v1" />
 </head>
 <body class="right-collapsed auth-locked">
   <section id="loginView" class="login-view" aria-labelledby="loginTitle">
@@ -1524,6 +1524,10 @@
                   <button id="serverFilesShowAll" class="ghost" type="button" hidden>Show All</button>
                 </div>
               </div>
+              <div class="gv-writeback-actionbar">
+                <div class="gv-writeback-note"><strong>CBZ files are updated in place.</strong><span>CBR and PDF may produce a separate metadata package.</span></div>
+                <button id="serverFilesWriteBackSelected" class="primary" type="button" disabled>Write JSON to Selected Files</button>
+              </div>
               <div class="gv-convert-only gv-convert-actionbar">
                 <div id="serverFilesFormatSummary" class="gv-convert-format-summary" aria-live="polite"></div>
                 <div class="gv-convert-actions">
@@ -1536,8 +1540,7 @@
             <div class="server-files-grid">
               <article class="settings-card server-files-card organize-files-card" data-server-files-action-card="organize">
                 <div class="file-metadata-card-heading">
-                  <h3>Organize Files</h3>
-                  <p class="sub">Build one naming rule at a time, then review every proposed path before anything moves.</p>
+                  <h3>File Naming &amp; Organization</h3>
                 </div>
                 <div class="server-files-section-label"><span>Naming Rule</span><em id="serverFilesRuleScopeSummary">Editing the rule used for selected manuals.</em></div>
                 <div class="server-files-template-preset-row" aria-label="Saved file organization templates">
@@ -1576,11 +1579,10 @@
                   <summary class="server-files-token-summary">
                     <span>
                       <strong>Add Metadata Fields</strong>
-                      <em>Only fields relevant to the active content type are shown.</em>
                     </span>
                     <b aria-hidden="true">&#x25BE;</b>
                   </summary>
-                  <div class="server-files-token-help">Choose a field to insert it into the active pattern. Folder separators create subfolders. GuideVault preserves the original file extension automatically.</div>
+                  <div class="server-files-token-help">Insert fields into the pattern. / creates folders; the file extension is preserved.</div>
                   <div class="server-files-token-groups">
                     <section class="server-files-token-group" aria-label="Common template fields">
                       <h4>Common</h4>
@@ -1639,28 +1641,20 @@
                     </section>
                   </div>
                 </details>
-                <p class="field-help">Build the plan after selecting files. Apply remains locked until the current selection and naming rules have a fresh, conflict-checked preview.</p>
-                <div class="settings-actions inline-actions server-files-actions">
-                  <button id="serverFilesPreviewSelected" class="primary" type="button">Build Rename Plan</button>
-                  <button id="serverFilesApplyPreview" class="danger" type="button" disabled>Apply Ready Changes</button>
+                <div class="gv-organize-actionbar">
+                  <span class="gv-writeback-note">Review the rename plan before moving files.</span>
+                  <div class="settings-actions inline-actions server-files-actions">
+                    <button id="serverFilesPreviewSelected" class="primary" type="button" disabled>Build Rename Plan</button>
+                    <button id="serverFilesApplyPreview" class="danger" type="button" disabled>Apply Ready Changes</button>
+                  </div>
                 </div>
                 <p id="serverFilesOrganizeStatus" class="sub account-status" aria-live="polite"></p>
                 <div id="serverFilesPreviewSummary" class="server-files-plan-metrics" aria-live="polite"></div>
                 <div id="serverFilesPreviewTable" class="server-files-preview-table"></div>
               </article>
 
-              <article class="settings-card server-files-card metadata-writeback-card" data-server-files-action-card="writeback">
-                <div class="file-metadata-card-heading">
-                  <h3>Metadata Write-Back</h3>
-                  <p class="sub">Write the current GuideVault metadata from the database/override store back into selected source packages as Guidevault JSON.</p>
-                </div>
-                <div class="server-files-writeback-callout">
-                  <strong>CBZ files are updated in place.</strong>
-                  <span>CBR and PDF sources use the existing package writer behavior and may create CBZ/ZIP metadata packages instead of modifying the original source.</span>
-                </div>
-                <div class="settings-actions inline-actions server-files-actions">
-                  <button id="serverFilesWriteBackSelected" class="primary" type="button">Write JSON to Selected Files</button>
-                </div>
+              <article class="settings-card server-files-card metadata-writeback-card gv-writeback-results" data-server-files-action-card="writeback">
+                <h3>Write-Back Results</h3>
                 <p id="serverFilesWriteBackStatus" class="sub account-status" aria-live="polite"></p>
                 <div id="serverFilesWriteBackResults" class="server-files-preview-table compact"></div>
               </article>
@@ -3744,6 +3738,6 @@
   </dialog>
 
 
-  <script src="/app.js?v=1.3.2-controlled-v1&amp;rev=launchbox-magazine-1&amp;bulk=publication-actions-v1&amp;mm=workspace-v1&amp;mmsections=v1&amp;mmfields=v1&amp;mmimport=v1&amp;magscan=v4.7.1&amp;magscantab=v1&amp;magapply=v1&amp;magoverview=v1&amp;magdetailpolish=v1&amp;formatui=v1"></script>
+  <script src="/app.js?v=1.3.2-controlled-v1&amp;rev=launchbox-magazine-1&amp;bulk=publication-actions-v1&amp;mm=workspace-v1&amp;mmsections=v1&amp;mmfields=v1&amp;mmimport=v1&amp;magscan=v4.7.1&amp;magscantab=v1&amp;magapply=v1&amp;magoverview=v1&amp;magdetailpolish=v1&amp;formatui=v1&amp;libraryfileui=v1"></script>
 </body>
 </html>

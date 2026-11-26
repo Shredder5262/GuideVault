@@ -25148,6 +25148,12 @@ function loadSettingsNavCollapsed() {
   } catch {
     Object.keys(GUIDEVAULT_SETTINGS_GROUPS).forEach(group => { collapsed[group] = true; });
   }
+  const expanded = Object.keys(GUIDEVAULT_SETTINGS_GROUPS).filter(group => !collapsed[group]);
+  if (expanded.length > 1) {
+    const active = settingsGroupForTab(state.settingsActiveTab || 'account');
+    const keep = expanded.includes(active) ? active : expanded[0];
+    expanded.forEach(group => { collapsed[group] = group !== keep; });
+  }
   state.settingsNavCollapsed = collapsed;
   return collapsed;
 }
@@ -25159,7 +25165,8 @@ function saveSettingsNavCollapsed() {
 function setSettingsGroupCollapsed(group, collapsed, persist = true) {
   if (!GUIDEVAULT_SETTINGS_GROUPS[group]) return;
   loadSettingsNavCollapsed();
-  state.settingsNavCollapsed[group] = !!collapsed;
+  if (!collapsed) Object.keys(GUIDEVAULT_SETTINGS_GROUPS).forEach(key => { state.settingsNavCollapsed[key] = key !== group; });
+  else state.settingsNavCollapsed[group] = true;
   if (persist) saveSettingsNavCollapsed();
   updateSettingsNavGroups(state.settingsActiveTab || 'account');
 }
@@ -25188,8 +25195,7 @@ function handleSettingsNavClick(btn) {
   const group = btn.dataset.settingsGroup || settingsGroupForTab(tab);
   loadSettingsNavCollapsed();
   if (btn.classList.contains('settings-subnav')) {
-    state.settingsNavCollapsed[group] = false;
-    saveSettingsNavCollapsed();
+    setSettingsGroupCollapsed(group, false);
     activateSettingsTab(tab);
     return;
   }
@@ -25198,17 +25204,14 @@ function handleSettingsNavClick(btn) {
     const alreadyActiveGroup = activeGroup === group;
     const currentlyCollapsed = !!state.settingsNavCollapsed[group];
     if (group === 'file-management') {
-      state.settingsNavCollapsed[group] = !currentlyCollapsed;
-      saveSettingsNavCollapsed();
-      updateSettingsNavGroups(state.settingsActiveTab || 'account');
+      setSettingsGroupCollapsed(group, !currentlyCollapsed);
       return;
     }
     if (alreadyActiveGroup && (state.settingsActiveTab === tab || btn.classList.contains('active'))) {
-      state.settingsNavCollapsed[group] = !currentlyCollapsed;
+      setSettingsGroupCollapsed(group, !currentlyCollapsed);
     } else {
-      state.settingsNavCollapsed[group] = false;
+      setSettingsGroupCollapsed(group, false);
     }
-    saveSettingsNavCollapsed();
   }
   activateSettingsTab(tab);
 }
@@ -25270,15 +25273,14 @@ function activateSettingsTab(tab = 'account') {
   const serverFilesTabs = new Set(['files-organize', 'files-writeback', 'files-convert']);
   const allowed = new Set(['account', 'preferences', 'keybinds', 'reading-profiles', 'dossiers', 'customize', 'opds', 'devices', 'insights-devices', 'statistics', 'server', 'files-organize', 'files-writeback', 'files-convert', 'integrations', 'metadata-manager', 'launchbox-match-review', 'media', 'email', 'users', 'tasks', 'info', 'events']);
   const active = allowed.has(tab) ? tab : 'account';
+  const previousGroup = settingsGroupForTab(state.settingsActiveTab || 'account');
   state.settingsActiveTab = active;
   const activeGroup = settingsGroupForTab(active);
   const activeGroupParent = document.querySelector(`.settings-nav-group[data-settings-group="${activeGroup}"]`);
   const activeGroupParentTab = activeGroupParent?.dataset.settingsTab || '';
   const activeIsParentLanding = active === activeGroupParentTab || (activeGroupParentTab === 'insights' && active === 'statistics');
-  if (!activeIsParentLanding) {
-    loadSettingsNavCollapsed();
-    state.settingsNavCollapsed[activeGroup] = false;
-    saveSettingsNavCollapsed();
+  if (!activeIsParentLanding || previousGroup !== activeGroup) {
+    setSettingsGroupCollapsed(activeGroup, false);
   }
   document.querySelectorAll('.settings-nav, .settings-subnav').forEach(btn => {
     const navTab = btn.dataset.settingsTab || '';
@@ -26254,11 +26256,13 @@ function renderServerFilesModeChrome() {
   const config = serverFilesModeConfig(mode);
   const converting = mode === 'convert';
   $('settingsFilesPanel')?.classList.toggle('gv-format-conversion', converting);
+  $('settingsFilesPanel')?.classList.toggle('gv-library-file-workspace', !converting);
+  if ($('settingsFilesPanel')) $('settingsFilesPanel').dataset.fileWorkspaceMode = mode;
   const selectionLabels = {
-    serverFilesSelectVisible: converting ? 'Select Visible' : 'Select Visible',
-    serverFilesSelectMatching: converting ? 'Select All Matching' : 'Select All Matching',
-    serverFilesClearSelection: converting ? 'Clear' : 'Clear Selection',
-    serverFilesUseMetadataSelection: converting ? 'From Metadata Manager' : 'Use Metadata Manager Selection'
+    serverFilesSelectVisible: 'Select Visible',
+    serverFilesSelectMatching: 'Select All Matching',
+    serverFilesClearSelection: 'Clear',
+    serverFilesUseMetadataSelection: 'From Metadata Manager'
   };
   Object.entries(selectionLabels).forEach(([id, label]) => { if ($(id)) $(id).textContent = label; });
   if ($('serverFilesPageTitle')) $('serverFilesPageTitle').textContent = config.title;
@@ -26290,10 +26294,7 @@ function serverFilesEnsureState() {
 
 function serverFilesSelectedKinds() {
   const files = serverFilesEnsureState();
-  if (serverFilesModeFromTab(state.settingsActiveTab) === 'convert') {
-    return METADATA_MANAGER_KIND_FILTERS.includes(files.convertKind) ? [files.convertKind] : [];
-  }
-  return (files.kindFilters || []).filter(kind => METADATA_MANAGER_KIND_FILTERS.includes(kind));
+  return METADATA_MANAGER_KIND_FILTERS.includes(files.convertKind) ? [files.convertKind] : [];
 }
 
 function serverFilesKindSummaryLabel(kinds = serverFilesSelectedKinds()) {
@@ -26536,12 +26537,14 @@ function renderServerFilesWorkspace() {
   const selected = new Set(serverFilesCurrentSelectedIds());
   const renderedIds = rendered.map(metadataManagerItemId).filter(Boolean);
   const conversionCount = $('serverFilesConvertSelectionCount');
-  if (conversionCount && serverFilesCurrentMode() === 'convert') {
+  if (conversionCount) {
     const validSelected = new Set(serverFilesSelectedItemsFromState().map(metadataManagerItemId));
     const matchingSelected = allItems.reduce((count, item) => count + Number(validSelected.has(metadataManagerItemId(item))), 0);
     const outside = validSelected.size - matchingSelected;
     conversionCount.textContent = `${validSelected.size} selected${outside ? ` · ${outside} outside filters` : ''}`;
     conversionCount.classList.toggle('has-outside', outside > 0);
+    if ($('serverFilesWriteBackSelected')) $('serverFilesWriteBackSelected').disabled = !validSelected.size || !!files.writeBackBusy;
+    if ($('serverFilesPreviewSelected')) $('serverFilesPreviewSelected').disabled = !validSelected.size || !!files.previewBusy;
   }
   const header = $('serverFilesHeaderCheck');
   if (header) {
@@ -27180,6 +27183,8 @@ function serverFilesRenderPreviewRows(showAll = false) {
 }
 
 async function serverFilesPreviewSelected() {
+  const files = serverFilesEnsureState();
+  if (files.previewBusy) return;
   const ids = serverFilesCurrentSelectedIds();
   const previewBtn = $('serverFilesPreviewSelected');
   const applyBtn = $('serverFilesApplyPreview');
@@ -27194,6 +27199,7 @@ async function serverFilesPreviewSelected() {
   state.serverFilesPreviewShowAll = false;
   state.serverFilesPreview = [];
   state.serverFilesPreviewRequest = null;
+  files.previewBusy = true;
   if (previewBtn) previewBtn.disabled = true;
   if (applyBtn) applyBtn.disabled = true;
   if ($('serverFilesPreviewTable')) $('serverFilesPreviewTable').innerHTML = `<div class="server-files-preview-loading"><strong>Building preview for ${ids.length} selected file(s)...</strong><span>Checking proposed paths and conflicts without moving anything.</span></div>`;
@@ -27220,7 +27226,8 @@ async function serverFilesPreviewSelected() {
       : '';
     serverFilesSetStatus('serverFilesOrganizeStatus', `${data?.message || `Previewed ${state.serverFilesPreview.length} file(s).`}${cappedMessage}`, data?.readyToApply ? 'success' : '');
   } finally {
-    if (previewBtn) previewBtn.disabled = false;
+    files.previewBusy = false;
+    if (previewBtn) previewBtn.disabled = !serverFilesSelectedItemsFromState().length;
   }
 }
 
@@ -27585,7 +27592,20 @@ if ($('serverFilesPreviewTable')) $('serverFilesPreviewTable').addEventListener(
 });
 if ($('serverFilesPreviewSelected')) $('serverFilesPreviewSelected').addEventListener('click', async () => { try { await serverFilesPreviewSelected(); } catch (err) { console.error(err); state.serverFilesPreviewRequest = null; serverFilesRenderPreviewSummary([]); serverFilesSetStatus('serverFilesOrganizeStatus', `Preview failed: ${err?.message || err}`, 'error'); if ($('serverFilesPreviewTable')) $('serverFilesPreviewTable').innerHTML = `<p class="sub">Preview failed: ${escapeHtml(err?.message || String(err || 'Unknown error'))}</p>`; } });
 if ($('serverFilesApplyPreview')) $('serverFilesApplyPreview').addEventListener('click', async () => { try { await serverFilesApplyPreview(); } catch (err) { console.error(err); serverFilesSetStatus('serverFilesOrganizeStatus', `Apply failed: ${err?.message || err}`, 'error'); } });
-if ($('serverFilesWriteBackSelected')) $('serverFilesWriteBackSelected').addEventListener('click', async () => { try { await metadataManagerWriteBackSelected('files'); } catch (err) { console.error(err); serverFilesSetStatus('serverFilesWriteBackStatus', `Write-back failed: ${err?.message || err}`, 'error'); } });
+if ($('serverFilesWriteBackSelected')) $('serverFilesWriteBackSelected').addEventListener('click', async () => {
+  const files = serverFilesEnsureState();
+  if (files.writeBackBusy) return;
+  const count = serverFilesSelectedItemsFromState().length;
+  if (!count) return;
+  files.writeBackBusy = true;
+  $('serverFilesWriteBackSelected').disabled = true;
+  try { await metadataManagerWriteBackSelected('files'); }
+  catch (err) { console.error(err); serverFilesSetStatus('serverFilesWriteBackStatus', `Write-back failed: ${err?.message || err}`, 'error'); }
+  finally {
+    files.writeBackBusy = false;
+    $('serverFilesWriteBackSelected').disabled = !serverFilesSelectedItemsFromState().length;
+  }
+});
 if ($('serverFilesConvertCbz')) $('serverFilesConvertCbz').addEventListener('click', async () => { try { await serverFilesConvertSelected('cbz'); } catch (err) { console.error(err); serverFilesSetStatus('serverFilesConvertStatus', `Conversion failed: ${err?.message || err}`, 'error'); renderServerFilesFormatTools(); } });
 if ($('serverFilesConvertPdf')) $('serverFilesConvertPdf').addEventListener('click', async () => { try { await serverFilesConvertSelected('pdf'); } catch (err) { console.error(err); serverFilesSetStatus('serverFilesConvertStatus', `Conversion failed: ${err?.message || err}`, 'error'); renderServerFilesFormatTools(); } });
 if ($('metadataManagerRunSourceLookup')) $('metadataManagerRunSourceLookup').addEventListener('click', async e => { e.preventDefault(); try { await metadataManagerRunBatchSourceLookup(); } catch (err) { console.error(err); metadataManagerSetStatus(`Batch source lookup failed: ${err?.message || err}`, 'error'); } });
