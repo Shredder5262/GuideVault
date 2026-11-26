@@ -11,7 +11,7 @@ public static class GuidevaultMagazineContentScanner
     public sealed record Suggestion(string Field, string Value, int Page, string Evidence, string Confidence);
     public sealed record ScanResult(int TotalPages, int Start, int Scanned, int ReadablePages, List<Suggestion> Suggestions, List<string> Warnings)
     {
-        public string ScannerRevision => "v5.3";
+        public string ScannerRevision => "v5.4";
         public int CachedPages { get; init; }
     }
     private static readonly SemaphoreSlim Gate = new(1, 1);
@@ -107,6 +107,30 @@ public static class GuidevaultMagazineContentScanner
                             catch (Exception ex) when (ex is not OperationCanceledException) { completeOcr = false; result.Warnings.Add($"Cover OCR mode {mode}: {ex.Message}"); }
                         }
                     }
+                    if(i==0)
+                    {
+                        try
+                        {
+                            using var cover=await Image.LoadAsync(input,token);
+                            // Overlapping cover regions, independent of publication or game identity.
+                            foreach(var region in new[]{(X:0.0,Y:0.55,W:1.0,H:0.45),(X:0.30,Y:0.55,W:0.70,H:0.45),(X:0.0,Y:0.15,W:0.70,H:0.55),(X:0.35,Y:0.15,W:0.65,H:0.55)})
+                            {
+                                int x=(int)(cover.Width*region.X),y=(int)(cover.Height*region.Y);
+                                int w=Math.Max(1,Math.Min(cover.Width-x,(int)(cover.Width*region.W))),h=Math.Max(1,Math.Min(cover.Height-y,(int)(cover.Height*region.H)));
+                                foreach(int variant in new[]{0,1,2})
+                                {
+                                    using var crop=cover.Clone(c=>c.Crop(new Rectangle(x,y,w,h)).Grayscale());
+                                    if(variant==1)crop.Mutate(c=>c.Contrast(1.5f).Invert());
+                                    if(variant==2)crop.Mutate(c=>c.BinaryThreshold(0.65f).Invert());
+                                    var cropPath=Path.Combine(temp,"cover-region.png");
+                                    await crop.SaveAsPngAsync(cropPath,token);
+                                    var regional=await Run("tesseract",[cropPath,"stdout","-l","eng","--psm","11","tsv"],token);
+                                    tsv += "\u001d" + RemapCoverTsv(regional,x,y,cover.Width,cover.Height);
+                                }
+                            }
+                        }
+                        catch(Exception ex) when(ex is not OperationCanceledException){completeOcr=false;result.Warnings.Add($"Cover region OCR: {ex.Message}");}
+                    }
                     if(i<4)
                     {
                         try
@@ -128,7 +152,8 @@ public static class GuidevaultMagazineContentScanner
                     }
                     else result = result with { CachedPages = result.CachedPages + 1 };
                     var sections=tsv.Split('\u001e');
-                    var passes = sections[0].Split('\f', StringSplitOptions.RemoveEmptyEntries).Select(x => ParseLayout(x.TrimStart('\r','\n'))).ToArray();
+                    var coverSections=sections[0].Split('\u001d');
+                    var passes = coverSections[0].Split('\f', StringSplitOptions.RemoveEmptyEntries).Select(x => ParseLayout(x.TrimStart('\r','\n'))).ToArray();
                     var layout = passes.OrderByDescending(p => p.Lines.Sum(l => Words.Matches(l.Text).Count * Math.Max(0,l.Confidence))).First();
                     string text = string.Join("\n", layout.Lines.Select(l => l.Text));
                     if (pdf && Words.Matches(text).Count < 12)
@@ -142,7 +167,7 @@ public static class GuidevaultMagazineContentScanner
                             result.Warnings.Add($"Page {i+1}: embedded text fallback; no reliable geometry.");
                         }
                     }
-                    if (i == 0) AnalyzeCover(item, coverDictionary, passes, result.Suggestions);
+                    if (i == 0) AnalyzeCover(item, coverDictionary, passes.Concat(coverSections.Skip(1).Select(ParseLayout)).ToArray(), result.Suggestions);
                     if (Words.Matches(text).Count >= 3)
                     {
                         var excluded = ExcludedPageReason(text, i + 1, total);
@@ -703,9 +728,15 @@ public static class GuidevaultMagazineContentScanner
             passNumber++;
             Diagnostic($"OCR pass {passNumber}", $"Image {pass.Width} x {pass.Height}; lines {pass.Lines.Count}", "Raw cover OCR");
             foreach(var line in pass.Lines.Take(200))
-                Diagnostic($"Pass {passNumber}: {line.Text}", Geometry(line,pass)+$" | confidence {line.Confidence:F1}", "OCR line");
+                Diagnostic($"Pass {passNumber}: {line.Text}", Geometry(line,pass)+$" | box {line.X},{line.Y},{line.Width},{line.Height} | confidence {line.Confidence:F1}", "OCR line");
         }
 
+        // Explicit cover numbering is collected across all passes, even if the
+        // selected general OCR pass did not contain the issue label.
+        var printedIssues=passes.SelectMany(p=>p.Lines).Where(l=>l.Confidence>=50)
+            .SelectMany(l=>Regex.Matches(l.Text,@"\bissue\s*(?:no\.?|number|#)?\s*#?\s*(\d{1,4})(?!\d)",RegexOptions.IgnoreCase).Cast<Match>().Select(m=>(Number:m.Groups[1].Value,Text:l.Text)))
+            .Where(m=>int.TryParse(m.Number,out int n)&&n>0&&(n<1900||n>2099)).GroupBy(m=>m.Number).ToArray();
+        if(printedIssues.Length==1)suggestions.Add(new("issueNumber",printedIssues[0].Key,1,printedIssues[0].First().Text,"Explicit cover issue number"));
         string Clean(string value) => Regex.Replace(value.Trim(), @"\s+(?:reviewed!?|reviews?!?|previewed!?|previews?!?|solution|walkthrough|strategy guide|exclusive maps)\s*[!.:]*$", "", RegexOptions.IgnoreCase).Trim(' ',':','!','—','-');
         string? Resolve(string value)
         {
@@ -799,6 +830,42 @@ public static class GuidevaultMagazineContentScanner
                     suggestions.Add(new("coverFragment",word,1,l.Text+Geometry(l,pass),"Prominent fragment with nearby strategy text"));
                 if(matches.Length!=1 || !ValidCoverSubject(matches[0],item.MagazineTitle) || !strategy)continue;
                 candidates.Add((matches[0],matches[0],l.Text+Geometry(l,pass)+" | Full title independently detected on cover | Nearby strategy headline",(double)l.Height/pass.Height*1.5,true,true));
+            }
+        }
+        // Recover a damaged two-word logo only when two distinct title tokens
+        // are independently supported in one spatial cluster near a strategy label.
+        // Review-list membership alone never establishes the main cover subject.
+        foreach(var pass in passes.Where(p=>p.Width>0&&p.Height>0))
+        {
+            var lines=pass.Lines.Where(l=>l.Height>0&&l.Confidence>=55).ToArray();
+            foreach(var strategy in lines.Where(l=>Regex.IsMatch(l.Text,@"\b(?:solution|walk[ -]?through|strategy guide|exclusive maps)\b",RegexOptions.IgnoreCase)))
+            {
+                var nearby=lines.Where(l=>l!=strategy && l.Y<strategy.Y && strategy.Y-l.Y<=pass.Height*.25 && l.Height>=pass.Height*.022 && l.X+l.Width>=strategy.X-pass.Width*.35 && l.X<=strategy.X+strategy.Width+pass.Width*.05).ToArray();
+                bool Fragment(string fragment,string word)=>fragment.Length>=3 && fragment.Length<=word.Length && (word.StartsWith(fragment,StringComparison.Ordinal)||word.EndsWith(fragment,StringComparison.Ordinal));
+                var matches=new List<(string Title,LayoutLine A,LayoutLine B)>();
+                foreach(var title in fullTitles.Where(t=>ValidCoverSubject(t,item.MagazineTitle)))
+                {
+                    var words=Normalize(title).Split(' ');
+                    if(words.Length!=2||words.Any(w=>w.Length<4))continue;
+                    foreach(var a in nearby)
+                    foreach(var b in nearby.Where(l=>l!=a))
+                    {
+                        var fa=Normalize(a.Text);var fb=Normalize(b.Text);
+                        // One token may be a short prefix only if the other is a
+                        // distinctive >=3-character fragment and both boxes are prominent.
+                        bool shortPrefix=fb.Length==2 && words[1].Length>=5 && words[1].StartsWith(fb,StringComparison.Ordinal) && b.Height>=pass.Height*.035;
+                        if(!Fragment(fa,words[0])||!(Fragment(fb,words[1])||shortPrefix))continue;
+                        if(Math.Abs(a.Y-b.Y)>pass.Height*.13 || Math.Abs(a.X+a.Width/2.0-(b.X+b.Width/2.0))>pass.Width*.55)continue;
+                        if(a.Height<pass.Height*.025||b.Height<pass.Height*.035)continue;
+                        matches.Add((title,a,b));
+                    }
+                }
+                var unique=matches.GroupBy(m=>ListingKey(m.Title)).ToArray();
+                if(unique.Length!=1)continue;
+                var m=unique[0].OrderByDescending(m=>m.A.Height+m.B.Height).First();
+                var detail=$"Corroborated logo fragments '{m.A.Text}'{Geometry(m.A,pass)} + '{m.B.Text}'{Geometry(m.B,pass)} | strategy label '{strategy.Text}' | complete title independently printed on cover";
+                candidates.Add((m.Title,m.Title,detail,(double)Math.Max(m.A.Height,m.B.Height)/pass.Height*1.5,true,true));
+                Diagnostic(m.Title,detail,"Two-token cover fragment match");
             }
         }
         var ranked=candidates.Where(c=>c.Resolved&&c.Size>0&&(distinct.Any(d=>ListingKey(d.Name)==ListingKey(c.Name)) || fullTitles.Any(t=>ListingKey(t)==ListingKey(c.Name)))).GroupBy(c=>ListingKey(c.Name)).Select(g=>g.OrderByDescending(c=>c.Size).First()).OrderByDescending(c=>c.Size).ToArray();
@@ -1138,6 +1205,19 @@ public static class GuidevaultMagazineContentScanner
     }
     private sealed record LayoutLine(string Text, int Block, int Paragraph, int X, int Y, int Width, int Height, double Confidence);
     private sealed record PageLayout(int Width, int Height, List<LayoutLine> Lines);
+    private static string RemapCoverTsv(string tsv,int offsetX,int offsetY,int width,int height)
+    {
+        var rows=tsv.Split('\n');
+        for(int i=1;i<rows.Length;i++)
+        {
+            var p=rows[i].TrimEnd('\r').Split('\t',12);
+            if(p.Length!=12||!int.TryParse(p[6],out int x)||!int.TryParse(p[7],out int y))continue;
+            if(p[0]=="1"){p[6]="0";p[7]="0";p[8]=width.ToString(CultureInfo.InvariantCulture);p[9]=height.ToString(CultureInfo.InvariantCulture);}
+            else {p[6]=(x+offsetX).ToString(CultureInfo.InvariantCulture);p[7]=(y+offsetY).ToString(CultureInfo.InvariantCulture);}
+            rows[i]=string.Join("\t",p);
+        }
+        return string.Join("\n",rows);
+    }
     private static PageLayout ParseLayout(string tsv)
     {
         var groups = new Dictionary<(int,int,int), List<(string Text,int X,int Y,int W,int H,double Conf)>>();
