@@ -11,7 +11,7 @@ public static class GuidevaultMagazineContentScanner
     public sealed record Suggestion(string Field, string Value, int Page, string Evidence, string Confidence);
     public sealed record ScanResult(int TotalPages, int Start, int Scanned, int ReadablePages, List<Suggestion> Suggestions, List<string> Warnings)
     {
-        public string ScannerRevision => "v5.2";
+        public string ScannerRevision => "v5.3";
         public int CachedPages { get; init; }
     }
     private static readonly SemaphoreSlim Gate = new(1, 1);
@@ -142,6 +142,7 @@ public static class GuidevaultMagazineContentScanner
                             result.Warnings.Add($"Page {i+1}: embedded text fallback; no reliable geometry.");
                         }
                     }
+                    if (i == 0) AnalyzeCover(item, coverDictionary, passes, result.Suggestions);
                     if (Words.Matches(text).Count >= 3)
                     {
                         var excluded = ExcludedPageReason(text, i + 1, total);
@@ -156,7 +157,6 @@ public static class GuidevaultMagazineContentScanner
                         else
                         {
                             AnalyzePage(item, dictionary, text, layout, i + 1, result.Suggestions);
-                            if (i == 0) AnalyzeCover(item, coverDictionary, passes, result.Suggestions);
                             if(i<4) foreach(var source in passes.Select(p=>string.Join("\n",p.Lines.Select(l=>l.Text))).Concat(sections.Skip(1)))
                                 AddPrintedPeriod(item,source,i+1,result.Suggestions);
                         }
@@ -696,6 +696,16 @@ public static class GuidevaultMagazineContentScanner
     private static void AnalyzeCover(LibraryItem item, Dictionary<string,CatalogTitle> dictionary, PageLayout[] passes, List<Suggestion> suggestions)
     {
         var candidates = new List<(string Name, string Printed, string Evidence, double Size, bool Editorial, bool Resolved)>();
+        void Diagnostic(string name,string evidence,string status) => suggestions.Add(new("coverDiagnostic",name,1,evidence,status));
+        int passNumber=0;
+        foreach(var pass in passes)
+        {
+            passNumber++;
+            Diagnostic($"OCR pass {passNumber}", $"Image {pass.Width} x {pass.Height}; lines {pass.Lines.Count}", "Raw cover OCR");
+            foreach(var line in pass.Lines.Take(200))
+                Diagnostic($"Pass {passNumber}: {line.Text}", Geometry(line,pass)+$" | confidence {line.Confidence:F1}", "OCR line");
+        }
+
         string Clean(string value) => Regex.Replace(value.Trim(), @"\s+(?:reviewed!?|reviews?!?|previewed!?|previews?!?|solution|walkthrough|strategy guide|exclusive maps)\s*[!.:]*$", "", RegexOptions.IgnoreCase).Trim(' ',':','!','—','-');
         string? Resolve(string value)
         {
@@ -782,14 +792,18 @@ public static class GuidevaultMagazineContentScanner
                 var word=Normalize(Clean(l.Text));
                 if(word.Length<5 || word.Contains(' '))continue;
                 var matches=fullTitles.Where(t=>Normalize(t).Split(' ').Contains(word) && Normalize(t).Contains(' ')).ToArray();
-                if(matches.Length!=1 || !ValidCoverSubject(matches[0],item.MagazineTitle))continue;
                 bool strategy=lines.Any(n=>n.Y>=l.Y-l.Height && n.Y<=l.Y+l.Height*4 &&
                     Math.Min(n.X+n.Width,l.X+l.Width)>Math.Max(n.X,l.X) && Regex.IsMatch(n.Text,@"\b(?:solution|walk[ -]?through|exclusive maps|strategy guide)\b",RegexOptions.IgnoreCase));
-                if(!strategy)continue;
+                Diagnostic(word,Geometry(l,pass)+$" | local matches: {string.Join(", ",matches)} | strategy context: {strategy}", "Prominent fragment");
+                if(strategy && !Regex.IsMatch(word,@"^(?:solution|walkthrough|exclusive|strategy|reviewed|previewed|definitive|magazine)$",RegexOptions.IgnoreCase))
+                    suggestions.Add(new("coverFragment",word,1,l.Text+Geometry(l,pass),"Prominent fragment with nearby strategy text"));
+                if(matches.Length!=1 || !ValidCoverSubject(matches[0],item.MagazineTitle) || !strategy)continue;
                 candidates.Add((matches[0],matches[0],l.Text+Geometry(l,pass)+" | Full title independently detected on cover | Nearby strategy headline",(double)l.Height/pass.Height*1.5,true,true));
             }
         }
         var ranked=candidates.Where(c=>c.Resolved&&c.Size>0&&(distinct.Any(d=>ListingKey(d.Name)==ListingKey(c.Name)) || fullTitles.Any(t=>ListingKey(t)==ListingKey(c.Name)))).GroupBy(c=>ListingKey(c.Name)).Select(g=>g.OrderByDescending(c=>c.Size).First()).OrderByDescending(c=>c.Size).ToArray();
+        foreach(var c in candidates.Take(200)) Diagnostic(c.Name,c.Evidence+$" | normalized size {c.Size:F4} | editorial {c.Editorial} | catalog resolved {c.Resolved}","Cover candidate");
+        Diagnostic("Cover ranking",string.Join("; ",ranked.Select(c=>$"{c.Name}: {c.Size:F4}")),ranked.Length==0?"No ranked candidate":ranked.Length==1||ranked[0].Size>=ranked[1].Size*1.6?"Dominant candidate":"Ambiguous size ranking");
         if(ranked.Length>0 && (ranked.Length==1 || ranked[0].Size>=ranked[1].Size*1.6))
         {
             var primary=ranked[0];
