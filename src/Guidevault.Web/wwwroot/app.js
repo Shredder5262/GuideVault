@@ -18669,7 +18669,7 @@ function gvMagazineScanDialog(items, fromDetail = false, inlineHost = null) {
   if (!items.length || items.length > 5) { metadataManagerSetStatus('Select 1–5 magazine issues per scan.','error'); return; }
   const dialog = document.createElement(inlineHost ? 'div' : 'dialog');
   dialog.className = inlineHost ? 'gv-magscan-inline' : 'gv-magscan-dialog';
-  dialog.innerHTML = `<div class="gv-magscan-content"><h2>Scan magazine metadata</h2><p class="sub">${items.length} issue(s). Scanner UI v4.1 — Local OCR and LaunchBox title lookup. Nothing is saved automatically.</p><label>Scan scope <select data-scan-scope><option value="12">First 12 pages (cover, contents, masthead)</option><option value="300"${fromDetail?' selected':''}>Full issue (up to 300 pages)</option></select></label><p class="sub" data-scan-status aria-live="polite">Start a scan to review suggested fields. Layout-aware English OCR and catalog matching. All magazine fields are checked; uncertain or unavailable values are not guessed. Review all proposed editorial data.</p><progress data-scan-progress value="0" max="1"></progress><div data-scan-results></div><div class="gv-magscan-actions"><button class="ghost" type="button" data-scan-close>Close</button><button class="ghost" type="button" data-scan-stop hidden>Stop</button><button class="primary" type="button" data-scan-start>Start scan</button><button class="primary" type="button" data-scan-stage disabled>Stage selected suggestions</button></div></div>`;
+  dialog.innerHTML = `<div class="gv-magscan-content"><h2>Scan magazine metadata</h2><p class="sub">${items.length} issue(s). Scanner UI v4.1 — Local OCR and LaunchBox title lookup. Nothing is saved automatically.</p><label>Scan scope <select data-scan-scope><option value="12">First 12 pages (cover, contents, masthead)</option><option value="300"${fromDetail?' selected':''}>Full issue (up to 300 pages)</option></select></label><p class="sub" data-scan-status aria-live="polite">Start a scan to review suggested fields. Layout-aware English OCR and catalog matching. All magazine fields are checked; uncertain or unavailable values are not guessed. Review all proposed editorial data.</p><progress data-scan-progress value="0" max="1"></progress><div data-scan-results></div><div class="gv-magscan-actions"><button class="ghost" type="button" data-scan-close>Close</button><button class="ghost" type="button" data-scan-stop hidden>Stop</button><button class="primary" type="button" data-scan-start>Start scan</button><button class="primary" type="button" data-scan-stage disabled>${fromDetail?'Apply selected suggestions':'Stage selected suggestions'}</button></div></div>`;
   (inlineHost || document.body).appendChild(dialog);
   const q = s => dialog.querySelector(s);
   const session = { controller:null, running:false, rows:[], dialog, inline:!!inlineHost, itemId:metadataManagerItemId(items[0]) };
@@ -18722,7 +18722,7 @@ function gvMagazineScanDialog(items, fromDetail = false, inlineHost = null) {
       for (const proposal of proposals) {
         const field = metadataManagerColumnDefinition(proposal.field,['Magazine'])?.label || proposal.field;
         const el = document.createElement('div'); el.className = 'gv-magscan-field';
-        const input = document.createElement('input'); input.type = 'checkbox'; input.checked = proposal.safe; input.disabled = proposal.locked; input.dataset.scanRow = rowIndex; input.dataset.scanField = proposal.field; input.setAttribute('aria-label', `Stage ${field}`);
+        const input = document.createElement('input'); input.type = 'checkbox'; input.checked = proposal.safe; input.disabled = proposal.locked; input.dataset.scanRow = rowIndex; input.dataset.scanField = proposal.field; input.setAttribute('aria-label', `${fromDetail?'Apply':'Stage'} ${field}`);
         const label = document.createElement('div'); label.innerHTML = `<strong>${escapeHtml(field)}</strong>${proposal.locked?' <small>Locked</small>':''}<div class="sub">Current: ${escapeHtml(proposal.current || '—')}</div>`;
         const edit = document.createElement('textarea'); edit.rows = GV_MAG_SCAN_ARRAYS.has(proposal.field) ? Math.min(9, Math.max(4, Math.ceil(proposal.value.length / 85))) : (proposal.field === 'summary' ? 5 : 2); edit.value = proposal.value; edit.dataset.scanValue = proposal.field; edit.disabled = proposal.locked; edit.setAttribute('aria-label', `Proposed ${field}`); label.appendChild(edit);
         const evidence = document.createElement('details'); evidence.innerHTML = `<summary>Evidence (${proposal.evidence.length})${proposal.conflict?' — conflicting values; edit the proposal before staging':''}</summary>${proposal.evidence.map(x=>`<p class="sub">${x.page?`Page ${x.page}: `:''}${escapeHtml(x.value)} — ${escapeHtml(x.evidence)}${x.confidence?` <small>[${escapeHtml(x.confidence)}]</small>`:''}</p>`).join('')}`; label.appendChild(evidence);
@@ -18761,23 +18761,88 @@ function gvMagazineScanDialog(items, fromDetail = false, inlineHost = null) {
         } catch(err) { if (session.controller.signal.aborted) throw err; row.warnings.push(String(err.message||err)); }
         progress.value=i+1;
       }
-      q('[data-scan-status]').textContent='Review the proposals and their evidence. Select the proposals you want to stage. Only measured or checksum-valid empty fields are preselected; no field is saved yet.';
+      q('[data-scan-status]').textContent=`Review the proposals and their evidence. Select the proposals you want to ${fromDetail?'apply to this magazine':'stage'}. Only measured or checksum-valid empty fields are preselected; no field is saved yet.`;
     } catch(err) { q('[data-scan-status]').textContent=session.controller.signal.aborted?'Scan stopped. Completed page results remain available for review.':String(err.message||err); }
     finally { session.running=false; q('[data-scan-start]').disabled=false; q('[data-scan-close]').disabled=false; q('[data-scan-scope]').disabled=false; q('[data-scan-stop]').hidden=true; render(); }
   };
-  q('[data-scan-stage]').onclick = () => {
+  q('[data-scan-stage]').onclick = async () => {
     if (session.running) return;
     let count=0; const ids=new Set(); state.metadataManager.dirty=state.metadataManager.dirty||{};
     const index=metadataManagerBuildStateItemIndex();
+    const directChanges={};
+    let skipped=0;
+    if(fromDetail && (!currentUserIsAdmin() || metadataManagerItemId(state.selected)!==session.itemId || session.rows.length!==1)) {
+      q('[data-scan-status]').textContent='The selected magazine has changed. Reopen its scanner before applying suggestions.'; return;
+    }
     for(const input of q('[data-scan-results]').querySelectorAll('input[data-scan-field]:checked:not(:disabled)')) {
       const row=session.rows[Number(input.dataset.scanRow)], id=metadataManagerItemId(row.item), field=input.dataset.scanField;
-      const current=index.get(id)?.item; if (!current || current.kind!=='Magazine' || !metadataManagerFieldsForKind('Magazine').has(field) || (isMetadataFieldLocked(current,field)||(field==='name'&&isMetadataFieldLocked(current,'title')))) continue;
-      const value=input.closest('.gv-magscan-field').querySelector('textarea').value.trim(); if (!value || value===String(metadataManagerFieldValue(current,field)??'').trim() || Object.hasOwn(state.metadataManager.dirty[id]||{},field) || String(metadataManagerFieldValue(current,field)??'')!==String(metadataManagerFieldValue(row.item,field)??'')) continue;
-      state.metadataManager.dirty[id]={...(state.metadataManager.dirty[id]||{}),[field]:value}; ids.add(id); count++;
+      const current=index.get(id)?.item;
+      if (!current || current.kind!=='Magazine' || !metadataManagerFieldsForKind('Magazine').has(field) || METADATA_MANAGER_READONLY_COLUMNS.has(field) || (isMetadataFieldLocked(current,field)||(field==='name'&&isMetadataFieldLocked(current,'title'))) || (fromDetail && id!==session.itemId)) { skipped++; continue; }
+      const value=input.closest('.gv-magscan-field').querySelector('textarea').value.trim();
+      if (!value || value===String(metadataManagerFieldValue(current,field)??'').trim() || Object.hasOwn(state.metadataManager.dirty[id]||{},field) || String(metadataManagerFieldValue(current,field)??'')!==String(metadataManagerFieldValue(row.item,field)??'')) { skipped++; continue; }
+      if(fromDetail) directChanges[field]=value;
+      else state.metadataManager.dirty[id]={...(state.metadataManager.dirty[id]||{}),[field]:value};
+      ids.add(id); count++;
     }
-    close();
-    if(fromDetail) { Object.assign(state.metadataManager,{kindFilters:['Magazine'],category:'',seriesFilter:'',search:'',statusFilter:'',missing:'',selectedIds:[]}); metadataManagerResetRenderLimit(); showSettingsScreen('metadata-manager'); }
-    renderMetadataManager(); metadataManagerSetStatus(`Staged ${count} field(s) for ${ids.size} issue(s). Existing staged edits and locked fields were skipped. Review and click Save Edited Rows.`,'success');
+    if(!fromDetail) {
+      close();
+      renderMetadataManager(); metadataManagerSetStatus(`Staged ${count} field(s) for ${ids.size} issue(s). Existing staged edits and locked fields were skipped. Review and click Save Edited Rows.`,'success');
+      return;
+    }
+    if(!count) { q('[data-scan-status]').textContent='No eligible changes to apply. Locked, unchanged, or conflicting fields were skipped.'; return; }
+    const id=session.itemId, item=index.get(id).item;
+    const raw=metadataManagerRowPayload(item,directChanges);
+    raw.metadataSource='Magazine content scanner';
+    const filtered=filterLockedMetadataPayload(item,raw);
+    const payload=normalizeClientMetadataPayload(filtered.payload,'Magazine');
+    if(!Object.keys(payload).some(k=>k!=='metadataSource')) { q('[data-scan-status]').textContent='No writable metadata changes remain.'; return; }
+    const root=q('[data-scan-results]');
+    const controls=[...root.querySelectorAll('input,textarea,select,button')].map(el=>[el,el.disabled]);
+    session.running=true;
+    controls.forEach(([el])=>el.disabled=true);
+    for(const selector of ['[data-scan-stage]','[data-scan-start]','[data-scan-scope]','[data-scan-close]'])q(selector).disabled=true;
+    q('[data-scan-status]').textContent='Saving selected suggestions to this magazine…';
+    try {
+      const response=await fetch(`/api/items/${encodeURIComponent(id)}/metadata`,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});
+      if(!response.ok) { let message=`HTTP ${response.status}`;try{message=(await response.json()).error||message;}catch{}throw new Error(message); }
+      const saved=await response.json();
+      if(metadataManagerItemId(saved)!==id)throw new Error('Save response did not identify the current magazine. Refresh before retrying.');
+      const latest=metadataManagerBuildStateItemIndex().get(id)?.item||item;
+      // Prefer the server's returned values (including server-side field locks).
+      const full=saved.kind==='Magazine';
+      const confirmed={};
+      for(const [key,value] of Object.entries(payload)) {
+        if(full && Object.hasOwn(saved,key))confirmed[key]=saved[key];
+        
+      }
+      if(!full)throw new Error(saved.saved===true?'Server saved the update but did not return the magazine. Refresh to verify the saved values.':'Unexpected save response. Refresh before retrying.');
+      const merged=mergeSavedMetadataClientSide(latest,full?saved:{},confirmed);
+      merged.id=merged.id||id; merged.Id=merged.Id||id;
+      replaceItemInState(merged);
+      rememberClientMetadataOverride(id,confirmed);
+      const applied=Object.entries(directChanges).filter(([field,value])=>{
+        const actual=String(metadataManagerFieldValue(merged,field)??'').trim();
+        return actual!==String(metadataManagerFieldValue(item,field)??'').trim();
+      }).length;
+      if(gvMagazineScanSession!==session || !dialog.isConnected || metadataManagerItemId(state.selected)!==id)return;
+      session.rows[0].item=merged; items[0]=merged;
+      // Preserve unsubmitted text edits and selections while refreshing the proposals.
+      const pending=[...root.querySelectorAll('input[data-scan-field]')].map(input=>({field:input.dataset.scanField,checked:input.checked,value:input.closest('.gv-magscan-field').querySelector('textarea').value})).filter(x=>!Object.hasOwn(directChanges,x.field));
+      renderDetails(merged);
+      render();
+      for(const p of pending) {
+        const input=[...root.querySelectorAll('input[data-scan-field]')].find(el=>el.dataset.scanField===p.field);
+        if(input&&!input.disabled) { input.checked=p.checked;input.closest('.gv-magscan-field').querySelector('textarea').value=p.value; }
+      }
+      q('[data-scan-status]').textContent=`Saved to this magazine: ${applied} field(s) updated.${count-applied+skipped?` ${count-applied+skipped} selected field(s) unchanged or skipped.`:''} Review remaining suggestions or return to Metadata.`;
+    } catch(err) {
+      q('[data-scan-status]').textContent=`Unable to confirm metadata save: ${err.message||err}. Selections retained; refresh if the save outcome is uncertain.`;
+    } finally {
+      session.running=false;
+      controls.forEach(([el,disabled])=>el.disabled=disabled);
+      for(const selector of ['[data-scan-start]','[data-scan-scope]','[data-scan-close]'])q(selector).disabled=false;
+      q('[data-scan-stage]').disabled=!root.querySelector('input[data-scan-field]:checked:not(:disabled)');
+    }
   };
   if (!inlineHost) dialog.showModal();
 }
@@ -18836,7 +18901,7 @@ function gvMagazineReviewGames(row,proposals,block) {
   if(!byGame.size||!edits.size)return;
   const section=document.createElement('details');section.className='gv-magscan-game-review';
   const title=document.createElement('summary');title.textContent=`Review individual game candidates (${byGame.size})`;section.appendChild(title);
-  const hint=document.createElement('p');hint.className='sub';hint.textContent='Adjust new game candidates individually. Existing games remain in the editable fields. Unresolved titles are ignored until selected. Apply choices updates the fields below; Stage is still required.';section.appendChild(hint);
+  const hint=document.createElement('p');hint.className='sub';hint.textContent='Adjust new game candidates individually. Existing games remain in the editable fields. Unresolved titles are ignored until selected. Apply choices updates the fields below; select the field and use the final Apply or Stage button.';section.appendChild(hint);
   const list=document.createElement('div');list.className='gv-magscan-game-list';section.appendChild(list);
   const controls=[];
   for(const game of [...byGame.values()].sort((a,b)=>Number(a.unresolved)-Number(b.unresolved)||(a.field==='featuredGames'?0:a.evidence.some(x=>x.field==='articleCandidate')?1:2)-(b.field==='featuredGames'?0:b.evidence.some(x=>x.field==='articleCandidate')?1:2)||a.name.localeCompare(b.name))) {
