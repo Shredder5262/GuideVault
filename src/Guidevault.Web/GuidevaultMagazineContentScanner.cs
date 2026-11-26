@@ -9,7 +9,7 @@ public static class GuidevaultMagazineContentScanner
     public sealed record Suggestion(string Field, string Value, int Page, string Evidence, string Confidence);
     public sealed record ScanResult(int TotalPages, int Start, int Scanned, int ReadablePages, List<Suggestion> Suggestions, List<string> Warnings)
     {
-        public string ScannerRevision => "v4.7.2";
+        public string ScannerRevision => "v5.0";
         public int CachedPages { get; init; }
     }
     private static readonly SemaphoreSlim Gate = new(1, 1);
@@ -64,7 +64,12 @@ public static class GuidevaultMagazineContentScanner
                 result.Suggestions.Add(new("pageCount", total.ToString(), 0, "Document reader page/image count; printed page numbering or double-page scans may differ.", "Measured"));
                 if (!pdf) await AddArchiveMetadata(item, result.Suggestions);
             }
-            var dictionary = BuildDictionary(games, GetYear(item.CoverDate + " " + item.PublicationDate + " " + item.Year));
+            var catalog = games.ToArray();
+            var year = GetYear(item.CoverDate + " " + item.PublicationDate + " " + item.Year);
+            var dictionary = BuildDictionary(catalog, year);
+            var focus = new[] { item.PrimarySystem, item.PlatformFocus }.Where(v => !string.IsNullOrWhiteSpace(v)).ToArray();
+            var local = catalog.Where(g => focus.Any(v => Normalize(v) == Normalize(g.Platform))).ToArray();
+            var coverDictionary = local.Length > 0 ? BuildDictionary(local, year) : dictionary;
             var sourceInfo = new FileInfo(item.Path);
             for (int i = start; i < Math.Min(start + count, total); i++)
             {
@@ -79,7 +84,7 @@ public static class GuidevaultMagazineContentScanner
                     {
                         var page = (i + 1).ToString();
                         var prefix = Path.Combine(temp, "page");
-                        await Run("pdftoppm", ["-f", page, "-l", page, "-scale-to", "2400", "-singlefile", "-png", item.Path, prefix], token);
+                        await Run("pdftoppm", ["-f", page, "-l", page, "-scale-to", i == 0 ? "3200" : "2400", "-singlefile", "-png", item.Path, prefix], token);
                         input = prefix + ".png";
                     }
                     else
@@ -91,10 +96,20 @@ public static class GuidevaultMagazineContentScanner
                         await File.WriteAllBytesAsync(input, image.Value.Bytes, token);
                     }
                     tsv = await Run("tesseract", [input, "stdout", "-l", "eng", "--psm", i == 0 ? "11" : "3", "tsv"], token);
-                    if (Words.Matches(tsv).Count > 30) RememberOcr(cacheKey,tsv);
+                    bool completeOcr = true;
+                    if (i == 0)
+                    {
+                        foreach (var mode in new[] { "3", "6", "12" })
+                        {
+                            try { tsv += "\n\f\n" + await Run("tesseract", [input, "stdout", "-l", "eng", "--psm", mode, "tsv"], token); }
+                            catch (Exception ex) when (ex is not OperationCanceledException) { completeOcr = false; result.Warnings.Add($"Cover OCR mode {mode}: {ex.Message}"); }
+                        }
+                    }
+                    if (completeOcr && Words.Matches(tsv).Count > 30) RememberOcr(cacheKey,tsv);
                     }
                     else result = result with { CachedPages = result.CachedPages + 1 };
-                    var layout = ParseLayout(tsv);
+                    var passes = tsv.Split('\f', StringSplitOptions.RemoveEmptyEntries).Select(x => ParseLayout(x.TrimStart('\r','\n'))).ToArray();
+                    var layout = passes.OrderByDescending(p => p.Lines.Sum(l => Words.Matches(l.Text).Count * Math.Max(0,l.Confidence))).First();
                     string text = string.Join("\n", layout.Lines.Select(l => l.Text));
                     if (pdf && Words.Matches(text).Count < 12)
                     {
@@ -118,7 +133,11 @@ public static class GuidevaultMagazineContentScanner
                                     if (!result.Suggestions.Any(s=>s.Field=="excludedGame"&&s.Page==i+1&&ListingKey(s.Value)==ListingKey(hit.Game)))
                                         result.Suggestions.Add(new("excludedGame",hit.Game,i+1,line.Text,"Excluded page — not current-issue coverage"));
                         }
-                        else AnalyzePage(item, dictionary, text, layout, i + 1, result.Suggestions);
+                        else
+                        {
+                            AnalyzePage(item, dictionary, text, layout, i + 1, result.Suggestions);
+                            if (i == 0) AnalyzeCover(item, coverDictionary, passes, result.Suggestions);
+                        }
                         result = result with { ReadablePages = result.ReadablePages + 1 };
                     }
                     else result.Warnings.Add($"Page {i + 1}: little or no readable text.");
@@ -611,6 +630,89 @@ public static class GuidevaultMagazineContentScanner
             else foreach (var c in candidates.Take(6)) Add("coverSubject", c.Game, c.Line.Text + Geometry(c.Line, layout), "Ambiguous cover heading");
         }
 
+    }
+    // Cover passes remain separate: never concatenate unrelated OCR blocks across passes.
+    private static void AnalyzeCover(LibraryItem item, Dictionary<string,CatalogTitle> dictionary, PageLayout[] passes, List<Suggestion> suggestions)
+    {
+        var candidates = new List<(string Name, string Printed, string Evidence, double Size, bool Editorial, bool Resolved)>();
+        string Clean(string value) => Regex.Replace(value.Trim(), @"\s+(?:reviewed!?|reviews?!?|previewed!?|previews?!?|solution|walkthrough|strategy guide|exclusive maps)\s*[!.:]*$", "", RegexOptions.IgnoreCase).Trim(' ',':','!','—','-');
+        string? Resolve(string value)
+        {
+            if (TryNumberedTitle(dictionary,value,out var numbered)) return numbered.Display;
+            var key=Normalize(value);
+            if(dictionary.TryGetValue(key,out var exact)) return exact.Display;
+            if(dictionary.TryGetValue("\0"+ListingKey(value),out var equivalent)) return equivalent.Display;
+            return null;
+        }
+        bool TitleLike(string value) => ValidCoverSubject(value,item.MagazineTitle) && LooksLikeUnresolvedTitle(value) && !ArticleNoise(value)
+            && !Regex.IsMatch(value,@"\b(?:inside|essential|every|new|game[s]?|issue|solution|walkthrough|maps|definitive|reviewed|previewed|unofficial|official|edition of)\b",RegexOptions.IgnoreCase);
+        foreach(var pass in passes.Where(p=>p.Width>0&&p.Height>0))
+        {
+            var lines=pass.Lines.Where(l=>l.Height>0&&l.Confidence>=35).ToArray();
+            if(lines.Length==0)continue;
+            double median=lines.Select(l=>(double)l.Height).OrderBy(h=>h).ElementAt(lines.Length/2);
+            bool Nearby(LayoutLine a,LayoutLine b) => b.Y>a.Y && b.Y-(a.Y+a.Height)<=Math.Max(a.Height,b.Height)*1.5 &&
+                (Math.Min(a.X+a.Width,b.X+b.Width)-Math.Max(a.X,b.X)>Math.Min(a.Width,b.Width)*.15 || Math.Abs(a.X-b.X)<=Math.Max(a.Height,b.Height)*1.2);
+            void Candidate(string printed, LayoutLine l, bool editorial, double size)
+            {
+                printed=Clean(printed);
+                var name=Resolve(printed);
+                if(!ValidCoverSubject(printed,item.MagazineTitle) || (!editorial&&name is null) || (name is null&&!TitleLike(printed)))return;
+                // Preserve an explicit unresolved subtitle instead of reducing it to a franchise.
+                candidates.Add((name??printed,printed,printed+Geometry(l,pass),size,editorial,name is not null));
+            }
+            foreach(var l in lines)
+            {
+                string printed=Clean(l.Text);
+                bool labelled=Regex.IsMatch(l.Text,@"\b(?:reviewed|previewed|solution|walkthrough|strategy guide)\s*[!:.]*$",RegexOptions.IgnoreCase);
+                if(Resolve(printed) is not null && (labelled || l.Height>=median*1.15)) Candidate(printed,l,labelled,l.Height);
+                // Join stacked logos even when the first word is much smaller than the second.
+                foreach(var next in lines.Where(n=>Nearby(l,n)).OrderBy(n=>n.Y).Take(4))
+                {
+                    string joined=Clean(l.Text+" "+next.Text);
+                    if(Resolve(joined) is not null && (Resolve(printed) is null || Resolve(Clean(next.Text)) is null) && Math.Max(l.Height,next.Height)>=median*1.15)
+                        Candidate(joined,l,labelled||Regex.IsMatch(next.Text,@"\b(?:reviewed|solution|walkthrough)\b",RegexOptions.IgnoreCase),Math.Max(l.Height,next.Height));
+                }
+                var header=Regex.Match(l.Text,@"^\s*(?:reviewed|reviews?|previewed|previews?|featured games?)\s*[:!]?\s*(?<tail>.*)$",RegexOptions.IgnoreCase);
+                if(!header.Success)continue;
+                if(header.Groups["tail"].Value.Trim().Length>0) Candidate(header.Groups["tail"].Value,l,true,0);
+                // Follow the heading's column, not global Tesseract reading order.
+                var list=lines.Where(n=>n.Y>l.Y && n.Y-l.Y<pass.Height*.34 && n.X>=l.X-l.Height*1.5 && n.X<l.X+Math.Max(l.Width,l.Height*7) && n.Height<=Math.Max(l.Height*1.5,median*1.6)).OrderBy(n=>n.Y).ToArray();
+                var prev=l;
+                for(int j=0;j<Math.Min(14,list.Length);j++)
+                {
+                    var entry=list[j];
+                    if(entry.Y-(prev.Y+prev.Height)>Math.Max(prev.Height,entry.Height)*2.8)break;
+                    string value=entry.Text.Trim();
+                    if(j+1<list.Length && Nearby(entry,list[j+1]))
+                    {
+                        var continuation=list[j+1];
+                        string joined=value+" "+continuation.Text.Trim();
+                        if((value.EndsWith(':') || Regex.IsMatch(continuation.Text,@"\b(?:edition|version)\b",RegexOptions.IgnoreCase) || (Resolve(value) is null&&Resolve(joined) is not null)) && (Resolve(joined) is not null || TitleLike(joined)))
+                        { value=joined;prev=continuation;j++; }
+                        else prev=entry;
+                    }
+                    else prev=entry;
+                    if(!TitleLike(Clean(value)) && Resolve(Clean(value)) is null)break;
+                    Candidate(value,entry,true,0);
+                }
+            }
+        }
+        // Suppress shorter versions when the same printed headline has a longer title.
+        var distinct=candidates.Where(c=>!candidates.Any(d=>Normalize(d.Printed).StartsWith(Normalize(c.Printed)+" ",StringComparison.Ordinal)&&Normalize(d.Name)!=Normalize(c.Name))).GroupBy(c=>ListingKey(c.Name)).Select(g=>g.OrderByDescending(c=>c.Editorial).ThenByDescending(c=>c.Size).First()).ToArray();
+        void Add(string field,string name,string evidence,string confidence)
+        {
+            if(!suggestions.Any(s=>s.Field==field&&s.Page==1&&ListingKey(s.Value)==ListingKey(name)&&s.Confidence==confidence)) suggestions.Add(new(field,name,1,evidence,confidence));
+        }
+        foreach(var c in distinct.Where(c=>c.Editorial))
+            Add("featuredGames",c.Name,"Cover editorial: "+c.Evidence,c.Resolved?"Cover editorial listing":"Cover editorial listing — catalog unresolved");
+        var ranked=candidates.Where(c=>c.Resolved&&c.Size>0&&distinct.Any(d=>ListingKey(d.Name)==ListingKey(c.Name))).GroupBy(c=>ListingKey(c.Name)).Select(g=>g.OrderByDescending(c=>c.Size).First()).OrderByDescending(c=>c.Size).ToArray();
+        if(ranked.Length>0 && (ranked.Length==1 || ranked[0].Size>=ranked[1].Size*1.6))
+        {
+            var primary=ranked[0];
+            Add("coverSubject",primary.Name,"Dominant cover headline: "+primary.Evidence,"Dominant cover headline — verify");
+            Add("featuredGames",primary.Name,"Dominant cover headline: "+primary.Evidence,"Cover story — verify");
+        }
     }
     private static string ExcludedPageReason(string text,int page,int total)
     {
