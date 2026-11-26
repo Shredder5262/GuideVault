@@ -219,7 +219,7 @@ public static class GuidevaultMagazineContentScanner
                     }
                     else
                     {
-                        result.Suggestions.Add(new("coverDiagnostic","Florence-2","Reused process-local cover result","Vision cache hit"));
+                        result.Suggestions.Add(new("coverDiagnostic","Florence-2",1,"Reused process-local cover result","Vision cache hit"));
                         AnalyzeVisionCover(item,coverDictionary,visionJson,result.Suggestions);
                     }
                 }
