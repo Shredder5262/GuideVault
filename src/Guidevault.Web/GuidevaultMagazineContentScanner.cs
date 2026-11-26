@@ -9,7 +9,7 @@ public static class GuidevaultMagazineContentScanner
     public sealed record Suggestion(string Field, string Value, int Page, string Evidence, string Confidence);
     public sealed record ScanResult(int TotalPages, int Start, int Scanned, int ReadablePages, List<Suggestion> Suggestions, List<string> Warnings)
     {
-        public string ScannerRevision => "v4.1";
+        public string ScannerRevision => "v4.2";
         public int CachedPages { get; init; }
     }
     private static readonly SemaphoreSlim Gate = new(1, 1);
@@ -316,13 +316,63 @@ public static class GuidevaultMagazineContentScanner
             if (english >= 12) Add("languageTag", "English", "Repeated English editorial words; language inferred, not guaranteed.", "Inferred");
         }
         if (likelyAd) return;
+        // A cover story can be indexed even when the artwork/logo has no readable text.
+        // Never assume that the first feature or largest OCR line is the artwork subject.
+        if (toc || (page > 1 && lines.Count(NumberedLine) >= 3 && lines.Any(l=>Regex.IsMatch(l,@"^\s*(?:index|in this issue|on the cover|cover story|cover feature)\b",RegexOptions.IgnoreCase))))
+        {
+            var explicitLabel = @"(?:cover\s+(?:story|feature|game)|on\s+the\s+cover|this\s+(?:month|issue)['’]s\s+cover)";
+            var weakLabel = @"(?:featured\s+games?|main\s+feature|special\s+feature)";
+            var labelPattern = @"^\s*(?:\d{1,3}[.\s]+)?(?<label>"+explicitLabel+"|"+weakLabel+@")\b\s*[:\-–—]?\s*(?<tail>.*)$";
+            foreach(int ci in Enumerable.Range(0,layout.Lines.Count).OrderBy(i=>Regex.IsMatch(layout.Lines[i].Text,@"^\s*(?:\d{1,3}[.\s]+)?"+explicitLabel+@"\b",RegexOptions.IgnoreCase)?0:1))
+            {
+                var heading=layout.Lines[ci];
+                var match=Regex.Match(heading.Text,labelPattern,RegexOptions.IgnoreCase);
+                if(!match.Success || IsLegal(heading.Text) || (heading.Height>0&&heading.Confidence<45)) continue;
+                bool explicitCover=Regex.IsMatch(match.Groups["label"].Value,"^"+explicitLabel+"$",RegexOptions.IgnoreCase);
+                var fragments=new List<(string Text,LayoutLine Line)>();
+                var tail=match.Groups["tail"].Value.Trim();
+                if(tail.Length>0) fragments.Add((tail,heading));
+                // Follow nearby title lines, not unrelated columns or the following department.
+                for(int ni=ci+1;ni<Math.Min(ci+3,layout.Lines.Count);ni++)
+                {
+                    var next=layout.Lines[ni];
+                    if(Regex.IsMatch(next.Text,labelPattern,RegexOptions.IgnoreCase)||Regex.IsMatch(next.Text,@"^\s*(?:reviews?|previews?|features?|departments?|news|contents|letters|editorial|cheats?|tips)\s*[:.!]?\s*$",RegexOptions.IgnoreCase)||IsLegal(next.Text)) break;
+                    if(heading.Height>0 && next.Height>0 && (next.Y<heading.Y || next.Y-heading.Y>Math.Max(heading.Height,next.Height)*4 || Math.Abs(next.X-heading.X)>Math.Max(heading.Height,next.Height)*5)) break;
+                    if(next.Height>0&&next.Confidence<45) break;
+                    fragments.Add((next.Text,next));
+                    if(fragments.Count>=2) break;
+                }
+                if(fragments.Count==2) fragments.Insert(0,(fragments[0].Text+" "+fragments[1].Text,fragments[0].Line));
+                bool identified=false;
+                foreach(var fragment in fragments)
+                {
+                    var clean=Regex.Replace(fragment.Text,@"^\s*\d{1,3}[.\s]+|\.{2,}\s*\d{1,3}\s*$|\s+\(page\s+\d{1,3}\)\s*$","",RegexOptions.IgnoreCase).Trim(' ',':','-','–','—');
+                    if(!ValidCoverSubject(clean,item.MagazineTitle)) continue;
+                    var hits=FindGames(dictionary,clean,true,true,true).Where(h=>!h.Fuzzy&&h.Whole&&ValidCoverSubject(h.Game,item.MagazineTitle)).Select(h=>h.Game).Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
+                    if(hits.Length>0)
+                    {
+                        foreach(var game in hits) Add("coverSubject",game,heading.Text+" | "+fragment.Text+Geometry(fragment.Line,layout),explicitCover?"Explicit contents cover story":"Contents featured game — cover unverified");
+                        identified=true; break;
+                    }
+                }
+                // A printed non-game subject is eligible only under an explicit cover label.
+                // Use the inline text or first adjacent line, not a concatenated paragraph.
+                if(explicitCover && !identified && fragments.Count>0)
+                {
+                    var fragment=fragments.Count==3?fragments[1]:fragments[0];
+                    var clean=Regex.Replace(fragment.Text,@"^\s*\d{1,3}[.\s]+|\.{2,}\s*\d{1,3}\s*$","").Trim(' ',':','-','–','—');
+                    if(ValidCoverSubject(clean,item.MagazineTitle) && LooksLikeUnresolvedTitle(clean) && !Regex.IsMatch(clean,@"\b(?:page|see|turn to|read about|this month|in this issue)\b",RegexOptions.IgnoreCase))
+                        Add("coverSubject",clean,heading.Text+" | "+fragment.Text+Geometry(fragment.Line,layout),"Explicit cover subject — verify printed title");
+                }
+            }
+        }
         var heights = layout.Lines.Where(l => l.Confidence >= 45 && l.Height > 0).Select(l => l.Height).OrderBy(x => x).ToArray();
         double median = heights.Length > 0 ? heights[heights.Length / 2] : 0;
         bool prominent(LayoutLine l) => median > 0 && l.Height >= median * 1.3 && l.Confidence >= 50;
         var coverHeadings = new List<(string Game, LayoutLine Line)>();
         var section = "";
         var previous = (LayoutLine?)null;
-        var coverRegion = toc; // Leading content before the first review/platform section may include the cover feature.
+        var coverRegion = toc; // Leading contents entries are not automatically cover stories.
         var platformIndex = false;
         foreach (var l in layout.Lines)
         {
@@ -402,9 +452,9 @@ public static class GuidevaultMagazineContentScanner
             foreach (var hit in matched)
             {
                 string evidence = (joinedEvidence.Length>0 && !Normalize(line).Contains(Normalize(hit.Game),StringComparison.Ordinal) ? joinedEvidence : line) + Geometry(l, layout);
-                if (page == 1 && titleContext && l.Confidence >= 50) coverHeadings.Add((hit.Game,l));
-                else if (toc && coverRegion && Regex.IsMatch(line, @"\b(?:game for|in.depth|cover (?:story|feature))\b|:\s*[^:]+$", RegexOptions.IgnoreCase) && !hit.Fuzzy)
-                { Add("coverSubject", hit.Game, evidence, "Contents cover evidence"); Add("featuredGames", hit.Game, evidence, "Contents cover evidence"); }
+                if (page == 1 && titleContext && l.Confidence >= 50 && ValidCoverSubject(hit.Game,item.MagazineTitle)) coverHeadings.Add((hit.Game,l));
+                else if (toc && coverRegion && Regex.IsMatch(line, @"\b(?:game for|in.depth)\b", RegexOptions.IgnoreCase) && !hit.Fuzzy && ValidCoverSubject(hit.Game,item.MagazineTitle))
+                { Add("coverSubject", hit.Game, evidence, "Contents main feature — cover unverified"); Add("featuredGames", hit.Game, evidence, "Contents main feature"); }
                 else if (explicitCoverage && coverageHits.Contains(Compact(hit.Game))) Add("featuredGames", hit.Game, evidence, "Explicit review/feature reference");
                 else if (listContext || (page > 1 && prominent(l) && hit.Whole && !departments && !hit.Fuzzy && l.Y < layout.Height*.60 && Regex.IsMatch(text,@"\b(?:review|preview|rating|graphics|sound|gameplay|publisher|developer|walkthrough)\b",RegexOptions.IgnoreCase))) Add("featuredGames", hit.Game, evidence, hit.Fuzzy ? "Possible OCR correction" : "Editorial heading");
                 else if (page > 1) Add("mentionedGames", hit.Game, evidence, hit.Fuzzy ? "Possible OCR correction" : "Contextual title match");
@@ -434,9 +484,12 @@ public static class GuidevaultMagazineContentScanner
             if (prominent(first.Line) && (candidates.Length == 1 || first.Line.Height >= candidates[1].Line.Height * 1.6)) Add("coverSubject", first.Game, first.Line.Text + Geometry(first.Line, layout), "Visual cover candidate");
             else foreach (var c in candidates.Take(6)) Add("coverSubject", c.Game, c.Line.Text + Geometry(c.Line, layout), "Ambiguous cover heading");
         }
-        // A cover subject need not be a game; use an explicit, non-game cover-story label only.
-        if (toc && !suggestions.Any(x=>x.Page==page && x.Field=="coverSubject"))
-            MatchField("coverSubject", @"^\s*cover (?:story|feature)\s*:\s*([^\r\n]{3,100})", text);
+
+    }
+    private static bool ValidCoverSubject(string value,string? publication)
+    {
+        var key=Normalize(value);
+        return key.Length>=3 && key.Length<=100 && key!=Normalize(publication??"") && !Regex.IsMatch(key,@"^(?:(?:issue|volume|vol|number|no)(?:\s+\d+)?|magazine|cover|cover story|cover feature|featured games?|features?|special edition|contents|table of contents|reviews?|previews?|news|unknown|unspecified|not identified|none|n a)$",RegexOptions.IgnoreCase);
     }
     private static bool LooksLikeUnresolvedTitle(string value)
     {

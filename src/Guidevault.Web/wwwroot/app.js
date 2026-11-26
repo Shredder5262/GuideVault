@@ -18669,7 +18669,7 @@ function gvMagazineScanDialog(items, fromDetail = false, inlineHost = null) {
   if (!items.length || items.length > 5) { metadataManagerSetStatus('Select 1–5 magazine issues per scan.','error'); return; }
   const dialog = document.createElement(inlineHost ? 'div' : 'dialog');
   dialog.className = inlineHost ? 'gv-magscan-inline' : 'gv-magscan-dialog';
-  dialog.innerHTML = `<div class="gv-magscan-content"><h2>Scan magazine metadata</h2><p class="sub">${items.length} issue(s). Scanner UI v4.1 — Local OCR and LaunchBox title lookup. Nothing is saved automatically.</p><label>Scan scope <select data-scan-scope><option value="12">First 12 pages (cover, contents, masthead)</option><option value="300"${fromDetail?' selected':''}>Full issue (up to 300 pages)</option></select></label><p class="sub" data-scan-status aria-live="polite">Start a scan to review suggested fields. Layout-aware English OCR and catalog matching. All magazine fields are checked; uncertain or unavailable values are not guessed. Review all proposed editorial data.</p><progress data-scan-progress value="0" max="1"></progress><div data-scan-results></div><div class="gv-magscan-actions"><button class="ghost" type="button" data-scan-close>Close</button><button class="ghost" type="button" data-scan-stop hidden>Stop</button><button class="primary" type="button" data-scan-start>Start scan</button><button class="primary" type="button" data-scan-stage disabled>${fromDetail?'Apply selected suggestions':'Stage selected suggestions'}</button></div></div>`;
+  dialog.innerHTML = `<div class="gv-magscan-content"><h2>Scan magazine metadata</h2><p class="sub">${items.length} issue(s). Scanner UI v4.2 — Local OCR and LaunchBox title lookup. Nothing is saved automatically.</p><label>Scan scope <select data-scan-scope><option value="12">First 12 pages (cover, contents, masthead)</option><option value="300"${fromDetail?' selected':''}>Full issue (up to 300 pages)</option></select></label><p class="sub" data-scan-status aria-live="polite">Start a scan to review suggested fields. Layout-aware English OCR and catalog matching. All magazine fields are checked; uncertain or unavailable values are not guessed. Review all proposed editorial data.</p><progress data-scan-progress value="0" max="1"></progress><div data-scan-results></div><div class="gv-magscan-actions"><button class="ghost" type="button" data-scan-close>Close</button><button class="ghost" type="button" data-scan-stop hidden>Stop</button><button class="primary" type="button" data-scan-start>Start scan</button><button class="primary" type="button" data-scan-stage disabled>${fromDetail?'Apply selected suggestions':'Stage selected suggestions'}</button></div></div>`;
   (inlineHost || document.body).appendChild(dialog);
   const q = s => dialog.querySelector(s);
   const session = { controller:null, running:false, rows:[], dialog, inline:!!inlineHost, itemId:metadataManagerItemId(items[0]) };
@@ -18687,11 +18687,14 @@ function gvMagazineScanDialog(items, fromDetail = false, inlineHost = null) {
     session.rows.forEach((row, rowIndex) => {
       const block = document.createElement('section'); block.className = 'gv-magscan-result';
       block.innerHTML = `<h3>${escapeHtml(metadataManagerItemName(row.item))}</h3><p class="sub">${row.readable} of ${row.scanned} scanned pages yielded text; ${row.cached||0} reused from OCR cache; ${row.total || '?'} total pages. ${row.complete ? (row.scanned>=row.total ? 'Full issue scanned.' : 'Limited scan — coverage incomplete.') : 'Partial scan.'} Backend scanner: ${escapeHtml(row.revision||'not reported')}.</p>`;
-      const strongCover=row.suggestions.filter(x=>x.field==='coverSubject'&&x.confidence==='Contents cover evidence');
-      const coverNames=[...new Set((strongCover.length?strongCover:row.suggestions.filter(x=>x.field==='coverSubject')).map(x=>x.value))];
-      const existingCover=String(row.item.coverSubject||'').trim();
+      const coverEvidence=gvMagazineCoverEvidence(row);
+      const coverNames=[...new Set(coverEvidence.map(x=>x.value))];
+      const storedCover=String(row.item.coverSubject||'').trim();
+      const existingCover=gvMagazineValidCover(storedCover,row.item.magazineTitle||row.item.series)?storedCover:'';
       const coverConflict=coverNames.length>1 || (existingCover && coverNames.some(v=>v.toLowerCase()!==existingCover.toLowerCase()));
       const reviewWarnings=[...row.warnings];
+      if(storedCover&&!existingCover)reviewWarnings.push(`Invalid or generic existing cover subject: ${storedCover}. Verify and clear or replace it in Metadata; no automatic deletion.`);
+      if(coverEvidence.some(x=>/unverified|verify printed title/i.test(x.confidence||'')))reviewWarnings.push('Contents feature evidence does not prove the cover artwork subject. Check the cover before accepting.');
       const observedPlatforms=row.suggestions.filter(x=>x.field==='featuredPlatforms').map(x=>x.value);
       const platformKey=gvMagazinePlatformKey;
       const year=Number(String(row.item.coverDate||row.item.publicationDate||row.item.year||'').match(/\b(?:19|20)\d{2}\b/)?.[0]||0);
@@ -18716,7 +18719,7 @@ function gvMagazineScanDialog(items, fromDetail = false, inlineHost = null) {
       const available=GV_MAG_SCAN_FIELDS.filter(f=>metadataManagerFieldsForKind('Magazine').has(f));
       const proposed=new Set(proposals.filter(p=>!p.editorOnly).map(p=>p.field));
       const observed=new Set(row.suggestions.map(p=>p.field));
-      audit.innerHTML=`<summary>${proposals.filter(p=>!p.editorOnly).length} proposed changes · ${available.length} fields checked (show coverage)</summary><div class="gv-magscan-coverage-grid">${available.map(f=>{const def=metadataManagerColumnDefinition(f,['Magazine']);const current=String(metadataManagerFieldValue(row.item,f)??'').trim();const present=current&&!(f==='pageCount'&&current==='0');const status=proposed.has(f)?'Proposal':(f==='publisher'||f==='pageCount')&&present?'Existing value retained':observed.has(f)?'Evidence found / unchanged':present?'Existing value retained':'No reliable evidence';return `<div><strong>${escapeHtml(def?.label||f)}</strong><small>${escapeHtml(status)}</small></div>`;}).join('')}</div>`;
+      audit.innerHTML=`<summary>${proposals.filter(p=>!p.editorOnly).length} proposed changes · ${available.length} fields checked (show coverage)</summary><div class="gv-magscan-coverage-grid">${available.map(f=>{const def=metadataManagerColumnDefinition(f,['Magazine']);const current=String(metadataManagerFieldValue(row.item,f)??'').trim();const present=current&&!(f==='pageCount'&&current==='0');const status=proposed.has(f)?'Proposal':(f==='publisher'||f==='pageCount')&&present?'Existing value retained':observed.has(f)?'Evidence found / not independently verified':present?'Existing value retained — unverified':'No reliable evidence';return `<div><strong>${escapeHtml(def?.label||f)}</strong><small>${escapeHtml(status)}</small></div>`;}).join('')}</div>`;
       block.appendChild(audit);
       if (!proposals.length) { const p = document.createElement('p'); p.textContent = 'No new editable suggestions found.'; block.appendChild(p); }
       for (const proposal of proposals) {
@@ -18753,7 +18756,7 @@ function gvMagazineScanDialog(items, fromDetail = false, inlineHost = null) {
             if (!res.ok) { let msg=`HTTP ${res.status}`; try { msg=(await res.json()).error||msg; } catch {} throw new Error(msg); }
             const data=await res.json();
             row.revision=String(data.scannerRevision||'not reported');
-            if(row.revision!=='v4.1') { row.suggestions=[]; throw new Error(`Scanner backend revision ${row.revision}; expected v4.1. Deploy the matching image and reload before scanning.`); }
+            if(row.revision!=='v4.2') { row.suggestions=[]; throw new Error(`Scanner backend revision ${row.revision}; expected v4.2. Deploy the matching image and reload before scanning.`); }
             row.total=data.totalPages; row.scanned+=data.scanned; row.readable+=data.readablePages; row.cached+=Number(data.cachedPages||0); row.suggestions.push(...(data.suggestions||[])); row.warnings.push(...(data.warnings||[]));
             if (!data.scanned) break; start+=data.scanned; progress.value=i+Math.min(1,start/Math.min(scope,row.total));
           } while(start<Math.min(scope,row.total));
@@ -18779,6 +18782,7 @@ function gvMagazineScanDialog(items, fromDetail = false, inlineHost = null) {
       const current=index.get(id)?.item;
       if (!current || current.kind!=='Magazine' || !metadataManagerFieldsForKind('Magazine').has(field) || METADATA_MANAGER_READONLY_COLUMNS.has(field) || (isMetadataFieldLocked(current,field)||(field==='name'&&isMetadataFieldLocked(current,'title'))) || (fromDetail && id!==session.itemId)) { skipped++; continue; }
       const value=input.closest('.gv-magscan-field').querySelector('textarea').value.trim();
+      if (field==='coverSubject'&&!gvMagazineValidCover(value,current.magazineTitle||current.series)) { skipped++; continue; }
       if (!value || value===String(metadataManagerFieldValue(current,field)??'').trim() || Object.hasOwn(state.metadataManager.dirty[id]||{},field) || String(metadataManagerFieldValue(current,field)??'')!==String(metadataManagerFieldValue(row.item,field)??'')) { skipped++; continue; }
       if(fromDetail) directChanges[field]=value;
       else state.metadataManager.dirty[id]={...(state.metadataManager.dirty[id]||{}),[field]:value};
@@ -18914,6 +18918,8 @@ function gvMagazineReviewGames(row,proposals,block) {
     select.value=edits.has(game.field)?game.field:'ignore';controls.push({game,select});item.append(label,select);list.appendChild(item);
   }
   const apply=document.createElement('button');apply.type='button';apply.className='ghost';apply.textContent='Apply game choices to proposals';section.appendChild(apply);
+  const summaryEdit=block.querySelector('textarea[data-scan-value="summary"]');
+  let lastGeneratedSummary=summaryEdit?.value;
   apply.onclick=()=>{
     const managed=new Set(controls.map(c=>key(c.game.name)));
     for(const [field,{input,edit}] of edits) {
@@ -18923,10 +18929,42 @@ function gvMagazineReviewGames(row,proposals,block) {
       const result=[...new Map([...preserved,...selected].filter(Boolean).map(v=>[key(v),v])).values()].join(', ');
       if(result!==edit.value){edit.value=result;input.checked=!!result.trim();input.dispatchEvent(new Event('change',{bubbles:true}));}
     }
+    if(summaryEdit&&!summaryEdit.disabled&&summaryEdit.value===lastGeneratedSummary){
+      const featured=edits.get('featuredGames')?.edit;
+      if(featured){const draft=gvMagazineCoverageSummary(metadataManagerFieldValue(row.item,'summary'),itemArray(featured.value));
+        const check=block.querySelector('input[data-scan-field="summary"]');
+        if(draft){summaryEdit.value=draft;lastGeneratedSummary=draft;}
+        else if(check){check.checked=false;summaryEdit.value='';lastGeneratedSummary='';}
+      }
+    }
   };
   const first=block.querySelector('.gv-magscan-field');block.insertBefore(section,first||null);
 }
 
+function gvMagazineValidCover(value,publication='') {
+  const k=v=>String(v??'').normalize('NFKC').toLowerCase().replace(/[^\p{L}\p{N}]+/gu,' ').trim();
+  const v=k(value);return v.length>=3&&v.length<=100&&v!==k(publication)&&!(/^(?:(?:issue|volume|vol|number|no)(?: \d+)?|magazine|cover|cover story|cover feature|featured games?|features?|special edition|contents|table of contents|reviews?|previews?|news|unknown|unspecified|not identified|none|n a)$/.test(v));
+}
+function gvMagazineCoverEvidence(row) {
+  const key=v=>String(v??'').normalize('NFKC').toLowerCase().replace(/[^\p{L}\p{N}]/gu,'');
+  const all=row.suggestions.filter(x=>x.field==='coverSubject'&&gvMagazineValidCover(x.value,row.item.magazineTitle||row.item.series));
+  const explicit=all.filter(x=>['Explicit contents cover story','Explicit cover subject — verify printed title'].includes(x.confidence));
+  if(explicit.length)return explicit;
+  const articles=new Set(row.suggestions.filter(x=>x.field==='featuredGames').map(x=>key(x.value)));
+  const confirmed=all.filter(x=>['Visual cover candidate','Ambiguous cover heading'].includes(x.confidence)&&articles.has(key(x.value)));
+  if(confirmed.length)return confirmed;
+  // An explicitly labelled featured/main game is only a possible cover subject.
+  return all.filter(x=>['Contents featured game — cover unverified','Contents main feature — cover unverified'].includes(x.confidence));
+}
+function gvMagazineCoverageSummary(current,titles) {
+  let base=String(current||'').trim().replace(/\s*(?:Detected editorial coverage includes|Featured coverage includes) [^\n]*?\.(?=\s*$)/i,'').trim();
+  // Strip only recognizable generated publication boilerplate, not custom descriptions.
+  const boilerplate=/^The [^.!?\n]{3,180} issue of [^.!?\n]{2,150} is a [^\n]{5,200}? magazine published by [^\n]{2,150}?\.\s*(?:It includes [^\n]*?\.)?\s*$/i;
+  if(boilerplate.test(base))base='';
+  const list=[...new Set(titles.filter(Boolean))].slice(0,12);
+  if(!list.length)return base;
+  return `${base?base+(/[.!?]$/.test(base)?' ':'. '):''}Featured coverage includes ${list.join(', ')}.`;
+}
 function gvMagazineScanProposals(row) {
   const fields=new Map(); const id=metadataManagerItemId(row.item), dirty=state.metadataManager.dirty[id]||{};
   const key=v=>String(v??'').normalize('NFKC').toLowerCase().replace(/[^\p{L}\p{N}]/gu,'');
@@ -18936,6 +18974,7 @@ function gvMagazineScanProposals(row) {
   const currentOf=f=>String(dirty[f]??metadataManagerFieldValue(row.item,f)??'').trim();
   function add(x) { if(!String(x.value??'').trim())return; if(!fields.has(x.field)) fields.set(x.field,[]); const a=fields.get(x.field); if(!a.some(y=>same(y.value,x.value)&&y.page===x.page)) a.push(x); }
   [...row.suggestions,...gvMagazineArticleEvidence(row)].forEach(x=>{
+    if(x.field==='coverSubject'&&!gvMagazineValidCover(x.value,row.item.magazineTitle||row.item.series)) return;
     if(x.field==='languageTag' && /^(?:iso|iso[- ]?639.*|tag|code|unknown|und|none|n\/a)$/i.test(String(x.value??'').trim())) return;
     add(x);
   });
@@ -18956,14 +18995,15 @@ function gvMagazineScanProposals(row) {
     if(!print.length) fields.delete('publisher');
     else fields.set('publisher',print.concat((fields.get('publisher')||[]).filter(x=>x.confidence==='Archive metadata'&&print.some(y=>same(x.value,y.value)))));
   }
-  const existingCover=currentOf('coverSubject');
-  const cover=fields.get('coverSubject')||[];
-  const explicitCover=unique(cover.filter(x=>x.confidence==='Contents cover evidence').map(x=>x.value));
-  const coverValues=explicitCover.length?explicitCover:candidates('coverSubject');
-  // Prefer a uniquely identified contents cover feature; preserve a populated value unless explicitly reviewed.
+  const storedCover=currentOf('coverSubject');
+  const existingCover=gvMagazineValidCover(storedCover,row.item.magazineTitle||row.item.series)?storedCover:'';
+  const cover=gvMagazineCoverEvidence(row);
+  const coverValues=unique(cover.map(x=>x.value));
+  // Explicit cover story > corroborated cover headline > unverified index feature.
+  // Keep valid existing subjects unless the user independently corrects them.
   if(coverValues.length!==1 || (existingCover&&!same(existingCover,coverValues[0]))) fields.delete('coverSubject');
-  else if(coverValues.length===1) fields.set('coverSubject',cover.filter(x=>same(x.value,coverValues[0])));
-  const acceptedCover=existingCover||(coverValues.length===1?coverValues[0]:'');
+  else fields.set('coverSubject',cover.filter(x=>same(x.value,coverValues[0])));
+  const acceptedCover=existingCover; // An unapproved cover proposal is not confirmed metadata.
   // A printed volume issue number is not necessarily the overall issue sequence.
   if(currentOf('issueNumber')) fields.delete('issueNumber');
   const featured=candidates('featuredGames');
@@ -18983,7 +19023,7 @@ function gvMagazineScanProposals(row) {
   const publication=currentOf('magazineTitle')||(publicationCandidates.length===1?publicationCandidates[0]:'');
   const issue=currentOf('issueNumber')||(candidates('issueNumber').length===1?candidates('issueNumber')[0]:'');
   const date=currentOf('coverDate')||(candidates('coverDate').length===1?candidates('coverDate')[0]:'');
-  if(publication&&issue&&(!currentOf('name')||same(currentOf('name'),publication))) infer('name',`${publication} #${issue}`,'Entry title constructed from publication name and issue sequence; review before replacing a generic title.');
+  if(publication&&issue&&!currentOf('name')) infer('name',`${publication} #${issue}`,'Entry title constructed from publication name and issue sequence; review before replacing a generic title.');
   // If the archive provided a title already equal to the current value, prefer the useful composed proposal.
   if(publication&&issue&&same(currentOf('name'),publication)) fields.set('name',(fields.get('name')||[]).filter(x=>!same(x.value,currentOf('name'))));
   if(featured.length>=2 && (editorialPlatforms.length || candidates('specialFeatures').length)) {
@@ -18991,16 +19031,11 @@ function gvMagazineScanProposals(row) {
     infer('tags','Magazine','Document kind and editorial evidence.');
     if(publication) infer('tags',publication,'Publication name; suggested discovery tag.');
   }
-  const titles=unique(featured).slice(0,12);
+  const titles=uniqueField('featuredGames',[...itemArray(currentOf('featuredGames')),...featured]);
   const currentSummary=currentOf('summary');
   if(titles.length){
-    const clause=`Detected editorial coverage includes ${titles.join(', ')}.`;
-    // Avoid repeatedly appending scanner-generated coverage sentences; preserve other prose.
-    const base=currentSummary.replace(/\s*Detected editorial coverage includes [^\n]*?\.(?=\s*$)/i,'').trim()||`${publication||row.item.title||'Magazine'}${issue?' issue #'+issue:''}${date?' ('+date+')':''}.${acceptedCover?' Cover subject: '+acceptedCover+'.':''}`;
-    if(!currentSummary.includes(clause)) {
-      fields.delete('summary');
-      infer('summary',`${base}${/[.!?]$/.test(base)?' ':'. '}${clause}`,'Draft based on editorial headings; existing description retained. Review wording.');
-    }
+    const draft=gvMagazineCoverageSummary(currentSummary,titles);
+    if(draft&&draft!==currentSummary){fields.delete('summary');infer('summary',draft,'Draft based on proposed featured coverage; review before applying. Custom description text retained.');}
   }
   const result=[];
   for(const field of GV_MAG_SCAN_FIELDS) {
@@ -19210,53 +19245,42 @@ function magazineDetailSubtitleText(item) {
 }
 
 function magazineOverviewHtml(item) {
-  const publicationTitle = guidevaultCleanDisplayText(item.magazineTitle || item.series || detectedSystemOf(item) || item.title || 'Video Game Magazine');
-  const displayEntryTitle = guidevaultCleanDisplayText(item.title || '');
-  const showEntryTitle = displayEntryTitle && !valuesEqualText(displayEntryTitle, publicationTitle);
+  const publicationTitle = guidevaultCleanDisplayText(item.magazineTitle || item.series || item.title || 'Video Game Magazine');
   const coverDate = guidevaultCleanDisplayText(item.coverDate || item.publicationDate || item.year);
+  const primarySystem = guidevaultCleanDisplayText(item.primarySystem || item.system || detailSystemLabelForItem(item));
   const publicationDate = item.publicationDate && !valuesEqualText(item.publicationDate, item.coverDate) ? guidevaultCleanDisplayText(item.publicationDate) : '';
-  const identityTags = [
-    item.magazineCategory || 'Video Game Magazine',
-    item.platformFocus || item.primarySystem || item.system,
-    coverDate
-  ].filter(Boolean);
+  const pages = Number(item.pageCount ?? item.PageCount ?? 0) || 0;
+  const coverSubject = gvMagazineValidCover(item.coverSubject,publicationTitle) ? item.coverSubject : 'Not identified';
+  const summary = String(item.summary || '').trim();
+  const extra = [magazineOverviewFieldIfValue('Volume', item.volume),magazineOverviewFieldIfValue('Publication Date',publicationDate),magazineOverviewFieldIfValue('Barcode / UPC / ISSN',item.barcodeUpcIssn || item.BarcodeUpcIssn || item.barcode || item.upc || item.issn),magazineOverviewFieldIfValue('Editor',item.writer)].filter(Boolean).join('');
   return `
-    <div class="magazine-hero-overview magazine-hero-overview-refined">
-      <div class="magazine-hero-kicker">Magazine</div>
-      <h2>${escapeHtml(publicationTitle)}</h2>
-      ${magazineIssueSubtitleHtml(item)}
-      ${showEntryTitle ? `<p class="magazine-entry-title-note">${escapeHtml(displayEntryTitle)}</p>` : ''}
-      <p>${escapeHtml(item.summary || descriptionFor(item))}</p>
-      <div class="magazine-hero-tags">${identityTags.map(v => guidevaultCleanDisplayText(v)).filter(Boolean).map(v => `<span class="overview-chip">${escapeHtml(v)}</span>`).join('')}</div>
-    </div>
-    <div class="magazine-overview-grid magazine-overview-grid-refined">
-      <section class="overview-card overview-card-identity magazine-overview-card-no-heading magazine-overview-primary-card">
-        <div class="overview-field-grid">
-          ${magazineOverviewFieldIfValue('Issue #', item.issueNumber)}
-          ${magazineOverviewFieldIfValue('Volume', item.volume)}
-          ${magazineOverviewField('Cover Date', coverDate)}
-          ${magazineOverviewFieldIfValue('Publisher', item.publisher)}
-          ${magazineOverviewFieldIfValue('Barcode / UPC / ISSN', item.barcodeUpcIssn || item.BarcodeUpcIssn || item.barcode || item.upc || item.issn)}
-          ${magazineOverviewFieldIfValue('Page Count', item.pageCount || item.PageCount ? `${item.pageCount || item.PageCount} pages` : '')}
-          ${magazineOverviewFieldIfValue('Editor', item.writer)}
-          ${magazineOverviewFieldIfValue('Publication Date', publicationDate)}
-          ${magazineOverviewFieldIfValue('Entry Title', showEntryTitle ? displayEntryTitle : '')}
-        </div>
-      </section>
-      <section class="overview-card overview-card-classification magazine-overview-card-no-heading magazine-overview-context-card">
-        <div class="overview-field-grid">
-          ${magazineOverviewField('Country of publication', item.region)}
-          ${magazineOverviewField('Language', item.languageTag)}
-          ${magazineOverviewField('Platform / Audience Focus', item.platformFocus)}
-          ${magazineOverviewField('Cover Game / Subject', item.coverSubject, 'magazine-overview-second-row magazine-overview-cover-subject')}
-          ${magazineOverviewField('Category', item.magazineCategory || item.category || 'Video game magazine', 'magazine-overview-second-row magazine-overview-category')}
-        </div>
-      </section>
-      ${magazineOverviewTagSection('Featured Games', item.featuredGames)}
-      ${magazineOverviewTagSection('Mentioned Games', item.mentionedGames)}
-      ${magazineOverviewTagSection('Featured Platforms', item.featuredPlatforms)}
-      ${magazineOverviewTagSection('Sections / Departments', item.specialFeatures)}
-      ${magazineOverviewTagSection('Insert Details', item.includedExtras)}
+    <section class="overview-card magazine-issue-overview-v42">
+      <h3>Issue Overview</h3>
+      <div class="overview-field-grid magazine-issue-overview-fields-v42">
+        ${magazineOverviewField('Magazine Title',publicationTitle)}
+        ${magazineOverviewField('Issue #',item.issueNumber)}
+        ${magazineOverviewField('Cover Date',coverDate)}
+        ${magazineOverviewField('Primary System',primarySystem)}
+        ${magazineOverviewField('Publisher',item.publisher)}
+        ${magazineOverviewField('Page Count',pages>0?`${pages} pages`:'')}
+        ${magazineOverviewField('Country of publication',item.region)}
+        ${magazineOverviewField('Language',item.languageTag)}
+        ${magazineOverviewField('Magazine Category',item.magazineCategory || item.category)}
+        ${magazineOverviewField('Cover Game / Subject',coverSubject,'magazine-issue-cover-v42')}
+      </div>
+      <div class="magazine-issue-description-v42"><h3>Description</h3><p>${escapeHtml(summary || 'No description available.')}</p></div>
+    </section>
+    <div class="magazine-overview-grid magazine-overview-grid-refined magazine-issue-lower-v42">
+      <div class="magazine-overview-column">
+        ${extra ? `<section class="overview-card"><h3>Publication Details</h3><div class="overview-field-grid">${extra}</div></section>` : ''}
+        ${magazineOverviewTagSection('Featured Games', item.featuredGames)}
+        ${magazineOverviewTagSection('Featured Platforms', item.featuredPlatforms)}
+      </div>
+      <div class="magazine-overview-column">
+        ${magazineOverviewTagSection('Sections / Departments', item.specialFeatures)}
+        ${magazineOverviewTagSection('Mentioned Games', item.mentionedGames)}
+        ${itemArray(item.includedExtras).length ? magazineOverviewTagSection('Insert Details', item.includedExtras) : ''}
+      </div>
     </div>`;
 }
 
