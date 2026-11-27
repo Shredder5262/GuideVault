@@ -11,7 +11,7 @@ public static class GuidevaultMagazineContentScanner
     public sealed record Suggestion(string Field, string Value, int Page, string Evidence, string Confidence);
     public sealed record ScanResult(int TotalPages, int Start, int Scanned, int ReadablePages, List<Suggestion> Suggestions, List<string> Warnings)
     {
-        public string ScannerRevision => "v7.1.6";
+        public string ScannerRevision => "v7.2";
         public int CachedPages { get; init; }
     }
     private static readonly SemaphoreSlim Gate = new(1, 1);
@@ -59,7 +59,7 @@ public static class GuidevaultMagazineContentScanner
             bool pdf = string.Equals(item.Format, "PDF", StringComparison.OrdinalIgnoreCase);
             int total = pdf ? ParsePdfPages(await Run("pdfinfo", [item.Path], token)) : await ArchiveReader.GetImagePageCountAsync(item.Path);
             if (total <= 0) throw new InvalidOperationException("No readable pages were found.");
-            start = Math.Clamp(start, 0, total); count = Math.Clamp(count, 1, 3);
+            start = Math.Clamp(start, 0, total); count = Math.Clamp(count, 1, start == 0 ? 5 : 3);
             var result = new ScanResult(total, start, 0, 0, new(), new());
             if (start == 0)
             {
@@ -77,6 +77,8 @@ public static class GuidevaultMagazineContentScanner
             bool visionOnly = engine == "vision";
             bool balanced = engine == "balanced";
             var refinePages = new List<int>();
+            var openingPages = new List<(int Page, string Text)>();
+            string? coverVision = null;
             // A fixed early-page window bounds vision cost across independent HTTP chunks.
             // Cover always receives deep recognition; at most three interior pages receive one pass each.
             if (balanced && start == 0) refinePages.Add(0);
@@ -206,6 +208,7 @@ public static class GuidevaultMagazineContentScanner
                         else
                         {
                             AnalyzePage(item, dictionary, text, layout, i + 1, result.Suggestions);
+                            if(i<5) openingPages.Add((i+1,string.Join("\n",layout.Lines.Where(l=>l.Confidence>=45||layout.Width==0).Take(100).Select(l=>l.Text))));
                             if(i<4) foreach(var source in passes.Select(p=>string.Join("\n",p.Lines.Select(l=>l.Text))).Concat(sections.Skip(1)))
                                 AddPrintedPeriod(item,source,i+1,result.Suggestions);
                         }
@@ -246,7 +249,7 @@ public static class GuidevaultMagazineContentScanner
                     if(json is null) continue;
                     try
                     {
-                        if(index==0) AnalyzeVisionCover(item,coverDictionary,json,result.Suggestions);
+                        if(index==0) { coverVision=json; AnalyzeVisionCover(item,coverDictionary,json,result.Suggestions); }
                         if(AnalyzeVisionPage(item,index==0?coverDictionary:dictionary,json,index+1,total,result.Suggestions,result.Warnings) && visionOnly)
                             result = result with { ReadablePages = result.ReadablePages + 1 };
                     }
@@ -291,6 +294,8 @@ public static class GuidevaultMagazineContentScanner
             }
             // Offer canonical replacements for previously saved abbreviations only when
             // the same canonical game is independently detected in this scan chunk.
+            if(balanced && start==0 && coverVision is not null)
+                await AnalyzeOpeningContext(item,dictionary,coverVision,openingPages,result.Suggestions,result.Warnings,token);
             var observedGames = result.Suggestions.Where(s => s.Field == "featuredGames" || s.Field == "mentionedGames" || s.Field == "coverSubject").ToArray();
             var storedNames = (item.FeaturedGames ?? Array.Empty<string>()).Concat(item.MentionedGames ?? Array.Empty<string>()).Append(item.CoverSubject ?? "");
             foreach (var stored in storedNames.Where(v => !string.IsNullOrWhiteSpace(v)).Distinct(StringComparer.OrdinalIgnoreCase))
@@ -1616,6 +1621,103 @@ public static class GuidevaultMagazineContentScanner
         suggestions.Add(new("coverSubject",best.Name,1,best.Evidence,"Dominant cover headline — verify"));
         suggestions.Add(new("featuredGames",best.Name,1,best.Evidence,"Cover story — verify"));
         if(best.Strategy) suggestions.Add(new("specialFeatures","Strategy guides",1,best.Evidence,"Cover strategy evidence — verify"));
+    }
+
+    // Contextual cover candidates are exact catalog matches to observed text, never free-form model titles.
+    private sealed record ContextCandidate(int Id,string Title,int Page,string Evidence,double Size,bool Editorial,bool Cover);
+    private static async Task AnalyzeOpeningContext(LibraryItem item, Dictionary<string,CatalogTitle> dictionary,string visionJson,List<(int Page,string Text)> opening,List<Suggestion> suggestions,List<string> warnings,CancellationToken token)
+    {
+        using var doc=System.Text.Json.JsonDocument.Parse(visionJson);
+        var root=doc.RootElement;
+        int height=root.GetProperty("height").GetInt32();
+        if(height<=0)return;
+        var lines=root.GetProperty("regions").EnumerateArray().Take(150).Select(r=>new LayoutLine(r.GetProperty("text").GetString()??"",0,0,r.GetProperty("x").GetInt32(),r.GetProperty("y").GetInt32(),r.GetProperty("width").GetInt32(),r.GetProperty("height").GetInt32(),0)).Where(l=>l.Height>0&&l.Width>0).ToArray();
+        var candidates=new List<ContextCandidate>();
+        bool Promo(string t)=>Regex.IsMatch(t,@"\b(?:win\s*[! ]|competition|contest|prizes?|giveaway|clubs?|order form|sweepstakes|advertisement|mail order)\b",RegexOptions.IgnoreCase);
+        bool Editorial(string t)=>Regex.IsMatch(t,@"\b(?:exclusive|sneak(?:y)?\s+(?:peek|look)|preview|review(?:ed)?|first look|solution|walk[ -]?through|players?['’]? guide|strategy|see pages?\s+\d+)\b",RegexOptions.IgnoreCase);
+        bool Align(LayoutLine a,LayoutLine b)=>Math.Min(a.X+a.Width,b.X+b.Width)-Math.Max(a.X,b.X)>Math.Min(a.Width,b.Width)*.3;
+        void AddCandidate(string title,int page,string evidence,double size,bool editorial,bool cover)
+        {
+            if(!ValidCoverSubject(title,item.MagazineTitle))return;
+            candidates.Add(new(0,title,page,evidence[..Math.Min(evidence.Length,420)],size,editorial,cover));
+        }
+        void Check(string printed,LayoutLine first,LayoutLine last)
+        {
+            string clean=Regex.Replace(printed.Trim(),@"^(?:exclusive|massive|huge|major|first look at)\s*[!:]?\s+|\s+(?:preview|review|solution|walkthrough)[!:.]*$","",RegexOptions.IgnoreCase);
+            if(!dictionary.TryGetValue(Normalize(clean),out var match)&&!dictionary.TryGetValue("\0"+ListingKey(clean),out match))return;
+            int top=first.Y,bottom=last.Y+last.Height;
+            var near=lines.Where(n=>Align(first,n)&&n.Y>=top-height*.055&&n.Y<=bottom+height*.065).OrderBy(n=>n.Y).Select(n=>n.Text).ToArray();
+            string context=string.Join(" | ",near);
+            double size=(double)Math.Max(first.Height,last.Height)/height;
+            bool editorial=Editorial(context);
+            // Never promote a prize or contest into the primary headline. Large editorial titles may have a nearby unrelated contest below.
+            if(Promo(printed)||(!editorial&&Promo(context))||(size<.022&&Promo(context)))return;
+            if(size<.022&&!editorial)return;
+            if(!editorial&&size<.045)return;
+            AddCandidate(match.Display,1,$"Printed '{printed}' | box {first.X},{first.Y},{first.Width},{first.Height} | nearby: {context}",size,editorial,true);
+        }
+        foreach(var l in lines)
+        {
+            Check(l.Text,l,l);
+            foreach(var n in lines.Where(n=>n.Y>l.Y&&n.Y-(l.Y+l.Height)<=Math.Max(l.Height,n.Height)*1.2&&Align(l,n)).OrderBy(n=>n.Y).Take(3))
+                Check(l.Text+" "+n.Text,l,n);
+        }
+        // Printed dedication is stronger than incidental coverage of other platforms.
+        foreach(var l in lines)
+        {
+            var m=Regex.Match(l.Text,@"\b(?:100\s*%\s*(?:SEGA\s+)?|dedicated\s+(?:100\s*%\s*)?to\s+(?:the\s+)?(?:SEGA\s+)?)(MASTER SYSTEM|GAME GEAR|MEGA DRIVE|SEGA SATURN)\b",RegexOptions.IgnoreCase);
+            if(!m.Success)continue;
+            string platform=m.Groups[1].Value.ToUpperInvariant() switch {"MASTER SYSTEM"=>"Sega Master System","GAME GEAR"=>"Sega Game Gear","MEGA DRIVE"=>"Sega Genesis",_=>"Sega Saturn"};
+            suggestions.Add(new("platformFocus",platform,1,l.Text,"Printed cover dedication"));
+            suggestions.Add(new("primarySystem",platform,1,l.Text,"Printed cover dedication"));
+        }
+        // Explicit early-page editorial evidence can corroborate cover candidates and featured games.
+        foreach(var s in suggestions.Where(s=>s.Page>=1&&s.Page<=5&&(s.Field=="featuredGames"||s.Field=="coverSubject")&&!Promo(s.Evidence)&&!ArticleNoise(s.Evidence)).ToArray())
+        {
+            bool explicitCover=s.Confidence=="Explicit contents cover story";
+            if(explicitCover||s.Field=="featuredGames"&&Editorial(s.Evidence))AddCandidate(s.Value,s.Page,s.Evidence,0,true,explicitCover);
+        }
+        var coverOptions=candidates.Where(c=>c.Cover).GroupBy(c=>ListingKey(c.Title)).Select(g=>g.OrderByDescending(c=>c.Size*(c.Editorial?1.5:1)).ThenByDescending(c=>c.Editorial).First()).OrderByDescending(c=>c.Size*(c.Editorial?1.5:1)).Take(8).ToArray();
+        var featured=candidates.Where(c=>!c.Cover&&c.Editorial).GroupBy(c=>ListingKey(c.Title)).Select(g=>g.First()).Take(12);
+        var options=coverOptions.Concat(featured).Select((c,i)=>c with {Id=i+1}).ToArray();
+        if(options.Length==0)return;
+        // A single conspicuous editorial headline is sufficient without trusting model output.
+        var strongest=coverOptions.FirstOrDefault();
+        bool clear=strongest is not null&&strongest.Editorial&&strongest.Size>=.035&&(coverOptions.Length==1||strongest.Size>=coverOptions[1].Size*1.4);
+        void Accept(ContextCandidate c,string reason)
+        {
+            suggestions.Add(new("coverSubject",c.Title,c.Page,c.Evidence+" | "+reason,"Contextual editorial cover"));
+            suggestions.Add(new("featuredGames",c.Title,c.Page,c.Evidence,"Contextual editorial cover"));
+        }
+        if(clear)Accept(strongest!,"Prominent exact title with aligned editorial wording");
+        // Never let generated text overwrite measured facts. Send bounded text snippets, not images.
+        var request=new { candidates=options.Select(c=>new {id=c.Id,title=c.Title,page=c.Page,evidence=c.Evidence,relativeHeight=c.Size,editorial=c.Editorial,coverEligible=c.Cover}), pages=opening.Select(p=>new {page=p.Page,text=p.Text[..Math.Min(p.Text.Length,p.Page==1?900:1100)]}) };
+        string path=Path.Combine(Path.GetTempPath(),"guidevault-context-"+Guid.NewGuid().ToString("N")+".json");
+        try
+        {
+            await File.WriteAllTextAsync(path,System.Text.Json.JsonSerializer.Serialize(request),token);
+            const string script="/opt/guidevault-vision/cover_ocr.py";
+            if((await Run("/opt/guidevault-vision/bin/python",[script,"--semantic-self-test"],token)).Trim()!="guidevault-semantic-v7.2")throw new InvalidOperationException("Semantic runtime revision mismatch");
+            var answer=await Run("/opt/guidevault-vision/bin/python",[script,"--semantic",path],token,180);
+            using var reply=System.Text.Json.JsonDocument.Parse(answer);
+            var r=reply.RootElement;
+            if(!clear&&r.TryGetProperty("coverId",out var selected)&&selected.ValueKind==System.Text.Json.JsonValueKind.Number&&selected.TryGetInt32(out int id))
+            {
+                var pick=options.FirstOrDefault(c=>c.Id==id&&c.Cover&&c.Editorial);
+                // A model selection must have printed editorial evidence, and may not override a much larger eligible headline.
+                if(pick is not null&&(pick.Size>=.022||pick.Page>1)&&(strongest is null||strongest.Size<=pick.Size*2||pick.Page>1))Accept(pick,"Semantic selection from printed candidates — verify");
+            }
+            if(r.TryGetProperty("featuredIds",out var ids)&&ids.ValueKind==System.Text.Json.JsonValueKind.Array)
+                foreach(var value in ids.EnumerateArray().Take(12))
+                    if(value.ValueKind==System.Text.Json.JsonValueKind.Number&&value.TryGetInt32(out int id2))
+                    {
+                        var pick=options.FirstOrDefault(c=>c.Id==id2&&!c.Cover&&c.Editorial);
+                        if(pick is not null)suggestions.Add(new("featuredGames",pick.Title,pick.Page,pick.Evidence,"Semantic editorial evidence — verify"));
+                    }
+            suggestions.Add(new("coverDiagnostic","Qwen2.5-0.5B",1,$"{options.Length} constrained candidates; {opening.Count} opening pages; model output validated against printed evidence","Contextual interpretation"));
+        }
+        catch(Exception ex) when(ex is not OperationCanceledException){warnings.Add("Semantic interpretation unavailable; retained printed-evidence analysis: "+ex.Message);}
+        finally{try{File.Delete(path);}catch{}}
     }
 
     private static string RemapCoverTsv(string tsv,int offsetX,int offsetY,int width,int height)
