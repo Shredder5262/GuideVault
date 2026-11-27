@@ -11,7 +11,7 @@ public static class GuidevaultMagazineContentScanner
     public sealed record Suggestion(string Field, string Value, int Page, string Evidence, string Confidence);
     public sealed record ScanResult(int TotalPages, int Start, int Scanned, int ReadablePages, List<Suggestion> Suggestions, List<string> Warnings)
     {
-        public string ScannerRevision => "v7.2.1";
+        public string ScannerRevision => "v7.2.2";
         public int CachedPages { get; init; }
     }
     private static readonly SemaphoreSlim Gate = new(1, 1);
@@ -30,6 +30,45 @@ public static class GuidevaultMagazineContentScanner
         }
         OcrCache[key]=value; OcrOrder.Enqueue(key); OcrCharacters+=value.Length;
     }
+    private static string? CatalogFingerprint;
+    private static readonly Dictionary<(int Year,string Scope),Dictionary<string,CatalogTitle>> CatalogIndexes = new();
+    private static Dictionary<string,CatalogTitle> CachedDictionary(GuidevaultLaunchBoxGame[] games,int year,string scope,string fingerprint)
+    {
+        if(CatalogFingerprint!=fingerprint){CatalogIndexes.Clear();CatalogFingerprint=fingerprint;}
+        var key=(year,scope);
+        if(CatalogIndexes.TryGetValue(key,out var existing))return existing;
+        var index=BuildDictionary(games,year);
+        if(CatalogIndexes.Count>=4)CatalogIndexes.Clear();
+        CatalogIndexes[key]=index;
+        return index;
+    }
+    private static string FingerprintCatalog(GuidevaultLaunchBoxGame[] games)
+    {
+        var bytes=System.Text.Json.JsonSerializer.SerializeToUtf8Bytes(games.Select(g=>new {g.Title,g.Platform,g.ReleaseYear,g.AlternateNames}));
+        return Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(bytes));
+    }
+    // The disk cache stores successful interior OCR only, never page images or metadata.
+    private static string OcrDiskPath((string Path,long Size,long Modified,int Page) key)
+    {
+        string identity=System.Text.Json.JsonSerializer.Serialize(new {key.Path,key.Size,key.Modified,key.Page,Version="interior-tsv-v722"});
+        return Path.Combine(Environment.GetEnvironmentVariable("GUIDEVAULT_DATA")??"/data","magazine-ocr-cache","v7.2.2",Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(Encoding.UTF8.GetBytes(identity)))+".tsv");
+    }
+    private static async Task<string?> ReadOcrDisk((string Path,long Size,long Modified,int Page) key,CancellationToken token)
+    {
+        if(key.Page<=3)return null; // opening pages include extra date/margin passes; retain original policy.
+        try { var path=OcrDiskPath(key); var info=new FileInfo(path); if(!info.Exists||info.Length<=0||info.Length>2_000_000)return null; var text=await File.ReadAllTextAsync(path,token); if(!text.StartsWith("level\tpage_num\t",StringComparison.Ordinal)||Words.Matches(text).Count<=30)return null; File.SetLastWriteTimeUtc(path,DateTime.UtcNow);return text; }
+        catch(Exception ex) when(ex is not OperationCanceledException){return null;}
+    }
+    private static async Task WriteOcrDisk((string Path,long Size,long Modified,int Page) key,string text,CancellationToken token)
+    {
+        if(key.Page<=3||Encoding.UTF8.GetByteCount(text)>2_000_000)return;
+        string? tmp=null;
+        try { var path=OcrDiskPath(key);var dir=Path.GetDirectoryName(path)!;Directory.CreateDirectory(dir);tmp=path+".tmp";await File.WriteAllTextAsync(tmp,text,token);File.Move(tmp,path,true);
+            var files=new DirectoryInfo(dir).EnumerateFiles("*.tsv").OrderBy(f=>f.LastWriteTimeUtc).ToArray();long size=files.Sum(f=>f.Length);int count=files.Length;
+            foreach(var f in files){if(size<=128L*1024*1024&&count<=512)break;long length=f.Length;f.Delete();size-=length;count--;}
+        } catch(Exception ex) when(ex is not OperationCanceledException){} finally{if(tmp is not null)try{File.Delete(tmp);}catch{}}
+    }
+    private static DateTime SemanticRetryAfterUtc=DateTime.MinValue;
     private static readonly Regex Words = new(@"[\p{L}\p{N}]+", RegexOptions.Compiled);
     private static readonly Regex YearPattern = new(@"\b(?:19|20)\d{2}\b", RegexOptions.Compiled);
     private const string Months = "January|February|March|April|May|June|July|August|September|October|November|December|Jan|Feb|Mar|Apr|Jun|Jul|Aug|Sep|Sept|Oct|Nov|Dec";
@@ -55,6 +94,7 @@ public static class GuidevaultMagazineContentScanner
         string temp = Path.Combine(Path.GetTempPath(), "guidevault-magscan-" + Guid.NewGuid().ToString("N"));
         try
         {
+            var requestTimer=Stopwatch.StartNew();
             Directory.CreateDirectory(temp);
             bool pdf = string.Equals(item.Format, "PDF", StringComparison.OrdinalIgnoreCase);
             int total = pdf ? ParsePdfPages(await Run("pdfinfo", [item.Path], token)) : await ArchiveReader.GetImagePageCountAsync(item.Path);
@@ -66,12 +106,15 @@ public static class GuidevaultMagazineContentScanner
                 result.Suggestions.Add(new("pageCount", total.ToString(), 0, "Document reader page/image count; printed page numbering or double-page scans may differ.", "Measured"));
                 if (!pdf) await AddArchiveMetadata(item, result.Suggestions);
             }
+            var catalogTimer=Stopwatch.StartNew();
             var catalog = games.ToArray();
+            string fingerprint=FingerprintCatalog(catalog);
             var year = GetYear(item.CoverDate + " " + item.PublicationDate + " " + item.Year);
-            var dictionary = BuildDictionary(catalog, year);
+            var dictionary = CachedDictionary(catalog,year,"all",fingerprint);
             var focus = new[] { item.PrimarySystem, item.PlatformFocus }.Where(v => !string.IsNullOrWhiteSpace(v)).ToArray();
             var local = catalog.Where(g => focus.Any(v => Normalize(v) == Normalize(g.Platform))).ToArray();
-            var coverDictionary = local.Length > 0 ? BuildDictionary(local, year) : dictionary;
+            var coverDictionary = start==0 && local.Length > 0 ? CachedDictionary(local,year,"focus:"+string.Join("|",focus.Select(Normalize).OrderBy(v=>v,StringComparer.Ordinal)),fingerprint) : dictionary;
+            result.Suggestions.Add(new("scanTiming","Catalog/index",start+1,$"{catalogTimer.Elapsed.TotalSeconds:F2}s; {catalog.Length} catalog entries","Timing"));
             var sourceInfo = new FileInfo(item.Path);
             bool fullVision = engine is "full" or "vision";
             bool visionOnly = engine == "vision";
@@ -97,8 +140,12 @@ public static class GuidevaultMagazineContentScanner
                 token.ThrowIfCancellationRequested();
                 try
                 {
+                    var ocrTimer=Stopwatch.StartNew();
                     var cacheKey=(sourceInfo.FullName,sourceInfo.Length,sourceInfo.LastWriteTimeUtc.Ticks,i);
-                    if (!OcrCache.TryGetValue(cacheKey,out var tsv))
+                    bool cacheHit=OcrCache.TryGetValue(cacheKey,out var tsv);
+                    if(!cacheHit){tsv=await ReadOcrDisk(cacheKey,token);if(tsv is not null){cacheHit=true;RememberOcr(cacheKey,tsv);}}
+                    int ocrPasses=0;
+                    if (!cacheHit)
                     {
                     string input;
                     if (pdf)
@@ -116,13 +163,14 @@ public static class GuidevaultMagazineContentScanner
                         input = Path.Combine(temp, "page.img");
                         await File.WriteAllBytesAsync(input, image.Value.Bytes, token);
                     }
+                    ocrPasses++;
                     tsv = await Run("tesseract", [input, "stdout", "-l", "eng", "--psm", i == 0 ? "11" : "3", "tsv"], token);
                     bool completeOcr = true;
                     if (i == 0)
                     {
                         foreach (var mode in new[] { "3", "6", "12" })
                         {
-                            try { tsv += "\n\f\n" + await Run("tesseract", [input, "stdout", "-l", "eng", "--psm", mode, "tsv"], token); }
+                            try { ocrPasses++; tsv += "\n\f\n" + await Run("tesseract", [input, "stdout", "-l", "eng", "--psm", mode, "tsv"], token); }
                             catch (Exception ex) when (ex is not OperationCanceledException) { completeOcr = false; result.Warnings.Add($"Cover OCR mode {mode}: {ex.Message}"); }
                         }
                     }
@@ -136,15 +184,23 @@ public static class GuidevaultMagazineContentScanner
                             {
                                 int x=(int)(cover.Width*region.X),y=(int)(cover.Height*region.Y);
                                 int w=Math.Max(1,Math.Min(cover.Width-x,(int)(cover.Width*region.W))),h=Math.Max(1,Math.Min(cover.Height-y,(int)(cover.Height*region.H)));
-                                foreach(int variant in new[]{0,1,2})
+                                // Prefer the contrast variant, then retry both remaining variants for weak regions.
+                                bool exhaustive=Environment.GetEnvironmentVariable("GUIDEVAULT_COVER_OCR_FULL")=="1";
+                                foreach(int variant in new[]{1,0,2})
                                 {
                                     using var crop=cover.Clone(c=>c.Crop(new Rectangle(x,y,w,h)).Grayscale());
                                     if(variant==1)crop.Mutate(c=>c.Contrast(1.5f).Invert());
                                     if(variant==2)crop.Mutate(c=>c.BinaryThreshold(0.65f).Invert());
                                     var cropPath=Path.Combine(temp,"cover-region.png");
                                     await crop.SaveAsPngAsync(cropPath,token);
+                                    ocrPasses++;
                                     var regional=await Run("tesseract",[cropPath,"stdout","-l","eng","--psm","11","tsv"],token);
                                     tsv += "\u001d" + RemapCoverTsv(regional,x,y,cover.Width,cover.Height);
+                                    if(variant==1&&!exhaustive)
+                                    {
+                                        var readable=ParseLayout(regional).Lines.Where(l=>l.Confidence>=80).ToArray();
+                                        if(readable.Length>=3&&readable.Sum(l=>Words.Matches(l.Text).Count)>=12)break;
+                                    }
                                 }
                             }
                         }
@@ -162,15 +218,18 @@ public static class GuidevaultMagazineContentScanner
                                 using var margin=image.Clone(c=>c.Crop(new Rectangle(x,0,w,image.Height)).Rotate(angle));
                                 var marginPath=Path.Combine(temp,"margin.png");
                                 await margin.SaveAsPngAsync(marginPath,token);
+                                ocrPasses++;
                                 tsv += "\u001e" + await Run("tesseract",[marginPath,"stdout","-l","eng","--psm","11"],token);
                             }
                         }
                         catch(Exception ex) when(ex is not OperationCanceledException){completeOcr=false;result.Warnings.Add($"Page {i+1} margin OCR: {ex.Message}");}
                     }
-                    if (completeOcr && Words.Matches(tsv).Count > 30) RememberOcr(cacheKey,tsv);
+                    if (completeOcr && Words.Matches(tsv).Count > 30) {RememberOcr(cacheKey,tsv);await WriteOcrDisk(cacheKey,tsv,token);}
                     }
                     else result = result with { CachedPages = result.CachedPages + 1 };
-                    var sections=tsv.Split('\u001e');
+                    result.Suggestions.Add(new("scanTiming","OCR / extraction",i+1,$"{ocrTimer.Elapsed.TotalSeconds:F2}s; {(cacheHit?"cache hit":$"{ocrPasses} Tesseract passes")}","Timing"));
+                    var analysisTimer=Stopwatch.StartNew();
+                    var sections=tsv!.Split('\u001e');
                     var coverSections=sections[0].Split('\u001d');
                     var passes = coverSections[0].Split('\f', StringSplitOptions.RemoveEmptyEntries).Select(x => ParseLayout(x.TrimStart('\r','\n'))).ToArray();
                     var layout = passes.OrderByDescending(p => p.Lines.Sum(l => Words.Matches(l.Text).Count * Math.Max(0,l.Confidence))).First();
@@ -219,6 +278,7 @@ public static class GuidevaultMagazineContentScanner
                         result.Warnings.Add($"Page {i + 1}: little or no readable text.");
                         if (balanced && i > 0 && i <= 3) refinePages.Add(i);
                     }
+                result.Suggestions.Add(new("scanTiming","OCR evidence analysis",i+1,$"{analysisTimer.Elapsed.TotalSeconds:F2}s","Timing"));
                 }
                 catch (Exception ex) when (ex is not OperationCanceledException)
                 {
@@ -227,6 +287,7 @@ public static class GuidevaultMagazineContentScanner
                 }
                 result = result with { Scanned = result.Scanned + 1 };
             }
+            var visionTimer=Stopwatch.StartNew();
             if (fullVision || (balanced && refinePages.Count > 0))
             {
                 var batch = new List<(int Index,string? Json,bool Cached)>();
@@ -292,11 +353,15 @@ public static class GuidevaultMagazineContentScanner
                     result.Warnings.Add($"Experimental vision failed; standard OCR retained: {ex.Message}");
                 }
             }
+            result.Suggestions.Add(new("scanTiming","Vision phase",start+1,$"{visionTimer.Elapsed.TotalSeconds:F2}s (includes extraction, cache lookup, inference and analysis)","Timing"));
+            var semanticTimer=Stopwatch.StartNew();
             // Offer canonical replacements for previously saved abbreviations only when
             // the same canonical game is independently detected in this scan chunk.
             if(balanced && start==0 && coverVision is not null)
                 await AnalyzeOpeningContext(item,coverDictionary,coverVision,openingPages,result.Suggestions,result.Warnings,token);
             else if(balanced && start==0) result.Suggestions.Add(new("coverDiagnostic","Qwen2.5-0.5B",1,"Cover vision unavailable","Semantic skipped"));
+            result.Suggestions.Add(new("scanTiming","Context / semantic phase",start+1,$"{semanticTimer.Elapsed.TotalSeconds:F2}s","Timing"));
+            var reconcileTimer=Stopwatch.StartNew();
             var observedGames = result.Suggestions.Where(s => s.Field == "featuredGames" || s.Field == "mentionedGames" || s.Field == "coverSubject").ToArray();
             var storedNames = (item.FeaturedGames ?? Array.Empty<string>()).Concat(item.MentionedGames ?? Array.Empty<string>()).Append(item.CoverSubject ?? "");
             foreach (var stored in storedNames.Where(v => !string.IsNullOrWhiteSpace(v)).Distinct(StringComparer.OrdinalIgnoreCase))
@@ -345,6 +410,8 @@ public static class GuidevaultMagazineContentScanner
                     result.Suggestions.Add(new("publisher", "Paragon Publishing", 0, "Publication reference: UK Games Magazines, Saturn Plus Issue Three (ukgamesmags.com/issues/saturn-plus-issue-three); verify against issue credits.", "Publication reference — verify"));
             }
             if (dictionary.Count == 0) result.Warnings.Add("No usable LaunchBox game names; game coverage suggestions are unavailable.");
+            result.Suggestions.Add(new("scanTiming","Reconciliation",start+1,$"{reconcileTimer.Elapsed.TotalSeconds:F2}s","Timing"));
+            result.Suggestions.Add(new("scanTiming","Request total",start+1,$"{requestTimer.Elapsed.TotalSeconds:F2}s","Timing"));
             return result;
         }
         finally { try { Directory.Delete(temp, true); } catch { } Gate.Release(); }
@@ -1732,6 +1799,11 @@ public static class GuidevaultMagazineContentScanner
             suggestions.Add(new("featuredGames",c.Title,c.Page,c.Evidence,"Contextual editorial cover"));
         }
         if(clear)Accept(strongest!,"Prominent exact title with aligned editorial wording");
+        var accepted=suggestions.Where(x=>x.Field=="coverSubject"&&(x.Confidence=="Dominant visual cover — verify"||x.Confidence=="Contextual editorial cover"||x.Confidence=="Explicit contents cover story")).Select(x=>ListingKey(x.Value)).Distinct().ToArray();
+        if(accepted.Length==1 && (strongest is null||ListingKey(strongest.Title)==accepted[0]) && !coverOptions.Any(c=>c.Page>1&&ListingKey(c.Title)!=accepted[0]))
+        {suggestions.Add(new("coverDiagnostic","Qwen2.5-0.5B",1,"Unique accepted visual/editorial cover; existing OCR and contents evidence retained","Semantic skipped — decisive evidence"));return;}
+        if(DateTime.UtcNow<SemanticRetryAfterUtc)
+        {suggestions.Add(new("coverDiagnostic","Qwen2.5-0.5B",1,"Previous semantic runtime failure; temporarily using printed evidence","Semantic skipped — cooldown"));return;}
         // Never let generated text overwrite measured facts. Send bounded text snippets, not images.
         var request=new { candidates=options.Select(c=>new {id=c.Id,title=c.Title,page=c.Page,evidence=c.Evidence,relativeHeight=c.Size,editorial=c.Editorial,coverEligible=c.Cover}), pages=opening.Select(p=>new {page=p.Page,text=p.Text[..Math.Min(p.Text.Length,p.Page==1?900:1100)]}) };
         string path=Path.Combine(Path.GetTempPath(),"guidevault-context-"+Guid.NewGuid().ToString("N")+".json");
@@ -1739,7 +1811,7 @@ public static class GuidevaultMagazineContentScanner
         {
             await File.WriteAllTextAsync(path,System.Text.Json.JsonSerializer.Serialize(request),token);
             const string script="/opt/guidevault-vision/cover_ocr.py";
-            if((await Run("/opt/guidevault-vision/bin/python",[script,"--semantic-self-test"],token)).Trim()!="guidevault-semantic-v7.2")throw new InvalidOperationException("Semantic runtime revision mismatch");
+            if((await Run("/opt/guidevault-vision/bin/python",[script,"--semantic-self-test"],token)).Trim()!="guidevault-semantic-v7.2.2")throw new InvalidOperationException("Semantic runtime revision mismatch");
             var answer=await Run("/opt/guidevault-vision/bin/python",[script,"--semantic",path],token,180);
             using var reply=System.Text.Json.JsonDocument.Parse(answer);
             var r=reply.RootElement;
@@ -1759,7 +1831,7 @@ public static class GuidevaultMagazineContentScanner
                     }
             suggestions.Add(new("coverDiagnostic","Qwen2.5-0.5B",1,$"{options.Length} constrained candidates; {opening.Count} opening pages; model output validated against printed evidence","Contextual interpretation"));
         }
-        catch(Exception ex) when(ex is not OperationCanceledException){warnings.Add("Semantic interpretation unavailable; retained printed-evidence analysis: "+ex.Message);suggestions.Add(new("coverDiagnostic","Qwen2.5-0.5B",1,ex.Message,"Semantic failed"));}
+        catch(Exception ex) when(ex is not OperationCanceledException){SemanticRetryAfterUtc=DateTime.UtcNow.AddMinutes(10);warnings.Add("Semantic interpretation unavailable; retained printed-evidence analysis: "+ex.Message);suggestions.Add(new("coverDiagnostic","Qwen2.5-0.5B",1,ex.Message,"Semantic failed"));}
         finally{try{File.Delete(path);}catch{}}
     }
 
@@ -2009,7 +2081,7 @@ public static class GuidevaultMagazineContentScanner
         process.Start();
         using var timeout = CancellationTokenSource.CreateLinkedTokenSource(token); timeout.CancelAfter(TimeSpan.FromSeconds(timeoutSeconds));
         var output = process.StandardOutput.ReadToEndAsync(timeout.Token); var error = process.StandardError.ReadToEndAsync(timeout.Token);
-        try { await process.WaitForExitAsync(timeout.Token); var stdout = await output; var stderr = await error; if (process.ExitCode != 0) throw new InvalidOperationException($"{executable} returned exit code {process.ExitCode}." + (timeoutSeconds>35 ? " "+stderr.Substring(Math.Max(0,stderr.Length-1800)) : "")); return stdout; }
+        try { await process.WaitForExitAsync(timeout.Token); var stdout = await output; var stderr = await error; if (process.ExitCode != 0) throw new InvalidOperationException($"{executable} returned exit code {process.ExitCode}." + (timeoutSeconds>35 ? " "+(stderr.Length<=3000?stderr:stderr[..1500]+" ... "+stderr[^1500..]) : "")); return stdout; }
         catch (OperationCanceledException) { try { if (!process.HasExited) process.Kill(true); } catch { } if (token.IsCancellationRequested) throw; throw new InvalidOperationException($"{executable} timed out."); }
         finally { try { if (!process.HasExited) process.Kill(true); } catch { } }
     }
