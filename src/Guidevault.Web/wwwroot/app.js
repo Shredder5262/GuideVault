@@ -18663,6 +18663,56 @@ function gvOpenInlineMagazineScan() {
   host.replaceChildren();
   gvMagazineScanDialog([item], true, host);
 }
+// v8 Phase 1: independent persistent extraction and search; legacy metadata scan remains unchanged.
+function gvAttachDocumentIndex(dialog, session, item) {
+  const panel=document.createElement('section'); panel.className='gv-magscan-content';
+  panel.innerHTML=`<h2>Document Index <small>v8.0 Phase 1</small></h2><p class="sub">Extract readable page text once and retain it for future metadata interpretation. No magazine metadata is changed.</p><p class="sub" data-index-status aria-live="polite">Checking document index…</p><progress data-index-progress value="0" max="1"></progress><div class="gv-magscan-actions"><button type="button" class="primary" data-index-start>Index / Resume</button><button type="button" class="ghost" data-index-force>Re-index document</button><button type="button" class="ghost" data-index-stop hidden>Stop</button></div><div class="gv-magscan-actions"><input type="search" data-index-query placeholder="Search indexed text" aria-label="Search indexed text"><button type="button" class="ghost" data-index-search>Search</button><input type="number" min="1" value="1" data-index-page aria-label="Page number"><button type="button" class="ghost" data-index-view>View page</button></div><p class="sub" data-index-message aria-live="polite"></p><div data-index-results></div><hr>`;
+  dialog.prepend(panel);
+  const q=s=>panel.querySelector(s), status=q('[data-index-status]'), message=q('[data-index-message]'), progress=q('[data-index-progress]'), results=q('[data-index-results]');
+  const endpoint=`/api/items/${encodeURIComponent(metadataManagerItemId(item))}/document-index`;
+  let busy=false, controller=null, current=null;
+  const buttons=[q('[data-index-start]'),q('[data-index-force]'),q('[data-index-search]'),q('[data-index-view]')];
+  async function api(params={},method='GET',signal) {
+    const res=await fetch(endpoint+'?'+new URLSearchParams(params),{method,signal});
+    if(!res.ok){let msg=`HTTP ${res.status}`;try{const e=await res.json();msg=e.error||e.detail||msg;}catch{}throw new Error(msg);}
+    return res.json();
+  }
+  function showStatus(s) {
+    current=s;const total=Number(s.totalPages||0), done=(s.indexedPages||[]).length, warnings=(s.warningPages||[]).length;
+    progress.max=Math.max(1,total);progress.value=done;
+    status.textContent=total?`${done} / ${total} pages indexed · ${warnings} sparse-text page(s) · ${s.extractionSeconds||0}s recorded extraction time${done===total?' · Complete':''}`:'Not indexed for the current source file.';
+    q('[data-index-page]').max=String(Math.max(1,total));
+  }
+  async function refresh(){try{showStatus(await api());}catch(e){status.textContent=e.message;}}
+  function showText(page,text,source){const details=document.createElement('details');details.open=true;const summary=document.createElement('summary');summary.textContent=`Page ${page} · ${source}`;const body=document.createElement('pre');body.style.whiteSpace='pre-wrap';body.style.overflowWrap='anywhere';body.textContent=text||'(No readable text)';details.append(summary,body);results.append(details);}
+  async function run(force){
+    if(busy||session.running){message.textContent='Another scan is active.';return;}
+    if(force&&!window.confirm('Re-extract every page? Existing indexed pages will be replaced only after each successful extraction.'))return;
+    busy=true;session.running=true;controller=new AbortController();session.controller=controller;
+    const legacy=['[data-scan-start]','[data-scan-stage]','[data-scan-close]'].map(s=>dialog.querySelector(s)).filter(Boolean);const previous=legacy.map(b=>b.disabled);legacy.forEach(b=>b.disabled=true);
+    buttons.forEach(b=>b.disabled=true);q('[data-index-stop]').hidden=false;message.textContent='';const start=Date.now();let activity='Preparing index…', errors=[];
+    const tick=()=>{status.textContent=`${activity} · elapsed ${Math.floor((Date.now()-start)/1000)}s`;};const clock=setInterval(tick,1000);tick();
+    try{
+      const s=await api({page:0},'POST',controller.signal);showStatus(s);const done=new Set(s.indexedPages||[]);progress.max=s.totalPages;progress.value=force?0:done.size;
+      let processed=0;
+      for(let page=1;page<=s.totalPages;page++){
+        if(controller.signal.aborted)throw new Error('Stopped');
+        if(!force&&done.has(page))continue;
+        activity=`Indexing page ${page} of ${s.totalPages}`;tick();
+        try{await api({page,fingerprint:s.fingerprint,force:String(force)},'POST',controller.signal);done.add(page);processed++;progress.value=force?processed:done.size;}
+        catch(e){if(controller.signal.aborted)throw e;errors.push(`Page ${page}: ${e.message}`);break;}
+      }
+      message.textContent=errors.length?`Index paused: ${errors.join('; ')}. Resume after resolving the error.`:'Indexing finished. No metadata was modified.';
+    }catch(e){message.textContent=controller.signal.aborted?'Indexing stopped. Completed pages retained.':e.message;}
+    finally{clearInterval(clock);busy=false;session.running=false;session.controller=null;controller=null;buttons.forEach(b=>b.disabled=false);legacy.forEach((b,i)=>b.disabled=previous[i]);q('[data-index-stop]').hidden=true;if(panel.isConnected)await refresh();}
+  }
+  q('[data-index-start]').onclick=()=>run(false);q('[data-index-force]').onclick=()=>run(true);q('[data-index-stop]').onclick=()=>{message.textContent='Stopping…';controller?.abort();};
+  q('[data-index-view]').onclick=async()=>{if(busy||session.running)return;results.replaceChildren();try{const p=await api({page:q('[data-index-page]').value});message.textContent=`${p.source} · ${p.width} × ${p.height} ${p.units} · ${p.seconds}s${p.warning?' · '+p.warning:''}`;showText(p.page,p.text,p.source);}catch(e){message.textContent=e.message;}};
+  q('[data-index-search]').onclick=async()=>{if(busy||session.running)return;results.replaceChildren();const term=q('[data-index-query]').value.trim();if(term.length<2||term.length>200){message.textContent='Enter 2–200 characters to search.';return;}try{const found=await api({q:term});message.textContent=`${found.matchingPages||0} matching pages (up to 100 shown)`;for(const p of found.hits||[])showText(p.page,p.snippet,p.source);}catch(e){message.textContent=e.message;}};
+  q('[data-index-query]').addEventListener('keydown',e=>{if(e.key==='Enter'){e.preventDefault();q('[data-index-search]').click();}});
+  refresh();
+}
+
 function gvMagazineScanDialog(items, fromDetail = false, inlineHost = null) {
   if (!currentUserIsAdmin() || gvMagazineScanSession) return;
   items = items.filter(item => item?.kind === 'Magazine');
@@ -18674,6 +18724,7 @@ function gvMagazineScanDialog(items, fromDetail = false, inlineHost = null) {
   const q = s => dialog.querySelector(s);
   const session = { controller:null, running:false, rows:[], dialog, inline:!!inlineHost, itemId:metadataManagerItemId(items[0]) };
   gvMagazineScanSession = session;
+  if (inlineHost && items.length === 1) gvAttachDocumentIndex(dialog, session, items[0]);
   function close() { if (session.running) return; if (inlineHost) gvDisposeInlineMagazineScan(); else dialog.close(); }
   if (inlineHost) {
     q('[data-scan-close]').textContent = 'Back to Metadata';

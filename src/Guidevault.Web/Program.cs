@@ -2958,6 +2958,49 @@ app.MapPut("/api/items/{id}/metadata", (string id, JsonElement payload) =>
 });
 
 // Magazine OCR scan v1: admin-only, read-only suggestions, bounded page chunks.
+// Document index v8 Phase 1: admin-only; library metadata is never changed.
+app.MapGet("/api/items/{id}/document-index", async (HttpRequest request, string id, int? page, string? q) =>
+{
+    if (CurrentGuidevaultUser(request)?.IsAdmin != true) return (IResult)Results.StatusCode(403);
+    var item = VisibleLibraryItems(request, cache.GetItemsSnapshot()).FirstOrDefault(i => i.Id == id);
+    if (item is null) return Results.NotFound();
+    if (item.Kind != "Magazine" || !File.Exists(item.Path)) return Results.BadRequest(new { error = "A readable magazine issue is required." });
+    var token = request.HttpContext.RequestAborted;
+    try
+    {
+        if (page.HasValue)
+        {
+            var record = await GuidevaultDocumentIndex.GetPageAsync(dataRoot, item, page.Value, token);
+            return record is null ? (IResult)Results.NotFound() : Results.Ok(record);
+        }
+        if (!string.IsNullOrWhiteSpace(q)) return Results.Ok(await GuidevaultDocumentIndex.SearchAsync(dataRoot,item,q,token));
+        return Results.Ok(await GuidevaultDocumentIndex.StatusAsync(dataRoot,item,token));
+    }
+    catch (OperationCanceledException) { return Results.StatusCode(499); }
+    catch (InvalidOperationException ex) { return Results.BadRequest(new { error = ex.Message }); }
+    catch (Exception) { return Results.Problem("Could not read the document index."); }
+});
+app.MapPost("/api/items/{id}/document-index", async (HttpRequest request, string id, int? page, string? fingerprint, bool? force) =>
+{
+    if (CurrentGuidevaultUser(request)?.IsAdmin != true) return (IResult)Results.StatusCode(403);
+    var item = VisibleLibraryItems(request, cache.GetItemsSnapshot()).FirstOrDefault(i => i.Id == id);
+    if (item is null) return Results.NotFound();
+    if (item.Kind != "Magazine" || !File.Exists(item.Path)) return Results.BadRequest(new { error = "A readable magazine issue is required." });
+    if (!GuidevaultLibraryIoGate.TryBeginArchiveWrite(out var lease, out var message, allowConcurrentArchiveReads: true) || lease is null)
+        return Results.Conflict(new { error = message });
+    using var indexLease = lease;
+    var token = request.HttpContext.RequestAborted;
+    try
+    {
+        if (!page.HasValue || page.Value == 0) return Results.Ok(await GuidevaultDocumentIndex.InitializeAsync(dataRoot,item,token));
+        var record = await GuidevaultDocumentIndex.IndexPageAsync(dataRoot,item,page.Value,fingerprint,force==true,token);
+        return Results.Ok(new { record.Page, record.Source, record.Warning, record.Seconds });
+    }
+    catch (OperationCanceledException) { return Results.StatusCode(499); }
+    catch (InvalidOperationException ex) { return Results.Conflict(new { error = ex.Message }); }
+    catch (Exception) { return Results.Problem("Document indexing failed. Completed pages were retained."); }
+});
+
 app.MapPost("/api/items/{id}/magazine-scan", async (HttpRequest request, string id, int? start, int? count, bool? vision, string? engine) =>
 {
     if (CurrentGuidevaultUser(request)?.IsAdmin != true) return Results.StatusCode(403);
