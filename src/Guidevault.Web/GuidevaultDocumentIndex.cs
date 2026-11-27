@@ -182,6 +182,7 @@ public static class GuidevaultDocumentIndex
         var languageWords = new Dictionary<string,int>(StringComparer.OrdinalIgnoreCase);
         var platformPages = new Dictionary<string,HashSet<int>>(StringComparer.OrdinalIgnoreCase);
         var contactOrganizations = new List<(string Name,int Page,string Proof)>();
+        var footerDates = new List<(string Date,int Page,string Proof)>();
         void Add(string field,string value,int? page,string source,string proof)
         {
             value=Regex.Replace(value.Trim(),@"\s+"," ").Trim(' ',':',';','–','—');
@@ -224,6 +225,12 @@ public static class GuidevaultDocumentIndex
                 seen.Add(page);
             }
             bool titleOnPage=ContainsTitle(p.Text,item.MagazineTitle);
+            if(page>1 && p.Height>0)
+            foreach(var footer in p.Lines.Where(l=>l.Y>=p.Height*.89&&l.Text.Length<=120&&!(l.Confidence is double c&&c<45)))
+            {
+                var d=Regex.Match(footer.Text,datePattern,ci);if(!d.Success)continue;
+                if(ContainsTitle(footer.Text,item.MagazineTitle)||Regex.IsMatch(footer.Text,@"^\s*(?:\d{1,4}\s+)?"+datePattern+@"(?:\s+\d{1,4})?\s*$",ci))footerDates.Add((d.Value,page,footer.Text));
+            }
             // Publication-related correspondence, not arbitrary reader addresses or advertisements.
             // Restrict to opening/closing editorial pages; require an organizational address and publication context.
             if(page<=8 || page>=manifest.TotalPages-1)
@@ -296,7 +303,7 @@ public static class GuidevaultDocumentIndex
                     Match("publicationDate",@"\b(?:publication date|published on)\s*:?\s*("+datePattern+")");
                 }
                 if(page==1)
-                    Match("coverPrice",@"(?:^|\s)((?:US\s*\$|U\.S\.A\.\s*\$|USA\s*\$|CAN(?:ADA)?\s*\$|UK\s*£|£|\$|€)\s*\d{1,3}[.,]\d{2})(?!\d)","Cover price candidate");
+                    Match("coverPrice",@"(?:^|\s)((?:US\s*\$|U\.S\.A\.\s*\$|USA\s*\$|CAN(?:ADA)?\s*\$|U\.?K\.?\s*£|£|\$|€)\s*\d{1,3}[.,]\d{2})(?!\d)","Cover price candidate");
                 // Publication credits can be on the back page or a colophon rather than a labeled masthead.
                 // Join only physically adjacent lines with similar left alignment to avoid crossing columns.
                 var following=Regex.IsMatch(text,@"\b(?:published|publisher|editorial office|publication office|subscriptions)\b",ci)?lines.Where(l=>l.Y>line.Y+line.Height*.45 && l.Y<=line.Y+Math.Max(line.Height*3.0,p.Height*.012) && Math.Abs(l.X-line.X)<=Math.Max(p.Width*.035,12) && !(l.Confidence is double c && c<50)).OrderBy(l=>l.Y).FirstOrDefault():null;
@@ -374,6 +381,8 @@ public static class GuidevaultDocumentIndex
                 foreach(var c in contacts)Add("publisher",c.Name,c.Page,"Publication correspondence organization candidate (not proof of publisher)",c.Proof);
             }
         }
+        foreach(var dates in footerDates.GroupBy(x=>Key(x.Date)).Where(g=>g.Select(x=>x.Page).Distinct().Count()>=3))
+            foreach(var d in dates.Take(4)){Add("coverDate",d.Date,d.Page,"Repeated running issue date",d.Proof);Add("year",Regex.Match(d.Date,@"(?:19|20)\d{2}").Value,d.Page,"Repeated running issue date",d.Proof);}
         var explicitSystems=evidence.Where(e=>e.Field=="primarySystem" && e.Source=="Explicit publication platform dedication").GroupBy(e=>EvidenceKey("primarySystem",e.Value)).ToArray();
         if(explicitSystems.Length==1){var e=explicitSystems[0].First();Add("platformFocus",e.Value,e.Page,"Explicit publication platform dedication",e.Evidence);}
         // Platform mentions are coverage signals only; never infer exclusive dedication from game references.
@@ -390,12 +399,26 @@ public static class GuidevaultDocumentIndex
             }
         }
         if(Fingerprint(item)!=fp)throw new InvalidOperationException("Source changed. Re-index the magazine first.");
+        // Resolve a printed corporate initialism only when a unique expanded reviewed peer supports it.
+        string PublisherBase(string name)=>Regex.Replace(name,@"[,\s]+(?:Inc\.?|Ltd\.?|Limited|Corp\.?|Corporation|LLC)\s*$","",RegexOptions.IgnoreCase).Trim();
+        string Initials(string name)=>string.Concat(Regex.Matches(PublisherBase(name),@"[\p{L}]+(?:'[\p{L}]+)?").Select(m=>char.ToLowerInvariant(m.Value[0])));
+        var expanded=evidence.Where(e=>e.Field=="publisher"&&e.Source=="Reviewed publication peer"&&Regex.Matches(PublisherBase(e.Value),@"[\p{L}]{2,}").Count>=2).Select(e=>e.Value).Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
+        string GroupKey(PublicationEvidence e)
+        {
+            if(e.Field=="publisher")
+            {
+                var core=PublisherBase(e.Value);var letters=Key(core);
+                if(letters.Length is >=2 and <=6&&Regex.IsMatch(core,@"^[A-Z.\s-]+$"))
+                {var matches=expanded.Where(x=>Initials(x)==letters).ToArray();if(matches.Length==1)return EvidenceKey("publisher",matches[0]);}
+            }
+            return EvidenceKey(e.Field,e.Value);
+        }
         var report=fields.Select(f=>{
-            var candidates=evidence.Where(e=>e.Field==f.Key).GroupBy(e=>EvidenceKey(f.Key,e.Value)).Select(g=>new {value=g.First().Value,evidence=g.OrderBy(e=>e.Source.Contains("candidate",StringComparison.OrdinalIgnoreCase)||e.Source.Contains("inference",StringComparison.OrdinalIgnoreCase)?1:0).Take(8).ToArray(),support=g.All(e=>e.Source.Contains("candidate",StringComparison.OrdinalIgnoreCase)||e.Source.Contains("inference",StringComparison.OrdinalIgnoreCase))?"Indirect":"Direct or reviewed"}).ToArray();
-            var status=candidates.Length>1?"Conflicting evidence":candidates.Length==0?"No indexed evidence":!Meaningful(f.Current)?"Candidate":EvidenceKey(f.Key,f.Current)==EvidenceKey(f.Key,candidates[0].value)?"Matches current":"Differs from current";
+            var candidates=evidence.Where(e=>e.Field==f.Key).GroupBy(GroupKey).Select(g=>new {value=g.OrderByDescending(e=>f.Key=="publisher"&&e.Source=="Reviewed publication peer"&&expanded.Contains(e.Value)).First().Value,evidence=g.OrderBy(e=>e.Source.Contains("candidate",StringComparison.OrdinalIgnoreCase)||e.Source.Contains("inference",StringComparison.OrdinalIgnoreCase)?1:0).Take(8).ToArray(),support=g.All(e=>e.Source.Contains("candidate",StringComparison.OrdinalIgnoreCase)||e.Source.Contains("inference",StringComparison.OrdinalIgnoreCase))?"Indirect":"Direct or reviewed"}).ToArray();
+            var status=candidates.Length>1?(f.Key=="coverPrice"?"Multiple price candidates":"Conflicting evidence"):candidates.Length==0?"No indexed evidence":!Meaningful(f.Current)?"Candidate":EvidenceKey(f.Key,f.Current)==EvidenceKey(f.Key,candidates[0].value)?"Matches current":"Differs from current";
             return new {field=f.Key,label=f.Label,current=f.Current,locked=MetadataLockHelper.IsLocked(item.MetadataLocks,f.Key),status,candidates};
         }).ToArray();
-        return new {revision="v8.0-phase2.3",indexedPages=indexed,totalPages=manifest.TotalPages,relatedIssues=peers.Length,seconds=Math.Round(watch.Elapsed.TotalSeconds,2),fields=report,openingPages,platformSignals};
+        return new {revision="v8.0-phase2.4",indexedPages=indexed,totalPages=manifest.TotalPages,relatedIssues=peers.Length,seconds=Math.Round(watch.Elapsed.TotalSeconds,2),fields=report,openingPages,platformSignals};
     }
     // Phase 3: read-only editorial analysis over the persistent page index.
     private sealed record EditorialTitle(string Title, string Platform, bool Alias);
@@ -407,6 +430,11 @@ public static class GuidevaultDocumentIndex
     private static readonly Regex Price = new(@"(?:\$\s*\d+(?:[.,]\d{2})?|\b\d+\s*(?:USD|GBP)\b)",RegexOptions.IgnoreCase|RegexOptions.Compiled);
     private static readonly Regex GameplayCue = new(@"\b(?:to (?:beat|defeat|avoid|prevent|unlock|select|complete|control|kill|get|reach|win)|(?:press|hold) (?:the |button |down |up )|(?:sound test|extra lives|secret passage|hidden level|highest score)|how (?:do|can) (?:i|you)|(?:at the beginning of|when in) (?:stage|level|the main))\b",RegexOptions.IgnoreCase|RegexOptions.Compiled);
     private static readonly Regex CatalogCue = new(@"(?:\[\s*[_ ]?\]|\(\s*[_ ]?\)|\|_\]|\b(?:check (?:all|the)|which (?:of|games)|games (?:you own|do you own)|order form)\b)",RegexOptions.IgnoreCase|RegexOptions.Compiled);
+    private static string NumberedToken(string s)=>s.ToLowerInvariant() switch {"ii"=>"2","iii"=>"3","iv"=>"4","v"=>"5","vi"=>"6","vii"=>"7","viii"=>"8","ix"=>"9","x"=>"10","xi"=>"11","xii"=>"12",_=>s.ToLowerInvariant()};
+    private static string TitleKey(IEnumerable<string> words)=>string.Join(" ",words.Select((word,i)=>i==0?word:NumberedToken(word)));
+    private static bool GenericPhrase(string raw)=>Regex.IsMatch(raw,@"^(?:basic|advanced|general|secret|special|helpful)\s+(?:strateg(?:y|ies)|tips|hints|codes|instructions|moves|features)$",RegexOptions.IgnoreCase);
+    private static readonly Regex ContentsNumber = new(@"(?:\.{2,}|\s{2,})\s*\d{1,3}\s*$",RegexOptions.Compiled);
+    private static readonly Regex LegalLine = new(@"\b(?:all rights reserved|registered trademark|copyright|ISSN|published (?:by|quarterly|monthly)|editor in chief|advertising materials)\b|©",RegexOptions.IgnoreCase|RegexOptions.Compiled);
     private static string[] EditorialTokens(string s) => EditorialWords.Matches(s).Select(m=>m.Value.ToLowerInvariant()).ToArray();
     private static bool SequelToken(string s) => int.TryParse(s,out _) || Regex.IsMatch(s,@"^(?:i|ii|iii|iv|v|vi|vii|viii|ix|x|xi|xii)$",RegexOptions.IgnoreCase);
     private static string Coverage(string text)
@@ -451,7 +479,7 @@ public static class GuidevaultDocumentIndex
                 if(string.IsNullOrWhiteSpace(name))continue;var words=EditorialTokens(name);
                 if(words.Length==0||words.Length>16||string.Concat(words).Length<3)continue;
                 if(words.Length==1&&generic.Contains(words[0]))continue;
-                var key=string.Join(" ",words);maxWords=Math.Max(maxWords,words.Length);
+                var key=TitleKey(words);maxWords=Math.Max(maxWords,words.Length);
                 if(!lookup.TryGetValue(key,out var list))lookup[key]=list=new();
                 var entry=new EditorialTitle(g.Title.Trim(),g.Platform??"",!string.Equals(name,g.Title,StringComparison.OrdinalIgnoreCase));
                 if(!list.Contains(entry))list.Add(entry);
@@ -462,28 +490,43 @@ public static class GuidevaultDocumentIndex
         {
             // Exact names take precedence over aliases; ambiguous distinct numbered titles are not merged.
             var direct=pair.Value.Where(x=>!x.Alias).ToArray();var options=direct.Length>0?direct:pair.Value.ToArray();
-            if(options.Select(x=>string.Join(" ",EditorialTokens(x.Title))).Distinct(StringComparer.Ordinal).Count()!=1)continue;
+            if(options.Select(x=>TitleKey(EditorialTokens(x.Title))).Distinct(StringComparer.Ordinal).Count()!=1)continue;
             // A short alias must not silently expand to a different sequel number.
-            if(options.All(x=>x.Alias)&&options.Any(x=>!EditorialTokens(x.Title).Where(SequelToken).SequenceEqual(pair.Key.Split(' ').Where(SequelToken))))continue;
+            if(options.All(x=>x.Alias)&&options.Any(x=>!EditorialTokens(x.Title).Where(SequelToken).Select(NumberedToken).SequenceEqual(pair.Key.Split(' ').Where(SequelToken).Select(NumberedToken))))continue;
             resolved[pair.Key]=options;
         }
         var hits=new List<EditorialHit>();var headings=new List<object>();var headingKeys=new HashSet<string>();var contentsPages=new List<int>();var advertisingPages=new List<int>();
+        bool Margin(PageRecord p,Line l)=>p.Height>0&&(l.Y<=p.Height*.06||l.Y>=p.Height*.91)&&l.Text.Length<=110;
+        string MarginKey(string text)=>Key(Regex.Replace(text,@"\b\d{1,4}\b",""));
+        var repeatedMargins=pages.SelectMany(p=>p.Lines.Where(l=>Margin(p,l)).Select(l=>new{p.Page,key=MarginKey(l.Text)})).Where(x=>x.key.Length>=5).GroupBy(x=>x.key).Where(g=>g.Select(x=>x.Page).Distinct().Count()>=3).Select(g=>g.Key).ToHashSet();
+        bool ExactEntry(string text)
+        {
+            var words=EditorialTokens(Regex.Replace(text,@"(?:\.{2,}|\s{2,})\s*\d{1,3}\s*$",""));
+            return words.Length>0&&(words.Length>=2||words[0].Length>=5&&Regex.IsMatch(text,@"[™®]|^[\p{Lu}]{5,}\s*[:.!]?\s*$"))&&resolved.ContainsKey(TitleKey(words));
+        }
         foreach(var p in pages)
         {
             token.ThrowIfCancellationRequested();
-            var lines=p.Lines.Where(l=>!string.IsNullOrWhiteSpace(l.Text)).ToArray();
+            var lines=p.Lines.Where(l=>!string.IsNullOrWhiteSpace(l.Text)&&!(Margin(p,l)&&repeatedMargins.Contains(MarginKey(l.Text)))).ToArray();
             bool readerPage=Regex.Matches(p.Text,@"(?im)^\s*Dear\s+").Count>=2;
-            bool contents=!readerPage&&p.Page>1&&p.Page<=8&&(Regex.IsMatch(p.Text,@"\b(?:table of contents|in this issue|inside this issue)\b",RegexOptions.IgnoreCase)||lines.Count(l=>l.Text.Length<=145&&EditorialKinds.IsMatch(l.Text))>=4);
+            bool masthead=Regex.IsMatch(p.Text,@"\b(?:editor[ -]+in[ -]+chief|ISSN|published quarterly|published monthly)\b",RegexOptions.IgnoreCase);
+            int exactEntries=lines.Count(l=>l.Text.Length<=100&&ExactEntry(l.Text));
+            int pageRefs=lines.Count(l=>ContentsNumber.IsMatch(l.Text));
+            int compactHeadings=lines.Count(l=>l.Text.Length<=90&&EditorialKinds.IsMatch(l.Text)&&!Regex.IsMatch(l.Text,@"[.!?]\s*$")&&EditorialTokens(l.Text).Length<=12);
+            bool explicitContents=lines.Any(l=>Regex.IsMatch(l.Text,@"^\s*(?:table of contents|contents|in this issue|inside this issue)\s*[:.!]?\s*$",RegexOptions.IgnoreCase));
+            bool contents=!readerPage&&!masthead&&p.Page>1&&p.Page<=10&&(explicitContents||exactEntries>=4||pageRefs>=3&&exactEntries>=1||compactHeadings>=4&&exactEntries>=1);
             if(contents)contentsPages.Add(p.Page);
             bool merchandisePage=lines.Count(l=>Merchandise.IsMatch(l.Text)&&Price.IsMatch(l.Text))>=2 || (Merchandise.Matches(p.Text).Count>=3&&Price.Matches(p.Text).Count>=3);
             bool catalogPage=lines.Count(l=>CatalogCue.IsMatch(l.Text))>=5;
-            bool advertisement=Advertising.Matches(p.Text).Select(m=>m.Value.ToLowerInvariant()).Distinct().Count()>=2 || merchandisePage;
+            bool promoPage=!contents&&!masthead&&p.Page<=4&&Regex.IsMatch(p.Text,@"\b(?:all rights reserved|trademarks? of|registered trademark)\b",RegexOptions.IgnoreCase)&&Regex.IsMatch(p.Text,@"\b(?:check out|exclusive|available now|coming soon|from the makers|only on|only for|you want a taste)\b",RegexOptions.IgnoreCase);
+            bool advertisement=Advertising.Matches(p.Text).Select(m=>m.Value.ToLowerInvariant()).Distinct().Count()>=2 || merchandisePage||promoPage;
             if(advertisement)advertisingPages.Add(p.Page);
             string activeKind="Reference";int lastHeading=-10;
+            var articleSubjects=new HashSet<string>(StringComparer.OrdinalIgnoreCase);
             bool assistancePage=!readerPage&&!contents&&!advertisement&&lines.Count(l=>GameplayCue.IsMatch(l.Text))>=2;
             for(int li=0;li<lines.Length;li++)
             {
-                token.ThrowIfCancellationRequested();var l=lines[li];var text=l.Text.Trim();if(text.Length>2000)continue;
+                token.ThrowIfCancellationRequested();var l=lines[li];var text=l.Text.Trim();if(text.Length>2000||LegalLine.IsMatch(text))continue;
                 int originalLength=text.Length;
                 // Join a possible line wrap only in the same column and with plausible spacing.
                 // Only matches beginning in the original line are accepted.
@@ -496,27 +539,43 @@ public static class GuidevaultDocumentIndex
                 }
                 double height=p.Height>0?l.Height/p.Height:0;
                 var localKind=Coverage(text);bool shortLine=text.Length<=145;
-                bool heading=shortLine&&localKind!="Reference"&&(contents||height>=.025||Regex.IsMatch(text,@"^[\p{Lu}\d][^.!?]{2,70}(?:\s+\d{1,3})?$"));
+                bool heading=shortLine&&localKind!="Reference"&&!masthead&&(contents&&EditorialTokens(text).Length<=14||height>=.025&&EditorialTokens(text).Length<=12||Regex.IsMatch(text,@"^[\p{Lu}\d][\p{Lu}\d &’':-]{2,70}$"));
                 if(heading&&!advertisement&&!Advertising.IsMatch(text)&&(!readerPage||localKind=="Reader letters")&&!Regex.IsMatch(text,@"^Dear\s+|^letters\s+we",RegexOptions.IgnoreCase))
                 {
                     activeKind=localKind;lastHeading=li;
                     if(headingKeys.Add(p.Page+":"+text.ToLowerInvariant()))headings.Add(new{page=p.Page,title=text,kind=localKind,source=contents?"Contents candidate":"Heading candidate",printedPage=PrintedPage(text)});
                 }
                 var matches=EditorialWords.Matches(matchText);var words=EditorialTokens(matchText);
+                var normalizedWords=words.Select(NumberedToken).ToArray();
+                var ocrWords=normalizedWords.ToArray();bool hasOcrRoman=false;
+                for(int j=0;j<words.Length;j++)if(Regex.IsMatch(matches[j].Value,@"^I[JLl]$")){ocrWords[j]="2";hasOcrRoman=true;}
+                bool exactEntry=ExactEntry(text);int lineWordCount=EditorialTokens(text).Length;
+                string SpanKey(string[] tokens,int start,int len)=>len==1?words[start]:words[start]==tokens[start]?string.Join(" ",tokens,start,len):words[start]+" "+string.Join(" ",tokens,start+1,len-1);
                 for(int i=0;i<words.Length;i++)
                 {
                     if(matches[i].Index>=originalLength)break;
                     for(int len=Math.Min(maxWords,words.Length-i);len>=1;len--)
                     {
-                        string key=string.Join(" ",words,i,len);
-                        if(!resolved.TryGetValue(key,out var options))continue;
+                        string key=SpanKey(normalizedWords,i,len);
+                        if(!resolved.TryGetValue(key,out var options))
+                        {
+                            // Bounded OCR Roman II variant, only for multi-word catalog matches.
+                            if(len<3||!hasOcrRoman||!resolved.TryGetValue(SpanKey(ocrWords,i,len),out options))continue;
+                        }
                         int end=i+len;int charEnd=matches[end-1].Index+matches[end-1].Length;
                         // Never accept a shorter franchise name when the printed text has a sequel suffix.
-                        if(end<words.Length&&(matches[end].Index<originalLength||charEnd>originalLength)&&SequelToken(matches[end].Value))continue;
+                        if(end<words.Length&&(matches[end].Index<originalLength||charEnd>originalLength)&&(SequelToken(matches[end].Value)||Regex.IsMatch(matches[end].Value,@"^I[JLl]$")))continue;
                         string raw=matchText.Substring(matches[i].Index,charEnd-matches[i].Index);
                         bool marked=Regex.IsMatch(matchText.Substring(charEnd),@"^\s*[™®©]");
-                        bool titleCase=raw.Any(char.IsUpper);bool standalone=EditorialTokens(text).Length<=len+2;
+                        bool titleCase=raw.Any(char.IsUpper);bool standalone=lineWordCount<=len+2;
                         bool prominent=height>=.035&&shortLine;
+                        bool fullLine=lineWordCount==len;
+                        bool startsTitle=matches[i].Index<=2;
+                        if(GenericPhrase(raw)&&options.All(x=>x.Alias)&&!marked||!fullLine&&!marked&&Regex.IsMatch(raw,@"^(?:pick up|fire ball)$",RegexOptions.IgnoreCase)){i=end-1;break;}
+                        // Short/common terms and aliases need independent title-like evidence, not a nearby gameplay keyword.
+                        if(len==1&&!(fullLine&&(marked||prominent||contents)||marked&&startsTitle||marked&&Regex.IsMatch(text,@"\b(?:in|play|playing|game)\s+"+Regex.Escape(raw)+@"\b",RegexOptions.IgnoreCase))){i=end-1;break;}
+                        if(len==1&&i>0&&Regex.IsMatch(words[i-1],@"^(?:easter|zombie|[a-z]+[i1l]{2})$",RegexOptions.IgnoreCase)){i=end-1;break;}
+                        if(options.All(x=>x.Alias)&&!exactEntry&&!marked&&!prominent&&(!startsTitle||!titleCase)&&len<=2){i=end-1;break;}
                         string near=heading||p.Page==1?localKind:"Reference";
                         if(near=="Reference"&&contents&&standalone&&li+1<lines.Length&&Regex.IsMatch(lines[li+1].Text,@"^\s*(?:our|a|the)\s+(?:special\s+)?",RegexOptions.IgnoreCase))near=Coverage(lines[li+1].Text);
                         if(near=="Reference"&&contents&&li-lastHeading<=2)near=activeKind;
@@ -525,19 +584,32 @@ public static class GuidevaultDocumentIndex
                         else if(!contents&&p.Page>1&&near=="Reference"&&(activeKind is "Review" or "Preview" or "Feature")&&li-lastHeading<=5&&marked)near=activeKind;
                         // Single ordinary words require title typography or explicit editorial context, not raw frequency.
                         if(len==1&&(!titleCase&&!marked||!marked&&!standalone&&!prominent&&near=="Reference")){i=end-1;break;}
-                        bool ad=Advertising.IsMatch(text)||(Merchandise.IsMatch(text)&&(Price.IsMatch(text)||merchandisePage))||(advertisement&&!contents&&!readerPage&&!GameplayCue.IsMatch(text)&&near=="Reference");
+                        bool ad=promoPage||Advertising.IsMatch(text)||(Merchandise.IsMatch(text)&&(Price.IsMatch(text)||merchandisePage||standalone))||(advertisement&&!contents&&!readerPage&&!GameplayCue.IsMatch(text)&&near=="Reference");
                         string kind=ad?"Possible advertising":catalogPage&&near=="Reference"?"Catalog listing":near;
+                        if(!ad&&contents&&exactEntry&&(kind is not "Review" and not "Preview" and not "Interview" and not "Gameplay assistance"))kind="Contents reference";
                         if(!ad&&kind=="Reference"&&contents&&standalone)kind="Contents reference";
                         if(!ad&&kind=="Reference"&&p.Page==1&&(marked||prominent||standalone))kind="Cover reference";
                         if(!ad&&kind=="Reference"&&prominent&&standalone)kind="Heading reference";
                         if(catalogPage&&options.All(x=>x.Alias)&&!marked&&near=="Reference"&&Regex.IsMatch(raw,@"\b(?:family|party|sports|action|adventure|arcade|board|card) games$",RegexOptions.IgnoreCase))
                         {i=end-1;break;}
                         var canonical=options.OrderBy(x=>x.Alias).ThenBy(x=>x.Title.Length).ThenBy(x=>x.Title,StringComparer.Ordinal).First().Title;
+                        if(!ad&&!contents&&!readerPage&&!catalogPage&&p.Page>1&&exactEntry&&prominent&&len>=2)articleSubjects.Add(canonical);
+                        if(!ad&&!contents&&!readerPage&&!catalogPage&&kind=="Reference"&&articleSubjects.Contains(canonical))kind="Feature";
+                        if(!ad&&contents&&exactEntry&&headingKeys.Add(p.Page+":entry:"+canonical))headings.Add(new{page=p.Page,title=canonical,kind=kind,source="Contents candidate",printedPage=PrintedPage(text)});
                         var platforms=options.Select(x=>x.Platform).Where(x=>!string.IsNullOrWhiteSpace(x)).Distinct(StringComparer.OrdinalIgnoreCase).OrderBy(x=>x).ToArray();
                         hits.Add(new EditorialHit(canonical,p.Page,kind,charEnd>originalLength?matchText:text,platforms,p.Page==1,contents,height));i=end-1;break;
                     }
                 }
             }
+        }
+        // A prominent exact game heading may anchor an adjacent article page, but only if that page
+        // independently contains the same title and an explicit continuation marker.
+        var continuationPages=pages.Where(p=>Regex.IsMatch(p.Text,@"(?im)^\s*(?:continued(?:\s+from\s+page\s+\d+)?|cont[.’']?d)\s*[.:]?\s*$")).Select(p=>p.Page).ToHashSet();
+        var articleAnchors=hits.Where(h=>h.Page>1&&!h.Contents&&h.Height>=.035&&(h.Kind is "Heading reference" or "Feature" or "Review" or "Preview")).ToArray();
+        for(int i=0;i<hits.Count;i++)
+        {
+            var h=hits[i];if(h.Kind!="Reference"||h.Contents||!continuationPages.Contains(h.Page)||advertisingPages.Contains(h.Page))continue;
+            if(articleAnchors.Any(a=>a.Page==h.Page-1&&string.Equals(a.Title,h.Title,StringComparison.OrdinalIgnoreCase)))hits[i]=h with{Kind="Feature"};
         }
         bool Featured(EditorialHit h)=>h.Kind is "Review" or "Preview" or "Gameplay assistance" or "Feature" or "Interview" or "Cover reference" or "Heading reference" or "Contents reference";
         // Infer platform from editorial evidence before excluding incompatible incidental matches.
@@ -568,7 +640,7 @@ public static class GuidevaultDocumentIndex
                 hits.Remove(hit);hits.Add(hit with{Title=target.Title,Platforms=target.Platforms,Kind=hit.Kind=="Heading reference"?"Feature":hit.Kind});
             }
         }
-        var groups=hits.GroupBy(h=>string.Join(" ",EditorialTokens(h.Title))).Select(g=>new{
+        var groups=hits.GroupBy(h=>TitleKey(EditorialTokens(h.Title))).Select(g=>new{
             title=g.First().Title, featured=g.Any(Featured), editorialPages=g.Where(Featured).Select(h=>h.Page).Distinct().OrderBy(x=>x).ToArray(),
             pages=g.Select(h=>h.Page).Distinct().OrderBy(x=>x).ToArray(),cover=g.Any(h=>h.Cover&&h.Kind!="Possible advertising"),contents=g.Any(h=>h.Contents&&Featured(h)),
             platforms=g.SelectMany(h=>h.Platforms).Distinct(StringComparer.OrdinalIgnoreCase).OrderBy(x=>x).ToArray(),
@@ -581,7 +653,7 @@ public static class GuidevaultDocumentIndex
         var platformSignals=groups.Where(g=>g.featured&&g.platforms.Length==1).GroupBy(g=>g.platforms[0],StringComparer.OrdinalIgnoreCase).Select(g=>new{platform=g.Key,featuredTitles=g.Count(),titles=g.Select(x=>x.title).ToArray()}).OrderByDescending(g=>g.featuredTitles).ToArray();
         string? primary=platformSignals.Length>0&&platformSignals[0].featuredTitles>=2&&(platformSignals.Length==1||platformSignals[0].featuredTitles>=platformSignals[1].featuredTitles*2+1)?platformSignals[0].platform:null;
         if(Fingerprint(item)!=fp)throw new InvalidOperationException("Source changed during analysis. Re-index the document.");
-        return new{revision="v8.0-phase3.1",excluded,indexedPages=pages.Count,totalPages=manifest.TotalPages,catalogGames=gameCount,contentsPages,advertisingPages,coverCandidates,primarySystemCandidate=primary,platformSignals,featuredCount=groups.Count(g=>g.featured),mentionedCount=groups.Count(g=>!g.featured&&g.kinds.Any(k=>k!="Possible advertising")),advertisingOnlyCount=groups.Count(g=>g.kinds.All(k=>k=="Possible advertising")),games=groups,headings,seconds=Math.Round(timer.Elapsed.TotalSeconds,2)};
+        return new{revision="v8.0-phase3.2",excluded,indexedPages=pages.Count,totalPages=manifest.TotalPages,catalogGames=gameCount,contentsPages,advertisingPages,coverCandidates,primarySystemCandidate=primary,platformSignals,featuredCount=groups.Count(g=>g.featured),mentionedCount=groups.Count(g=>!g.featured&&g.kinds.Any(k=>k!="Possible advertising")),advertisingOnlyCount=groups.Count(g=>g.kinds.All(k=>k=="Possible advertising")),games=groups,headings,seconds=Math.Round(timer.Elapsed.TotalSeconds,2)};
     }
     private static int? PrintedPage(string text)
     {
@@ -611,8 +683,9 @@ public static class GuidevaultDocumentIndex
             var after=JsonSerializer.SerializeToElement(value,Json); if(!Nonempty(after))return;
             var before=current.TryGetProperty(field,out var old)?old:JsonSerializer.SerializeToElement<object?>(null,Json);
             if(Equal(field,before,after))return;
-            if(protectedItem||MetadataLockHelper.IsLocked(item.MetadataLocks,field)){held.Add(field+": protected metadata — "+reason);return;}
-            if((Nonempty(before)||before.ValueKind==JsonValueKind.String&&!string.IsNullOrWhiteSpace(before.GetString()))&&(!replace||manual||!canReplace)){held.Add(field+": existing value retained — "+reason);return;}
+            if(protectedItem){held.Add(field+": protected metadata (record status: "+MetadataStatusHelper.Normalize(item.MetadataStatus)+") — "+reason);return;}
+            if(MetadataLockHelper.IsLocked(item.MetadataLocks,field)){held.Add(field+": protected metadata (field locked) — "+reason);return;}
+            if((Nonempty(before)||before.ValueKind==JsonValueKind.String&&!string.IsNullOrWhiteSpace(before.GetString()))&&(!replace||manual||!canReplace)){held.Add(field+": existing value retained ("+(manual?"manual edit source":!replace?"replacement option disabled":"insufficient replacement evidence")+") — "+reason);return;}
             values[field]=value;changes.Add(new(field,before,after,reason));
         }
         var conflicting=new HashSet<string>(StringComparer.OrdinalIgnoreCase);
@@ -628,18 +701,18 @@ public static class GuidevaultDocumentIndex
             bool indirectAllowed=key=="languageTag"||(key is "publisher" or "region")&&repeatedContact;
             if(!direct&&!indirectAllowed){held.Add(key+": indirect evidence only — "+val);continue;}
             if(key=="pageCount"){if(int.TryParse(val,out var count))Offer(key,count,"Indexed digital page count",false);}
-            else Offer(key,val,support+" — "+val,direct);
+            else Offer(key,val,support+" — "+val,direct||key=="region"&&repeatedContact);
         }
         var gameRows=editorial.GetProperty("games").EnumerateArray().ToArray();
         var primary=S(editorial,"primarySystemCandidate");
         var relevant=gameRows; // Phase 3 already filters unsupported incidental matches; retain genuine cross-platform coverage.
-        bool EditorialCoverage(JsonElement g)=>g.GetProperty("featured").GetBoolean()&&A(g,"kinds").Any(k=>k is "Review" or "Preview" or "Feature" or "Gameplay assistance" or "Interview");
+        bool EditorialCoverage(JsonElement g)=>g.GetProperty("featured").GetBoolean()&&(A(g,"kinds").Any(k=>k is "Review" or "Preview" or "Feature" or "Gameplay assistance" or "Interview")||g.GetProperty("contents").GetBoolean()&&A(g,"kinds").Contains("Contents reference")&&g.GetProperty("evidence").EnumerateArray().Any(e=>!editorial.GetProperty("contentsPages").EnumerateArray().Any(p=>p.GetInt32()==e.GetProperty("page").GetInt32())&&S(e,"kind")=="Reference"));
         var featured=relevant.Where(EditorialCoverage).Select(g=>S(g,"title")).Where(Meaningful).Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
         var mentioned=relevant.Where(g=>!featured.Contains(S(g,"title"),StringComparer.OrdinalIgnoreCase)&&A(g,"kinds").Any(k=>k is not "Possible advertising" and not "Catalog listing")).Select(g=>S(g,"title")).Where(Meaningful).Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
         if(primary.Length>0)
         {
             if(!values.ContainsKey("primarySystem")&&!conflicting.Contains("primarySystem"))Offer("primarySystem",primary,"Platform inferred from unambiguous editorial game titles",false);
-            if(!values.ContainsKey("platformFocus")&&!conflicting.Contains("platformFocus"))Offer("platformFocus",primary,"Platform inferred from editorial game titles",false);
+            if(!values.ContainsKey("platformFocus")&&!conflicting.Contains("platformFocus"))Offer("platformFocus",primary,"Platform inferred from editorial game titles",editorial.GetProperty("platformSignals").EnumerateArray().Any(p=>S(p,"platform")==primary&&p.GetProperty("featuredTitles").GetInt32()>=3));
             Offer("featuredPlatforms",new[]{primary}.Concat(relevant.Where(EditorialCoverage).Where(g=>A(g,"platforms").Length==1).SelectMany(g=>A(g,"platforms"))).Distinct(StringComparer.OrdinalIgnoreCase).ToArray(),"Dominant and other unambiguous editorial platforms");
         }
         else
@@ -659,15 +732,22 @@ public static class GuidevaultDocumentIndex
             else held.Add("coverSubject: primary cover not verified — "+string.Join(", ",covers.Select(g=>S(g,"title"))));
         }
         var kinds=relevant.Where(EditorialCoverage).SelectMany(g=>A(g,"kinds")).Where(k=>k is "Review" or "Preview" or "Feature" or "Gameplay assistance" or "Interview").Concat(editorial.GetProperty("headings").EnumerateArray().Where(h=>S(h,"source")=="Contents candidate").Select(h=>S(h,"kind"))).Where(Meaningful).Distinct(StringComparer.OrdinalIgnoreCase).OrderBy(x=>x).ToArray();
-        Offer("specialFeatures",kinds,"Editorial coverage and contents section types");
+        var departments=editorial.GetProperty("headings").EnumerateArray().Where(h=>S(h,"source")=="Contents candidate"&&(S(h,"kind") is "Reader letters" or "Technical department" or "Competition" or "High scores" or "Editorial")).Select(h=>Regex.Replace(S(h,"title"),@"^NEW!\s*|[_—–]+\s*$","",RegexOptions.IgnoreCase).Trim()).Where(t=>t.Length is >=5 and <=65&&!Regex.IsMatch(t,@"[.!?]$")&&EditorialTokens(t).Length<=9).Distinct(StringComparer.OrdinalIgnoreCase).Take(8).ToArray();
+        Offer("specialFeatures",kinds.Concat(departments).Distinct(StringComparer.OrdinalIgnoreCase).ToArray(),"Editorial coverage and contents section types");
         if(featured.Length>0)
         {
             string publicationName=values.TryGetValue("magazineTitle",out var titleValue)?titleValue.ToString()??item.MagazineTitle:item.MagazineTitle;
             if(!Meaningful(publicationName))publicationName=item.Title;
             string issue=values.TryGetValue("issueNumber",out var issueValue)?issueValue.ToString()??"":item.IssueNumber;
             string date=values.TryGetValue("coverDate",out var dateValue)?dateValue.ToString()??"":item.CoverDate;
-            var summary=publicationName+(Meaningful(issue)?", issue "+issue:"")+(Meaningful(date)?" ("+date+")":"")+". Indexed editorial coverage includes "+string.Join(", ",featured.Take(12))+(featured.Length>12?", and additional games":"")+".";
-            if(kinds.Length>0)summary+=" Content includes "+string.Join(", ",kinds.Select(k=>k.ToLowerInvariant()))+".";
+            string JoinNatural(IEnumerable<string> list){var a=list.ToArray();return a.Length<=1?string.Join("",a):string.Join(", ",a.Take(a.Length-1))+(a.Length>2?", and ":" and ")+a[^1];}
+            var main=relevant.Where(EditorialCoverage).Where(g=>g.GetProperty("contents").GetBoolean()||A(g,"kinds").Contains("Review")||A(g,"kinds").Contains("Preview")).OrderByDescending(g=>A(g,"kinds").Contains("Review")).Select(g=>S(g,"title")).Distinct(StringComparer.OrdinalIgnoreCase).Take(6).ToArray();
+            var other=featured.Except(main,StringComparer.OrdinalIgnoreCase).Take(6).ToArray();
+            var summary=(Meaningful(date)?"The "+date+" issue of ":"This issue of ")+publicationName+(Meaningful(issue)?" (issue "+issue+")":"")+(primary.Length>0?" focuses on the "+primary+".":" features video game coverage.");
+            if(main.Length>0)summary+=" Featured coverage includes "+JoinNatural(main)+".";
+            if(other.Length>0)summary+=(main.Length>0?" Additional game coverage includes ":" Game coverage includes ")+JoinNatural(other)+".";
+            if(departments.Length>0)summary+=" Regular sections include "+JoinNatural(departments)+".";
+            else if(kinds.Length>0)summary+=" Contents include "+JoinNatural(kinds.Select(k=>k.ToLowerInvariant()))+".";
             Offer("summary",summary,"Deterministic issue summary from indexed editorial evidence");
         }
         if(Fingerprint(item)!=fp)throw new InvalidOperationException("Source changed during cataloging. Re-index first.");
@@ -676,8 +756,8 @@ public static class GuidevaultDocumentIndex
         update=MetadataLockHelper.FilterLockedFields(update,item.MetadataLocks);
         var filtered=JsonSerializer.SerializeToElement(update,Json);
         foreach(var c in changes.Where(c=>!filtered.TryGetProperty(c.Field,out var v)||v.ValueKind==JsonValueKind.Null).ToArray()){changes.Remove(c);held.Add(c.Field+": protected by field alias lock");}
-        if(changes.Count>0&&!manual)update=update with{MetadataSource="Magazine document index v8.0 Phase 4"};
-        return new CatalogPlan("v8.0-phase4",fp,update,changes,held,publication,editorial,Math.Round(clock.Elapsed.TotalSeconds,2));
+        if(changes.Count>0&&!manual)update=update with{MetadataSource="Magazine document index v8.0 Phase 4.1"};
+        return new CatalogPlan("v8.0-phase4.1",fp,update,changes,held,publication,editorial,Math.Round(clock.Elapsed.TotalSeconds,2));
     }
     public static async Task SaveCatalogReportAsync(string root,LibraryItem item,CatalogPlan plan,CancellationToken token)
     {
