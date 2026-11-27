@@ -18666,7 +18666,7 @@ function gvOpenInlineMagazineScan() {
 // v8 Phase 1: independent persistent extraction and search; legacy metadata scan remains unchanged.
 function gvAttachDocumentIndex(dialog, session, item) {
   const panel=document.createElement('section'); panel.className='gv-magscan-content';
-  panel.innerHTML=`<h2>Automatic Cataloging <small>v8.0 Phase 4.1</small></h2><p class="sub">Index missing pages once, analyze the issue and save supported metadata. Existing populated values, reviewed records and locked fields are protected by default.</p><label><input type="checkbox" data-catalog-replace> Replace supported unreviewed metadata (existing game lists and summary may be replaced)</label><div class="gv-magscan-actions"><button type="button" class="primary" data-catalog-start>Scan magazine</button><button type="button" class="ghost" data-catalog-download disabled>Download catalog report</button><button type="button" class="ghost" data-catalog-history>Refresh change history</button><button type="button" class="ghost" data-catalog-undo disabled>Undo last catalog save</button></div><p class="sub" data-catalog-status aria-live="polite">Ready. No additional AI models are used.</p><textarea data-catalog-report rows="12" readonly hidden style="width:100%" aria-label="Catalog evidence report"></textarea><details><summary>Catalog change history</summary><div data-catalog-history-results></div></details><hr><h2>Document Index <small>v8.0 Phase 1</small></h2><p class="sub">Extract readable page text once and retain it for future metadata interpretation. No magazine metadata is changed.</p><p class="sub" data-index-status aria-live="polite">Checking document index…</p><progress data-index-progress value="0" max="1"></progress><div class="gv-magscan-actions"><button type="button" class="primary" data-index-start>Index / Resume</button><button type="button" class="ghost" data-index-force>Re-index document</button><button type="button" class="ghost" data-index-stop hidden>Stop</button></div><div style="display:grid;grid-template-columns:minmax(0,1fr) auto;gap:8px;align-items:center;margin:10px 0"><input type="search" data-index-query placeholder="Search indexed text" aria-label="Search indexed text"><button type="button" class="ghost" data-index-search>Search</button><input type="number" min="1" value="1" data-index-page aria-label="Page number"><button type="button" class="ghost" data-index-view>View page</button></div><p class="sub" data-index-message aria-live="polite"></p><div data-index-results></div><hr><h2>Publication Intelligence <small>v8.0 Phase 2.4</small></h2><p class="sub">Interpret the completed document index. Review printed evidence, file identity and clearly labeled inferences without repeating OCR. No metadata is modified.</p><div class="gv-magscan-actions"><button type="button" class="primary" data-publication-analyze>Analyze publication</button><button type="button" class="ghost" data-publication-copy disabled>Copy evidence report</button></div><p class="sub" data-publication-status aria-live="polite"></p><div data-publication-results></div><hr><h2>Editorial Intelligence <small>v8.0 Phase 3.2</small></h2><p class="sub">Find editorial headings, game coverage and platform candidates using the saved index. No additional OCR or AI calls. Candidates only; metadata remains unchanged.</p><div class="gv-magscan-actions"><button type="button" class="primary" data-editorial-analyze>Analyze editorial content</button><button type="button" class="ghost" data-editorial-copy disabled>Copy editorial report</button><button type="button" class="ghost" data-editorial-download disabled>Download report</button></div><p class="sub" data-editorial-status aria-live="polite"></p><textarea data-editorial-report rows="12" readonly hidden style="width:100%" aria-label="Complete editorial report"></textarea><div data-editorial-results></div><hr>`;
+  panel.innerHTML=`<h2>Automatic Cataloging <small>v8.0 Phase 4.2</small></h2><p class="sub">Index missing pages once, analyze the issue and save supported metadata. Existing populated values, reviewed records and locked fields are protected by default.</p><label><input type="checkbox" data-catalog-replace> Replace supported unreviewed metadata (existing game lists and summary may be replaced)</label><div class="gv-magscan-actions"><button type="button" class="primary" data-catalog-start>Scan magazine</button><button type="button" class="ghost" data-catalog-download disabled>Download catalog report</button><button type="button" class="ghost" data-catalog-history>Refresh change history</button><button type="button" class="ghost" data-catalog-undo disabled>Undo last catalog save</button></div><p class="sub" data-catalog-status aria-live="polite">Ready. No additional AI models are used.</p><textarea data-catalog-report rows="12" readonly hidden style="width:100%" aria-label="Catalog evidence report"></textarea><details><summary>Catalog change history</summary><div data-catalog-history-results></div></details><hr><h2>Document Index <small>Server job · Phase 4.2</small></h2><p class="sub">Extract readable page text once and retain it for future metadata interpretation. No magazine metadata is changed.</p><p class="sub" data-index-status aria-live="polite">Checking document index…</p><progress data-index-progress value="0" max="1"></progress><label>Concurrent pages <select data-index-workers><option value="1">1 — Low resource</option><option value="2" selected>2 — Balanced</option><option value="4">4 — High performance</option></select></label><p class="sub">Indexing continues on the server if you close this page. Completed pages are saved individually.</p><div class="gv-magscan-actions"><button type="button" class="primary" data-index-start>Index / Resume</button><button type="button" class="ghost" data-index-force>Re-index document</button><button type="button" class="ghost" data-index-stop hidden>Stop</button></div><div style="display:grid;grid-template-columns:minmax(0,1fr) auto;gap:8px;align-items:center;margin:10px 0"><input type="search" data-index-query placeholder="Search indexed text" aria-label="Search indexed text"><button type="button" class="ghost" data-index-search>Search</button><input type="number" min="1" value="1" data-index-page aria-label="Page number"><button type="button" class="ghost" data-index-view>View page</button></div><p class="sub" data-index-message aria-live="polite"></p><div data-index-results></div><hr><h2>Publication Intelligence <small>v8.0 Phase 2.4</small></h2><p class="sub">Interpret the completed document index. Review printed evidence, file identity and clearly labeled inferences without repeating OCR. No metadata is modified.</p><div class="gv-magscan-actions"><button type="button" class="primary" data-publication-analyze>Analyze publication</button><button type="button" class="ghost" data-publication-copy disabled>Copy evidence report</button></div><p class="sub" data-publication-status aria-live="polite"></p><div data-publication-results></div><hr><h2>Editorial Intelligence <small>v8.0 Phase 3.2</small></h2><p class="sub">Find editorial headings, game coverage and platform candidates using the saved index. No additional OCR or AI calls. Candidates only; metadata remains unchanged.</p><div class="gv-magscan-actions"><button type="button" class="primary" data-editorial-analyze>Analyze editorial content</button><button type="button" class="ghost" data-editorial-copy disabled>Copy editorial report</button><button type="button" class="ghost" data-editorial-download disabled>Download report</button></div><p class="sub" data-editorial-status aria-live="polite"></p><textarea data-editorial-report rows="12" readonly hidden style="width:100%" aria-label="Complete editorial report"></textarea><div data-editorial-results></div><hr>`;
   dialog.prepend(panel);
   const q=s=>panel.querySelector(s), status=q('[data-index-status]'), message=q('[data-index-message]'), progress=q('[data-index-progress]'), results=q('[data-index-results]');
   const endpoint=`/api/items/${encodeURIComponent(metadataManagerItemId(item))}/document-index`;
@@ -18685,29 +18685,50 @@ function gvAttachDocumentIndex(dialog, session, item) {
   }
   async function refresh(){try{showStatus(await api());}catch(e){status.textContent=e.message;}}
   function showText(page,text,source){const details=document.createElement('details');details.open=true;const summary=document.createElement('summary');summary.textContent=`Page ${page} · ${source}`;const body=document.createElement('pre');body.style.whiteSpace='pre-wrap';body.style.overflowWrap='anywhere';body.textContent=text||'(No readable text)';details.append(summary,body);results.append(details);}
+  // Job lifetime belongs to the server. Closing this panel stops polling only.
+  let jobPolling=false,jobTimer=null,lastResult='',lastState='';
+  async function jobRequest(params={},method='GET'){
+    const timeout=new AbortController();const timer=setTimeout(()=>timeout.abort(),15000);
+    try{const res=await fetch(endpoint+'/job?'+new URLSearchParams(params),{method,signal:timeout.signal,cache:'no-store'});
+      if(!res.ok){let msg=`HTTP ${res.status}`;try{const e=await res.json();msg=e.error||e.detail||msg;}catch{}throw new Error(msg);}return await res.json();}
+    finally{clearTimeout(timer);}
+  }
+  function applyJob(j){
+    const running=j.state==='running';const observedRunning=lastState==='running';
+    busy=running;session.running=running;buttons.forEach(b=>b.disabled=running);
+    q('[data-index-workers]').disabled=running;q('[data-index-stop]').hidden=!running;
+    const legacy=['[data-scan-start]','[data-scan-stage]'].map(s=>dialog.querySelector(s)).filter(Boolean);
+    if(running&&lastState!=='running')legacy.forEach(b=>{b.dataset.indexWasDisabled=String(b.disabled);b.disabled=true;});
+    if(!running&&lastState==='running')legacy.forEach(b=>{b.disabled=b.dataset.indexWasDisabled==='true';delete b.dataset.indexWasDisabled;});
+    lastState=j.state;
+    if(j.state==='idle')return;
+    progress.max=Math.max(1,j.force?j.target:j.totalPages);progress.value=j.force?j.processed:j.indexed;
+    const eta=j.remainingSeconds==null?'':` · ~${Math.ceil(j.remainingSeconds/60)} min remaining`;
+    status.textContent=`${j.indexed} / ${j.totalPages} indexed · ${j.processed}/${j.target} attempted this run · ${j.pagesPerMinute} pages/min · ${j.seconds}s${eta}`;
+    const active=(j.active||[]).map(p=>`Page ${p.page}: ${p.stage}`);
+    const failed=(j.failed||[]).map(p=>`Page ${p.page}: ${p.error}`);
+    message.textContent=[j.message,...active,...failed.map(s=>'Failed: '+s)].join('\n');message.style.whiteSpace='pre-wrap';
+    if(j.catalog)catalogStatus.textContent=j.message;
+    if(j.report&&j.jobId!==lastResult){lastResult=j.jobId;displayCatalogReport(j.report,observedRunning);}
+    else if(j.report&&j.catalog)catalogStatus.textContent=`Saved ${j.report.changes.length} field(s) · ${j.report.held.length} held · ${j.report.seconds}s interpretation.`;
+  }
+  async function pollJob(){
+    if(jobPolling||!panel.isConnected)return;jobPolling=true;
+    try{const j=await jobRequest();if(!panel.isConnected)return;applyJob(j);if(j.state==='running')jobTimer=setTimeout(pollJob,2000);else if(j.state==='idle')await refresh();}
+    catch(e){if(panel.isConnected){message.textContent=`Job status unavailable: ${e.message}. Retrying; server job is independent of this connection.`;jobTimer=setTimeout(pollJob,4000);}}
+    finally{jobPolling=false;}
+  }
   async function run(force,catalogAfter=false){
     if(busy||session.running){message.textContent='Another scan is active.';return;}
     if(force&&!window.confirm('Re-extract every page? Existing indexed pages will be replaced only after each successful extraction.'))return;
-    busy=true;session.running=true;controller=new AbortController();session.controller=controller;
-    const legacy=['[data-scan-start]','[data-scan-stage]','[data-scan-close]'].map(s=>dialog.querySelector(s)).filter(Boolean);const previous=legacy.map(b=>b.disabled);legacy.forEach(b=>b.disabled=true);
-    buttons.forEach(b=>b.disabled=true);q('[data-index-stop]').hidden=false;message.textContent='';const start=Date.now();let activity='Preparing index…', errors=[];
-    const tick=()=>{status.textContent=`${activity} · elapsed ${Math.floor((Date.now()-start)/1000)}s`;};const clock=setInterval(tick,1000);tick();
-    try{
-      const s=await api({page:0},'POST',controller.signal);showStatus(s);const done=new Set(s.indexedPages||[]);progress.max=s.totalPages;progress.value=force?0:done.size;
-      let processed=0;
-      for(let page=1;page<=s.totalPages;page++){
-        if(controller.signal.aborted)throw new Error('Stopped');
-        if(!force&&done.has(page))continue;
-        activity=`Indexing page ${page} of ${s.totalPages}`;tick();
-        try{await api({page,fingerprint:s.fingerprint,force:String(force)},'POST',controller.signal);done.add(page);processed++;progress.value=force?processed:done.size;}
-        catch(e){if(controller.signal.aborted)throw e;errors.push(`Page ${page}: ${e.message}`);break;}
-      }
-      message.textContent=errors.length?`Index paused: ${errors.join('; ')}. Resume after resolving the error.`:'Indexing finished. No metadata was modified during extraction.';
-      if(catalogAfter){if(errors.length||done.size!==s.totalPages)throw new Error('Index is incomplete; cataloging was not started. Resume indexing first.');if(controller.signal.aborted)throw new Error('Stopped');activity='Cataloging indexed content…';tick();await performCatalog(controller.signal);}
-    }catch(e){message.textContent=controller.signal.aborted?'Stopped. Completed pages retained.':e.message;if(catalogAfter)catalogStatus.textContent=controller.signal.aborted?'Stopped. If saving had begun, refresh change history to verify the outcome.':`Cataloging: ${e.message}`;}
-    finally{clearInterval(clock);busy=false;session.running=false;session.controller=null;controller=null;buttons.forEach(b=>b.disabled=false);legacy.forEach((b,i)=>b.disabled=previous[i]);q('[data-index-stop]').hidden=true;if(panel.isConnected)await refresh();}
+    busy=true;session.running=true;buttons.forEach(b=>b.disabled=true);message.textContent='Starting server indexing job…';
+    clearTimeout(jobTimer);
+    try{const j=await jobRequest({force:String(force),catalog:String(catalogAfter),replace:String(q('[data-catalog-replace]').checked),workers:q('[data-index-workers]').value},'POST');applyJob(j);}
+    catch(e){message.textContent=`Start response: ${e.message}. Checking whether the server accepted the job.`;}
+    finally{if(panel.isConnected){await pollJob();}}
   }
-  q('[data-index-start]').onclick=()=>run(false);q('[data-index-force]').onclick=()=>run(true);q('[data-index-stop]').onclick=()=>{message.textContent='Stopping…';controller?.abort();};
+  q('[data-index-start]').onclick=()=>run(false);q('[data-index-force]').onclick=()=>run(true);
+  q('[data-index-stop]').onclick=async()=>{try{applyJob(await jobRequest({action:'stop'},'POST'));}catch(e){message.textContent=e.message;}await pollJob();};
   q('[data-index-view]').onclick=async()=>{if(busy||session.running)return;results.replaceChildren();try{const p=await api({page:q('[data-index-page]').value});message.textContent=`${p.source} · ${p.width} × ${p.height} ${p.units} · ${p.seconds}s${p.warning?' · '+p.warning:''}`;showText(p.page,p.text,p.source);}catch(e){message.textContent=e.message;}};
   q('[data-index-search]').onclick=async()=>{if(busy||session.running)return;results.replaceChildren();const term=q('[data-index-query]').value.trim();if(term.length<2||term.length>200){message.textContent='Enter 2–200 characters to search.';return;}try{const found=await api({q:term});message.textContent=`${found.matchingPages||0} matching pages (up to 100 shown)`;for(const p of found.hits||[])showText(p.page,p.snippet,p.source);}catch(e){message.textContent=e.message;}};
   q('[data-index-query]').addEventListener('keydown',e=>{if(e.key==='Enter'){e.preventDefault();q('[data-index-search]').click();}});
@@ -18794,12 +18815,9 @@ function gvAttachDocumentIndex(dialog, session, item) {
     const res=await fetch(endpoint+'/catalog'+path,{method,signal});if(!res.ok){let msg=`HTTP ${res.status}`;try{const e=await res.json();msg=e.error||e.detail||msg;}catch{}throw new Error(msg);}return res.json();
   }
   function clearCatalogClientFields(changes){const key=metadataOverrideKey(item);const map=readClientMetadataOverrides();if(!map[key])return;for(const c of changes||[])delete map[key][c.field];delete map[key].metadataSource;writeClientMetadataOverrides(map);}
-  async function performCatalog(signal){
-    catalogStatus.textContent='Interpreting indexed publication and editorial evidence…';
-    const report=await catalogRequest('?replace='+String(q('[data-catalog-replace]').checked),'POST',signal);
+  function displayCatalogReport(report,applyToClient=false){
     if(metadataManagerItemId(report.item)!==metadataManagerItemId(item))throw new Error('Unexpected save response. Refresh to verify metadata.');
-    replaceItemInState(report.item);
-    if(report.changes?.length)clearCatalogClientFields(report.changes);
+    if(applyToClient){replaceItemInState(report.item);if(report.changes?.length)clearCatalogClientFields(report.changes);}
     const lines=[`Automatic Cataloging ${report.revision}`,`${report.changes.length} field(s) saved · ${report.seconds}s interpretation · ${report.held.length} held`];
     for(const c of report.changes)lines.push(`${c.field}: ${JSON.stringify(c.before)} → ${JSON.stringify(c.after)} (${c.reason})`);
     lines.push('', 'Retained or uncertain fields:',...report.held,'','Publication evidence:',JSON.stringify(report.publication,null,2),'','Editorial evidence:',JSON.stringify(report.editorial,null,2));
@@ -18820,7 +18838,7 @@ function gvAttachDocumentIndex(dialog, session, item) {
     finally{busy=false;session.running=false;buttons.forEach(b=>b.disabled=false);legacy.forEach((b,i)=>b.disabled=previous[i]);await refreshHistory();}
   };
   refreshHistory();
-  refresh();
+  pollJob();
 }
 
 function gvMagazineScanDialog(items, fromDetail = false, inlineHost = null) {

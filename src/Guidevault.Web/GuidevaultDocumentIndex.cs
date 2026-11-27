@@ -60,7 +60,7 @@ public static class GuidevaultDocumentIndex
             }
         return new { revision=Revision, fingerprint=fp, totalPages=m?.TotalPages??0, indexedPages=done, warningPages=warnings, extractionSeconds=Math.Round(seconds,2) };
     }
-    public static async Task<object> InitializeAsync(string root, LibraryItem item, CancellationToken token)
+    public static async Task<object> InitializeAsync(string root, LibraryItem item, CancellationToken token, int? archiveCount=null)
     {
         var fp=Fingerprint(item); var dir=DirectoryFor(root,item,fp);
         if(await ReadManifest(dir,fp,token) is null)
@@ -71,7 +71,7 @@ public static class GuidevaultDocumentIndex
                 var info=await Run("pdfinfo",[item.Path],token);
                 if(!int.TryParse(Regex.Match(info,@"(?m)^Pages:\s*(\d+)").Groups[1].Value,out total)) total=0;
             }
-            else total=await ArchiveReader.GetImagePageCountAsync(item.Path);
+            else total=archiveCount??(JsonSerializer.Deserialize<string[]>(await RunArchiveWorker("list",item.Path,null,null,token),Json)?.Length??0);
             if(total<=0 || total>10000) throw new InvalidOperationException("No supported pages found, or document exceeds 10,000 pages.");
             if(Fingerprint(item)!=fp) throw new InvalidOperationException("Source changed during indexing. Restart indexing.");
             Directory.CreateDirectory(dir);
@@ -79,7 +79,7 @@ public static class GuidevaultDocumentIndex
         }
         return await StatusAsync(root,item,token);
     }
-    public static async Task<PageRecord> IndexPageAsync(string root, LibraryItem item, int page, string? expected, bool force, CancellationToken token)
+    public static async Task<PageRecord> IndexPageAsync(string root, LibraryItem item, int page, string? expected, bool force, CancellationToken token, string? archiveEntry=null, Action<string>? stage=null)
     {
         var fp=Fingerprint(item); if(fp!=expected) throw new InvalidOperationException("Source changed. Start indexing again.");
         var dir=DirectoryFor(root,item,fp); var m=await ReadManifest(dir,fp,token);
@@ -93,6 +93,7 @@ public static class GuidevaultDocumentIndex
             var n=page.ToString(CultureInfo.InvariantCulture);
             if(IsPdf(item))
             {
+                stage?.Invoke("Extracting PDF text");
                 try { var bbox=await Run("pdftotext",["-f",n,"-l",n,"-bbox-layout",item.Path,"-"],token); var candidate=ParsePdf(bbox); if(Usable(candidate)) extracted=candidate; }
                 catch(Exception ex) when(ex is not OperationCanceledException) { /* fall back to raster OCR */ }
             }
@@ -101,21 +102,24 @@ public static class GuidevaultDocumentIndex
                 string input;
                 if(IsPdf(item))
                 {
+                    stage?.Invoke("Rendering PDF page");
                     var prefix=Path.Combine(temp,"page"); await Run("pdftoppm",["-f",n,"-l",n,"-scale-to",page==1?"3000":"2200","-singlefile","-png",item.Path,prefix],token); input=prefix+".png";
                 }
                 else
                 {
-                    var image=await ArchiveReader.GetImagePageAsync(item.Path,page-1);
-                    if(image is null || image.Value.Bytes.Length>40_000_000) throw new InvalidOperationException("Page image unavailable or exceeds 40 MB.");
-                    input=Path.Combine(temp,"page.img"); await File.WriteAllBytesAsync(input,image.Value.Bytes,token);
+                    stage?.Invoke("Extracting archive image (60s timeout)");
+                    if(archiveEntry is null){var keys=JsonSerializer.Deserialize<string[]>(await RunArchiveWorker("list",item.Path,null,null,token),Json)??[];if(page>keys.Length)throw new InvalidOperationException("Page not in archive manifest.");archiveEntry=keys[page-1];}
+                    input=Path.Combine(temp,"page.img");await RunArchiveWorker("extract",item.Path,archiveEntry,input,token);
+                    if(!File.Exists(input)||new FileInfo(input).Length>40_000_000)throw new InvalidOperationException("Page image unavailable or exceeds 40 MB.");
                 }
+                stage?.Invoke("Tesseract OCR (90s timeout)");
                 var tsv=await Run("tesseract",[input,"stdout","-l","eng","--psm",page==1?"11":"3","tsv"],token); extracted=ParseTsv(tsv);
             }
             if(extracted.Width<=0 || extracted.Height<=0) throw new InvalidOperationException("Extraction returned invalid page geometry.");
             var text=string.Join("\n",extracted.Lines.Select(l=>l.Text));
             var record=new PageRecord(page,extracted.Source,text,extracted.Width,extracted.Height,extracted.Units,extracted.Lines,Math.Round(timer.Elapsed.TotalSeconds,2),Usable(extracted)?null:"Little readable text; this may be an image-only page or poor recognition.",Revision);
             token.ThrowIfCancellationRequested(); if(Fingerprint(item)!=fp) throw new InvalidOperationException("Source changed during extraction. Page was not saved.");
-            await Write(PagePath(dir,page),record,token); return record;
+            stage?.Invoke("Saving page index");await Write(PagePath(dir,page),record,token); return record;
         }
         finally { try { Directory.Delete(temp,true); } catch { } }
     }
@@ -757,12 +761,157 @@ public static class GuidevaultDocumentIndex
         var filtered=JsonSerializer.SerializeToElement(update,Json);
         foreach(var c in changes.Where(c=>!filtered.TryGetProperty(c.Field,out var v)||v.ValueKind==JsonValueKind.Null).ToArray()){changes.Remove(c);held.Add(c.Field+": protected by field alias lock");}
         if(changes.Count>0&&!manual)update=update with{MetadataSource="Magazine document index v8.0 Phase 4.1"};
-        return new CatalogPlan("v8.0-phase4.1",fp,update,changes,held,publication,editorial,Math.Round(clock.Elapsed.TotalSeconds,2));
+        return new CatalogPlan("v8.0-phase4.2",fp,update,changes,held,publication,editorial,Math.Round(clock.Elapsed.TotalSeconds,2));
     }
     public static async Task SaveCatalogReportAsync(string root,LibraryItem item,CatalogPlan plan,CancellationToken token)
     {
         var fp=Fingerprint(item);if(fp!=plan.Fingerprint)throw new InvalidOperationException("Source changed before saving catalog report.");
         var dir=DirectoryFor(root,item,fp);await Write(Path.Combine(dir,"catalog-report.json"),plan,token);
+    }
+
+    // Phase 4.2: bounded server-owned jobs. Saved page records remain the durable resume checkpoint.
+    private static readonly object JobLock = new();
+    private static readonly Dictionary<string, IndexJob> Jobs = new(StringComparer.Ordinal);
+    private sealed class IndexJob
+    {
+        public string Id { get; } = Guid.NewGuid().ToString("N");
+        public string ItemId { get; init; } = "";
+        public bool Force { get; init; }
+        public bool Catalog { get; init; }
+        public int Workers { get; init; }
+        public CancellationTokenSource Stop { get; } = new();
+        public DateTimeOffset Started { get; } = DateTimeOffset.UtcNow;
+        public DateTimeOffset? Finished { get; set; }
+        public string State { get; set; } = "running";
+        public string Message { get; set; } = "Preparing document";
+        public int Total { get; set; }
+        public int Indexed { get; set; }
+        public int Processed { get; set; }
+        public int Target { get; set; }
+        public Dictionary<int,string> Active { get; } = new();
+        public Dictionary<int,string> Failed { get; } = new();
+        public object? Report { get; set; }
+    }
+    private static object Snapshot(IndexJob j)
+    {
+        var elapsed = Math.Max(.01, ((j.Finished ?? DateTimeOffset.UtcNow)-j.Started).TotalSeconds);
+        return new { jobId=j.Id, state=j.State, message=j.Message, totalPages=j.Total, indexed=j.Indexed,
+            processed=j.Processed, target=j.Target, force=j.Force, catalog=j.Catalog, workers=j.Workers,
+            seconds=Math.Round(elapsed,1), pagesPerMinute=Math.Round(j.Processed*60/elapsed,1),
+            remainingSeconds=j.Processed>0&&j.State=="running"? (double?)Math.Round(Math.Max(0,j.Target-j.Processed)*elapsed/j.Processed):null,
+            active=j.Active.OrderBy(p=>p.Key).Select(p=>new{page=p.Key,stage=p.Value}).ToArray(),
+            failed=j.Failed.OrderBy(p=>p.Key).Select(p=>new{page=p.Key,error=p.Value}).ToArray(), report=j.Report };
+    }
+    public static object? JobStatus(string id)
+    {
+        lock(JobLock) return Jobs.TryGetValue(id,out var j)?Snapshot(j):null;
+    }
+    public static object? StopJob(string id)
+    {
+        lock(JobLock)
+        {
+            if(!Jobs.TryGetValue(id,out var j))return null;
+            if(j.State=="running"){j.Message="Stopping after cancellation";j.Stop.Cancel();}
+            return Snapshot(j);
+        }
+    }
+    public static object StartJob(string root,LibraryItem item,bool force,bool catalog,int workers,IDisposable lease,
+        Func<CancellationToken,Task<object>>? saveCatalog,CancellationToken shutdown,ILogger logger)
+    {
+        lock(JobLock)
+        {
+            if(Jobs.TryGetValue(item.Id,out var old)&&old.State=="running"){lease.Dispose();return Snapshot(old);}
+            // Limit retained in-memory results; page checkpoints and catalog reports live on disk.
+            foreach(var key in Jobs.Where(x=>x.Value.Finished.HasValue).OrderByDescending(x=>x.Value.Finished).Skip(15).Select(x=>x.Key).ToArray())
+                Jobs.Remove(key);
+            var j=new IndexJob{ItemId=item.Id,Force=force,Catalog=catalog,Workers=Math.Clamp(workers,1,4)};
+            Jobs[item.Id]=j;
+            _=Task.Run(async()=>
+            {
+                using var linked=CancellationTokenSource.CreateLinkedTokenSource(j.Stop.Token,shutdown);
+                var token=linked.Token;
+                try
+                {
+                    logger.LogInformation("Document index job {Job} started for {Item}, workers {Workers}",j.Id,item.Id,j.Workers);
+                    var fp=Fingerprint(item);var dir=DirectoryFor(root,item,fp);
+                    string[]? entries=null;
+                    if(!IsPdf(item))
+                    {
+                        lock(JobLock)j.Message="Reading archive page manifest";
+                        var output=await RunArchiveWorker("list",item.Path,null,null,token);
+                        entries=JsonSerializer.Deserialize<string[]>(output,Json)??[];
+                    }
+                    await InitializeAsync(root,item,token,entries?.Length);
+                    var m=await ReadManifest(dir,fp,token)??throw new InvalidOperationException("Document manifest unavailable.");
+                    if(entries is not null&&entries.Length!=m.TotalPages)throw new InvalidOperationException("Archive page count differs from the saved index. Source may have changed.");
+                    var done=new HashSet<int>();
+                    for(int p=1;p<=m.TotalPages;p++)if(await ReadPage(dir,p,token)is not null)done.Add(p);
+                    var todo=Enumerable.Range(1,m.TotalPages).Where(p=>force||!done.Contains(p)).ToArray();
+                    lock(JobLock){j.Total=m.TotalPages;j.Indexed=done.Count;j.Target=todo.Length;j.Message="Indexing missing pages";}
+                    await Parallel.ForEachAsync(todo,new ParallelOptions{MaxDegreeOfParallelism=j.Workers,CancellationToken=token},async(page,ct)=>
+                    {
+                        void Stage(string value){lock(JobLock)j.Active[page]=value;logger.LogInformation("Document index {Job} page {Page}: {Stage}",j.Id,page,value);}
+                        try
+                        {
+                            for(int attempt=1;attempt<=2;attempt++)
+                            {
+                                ct.ThrowIfCancellationRequested();
+                                try
+                                {
+                                    Stage($"Attempt {attempt}: preparing");
+                                    await IndexPageAsync(root,item,page,fp,force,ct,entries is null?null:entries[page-1],Stage);
+                                    lock(JobLock){if(done.Add(page))j.Indexed++;j.Processed++;j.Failed.Remove(page);}
+                                    break;
+                                }
+                                catch(Exception ex) when(ex is not OperationCanceledException)
+                                {
+                                    logger.LogWarning(ex,"Document index {Job} page {Page} attempt {Attempt} failed",j.Id,page,attempt);
+                                    if(attempt==2){lock(JobLock){j.Failed[page]=ex.Message;j.Processed++;}}
+                                    else {Stage("Retrying after extraction error");await Task.Delay(750,ct);}
+                                }
+                            }
+                        }
+                        finally{lock(JobLock)j.Active.Remove(page);}
+                    });
+                    token.ThrowIfCancellationRequested();
+                    bool complete;lock(JobLock)complete=j.Failed.Count==0&&j.Indexed==j.Total;
+                    if(Fingerprint(item)!=fp)throw new InvalidOperationException("Source changed during indexing; cataloging cancelled.");
+                    if(complete&&catalog&&saveCatalog is not null)
+                    {
+                        lock(JobLock)j.Message="Interpreting and saving catalog metadata";
+                        var report=await saveCatalog(token);lock(JobLock)j.Report=report;
+                    }
+                    lock(JobLock){j.State=complete?"complete":"incomplete";j.Message=complete?(catalog?"Cataloging complete":"Indexing complete"):"Failed pages retained in report. Resume to retry; cataloging not started.";}
+                }
+                catch(OperationCanceledException){lock(JobLock){j.State="stopped";j.Message="Stopped; completed page records retained. Check history if catalog saving had begun.";}}
+                catch(Exception ex){logger.LogError(ex,"Document index job {Job} failed",j.Id);lock(JobLock){j.State="failed";j.Message=ex.Message;}}
+                finally{lock(JobLock){j.Active.Clear();j.Finished=DateTimeOffset.UtcNow;}lease.Dispose();}
+            });
+            return Snapshot(j);
+        }
+    }
+    // Use the same application assembly as a short-lived archive-only subprocess.
+    // A blocked archive read is killed by RunProcess's timeout, not abandoned inside the web process.
+    private static async Task<string> RunArchiveWorker(string mode,string path,string? key,string? output,CancellationToken token)
+    {
+        var executable=Environment.ProcessPath??throw new InvalidOperationException("Cannot locate archive worker executable.");
+        var args=new List<string>();
+        if(Path.GetFileNameWithoutExtension(executable).Equals("dotnet",StringComparison.OrdinalIgnoreCase))
+            args.Add(typeof(GuidevaultDocumentIndex).Assembly.Location);
+        args.Add("--gv-index-archive-worker");args.Add(mode);args.Add(path);
+        if(key is not null)args.Add(key);if(output is not null)args.Add(output);
+        return await Run(executable,args.ToArray(),token,60);
+    }
+    public static async Task RunArchiveWorkerCommand(string[] args)
+    {
+        if(args.Length==3&&args[1]=="list")
+        {
+            Console.Write(JsonSerializer.Serialize(ArchiveReader.GetImageEntryKeys(args[2]),Json));return;
+        }
+        if(args.Length!=5||args[1]!="extract")throw new InvalidOperationException("Invalid archive worker arguments.");
+        var image=await ArchiveReader.GetImagePageByKeyAsync(args[2],args[3],40_000_000);
+        if(image is null)throw new InvalidOperationException("Page image unavailable or unsupported.");
+        await File.WriteAllBytesAsync(args[4],image.Value.Bytes);
     }
 
     private static bool IsPdf(LibraryItem item) => Path.GetExtension(item.Path).Equals(".pdf",StringComparison.OrdinalIgnoreCase);
@@ -795,14 +944,14 @@ public static class GuidevaultDocumentIndex
         var lines=groups.Values.Select(g=>{double x=g.Min(l=>l.X),y=g.Min(l=>l.Y);return new Line(string.Join(" ",g.Select(l=>l.Text)),x,y,g.Max(l=>l.X+l.Width)-x,g.Max(l=>l.Y+l.Height)-y,g.Average(l=>l.Confidence));}).ToList();
         return new Extraction("tesseract-eng",width,height,"pixels",lines);
     }
-    private static async Task<string> Run(string executable,string[] args,CancellationToken token)
+    private static async Task<string> Run(string executable,string[] args,CancellationToken token,int seconds=90)
     {
         using var p=new Process{StartInfo=new ProcessStartInfo(executable){RedirectStandardOutput=true,RedirectStandardError=true,UseShellExecute=false,CreateNoWindow=true}};
         foreach(var a in args)p.StartInfo.ArgumentList.Add(a);p.StartInfo.Environment["OMP_THREAD_LIMIT"]="2";p.StartInfo.Environment["LC_ALL"]="C";
-        p.Start(); using var timeout=CancellationTokenSource.CreateLinkedTokenSource(token);timeout.CancelAfter(TimeSpan.FromSeconds(90));
+        p.Start(); using var timeout=CancellationTokenSource.CreateLinkedTokenSource(token);timeout.CancelAfter(TimeSpan.FromSeconds(seconds));
         var stdout=p.StandardOutput.ReadToEndAsync(timeout.Token);var stderr=p.StandardError.ReadToEndAsync(timeout.Token);
-        try { await p.WaitForExitAsync(timeout.Token);var output=await stdout;var error=await stderr;if(p.ExitCode!=0)throw new InvalidOperationException($"{executable} failed ({p.ExitCode}).");return output; }
+        try { await p.WaitForExitAsync(timeout.Token);var output=await stdout;var error=await stderr;if(p.ExitCode!=0)throw new InvalidOperationException($"{Path.GetFileName(executable)} failed ({p.ExitCode}): {error.Trim()[..Math.Min(800,error.Trim().Length)]}");return output; }
         catch(OperationCanceledException){if(token.IsCancellationRequested)throw;throw new InvalidOperationException($"{executable} timed out.");}
-        finally{try{if(!p.HasExited){p.Kill(true);await p.WaitForExitAsync();}}catch{}}
+        finally{try{if(!p.HasExited){p.Kill(true);await p.WaitForExitAsync().WaitAsync(TimeSpan.FromSeconds(5));}}catch{}}
     }
 }

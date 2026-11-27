@@ -18,6 +18,12 @@ using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.ResponseCompression;
 using Microsoft.Extensions.Configuration;
 
+if(args.Length>0&&args[0]=="--gv-index-archive-worker")
+{
+    try{await GuidevaultDocumentIndex.RunArchiveWorkerCommand(args);}
+    catch(Exception ex){Console.Error.WriteLine(ex.Message);Environment.ExitCode=1;}
+    return;
+}
 var builder = WebApplication.CreateBuilder(args);
 builder.Services.AddResponseCompression(responseCompression =>
 {
@@ -3037,6 +3043,37 @@ app.MapGet("/api/items/{id}/document-index", async (HttpRequest request, string 
     catch (OperationCanceledException) { return Results.StatusCode(499); }
     catch (InvalidOperationException ex) { return Results.BadRequest(new { error = ex.Message }); }
     catch (Exception) { return Results.Problem("Could not read the document index."); }
+});
+app.MapGet("/api/items/{id}/document-index/job", (HttpRequest request,string id) =>
+{
+    if(CurrentGuidevaultUser(request)?.IsAdmin!=true)return (IResult)Results.StatusCode(403);
+    if(!VisibleLibraryItems(request,cache.GetItemsSnapshot()).Any(i=>i.Id==id&&i.Kind=="Magazine"))return Results.NotFound();
+    return Results.Ok(GuidevaultDocumentIndex.JobStatus(id)??new{state="idle"});
+});
+app.MapPost("/api/items/{id}/document-index/job", (HttpRequest request,string id,string? action,bool? force,bool? catalog,bool? replace,int? workers) =>
+{
+    if(CurrentGuidevaultUser(request)?.IsAdmin!=true)return (IResult)Results.StatusCode(403);
+    var item=VisibleLibraryItems(request,cache.GetItemsSnapshot()).FirstOrDefault(i=>i.Id==id&&i.Kind=="Magazine");
+    if(item is null)return Results.NotFound();
+    if(action=="stop")return Results.Ok(GuidevaultDocumentIndex.StopJob(id)??new{state="idle"});
+    if(!File.Exists(item.Path))return Results.BadRequest(new{error="Source magazine is unavailable."});
+    if(!GuidevaultLibraryIoGate.TryBeginArchiveWrite(out var lease,out var message,allowConcurrentArchiveReads:true)||lease is null)return Results.Conflict(new{error=message});
+    // Capture only application services, immutable identifiers and options; never a request or its cancellation token.
+    var replaceExisting=replace==true;
+    async Task<object> Save(CancellationToken token)
+    {
+        var fresh=cache.GetItemsSnapshot().FirstOrDefault(i=>i.Id==id&&i.Kind=="Magazine")??throw new InvalidOperationException("Magazine no longer exists.");
+        if(GuidevaultDocumentIndex.CatalogFingerprint(fresh)!=GuidevaultDocumentIndex.CatalogFingerprint(item))throw new InvalidOperationException("Source changed during indexing; cataloging cancelled.");
+        var expected=metadataStore.GetDocumentCatalogOverride(id);fresh=metadataStore.ApplyOverride(fresh);
+        var plan=await GuidevaultDocumentIndex.CatalogAsync(dataRoot,fresh,cache.GetItemsSnapshot(),launchBoxIntegrationStore.GetSnapshot().Games,replaceExisting,token);
+        await GuidevaultDocumentIndex.SaveCatalogReportAsync(dataRoot,fresh,plan,token);
+        token.ThrowIfCancellationRequested();
+        var updated=metadataStore.CommitDocumentCatalog(dataRoot,fresh,expected,plan);
+        if(plan.Changes.Count>0){cache.ReplaceCachedItem(updated,persist:false);RecordSystemEvent("Metadata","Magazine cataloged",$"Indexed catalog updated {plan.Changes.Count} field(s) for {fresh.Title}.","api",id,fresh.Title);}
+        return new{item=updated,plan.Revision,plan.Changes,plan.Held,plan.Publication,plan.Editorial,plan.Seconds,history=metadataStore.DocumentCatalogHistory(dataRoot,id)};
+    }
+    try{return Results.Ok(GuidevaultDocumentIndex.StartJob(dataRoot,item,force==true,catalog==true,workers??2,lease,catalog==true?Save:null,app.Lifetime.ApplicationStopping,app.Logger));}
+    catch(Exception ex){lease.Dispose();app.Logger.LogError(ex,"Unable to start document index job");return Results.Problem("Unable to start document index job.");}
 });
 app.MapPost("/api/items/{id}/document-index", async (HttpRequest request, string id, int? page, string? fingerprint, bool? force) =>
 {
@@ -20206,7 +20243,21 @@ public static class ArchiveReader
     {
         var entries = GetImageEntries(archivePath);
         if (pageIndex < 0 || pageIndex >= entries.Length) return null;
-        var entryKey = entries[pageIndex];
+        return await GetImagePageByKeyAsync(archivePath,entries[pageIndex]);
+    }
+
+    public static async Task<(byte[] Bytes, string ContentType)?> GetImagePageByKeyAsync(string archivePath,string entryKey,int? maxBytes=null)
+    {
+        async Task Copy(Stream source,MemoryStream target)
+        {
+            if(maxBytes is null){await source.CopyToAsync(target);return;}
+            var buffer=new byte[81920];int read;
+            while((read=await source.ReadAsync(buffer.AsMemory()))>0)
+            {
+                if(target.Length+read>maxBytes.Value)throw new InvalidDataException("Page image exceeds configured size limit.");
+                await target.WriteAsync(buffer.AsMemory(0,read));
+            }
+        }
         var ext = Path.GetExtension(entryKey).ToLowerInvariant();
         var contentType = ContentTypeFromExtension(ext);
 
@@ -20220,11 +20271,12 @@ public static class ArchiveReader
                 {
                     await using var stream = entry.Open();
                     using var ms = new MemoryStream();
-                    await stream.CopyToAsync(ms);
+                    await Copy(stream,ms);
                     var bytes = ms.ToArray();
                     return LooksLikeImageBytes(bytes, contentType) ? (bytes, contentType) : null;
                 }
             }
+            catch (InvalidDataException ex) when(maxBytes.HasValue && ex.Message=="Page image exceeds configured size limit."){throw;}
             catch
             {
                 // Mislabelled CBZ or transient zip read failure; try SharpCompress below.
@@ -20240,7 +20292,7 @@ public static class ArchiveReader
 
             await using var input = reader.OpenEntryStream();
             using var output = new MemoryStream();
-            await input.CopyToAsync(output);
+            await Copy(input,output);
             var bytes = output.ToArray();
             return LooksLikeImageBytes(bytes, contentType) ? (bytes, contentType) : null;
         }
