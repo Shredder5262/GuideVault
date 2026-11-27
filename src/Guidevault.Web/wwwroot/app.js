@@ -18741,7 +18741,7 @@ function gvMagazineScanDialog(items, fromDetail = false, inlineHost = null) {
       if(row.item.issueNumber&&printedIssues.some(v=>String(v).trim().replace(/^0+(?=\d)/,'')!==String(row.item.issueNumber).trim().replace(/^0+(?=\d)/,''))) reviewWarnings.push(`Printed issue number(s): ${printedIssues.join(', ')}. Existing issue #${row.item.issueNumber}; review printed cover evidence before changing.`);
       if(coverConflict) reviewWarnings.push(`Cover headings detected: ${coverNames.join(', ')}. ${existingCover?'Existing cover subject retained: '+existingCover+'. ':''}OCR headings do not establish the primary cover story; edit Metadata after checking the cover.`);
       if (reviewWarnings.length) { const w = document.createElement('details'); w.innerHTML = `<summary>${reviewWarnings.length} scan warning(s)</summary><p>${reviewWarnings.map(escapeHtml).join('<br>')}</p>`; block.appendChild(w); }
-      if(row.revision!=='v7.1.4'||!row.complete){root.appendChild(block);return;}
+      if(row.revision!=='v7.1.6'||!row.complete){root.appendChild(block);return;}
       const proposals = gvMagazineScanProposals(row);
       const corrections=[];
       const coverProposal=proposals.find(p=>p.field==='coverSubject');
@@ -18828,7 +18828,7 @@ function gvMagazineScanDialog(items, fromDetail = false, inlineHost = null) {
             if (!res.ok) { let msg=`HTTP ${res.status}`; try { msg=(await res.json()).error||msg; } catch {} throw new Error(msg); }
             const data=await res.json();
             row.revision=String(data.scannerRevision||'not reported');
-            if(row.revision!=='v7.1.4') { row.suggestions=[]; throw new Error(`Scanner backend revision ${row.revision}; expected v7.1.4. Deploy the matching image and reload before scanning.`); }
+            if(row.revision!=='v7.1.6') { row.suggestions=[]; throw new Error(`Scanner backend revision ${row.revision}; expected v7.1.6. Deploy the matching image and reload before scanning.`); }
             row.total=data.totalPages; row.scanned+=data.scanned; row.readable+=data.readablePages; row.cached+=Number(data.cachedPages||0); row.suggestions.push(...(data.suggestions||[])); row.warnings.push(...(data.warnings||[]));
             if (!data.scanned) {row.warnings.push('No pages returned; scan incomplete.');break;} start+=data.scanned; progress.value=i+Math.min(1,start/Math.min(scope,row.total));
           } while(start<Math.min(scope,row.total));
@@ -18945,7 +18945,7 @@ function gvMagazineEditableCorrection(row,field,value,reason) {
   return {field,current,value,evidence:[{value:value||'Clear field',page:0,evidence:reason,confidence:'Manual correction — review required'}],conflict:false,locked:false,safe:false};
 }
 function gvMagazineScanReport(rows,root) {
-  const report=['GuideVault magazine scan report — UI v7.1.4'];
+  const report=['GuideVault magazine scan report — UI v7.1.6'];
   const blocks=[...root.querySelectorAll('.gv-magscan-result')];
   rows.forEach((row,i)=>{
     const block=blocks[i];if(!block)return;
