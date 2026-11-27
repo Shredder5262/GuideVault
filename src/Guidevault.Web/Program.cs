@@ -2958,6 +2958,50 @@ app.MapPut("/api/items/{id}/metadata", (string id, JsonElement payload) =>
 });
 
 // Magazine OCR scan v1: admin-only, read-only suggestions, bounded page chunks.
+// Phase 4: automatic cataloging only from the current completed index. Admin-only writes.
+app.MapPost("/api/items/{id}/document-index/catalog", async (HttpRequest request,string id,bool? replace) =>
+{
+    if(CurrentGuidevaultUser(request)?.IsAdmin!=true)return (IResult)Results.StatusCode(403);
+    if(!GuidevaultLibraryIoGate.TryBeginArchiveWrite(out var lease,out var busyMessage))return Results.Conflict(new{error=busyMessage});
+    using(lease)
+    {
+        var item=VisibleLibraryItems(request,cache.GetItemsSnapshot()).FirstOrDefault(i=>i.Id==id);
+        if(item is null)return Results.NotFound();
+        if(item.Kind!="Magazine"||!File.Exists(item.Path))return Results.BadRequest(new{error="A readable magazine issue is required."});
+        try
+        {
+            var expected=metadataStore.GetDocumentCatalogOverride(id);item=metadataStore.ApplyOverride(item);
+            var plan=await GuidevaultDocumentIndex.CatalogAsync(dataRoot,item,cache.GetItemsSnapshot(),launchBoxIntegrationStore.GetSnapshot().Games,replace==true,request.HttpContext.RequestAborted);
+            await GuidevaultDocumentIndex.SaveCatalogReportAsync(dataRoot,item,plan,request.HttpContext.RequestAborted);
+            request.HttpContext.RequestAborted.ThrowIfCancellationRequested();
+            var updated=metadataStore.CommitDocumentCatalog(dataRoot,item,expected,plan);
+            if(plan.Changes.Count>0){cache.ReplaceCachedItem(updated,persist:false);RecordSystemEvent("Metadata","Magazine cataloged",$"Indexed catalog updated {plan.Changes.Count} field(s) for {item.Title}.","api",id,item.Title);}
+            return Results.Ok(new{item=updated,plan.Revision,plan.Changes,plan.Held,plan.Publication,plan.Editorial,plan.Seconds,history=metadataStore.DocumentCatalogHistory(dataRoot,id)});
+        }
+        catch(OperationCanceledException){return Results.StatusCode(499);}
+        catch(InvalidOperationException ex){return Results.Conflict(new{error=ex.Message});}
+        catch(Exception){return Results.Problem("Cataloging failed. Check the document index, metadata and catalog history before retrying.");}
+    }
+});
+app.MapGet("/api/items/{id}/document-index/catalog/history", (HttpRequest request,string id) =>
+{
+    if(CurrentGuidevaultUser(request)?.IsAdmin!=true)return (IResult)Results.StatusCode(403);
+    if(!VisibleLibraryItems(request,cache.GetItemsSnapshot()).Any(i=>i.Id==id&&i.Kind=="Magazine"))return Results.NotFound();
+    try{return Results.Ok(metadataStore.DocumentCatalogHistory(dataRoot,id));}catch(Exception){return Results.Problem("Catalog history could not be read.");}
+});
+app.MapPost("/api/items/{id}/document-index/catalog/undo", (HttpRequest request,string id) =>
+{
+    if(CurrentGuidevaultUser(request)?.IsAdmin!=true)return (IResult)Results.StatusCode(403);
+    if(!GuidevaultLibraryIoGate.TryBeginArchiveWrite(out var lease,out var busyMessage))return Results.Conflict(new{error=busyMessage});
+    using(lease)
+    {
+        var item=VisibleLibraryItems(request,cache.GetItemsSnapshot()).FirstOrDefault(i=>i.Id==id&&i.Kind=="Magazine");if(item is null)return Results.NotFound();
+        try{var restored=metadataStore.UndoDocumentCatalog(dataRoot,item);cache.ReplaceCachedItem(restored,persist:true);RecordSystemEvent("Metadata","Magazine catalog undone",$"Restored catalog metadata for {item.Title}.","api",id,item.Title);return Results.Ok(new{item=restored,history=metadataStore.DocumentCatalogHistory(dataRoot,id)});}
+        catch(InvalidOperationException ex){return Results.Conflict(new{error=ex.Message});}
+        catch(Exception){return Results.Problem("Catalog rollback failed. Refresh and inspect metadata before retrying.");}
+    }
+});
+
 // Phase 3: editorial analysis of the persistent index, admin-only and read-only.
 app.MapGet("/api/items/{id}/document-index/editorial", async (HttpRequest request, string id) =>
 {
@@ -15474,6 +15518,66 @@ public sealed class MetadataStore
             LaunchBoxMatchedAt = Keep(update.LaunchBoxMatchedAt, item.LaunchBoxMatchedAt),
             MetadataLocks = MetadataLockHelper.MergeLocks(item.MetadataLocks, update.MetadataLocks)
         };
+    }
+
+    // Phase 4: journal the exact override under the same lock used by normal metadata writes.
+    public sealed record DocumentCatalogJournal(string Id,string Fingerprint,DateTimeOffset Created,LibraryItem BeforeItem,ItemMetadataUpdate? Before,ItemMetadataUpdate After,GuidevaultDocumentIndex.CatalogChange[] Changes);
+    public ItemMetadataUpdate? GetDocumentCatalogOverride(string id)
+    {
+        lock(_gate){return _overrides.TryGetValue(id,out var current)?current:null;}
+    }
+    private bool SameCatalogOverride(ItemMetadataUpdate? a,ItemMetadataUpdate? b)=>JsonSerializer.Serialize(a,_jsonOptions)==JsonSerializer.Serialize(b,_jsonOptions);
+    private static string DocumentCatalogJournalDirectory(string root,string id)=>Path.Combine(root,"document-index","catalog-history",Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(id))).ToLowerInvariant());
+    public LibraryItem CommitDocumentCatalog(string root,LibraryItem item,ItemMetadataUpdate? expected,GuidevaultDocumentIndex.CatalogPlan plan)
+    {
+        lock(_gate)
+        {
+            _overrides.TryGetValue(item.Id,out var before);
+            if(!SameCatalogOverride(before,expected))throw new InvalidOperationException("Metadata changed during analysis. Run Scan Magazine again.");
+            if(before?.Removed==true||GuidevaultDocumentIndex.CatalogFingerprint(item)!=plan.Fingerprint)throw new InvalidOperationException("The magazine changed during analysis.");
+            if(plan.Changes.Count==0)return item;
+            var after=MergeMetadataUpdate(before,plan.Update);
+            var dir=DocumentCatalogJournalDirectory(root,item.Id);Directory.CreateDirectory(dir);
+            var file=Path.Combine(dir,DateTime.UtcNow.Ticks.ToString("D19")+"-"+Guid.NewGuid().ToString("N")+".json");
+            var journal=new DocumentCatalogJournal(item.Id,plan.Fingerprint,DateTimeOffset.UtcNow,item,before,after,plan.Changes.ToArray());
+            GuidevaultAtomicFile.WriteAllText(file,JsonSerializer.Serialize(journal,_jsonOptions));
+            _overrides[item.Id]=after;
+            try{Persist();}catch{if(before is null)_overrides.Remove(item.Id);else _overrides[item.Id]=before;try{File.Delete(file);}catch{}throw;}
+            return ApplyUpdateSnapshot(ApplyOverride(item),plan.Update);
+        }
+    }
+    public object DocumentCatalogHistory(string root,string id)
+    {
+        lock(_gate)
+        {
+            var dir=DocumentCatalogJournalDirectory(root,id);if(!Directory.Exists(dir))return new{available=false,entries=Array.Empty<object>()};
+            var files=Directory.EnumerateFiles(dir,"*.json").OrderByDescending(x=>x,StringComparer.Ordinal).Take(20).ToArray();var rows=new List<object>();bool available=false;
+            _overrides.TryGetValue(id,out var current);
+            for(int i=0;i<files.Length;i++)
+            {
+                var entry=JsonSerializer.Deserialize<DocumentCatalogJournal>(File.ReadAllText(files[i]),_jsonOptions);if(entry is null||entry.Id!=id)continue;
+                bool undone=File.Exists(files[i]+".undone");bool canUndo=i==0&&!undone&&SameCatalogOverride(current,entry.After);if(canUndo)available=true;
+                rows.Add(new{entry.Created,changes=entry.Changes,undone,canUndo});
+            }
+            return new{available,entries=rows};
+        }
+    }
+    public LibraryItem UndoDocumentCatalog(string root,LibraryItem item)
+    {
+        lock(_gate)
+        {
+            var dir=DocumentCatalogJournalDirectory(root,item.Id);
+            var file=Directory.Exists(dir)?Directory.EnumerateFiles(dir,"*.json").OrderByDescending(x=>x,StringComparer.Ordinal).FirstOrDefault():null;
+            if(file is null||File.Exists(file+".undone"))throw new InvalidOperationException("No active catalog save is available to undo.");
+            var entry=JsonSerializer.Deserialize<DocumentCatalogJournal>(File.ReadAllText(file),_jsonOptions)??throw new InvalidOperationException("Catalog journal could not be read.");
+            _overrides.TryGetValue(item.Id,out var current);
+            if(entry.Id!=item.Id||entry.Fingerprint!=GuidevaultDocumentIndex.CatalogFingerprint(item)||!SameCatalogOverride(current,entry.After))throw new InvalidOperationException("Metadata or source changed since cataloging. Undo refused to protect later edits.");
+            if(entry.Before is null)_overrides.Remove(item.Id);else _overrides[item.Id]=entry.Before;
+            try{Persist();}catch{_overrides[item.Id]=entry.After;throw;}
+            // If the process stops before the marker, the override comparison still prevents a second undo.
+            try{GuidevaultAtomicFile.WriteAllText(file+".undone",DateTimeOffset.UtcNow.ToString("O"));}catch{/* metadata already restored */}
+            return entry.BeforeItem;
+        }
     }
 
     public ItemMetadataUpdate PrepareIncomingOverride(string id, ItemMetadataUpdate update, bool overwriteLockedFields = false, string? kindHint = null)

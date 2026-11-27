@@ -589,6 +589,102 @@ public static class GuidevaultDocumentIndex
         return m.Success&&int.TryParse(m.Groups[1].Value,out int n)&&n>0?n:null;
     }
 
+    // Phase 4: derive a conservative save plan from the existing read-only reports.
+    public sealed record CatalogChange(string Field, JsonElement Before, JsonElement After, string Reason);
+    public sealed record CatalogPlan(string Revision, string Fingerprint, ItemMetadataUpdate Update, List<CatalogChange> Changes, List<string> Held, JsonElement Publication, JsonElement Editorial, double Seconds);
+    public static string CatalogFingerprint(LibraryItem item) => Fingerprint(item);
+    public static async Task<CatalogPlan> CatalogAsync(string root, LibraryItem item, IReadOnlyList<LibraryItem> library, IEnumerable<GuidevaultLaunchBoxGame> games, bool replace, CancellationToken token)
+    {
+        var clock=Stopwatch.StartNew(); var fp=Fingerprint(item);
+        var publication=JsonSerializer.SerializeToElement(await PublicationAsync(root,item,library,token),Json);
+        var editorial=JsonSerializer.SerializeToElement(await EditorialAsync(root,item,games,token),Json);
+        var changes=new List<CatalogChange>(); var held=new List<string>(); var values=new Dictionary<string,object>();
+        var protectedItem=MetadataStatusHelper.Normalize(item.MetadataStatus) is MetadataStatusHelper.Reviewed or MetadataStatusHelper.Locked or MetadataStatusHelper.ManualOnly;
+        bool manual=(item.MetadataSource??"").Contains("Manual edit",StringComparison.OrdinalIgnoreCase);
+        var current=JsonSerializer.SerializeToElement(item,Json);
+        string S(JsonElement e,string name)=>e.TryGetProperty(name,out var v)&&v.ValueKind==JsonValueKind.String?v.GetString()??"":"";
+        string[] A(JsonElement e,string name)=>e.TryGetProperty(name,out var v)&&v.ValueKind==JsonValueKind.Array?v.EnumerateArray().Where(x=>x.ValueKind==JsonValueKind.String).Select(x=>x.GetString()??"").Where(x=>x.Length>0).ToArray():[];
+        bool Nonempty(JsonElement e)=>e.ValueKind switch {JsonValueKind.String=>Meaningful(e.GetString()),JsonValueKind.Array=>e.GetArrayLength()>0,JsonValueKind.Number=>e.TryGetInt32(out var n)&&n>0,_=>false};
+        bool Equal(string field,JsonElement a,JsonElement b)=>a.ValueKind==JsonValueKind.String&&b.ValueKind==JsonValueKind.String?EvidenceKey(field,a.GetString())==EvidenceKey(field,b.GetString()):a.ValueKind==JsonValueKind.Array&&b.ValueKind==JsonValueKind.Array?a.EnumerateArray().Select(x=>x.GetString()).SequenceEqual(b.EnumerateArray().Select(x=>x.GetString()),StringComparer.OrdinalIgnoreCase):a.GetRawText()==b.GetRawText();
+        void Offer(string field,object value,string reason,bool canReplace=true)
+        {
+            var after=JsonSerializer.SerializeToElement(value,Json); if(!Nonempty(after))return;
+            var before=current.TryGetProperty(field,out var old)?old:JsonSerializer.SerializeToElement<object?>(null,Json);
+            if(Equal(field,before,after))return;
+            if(protectedItem||MetadataLockHelper.IsLocked(item.MetadataLocks,field)){held.Add(field+": protected metadata — "+reason);return;}
+            if((Nonempty(before)||before.ValueKind==JsonValueKind.String&&!string.IsNullOrWhiteSpace(before.GetString()))&&(!replace||manual||!canReplace)){held.Add(field+": existing value retained — "+reason);return;}
+            values[field]=value;changes.Add(new(field,before,after,reason));
+        }
+        var conflicting=new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var permitted=new HashSet<string>(StringComparer.OrdinalIgnoreCase){"magazineTitle","issueNumber","volume","coverDate","year","publicationDate","publisher","writer","region","languageTag","primarySystem","platformFocus","magazineCategory","barcodeUpcIssn","pageCount"};
+        foreach(var field in publication.GetProperty("fields").EnumerateArray())
+        {
+            var key=S(field,"field");if(!permitted.Contains(key))continue;
+            var candidates=field.GetProperty("candidates");if(candidates.GetArrayLength()!=1){if(candidates.GetArrayLength()>1){conflicting.Add(key);held.Add(key+": conflicting publication evidence");}continue;}
+            var c=candidates[0];var val=S(c,"value");var support=S(c,"support");bool direct=support=="Direct or reviewed";
+            // Indirect evidence never replaces a populated field; language and repeated publication contacts may fill blanks.
+            var ev=c.GetProperty("evidence").EnumerateArray().ToArray();
+            bool repeatedContact=ev.Where(e=>S(e,"source").Contains("correspondence",StringComparison.OrdinalIgnoreCase)&&e.GetProperty("page").ValueKind==JsonValueKind.Number).Select(e=>e.GetProperty("page").GetInt32()).Distinct().Count()>=2;
+            bool indirectAllowed=key=="languageTag"||(key is "publisher" or "region")&&repeatedContact;
+            if(!direct&&!indirectAllowed){held.Add(key+": indirect evidence only — "+val);continue;}
+            if(key=="pageCount"){if(int.TryParse(val,out var count))Offer(key,count,"Indexed digital page count",false);}
+            else Offer(key,val,support+" — "+val,direct);
+        }
+        var gameRows=editorial.GetProperty("games").EnumerateArray().ToArray();
+        var primary=S(editorial,"primarySystemCandidate");
+        var relevant=gameRows; // Phase 3 already filters unsupported incidental matches; retain genuine cross-platform coverage.
+        bool EditorialCoverage(JsonElement g)=>g.GetProperty("featured").GetBoolean()&&A(g,"kinds").Any(k=>k is "Review" or "Preview" or "Feature" or "Gameplay assistance" or "Interview");
+        var featured=relevant.Where(EditorialCoverage).Select(g=>S(g,"title")).Where(Meaningful).Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
+        var mentioned=relevant.Where(g=>!featured.Contains(S(g,"title"),StringComparer.OrdinalIgnoreCase)&&A(g,"kinds").Any(k=>k is not "Possible advertising" and not "Catalog listing")).Select(g=>S(g,"title")).Where(Meaningful).Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
+        if(primary.Length>0)
+        {
+            if(!values.ContainsKey("primarySystem")&&!conflicting.Contains("primarySystem"))Offer("primarySystem",primary,"Platform inferred from unambiguous editorial game titles",false);
+            if(!values.ContainsKey("platformFocus")&&!conflicting.Contains("platformFocus"))Offer("platformFocus",primary,"Platform inferred from editorial game titles",false);
+            Offer("featuredPlatforms",new[]{primary}.Concat(relevant.Where(EditorialCoverage).Where(g=>A(g,"platforms").Length==1).SelectMany(g=>A(g,"platforms"))).Distinct(StringComparer.OrdinalIgnoreCase).ToArray(),"Dominant and other unambiguous editorial platforms");
+        }
+        else
+        {
+            var platforms=relevant.Where(EditorialCoverage).SelectMany(g=>A(g,"platforms").Length==1?A(g,"platforms"):Array.Empty<string>()).Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
+            Offer("featuredPlatforms",platforms,"Unambiguous catalog platforms from editorial coverage");
+        }
+        Offer("featuredGames",featured,"Indexed editorial coverage; excludes cover-only, catalog-only and advertising-only matches");
+        Offer("mentionedGames",mentioned,"Indexed non-advertising references; catalog-only matches retained in report");
+        var covers=editorial.GetProperty("coverCandidates").EnumerateArray().ToArray();
+        // A text mention alone does not establish the main cover story. Do not promote an unverified contents-only candidate.
+        if(covers.Length>0)
+        {
+            var best=covers[0];var title=S(best,"title");
+            var verifiedText=covers.Length==1&&S(best,"source")=="Cover text"&&featured.Contains(title,StringComparer.OrdinalIgnoreCase)&&relevant.Any(g=>S(g,"title")==title&&g.GetProperty("contents").GetBoolean()&&A(g,"kinds").Any(k=>k is "Review" or "Preview" or "Feature"));
+            if(verifiedText)Offer("coverSubject",title,"Single cover-text candidate with explicit editorial contents support",false);
+            else held.Add("coverSubject: primary cover not verified — "+string.Join(", ",covers.Select(g=>S(g,"title"))));
+        }
+        var kinds=relevant.Where(EditorialCoverage).SelectMany(g=>A(g,"kinds")).Where(k=>k is "Review" or "Preview" or "Feature" or "Gameplay assistance" or "Interview").Concat(editorial.GetProperty("headings").EnumerateArray().Where(h=>S(h,"source")=="Contents candidate").Select(h=>S(h,"kind"))).Where(Meaningful).Distinct(StringComparer.OrdinalIgnoreCase).OrderBy(x=>x).ToArray();
+        Offer("specialFeatures",kinds,"Editorial coverage and contents section types");
+        if(featured.Length>0)
+        {
+            string publicationName=values.TryGetValue("magazineTitle",out var titleValue)?titleValue.ToString()??item.MagazineTitle:item.MagazineTitle;
+            if(!Meaningful(publicationName))publicationName=item.Title;
+            string issue=values.TryGetValue("issueNumber",out var issueValue)?issueValue.ToString()??"":item.IssueNumber;
+            string date=values.TryGetValue("coverDate",out var dateValue)?dateValue.ToString()??"":item.CoverDate;
+            var summary=publicationName+(Meaningful(issue)?", issue "+issue:"")+(Meaningful(date)?" ("+date+")":"")+". Indexed editorial coverage includes "+string.Join(", ",featured.Take(12))+(featured.Length>12?", and additional games":"")+".";
+            if(kinds.Length>0)summary+=" Content includes "+string.Join(", ",kinds.Select(k=>k.ToLowerInvariant()))+".";
+            Offer("summary",summary,"Deterministic issue summary from indexed editorial evidence");
+        }
+        if(Fingerprint(item)!=fp)throw new InvalidOperationException("Source changed during cataloging. Re-index first.");
+        // Enforce alias locks too, using the existing metadata store filter. Report any removed change.
+        var update=ItemMetadataJsonReader.Read(JsonSerializer.SerializeToElement(values,Json));
+        update=MetadataLockHelper.FilterLockedFields(update,item.MetadataLocks);
+        var filtered=JsonSerializer.SerializeToElement(update,Json);
+        foreach(var c in changes.Where(c=>!filtered.TryGetProperty(c.Field,out var v)||v.ValueKind==JsonValueKind.Null).ToArray()){changes.Remove(c);held.Add(c.Field+": protected by field alias lock");}
+        if(changes.Count>0&&!manual)update=update with{MetadataSource="Magazine document index v8.0 Phase 4"};
+        return new CatalogPlan("v8.0-phase4",fp,update,changes,held,publication,editorial,Math.Round(clock.Elapsed.TotalSeconds,2));
+    }
+    public static async Task SaveCatalogReportAsync(string root,LibraryItem item,CatalogPlan plan,CancellationToken token)
+    {
+        var fp=Fingerprint(item);if(fp!=plan.Fingerprint)throw new InvalidOperationException("Source changed before saving catalog report.");
+        var dir=DirectoryFor(root,item,fp);await Write(Path.Combine(dir,"catalog-report.json"),plan,token);
+    }
+
     private static bool IsPdf(LibraryItem item) => Path.GetExtension(item.Path).Equals(".pdf",StringComparison.OrdinalIgnoreCase);
     private static bool Usable(Extraction p) => Regex.Matches(string.Join(" ",p.Lines.Select(l=>l.Text)),@"\p{L}{2,}").Count>=12;
     private static double Number(string? s) => double.TryParse(s,NumberStyles.Float,CultureInfo.InvariantCulture,out var d)&&double.IsFinite(d)?d:0;

@@ -18666,12 +18666,12 @@ function gvOpenInlineMagazineScan() {
 // v8 Phase 1: independent persistent extraction and search; legacy metadata scan remains unchanged.
 function gvAttachDocumentIndex(dialog, session, item) {
   const panel=document.createElement('section'); panel.className='gv-magscan-content';
-  panel.innerHTML=`<h2>Document Index <small>v8.0 Phase 1</small></h2><p class="sub">Extract readable page text once and retain it for future metadata interpretation. No magazine metadata is changed.</p><p class="sub" data-index-status aria-live="polite">Checking document index…</p><progress data-index-progress value="0" max="1"></progress><div class="gv-magscan-actions"><button type="button" class="primary" data-index-start>Index / Resume</button><button type="button" class="ghost" data-index-force>Re-index document</button><button type="button" class="ghost" data-index-stop hidden>Stop</button></div><div style="display:grid;grid-template-columns:minmax(0,1fr) auto;gap:8px;align-items:center;margin:10px 0"><input type="search" data-index-query placeholder="Search indexed text" aria-label="Search indexed text"><button type="button" class="ghost" data-index-search>Search</button><input type="number" min="1" value="1" data-index-page aria-label="Page number"><button type="button" class="ghost" data-index-view>View page</button></div><p class="sub" data-index-message aria-live="polite"></p><div data-index-results></div><hr><h2>Publication Intelligence <small>v8.0 Phase 2.3</small></h2><p class="sub">Interpret the completed document index. Review printed evidence, file identity and clearly labeled inferences without repeating OCR. No metadata is modified.</p><div class="gv-magscan-actions"><button type="button" class="primary" data-publication-analyze>Analyze publication</button><button type="button" class="ghost" data-publication-copy disabled>Copy evidence report</button></div><p class="sub" data-publication-status aria-live="polite"></p><div data-publication-results></div><hr><h2>Editorial Intelligence <small>v8.0 Phase 3.1</small></h2><p class="sub">Find editorial headings, game coverage and platform candidates using the saved index. No additional OCR or AI calls. Candidates only; metadata remains unchanged.</p><div class="gv-magscan-actions"><button type="button" class="primary" data-editorial-analyze>Analyze editorial content</button><button type="button" class="ghost" data-editorial-copy disabled>Copy editorial report</button><button type="button" class="ghost" data-editorial-download disabled>Download report</button></div><p class="sub" data-editorial-status aria-live="polite"></p><textarea data-editorial-report rows="12" readonly hidden style="width:100%" aria-label="Complete editorial report"></textarea><div data-editorial-results></div><hr>`;
+  panel.innerHTML=`<h2>Automatic Cataloging <small>v8.0 Phase 4</small></h2><p class="sub">Index missing pages once, analyze the issue and save supported metadata. Existing populated values, reviewed records and locked fields are protected by default.</p><label><input type="checkbox" data-catalog-replace> Replace supported unreviewed metadata (existing game lists and summary may be replaced)</label><div class="gv-magscan-actions"><button type="button" class="primary" data-catalog-start>Scan magazine</button><button type="button" class="ghost" data-catalog-download disabled>Download catalog report</button><button type="button" class="ghost" data-catalog-history>Refresh change history</button><button type="button" class="ghost" data-catalog-undo disabled>Undo last catalog save</button></div><p class="sub" data-catalog-status aria-live="polite">Ready. No additional AI models are used.</p><textarea data-catalog-report rows="12" readonly hidden style="width:100%" aria-label="Catalog evidence report"></textarea><details><summary>Catalog change history</summary><div data-catalog-history-results></div></details><hr><h2>Document Index <small>v8.0 Phase 1</small></h2><p class="sub">Extract readable page text once and retain it for future metadata interpretation. No magazine metadata is changed.</p><p class="sub" data-index-status aria-live="polite">Checking document index…</p><progress data-index-progress value="0" max="1"></progress><div class="gv-magscan-actions"><button type="button" class="primary" data-index-start>Index / Resume</button><button type="button" class="ghost" data-index-force>Re-index document</button><button type="button" class="ghost" data-index-stop hidden>Stop</button></div><div style="display:grid;grid-template-columns:minmax(0,1fr) auto;gap:8px;align-items:center;margin:10px 0"><input type="search" data-index-query placeholder="Search indexed text" aria-label="Search indexed text"><button type="button" class="ghost" data-index-search>Search</button><input type="number" min="1" value="1" data-index-page aria-label="Page number"><button type="button" class="ghost" data-index-view>View page</button></div><p class="sub" data-index-message aria-live="polite"></p><div data-index-results></div><hr><h2>Publication Intelligence <small>v8.0 Phase 2.3</small></h2><p class="sub">Interpret the completed document index. Review printed evidence, file identity and clearly labeled inferences without repeating OCR. No metadata is modified.</p><div class="gv-magscan-actions"><button type="button" class="primary" data-publication-analyze>Analyze publication</button><button type="button" class="ghost" data-publication-copy disabled>Copy evidence report</button></div><p class="sub" data-publication-status aria-live="polite"></p><div data-publication-results></div><hr><h2>Editorial Intelligence <small>v8.0 Phase 3.1</small></h2><p class="sub">Find editorial headings, game coverage and platform candidates using the saved index. No additional OCR or AI calls. Candidates only; metadata remains unchanged.</p><div class="gv-magscan-actions"><button type="button" class="primary" data-editorial-analyze>Analyze editorial content</button><button type="button" class="ghost" data-editorial-copy disabled>Copy editorial report</button><button type="button" class="ghost" data-editorial-download disabled>Download report</button></div><p class="sub" data-editorial-status aria-live="polite"></p><textarea data-editorial-report rows="12" readonly hidden style="width:100%" aria-label="Complete editorial report"></textarea><div data-editorial-results></div><hr>`;
   dialog.prepend(panel);
   const q=s=>panel.querySelector(s), status=q('[data-index-status]'), message=q('[data-index-message]'), progress=q('[data-index-progress]'), results=q('[data-index-results]');
   const endpoint=`/api/items/${encodeURIComponent(metadataManagerItemId(item))}/document-index`;
   let busy=false, controller=null, current=null;
-  const buttons=[q('[data-index-start]'),q('[data-index-force]'),q('[data-index-search]'),q('[data-index-view]'),q('[data-publication-analyze]'),q('[data-editorial-analyze]')];
+  const buttons=[q('[data-index-start]'),q('[data-index-force]'),q('[data-index-search]'),q('[data-index-view]'),q('[data-publication-analyze]'),q('[data-editorial-analyze]'),q('[data-catalog-start]'),q('[data-catalog-replace]'),q('[data-catalog-history]')];
   async function api(params={},method='GET',signal) {
     const res=await fetch(endpoint+'?'+new URLSearchParams(params),{method,signal});
     if(!res.ok){let msg=`HTTP ${res.status}`;try{const e=await res.json();msg=e.error||e.detail||msg;}catch{}throw new Error(msg);}
@@ -18685,7 +18685,7 @@ function gvAttachDocumentIndex(dialog, session, item) {
   }
   async function refresh(){try{showStatus(await api());}catch(e){status.textContent=e.message;}}
   function showText(page,text,source){const details=document.createElement('details');details.open=true;const summary=document.createElement('summary');summary.textContent=`Page ${page} · ${source}`;const body=document.createElement('pre');body.style.whiteSpace='pre-wrap';body.style.overflowWrap='anywhere';body.textContent=text||'(No readable text)';details.append(summary,body);results.append(details);}
-  async function run(force){
+  async function run(force,catalogAfter=false){
     if(busy||session.running){message.textContent='Another scan is active.';return;}
     if(force&&!window.confirm('Re-extract every page? Existing indexed pages will be replaced only after each successful extraction.'))return;
     busy=true;session.running=true;controller=new AbortController();session.controller=controller;
@@ -18702,8 +18702,9 @@ function gvAttachDocumentIndex(dialog, session, item) {
         try{await api({page,fingerprint:s.fingerprint,force:String(force)},'POST',controller.signal);done.add(page);processed++;progress.value=force?processed:done.size;}
         catch(e){if(controller.signal.aborted)throw e;errors.push(`Page ${page}: ${e.message}`);break;}
       }
-      message.textContent=errors.length?`Index paused: ${errors.join('; ')}. Resume after resolving the error.`:'Indexing finished. No metadata was modified.';
-    }catch(e){message.textContent=controller.signal.aborted?'Indexing stopped. Completed pages retained.':e.message;}
+      message.textContent=errors.length?`Index paused: ${errors.join('; ')}. Resume after resolving the error.`:'Indexing finished. No metadata was modified during extraction.';
+      if(catalogAfter){if(errors.length||done.size!==s.totalPages)throw new Error('Index is incomplete; cataloging was not started. Resume indexing first.');if(controller.signal.aborted)throw new Error('Stopped');activity='Cataloging indexed content…';tick();await performCatalog(controller.signal);}
+    }catch(e){message.textContent=controller.signal.aborted?'Stopped. Completed pages retained.':e.message;if(catalogAfter)catalogStatus.textContent=controller.signal.aborted?'Stopped. If saving had begun, refresh change history to verify the outcome.':`Cataloging: ${e.message}`;}
     finally{clearInterval(clock);busy=false;session.running=false;session.controller=null;controller=null;buttons.forEach(b=>b.disabled=false);legacy.forEach((b,i)=>b.disabled=previous[i]);q('[data-index-stop]').hidden=true;if(panel.isConnected)await refresh();}
   }
   q('[data-index-start]').onclick=()=>run(false);q('[data-index-force]').onclick=()=>run(true);q('[data-index-stop]').onclick=()=>{message.textContent='Stopping…';controller?.abort();};
@@ -18782,6 +18783,43 @@ function gvAttachDocumentIndex(dialog, session, item) {
     }catch(e){msg.textContent=e.message;}
     finally{busy=false;session.running=false;session.controller=null;controller=null;buttons.forEach(b=>b.disabled=false);legacy.forEach((b,i)=>b.disabled=previous[i]);}
   };
+  // One action: reuse or finish the index, then reconcile and save supported metadata.
+  let catalogReport='';
+  const catalogStatus=q('[data-catalog-status]'), catalogHistory=q('[data-catalog-history-results]');
+  function displayHistory(history){
+    catalogHistory.replaceChildren();q('[data-catalog-undo]').disabled=!history?.available;
+    for(const entry of history?.entries||[]){const d=document.createElement('details');const s=document.createElement('summary');s.textContent=`${new Date(entry.created).toLocaleString()} · ${entry.changes.length} change(s)${entry.undone?' · Undone':''}`;d.append(s);for(const change of entry.changes){const p=document.createElement('p');p.textContent=`${change.field}: ${JSON.stringify(change.before)} → ${JSON.stringify(change.after)} (${change.reason})`;d.append(p);}catalogHistory.append(d);}
+  }
+  async function catalogRequest(path='',method='GET',signal){
+    const res=await fetch(endpoint+'/catalog'+path,{method,signal});if(!res.ok){let msg=`HTTP ${res.status}`;try{const e=await res.json();msg=e.error||e.detail||msg;}catch{}throw new Error(msg);}return res.json();
+  }
+  function clearCatalogClientFields(changes){const key=metadataOverrideKey(item);const map=readClientMetadataOverrides();if(!map[key])return;for(const c of changes||[])delete map[key][c.field];delete map[key].metadataSource;writeClientMetadataOverrides(map);}
+  async function performCatalog(signal){
+    catalogStatus.textContent='Interpreting indexed publication and editorial evidence…';
+    const report=await catalogRequest('?replace='+String(q('[data-catalog-replace]').checked),'POST',signal);
+    if(metadataManagerItemId(report.item)!==metadataManagerItemId(item))throw new Error('Unexpected save response. Refresh to verify metadata.');
+    replaceItemInState(report.item);
+    if(report.changes?.length)clearCatalogClientFields(report.changes);
+    const lines=[`Automatic Cataloging ${report.revision}`,`${report.changes.length} field(s) saved · ${report.seconds}s interpretation · ${report.held.length} held`];
+    for(const c of report.changes)lines.push(`${c.field}: ${JSON.stringify(c.before)} → ${JSON.stringify(c.after)} (${c.reason})`);
+    lines.push('', 'Retained or uncertain fields:',...report.held,'','Publication evidence:',JSON.stringify(report.publication,null,2),'','Editorial evidence:',JSON.stringify(report.editorial,null,2));
+    catalogReport=lines.join('\n');q('[data-catalog-report]').value=catalogReport;q('[data-catalog-report]').hidden=false;q('[data-catalog-download]').disabled=false;
+    catalogStatus.textContent=`Saved ${report.changes.length} field(s) · ${report.held.length} retained or uncertain · ${report.seconds}s interpretation. Existing indexed pages reused. See report for details.`;
+    displayHistory(report.history);
+  }
+  q('[data-catalog-start]').onclick=()=>run(false,true);
+  q('[data-catalog-download]').onclick=()=>{if(!catalogReport)return;const url=URL.createObjectURL(new Blob([catalogReport],{type:'text/plain;charset=utf-8'}));const a=document.createElement('a');a.href=url;a.download='GuideVault-catalog-report.txt';panel.append(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(url),1000);};
+  async function refreshHistory(){try{displayHistory(await catalogRequest('/history'));}catch(e){catalogStatus.textContent=e.message;}}
+  q('[data-catalog-history]').onclick=()=>{if(!busy&&!session.running)refreshHistory();};
+  q('[data-catalog-undo]').onclick=async()=>{
+    if(busy||session.running||!window.confirm('Undo the most recent automatic catalog save? Later metadata edits will prevent undo.'))return;
+    busy=true;session.running=true;buttons.forEach(b=>b.disabled=true);q('[data-catalog-undo]').disabled=true;
+    const legacy=['[data-scan-start]','[data-scan-stage]','[data-scan-close]'].map(s=>dialog.querySelector(s)).filter(Boolean);const previous=legacy.map(b=>b.disabled);legacy.forEach(b=>b.disabled=true);
+    try{const result=await catalogRequest('/undo','POST');if(metadataManagerItemId(result.item)!==metadataManagerItemId(item))throw new Error('Unexpected undo response. Refresh to verify.');replaceItemInState(result.item);clearCatalogClientFields(result.history?.entries?.[0]?.changes);catalogStatus.textContent='Previous metadata restored. Refresh the page to reload all metadata views.';displayHistory(result.history);}
+    catch(e){catalogStatus.textContent=e.message;}
+    finally{busy=false;session.running=false;buttons.forEach(b=>b.disabled=false);legacy.forEach((b,i)=>b.disabled=previous[i]);await refreshHistory();}
+  };
+  refreshHistory();
   refresh();
 }
 
