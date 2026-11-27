@@ -932,11 +932,11 @@ public static class GuidevaultDocumentIndex
             if(!int.TryParse(args[3],out var edge)||edge is < 1000 or > 3000)throw new InvalidOperationException("Invalid OCR recovery image size.");
             var info=Image.Identify(args[2]);
             if(info.Width<=0||info.Height<=0||(long)info.Width*info.Height>80_000_000)throw new InvalidOperationException($"Recovery image dimensions {info.Width} x {info.Height} exceed safe decode limits.");
-            using var image=Image.Load<L8>(args[2]);
-            var scale=Math.Min(1d,edge/(double)Math.Max(image.Width,image.Height));
-            int width=Math.Max(1,(int)Math.Round(image.Width*scale)),height=Math.Max(1,(int)Math.Round(image.Height*scale));
-            if(width!=image.Width||height!=image.Height)image.Mutate(x=>x.Resize(width,height));
-            await image.SaveAsPngAsync(args[4]);
+            using var recoveryImage=Image.Load<L8>(args[2]);
+            var scale=Math.Min(1d,edge/(double)Math.Max(recoveryImage.Width,recoveryImage.Height));
+            int width=Math.Max(1,(int)Math.Round(recoveryImage.Width*scale)),height=Math.Max(1,(int)Math.Round(recoveryImage.Height*scale));
+            if(width!=recoveryImage.Width||height!=recoveryImage.Height)recoveryImage.Mutate(x=>x.Resize(width,height));
+            await recoveryImage.SaveAsPngAsync(args[4]);
             Console.Write($"{info.Width} x {info.Height} -> {width} x {height}");return;
         }
         if(args.Length!=5||args[1]!="extract")throw new InvalidOperationException("Invalid archive worker arguments.");
