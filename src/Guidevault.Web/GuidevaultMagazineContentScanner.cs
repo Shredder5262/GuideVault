@@ -11,7 +11,7 @@ public static class GuidevaultMagazineContentScanner
     public sealed record Suggestion(string Field, string Value, int Page, string Evidence, string Confidence);
     public sealed record ScanResult(int TotalPages, int Start, int Scanned, int ReadablePages, List<Suggestion> Suggestions, List<string> Warnings)
     {
-        public string ScannerRevision => "v7.1";
+        public string ScannerRevision => "v7.1.2";
         public int CachedPages { get; init; }
     }
     private static readonly SemaphoreSlim Gate = new(1, 1);
@@ -78,9 +78,9 @@ public static class GuidevaultMagazineContentScanner
             if (fullVision)
             {
                 const string script = "/opt/guidevault-vision/cover_ocr.py";
-                const string protocol = "guidevault-vision-deep-v7.1.1";
+                const string protocol = "guidevault-vision-deep-v7.1.2";
                 if (!File.Exists(script) || !(await File.ReadAllTextAsync(script, token)).Contains(protocol, StringComparison.Ordinal))
-                    throw new InvalidOperationException("Incompatible vision runtime: rebuild and deploy the matching v7.1.1 Docker image. No magazine recognition was started.");
+                    throw new InvalidOperationException("Incompatible vision runtime: rebuild and deploy the matching v7.1.2 Docker image. No magazine recognition was started.");
                 var verified = await Run("/opt/guidevault-vision/bin/python", [script, "--self-test"], token);
                 if (!string.Equals(verified.Trim(), protocol, StringComparison.Ordinal))
                     throw new InvalidOperationException("Vision runtime compatibility self-test failed. Rebuild and deploy the matching Docker image.");
@@ -319,13 +319,13 @@ public static class GuidevaultMagazineContentScanner
     {
         var output=new List<(int Index,string? Json,bool Cached)>();
         var pending=new List<(int Index,string Input,string Cache)>();
-        var cacheRoot=Path.Combine(Environment.GetEnvironmentVariable("GUIDEVAULT_DATA")??"/data","vision-page-cache","v7.1");
+        var cacheRoot=Path.Combine(Environment.GetEnvironmentVariable("GUIDEVAULT_DATA")??"/data","vision-page-cache","v7.1.2");
         bool cacheEnabled=true;
         try { Directory.CreateDirectory(cacheRoot); } catch(Exception ex) { cacheEnabled=false; warnings.Add("Vision disk cache unavailable: "+ex.Message); }
         for(int i=start;i<end;i++)
         {
             token.ThrowIfCancellationRequested();
-            var identity=$"{source.FullName}\n{source.Length}\n{source.LastWriteTimeUtc.Ticks}\n{i}\nflorence-base-00921df-deep4-1800-768-1024";
+            var identity=$"{source.FullName}\n{source.Length}\n{source.LastWriteTimeUtc.Ticks}\n{i}\nflorence-base-00921df-adaptive-1800-1024-v712\n{Environment.GetEnvironmentVariable("GUIDEVAULT_VISION_RETRY_DEPTH")??"1"}";
             var key=Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(Encoding.UTF8.GetBytes(identity)));
             var cachePath=Path.Combine(cacheRoot,key+".json");
             try
@@ -336,7 +336,7 @@ public static class GuidevaultMagazineContentScanner
                     {
                         var cached=await File.ReadAllTextAsync(cachePath,token);
                         using var check=System.Text.Json.JsonDocument.Parse(cached);
-                        if(check.RootElement.TryGetProperty("regions",out var regions)&&regions.ValueKind==System.Text.Json.JsonValueKind.Array)
+                        if(check.RootElement.TryGetProperty("regions",out var regions)&&regions.ValueKind==System.Text.Json.JsonValueKind.Array && check.RootElement.TryGetProperty("truncated",out var incompleteCache) && incompleteCache.ValueKind==System.Text.Json.JsonValueKind.False)
                         {output.Add((i,cached,true));continue;}
                     }
                     catch(Exception ex) when(ex is not OperationCanceledException) { warnings.Add($"Page {i+1}: invalid vision cache; rescanning."); }
@@ -363,7 +363,7 @@ public static class GuidevaultMagazineContentScanner
             try
             {
                 var args=new[]{"/opt/guidevault-vision/cover_ocr.py","--deep-batch"}.Concat(pending.Select(p=>p.Input)).ToArray();
-                var raw=await Run("/opt/guidevault-vision/bin/python",args,token,1200);
+                var raw=await Run("/opt/guidevault-vision/bin/python",args,token,2400);
                 using var doc=System.Text.Json.JsonDocument.Parse(raw);
                 var pages=doc.RootElement.EnumerateArray().ToArray();
                 if(pages.Length!=pending.Count)throw new InvalidOperationException("Vision batch result count mismatch.");
@@ -373,7 +373,7 @@ public static class GuidevaultMagazineContentScanner
                     if(!page.TryGetProperty("regions",out var regions)||regions.ValueKind!=System.Text.Json.JsonValueKind.Array)
                     {warnings.Add($"Page {p.Index+1}: vision failed: {page.GetRawText()}");output.Add((p.Index,null,false));continue;}
                     var json=page.GetRawText();output.Add((p.Index,json,false));
-                    if(cacheEnabled && json.Length<2_000_000 && regions.GetArrayLength()>0)
+                    if(cacheEnabled && json.Length<2_000_000 && regions.GetArrayLength()>0 && page.TryGetProperty("truncated",out var incomplete) && incomplete.ValueKind==System.Text.Json.JsonValueKind.False)
                     {
                         try { var tmp=p.Cache+".tmp";await File.WriteAllTextAsync(tmp,json,token);File.Move(tmp,p.Cache,true); }
                         catch(Exception ex) when(ex is not OperationCanceledException) { warnings.Add($"Page {p.Index+1}: vision cache write failed: {ex.Message}"); }
@@ -403,9 +403,12 @@ public static class GuidevaultMagazineContentScanner
         if(excluded.Length>0){warnings.Add($"Page {page}: vision {excluded}; excluded from current-issue evidence.");return true;}
         var found=new List<Suggestion>();
         if(root.TryGetProperty("truncated",out var cut) && cut.ValueKind==System.Text.Json.JsonValueKind.True)
-            warnings.Add($"Page {page}: at least one vision region reached its generation limit; coverage may be incomplete.");
+            warnings.Add($"Page {page}: adaptive retries could not complete all regions; coverage may be incomplete. Result not cached.");
         var passes=root.TryGetProperty("passes",out var passCount)?passCount.GetInt32():1;
-        suggestions.Add(new("pageVisionDiagnostic",$"Page {page}",page,$"{lines.Count} regions; {passes} passes; {root.GetProperty("seconds").GetDouble():F1}s; peak process RSS {root.GetProperty("peakMb").GetDouble():F0} MiB","Vision page recognition"));
+        var retries=root.TryGetProperty("retries",out var retryCount)?retryCount.GetInt32():0;
+        var recovered=root.TryGetProperty("recovered",out var recoveryCount)?recoveryCount.GetInt32():0;
+        var unresolved=root.TryGetProperty("unresolved",out var unresolvedCount)?unresolvedCount.GetInt32():0;
+        suggestions.Add(new("pageVisionDiagnostic",$"Page {page}",page,$"{lines.Count} regions; {passes} passes; {retries} retry tiles; {recovered} recovered limits; {unresolved} unresolved; {root.GetProperty("seconds").GetDouble():F1}s; peak process RSS {root.GetProperty("peakMb").GetDouble():F0} MiB","Vision page recognition"));
         AnalyzePage(item,dictionary,text,new PageLayout(width,height,lines),page,found);
         // A cover teaser with a printed page reference is evidence of dedicated editorial coverage.
         // Restrict matching to nearby aligned lines; a page number elsewhere is not corroboration.
@@ -420,7 +423,7 @@ public static class GuidevaultMagazineContentScanner
                     if(ValidCoverSubject(hit.Game,item.MagazineTitle) && (Words.Matches(hit.Game).Count>1 || nearby.Any(l=>ListingKey(l.Text)==ListingKey(hit.Game)) || Regex.IsMatch(joined,@"\b(?:latest on|review of|guide to|guide for|tips for|and)\s+"+Regex.Escape(hit.Game)+@"\b",RegexOptions.IgnoreCase)) && !found.Any(x=>x.Field=="featuredGames"&&ListingKey(x.Value)==ListingKey(hit.Game)))
                         found.Add(new("featuredGames",hit.Game,page,joined[..Math.Min(joined.Length,420)],"Cover editorial page reference — verify"));
             }
-            foreach(var (pattern,label) in new[]{(@"\b(?:mailbag|reader letters)\b","Reader letters"),(@"\b(?:art contest|reader contest)\b","Reader contests"),(@"\b(?:play guide|gameplay guide|walkthrough|solution|strategy guide)\b","Strategy guides"),(@"\b(?:reviewed|reviews?)\b","Reviews"),(@"\b(?:preview|first look)\b","Previews")})
+            foreach(var (pattern,label) in new[]{(@"\b(?:mailbag|reader letters)\b","Reader letters"),(@"\b(?:customer\s+service\s+department|sega spotlight)\b","Customer service spotlight"),(@"\b(?:art contest|reader contest)\b","Reader contests"),(@"\b(?:play guide|gameplay guide|walkthrough|solution|strategy guide)\b","Strategy guides"),(@"\b(?:reviewed|reviews?)\b","Reviews"),(@"\b(?:preview|first look)\b","Previews")})
                 if(Regex.IsMatch(text,pattern,RegexOptions.IgnoreCase))found.Add(new("specialFeatures",label,page,Regex.Match(text,pattern,RegexOptions.IgnoreCase).Value,"Cover editorial evidence"));
         }
         AddPrintedPeriod(item,text,page,found);
@@ -1465,6 +1468,9 @@ public static class GuidevaultMagazineContentScanner
         void Log(string value,string evidence,string status)=>suggestions.Add(new("coverDiagnostic",value,1,evidence,status));
         Log("Florence-2 Base",$"{lines.Length} regions; {root.GetProperty("seconds").GetDouble():F1}s; peak process RSS {root.GetProperty("peakMb").GetDouble():F0} MiB; geometry {width}x{height}","Vision runtime");
         foreach(var l in lines)Log(l.Text,$"box {l.X},{l.Y},{l.Width},{l.Height}; model confidence not available","Vision region");
+        if(root.TryGetProperty("alternatives",out var alternatives) && alternatives.ValueKind==System.Text.Json.JsonValueKind.Array)
+            foreach(var a in alternatives.EnumerateArray().Take(200))
+                Log(a.GetProperty("text").GetString()??"",$"Preferred: {a.GetProperty("chosen").GetString()} | box {a.GetProperty("x")},{a.GetProperty("y")},{a.GetProperty("width")},{a.GetProperty("height")}","Vision overlapping alternative");
         if(lines.Length==0)return;
         // A top headline linked to a publication subtitle is a masthead, not a game.
         var mastheads=lines.Where(l=>l.Y<height*.16 && l.Width>width*.35 && l.Height>height*.035 &&
@@ -1505,6 +1511,8 @@ public static class GuidevaultMagazineContentScanner
             bool independent=confirmed.Contains(ListingKey(match.Display));
             evidence+=$" | strategy {strategy}; editorial {editorial}; teaser {teaser}; independent cover OCR {independent}";
             bool pageReference=lines.Any(n=>NearbyLabel(n)&&Regex.IsMatch(n.Text,@"\bsee pages?\s+\d+(?:\s*[-–—]\s*\d+)?\b",RegexOptions.IgnoreCase));
+            var leadIn=string.Join(" ",lines.Where(n=>n.Y>=first.Y-height*.11 && n.Y<first.Y && Math.Min(right,n.X+n.Width)>Math.Max(left,n.X)).OrderBy(n=>n.Y).Select(n=>n.Text));
+            if(pageReference && Regex.IsMatch(leadIn,@"\bmaster\s+the\b",RegexOptions.IgnoreCase)){strategy=true; evidence+=" | aligned instructional lead-in: "+leadIn;}
             if(size<.035||Math.Max(first.Height,last.Height)<median*1.5||(!independent&&!strategy&&!(editorial&&(size>=.06||pageReference)))){Log(match.Display,evidence,"Vision candidate — insufficient independent or prominence evidence");return;}
             double score=size*(strategy?1.5:editorial?1.35:1.0)*(teaser&&!editorial?.70:1.0);
             candidates.Add((match.Display,score,evidence,strategy,editorial));Log(match.Display,evidence,"Vision candidate — corroborated");
@@ -1530,6 +1538,7 @@ public static class GuidevaultMagazineContentScanner
         }
         suggestions.Add(new("coverSubject",best.Name,1,best.Evidence,"Dominant cover headline — verify"));
         suggestions.Add(new("featuredGames",best.Name,1,best.Evidence,"Cover story — verify"));
+        if(best.Strategy) suggestions.Add(new("specialFeatures","Strategy guides",1,best.Evidence,"Cover strategy evidence — verify"));
     }
 
     private static string RemapCoverTsv(string tsv,int offsetX,int offsetY,int width,int height)
