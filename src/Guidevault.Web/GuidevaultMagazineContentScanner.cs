@@ -11,7 +11,7 @@ public static class GuidevaultMagazineContentScanner
     public sealed record Suggestion(string Field, string Value, int Page, string Evidence, string Confidence);
     public sealed record ScanResult(int TotalPages, int Start, int Scanned, int ReadablePages, List<Suggestion> Suggestions, List<string> Warnings)
     {
-        public string ScannerRevision => "v7.1.4";
+        public string ScannerRevision => "v7.1.6";
         public int CachedPages { get; init; }
     }
     private static readonly SemaphoreSlim Gate = new(1, 1);
@@ -1013,6 +1013,7 @@ public static class GuidevaultMagazineContentScanner
         {
             var lines=pass.Lines.Where(l=>l.Height>0&&l.Confidence>=35).ToArray();
             if(lines.Length==0)continue;
+            AnalyzeExplicitCoverCallouts(item,dictionary,lines.Where(l=>l.Confidence>=55).ToArray(),pass.Height,suggestions,"OCR");
             double median=lines.Select(l=>(double)l.Height).OrderBy(h=>h).ElementAt(lines.Length/2);
             bool Nearby(LayoutLine a,LayoutLine b) => b.Y>a.Y && b.Y-(a.Y+a.Height)<=Math.Max(a.Height,b.Height)*1.5 &&
                 (Math.Min(a.X+a.Width,b.X+b.Width)-Math.Max(a.X,b.X)>Math.Min(a.Width,b.Width)*.15 || Math.Abs(a.X-b.X)<=Math.Max(a.Height,b.Height)*1.2);
@@ -1487,6 +1488,50 @@ public static class GuidevaultMagazineContentScanner
     }
     private sealed record LayoutLine(string Text, int Block, int Paragraph, int X, int Y, int Width, int Height, double Confidence);
     private sealed record PageLayout(int Width, int Height, List<LayoutLine> Lines);
+    // Explicit editorial callouts may print the game in small type, independently of logo size.
+    private static void AnalyzeExplicitCoverCallouts(LibraryItem item, Dictionary<string,CatalogTitle> dictionary, LayoutLine[] lines, int height, List<Suggestion> suggestions, string source)
+    {
+        if(height<=0)return;
+        const string pattern=@"^\s*(?:(?<emphasis>massive|huge|major|exclusive|complete|full|in[- ]depth|special|world exclusive)\s+)?(?<title>.+?)\s+(?<kind>preview|review|solution|walk[ -]?through|strategy guide|play guide)\s*[!:.]*$";
+        void Check(string text, LayoutLine first, LayoutLine last)
+        {
+            var m=Regex.Match(text,pattern,RegexOptions.IgnoreCase);
+            if(!m.Success || ArticleNoise(text))return;
+            var title=m.Groups["title"].Value.Trim(' ',':','!','—','-');
+            if(!dictionary.TryGetValue(Normalize(title),out var match)&&!dictionary.TryGetValue("\0"+ListingKey(title),out match))return;
+            if(!ValidCoverSubject(match.Display,item.MagazineTitle))return;
+            var publication=Normalize(item.MagazineTitle??"");
+            if(publication.Split(' ',StringSplitOptions.RemoveEmptyEntries).Contains(Normalize(match.Display)))return;
+            var kind=m.Groups["kind"].Value.ToLowerInvariant();
+            var evidence=$"{source} explicit cover callout '{text}' | editorial kind: {kind} | box {first.X},{first.Y},{first.Width},{first.Height}";
+            void Add(string field,string value,string confidence)
+            {
+                if(!suggestions.Any(x=>x.Field==field&&x.Page==1&&ListingKey(x.Value)==ListingKey(value)&&x.Confidence==confidence))suggestions.Add(new(field,value,1,evidence,confidence));
+            }
+            Add("featuredGames",match.Display,"Explicit cover editorial callout");
+            Add("coverSubject",match.Display,"Explicit cover editorial callout");
+            // Only an emphatic, reasonably visible callout can outrank ordinary cover candidates.
+            if(m.Groups["emphasis"].Success && Math.Max(first.Height,last.Height)>=height*.012)
+                Add("coverSubject",match.Display,"Explicit prominent cover callout");
+            Add("specialFeatures",kind=="preview"?"Previews":kind=="review"?"Reviews":"Strategy guides","Cover editorial evidence");
+            Add("coverDiagnostic",match.Display,"Explicit editorial callout recognized");
+        }
+        foreach(var first in lines)
+        {
+            Check(first.Text,first,first);
+            // Build up to three adjacent lines in the same column, never across OCR passes.
+            var current=first;var text=first.Text;
+            for(int step=0;step<2;step++)
+            {
+                var next=lines.Where(n=>n.Y>current.Y && n.Y-(current.Y+current.Height)>=-current.Height*.35 && n.Y-(current.Y+current.Height)<=Math.Max(current.Height,n.Height)*1.1 &&
+                    (Math.Min(current.X+current.Width,n.X+n.Width)-Math.Max(current.X,n.X)>Math.Min(current.Width,n.Width)*.25 || Math.Abs(current.X-n.X)<=Math.Max(current.Height,n.Height)*.6))
+                    .OrderBy(n=>n.Y).ThenBy(n=>Math.Abs(n.X-current.X)).FirstOrDefault();
+                if(next is null)break;
+                text+=" "+next.Text;Check(text,first,next);current=next;
+            }
+        }
+    }
+
     // Model regions are evidence, not calibrated OCR confidence. Do not feed them
     // into the Tesseract confidence gates or overwrite existing metadata.
     private static void AnalyzeVisionCover(LibraryItem item, Dictionary<string,CatalogTitle> dictionary, string json, List<Suggestion> suggestions)
@@ -1503,6 +1548,7 @@ public static class GuidevaultMagazineContentScanner
             foreach(var a in alternatives.EnumerateArray().Take(200))
                 Log(a.GetProperty("text").GetString()??"",$"Preferred: {a.GetProperty("chosen").GetString()} | box {a.GetProperty("x")},{a.GetProperty("y")},{a.GetProperty("width")},{a.GetProperty("height")}","Vision overlapping alternative");
         if(lines.Length==0)return;
+        AnalyzeExplicitCoverCallouts(item,dictionary,lines,height,suggestions,"Florence-2");
         // A top headline linked to a publication subtitle is a masthead, not a game.
         var mastheads=lines.Where(l=>l.Y<height*.16 && l.Width>width*.35 && l.Height>height*.035 &&
             lines.Any(n=>n.Y>=l.Y+l.Height-height*.03 && n.Y<=l.Y+l.Height+height*.09 &&

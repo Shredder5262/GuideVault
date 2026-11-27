@@ -18669,7 +18669,7 @@ function gvMagazineScanDialog(items, fromDetail = false, inlineHost = null) {
   if (!items.length || items.length > 5) { metadataManagerSetStatus('Select 1–5 magazine issues per scan.','error'); return; }
   const dialog = document.createElement(inlineHost ? 'div' : 'dialog');
   dialog.className = inlineHost ? 'gv-magscan-inline' : 'gv-magscan-dialog';
-  dialog.innerHTML = `<div class="gv-magscan-content"><h2>Scan magazine metadata</h2><p class="sub">${items.length} issue(s). Scanner UI v7.1.5 — Local OCR and LaunchBox title lookup. Nothing is saved automatically.</p><label>Scan scope <select data-scan-scope><option value="1">Cover only</option><option value="12">First 12 pages (cover, contents, masthead)</option><option value="300"${fromDetail?' selected':''}>Full issue (up to 300 pages)</option></select></label><p class="sub">Uses detailed cover recognition, OCR on interior pages, and selective vision refinement. Review suggestions before saving.</p><p class="sub" data-scan-status aria-live="polite">Start a scan to review suggested fields. Layout-aware English OCR and catalog matching. All magazine fields are checked; uncertain or unavailable values are not guessed. Review all proposed editorial data.</p><progress data-scan-progress value="0" max="1"></progress><div data-scan-results></div><div class="gv-magscan-actions"><button class="ghost" type="button" data-scan-close>Close</button><button class="ghost" type="button" data-scan-stop hidden>Stop</button><button class="ghost" type="button" data-scan-copy disabled>Copy Scan Report</button><button class="primary" type="button" data-scan-start>Start scan</button><button class="primary" type="button" data-scan-stage disabled>${fromDetail?'Apply selected suggestions':'Stage selected suggestions'}</button></div></div>`;
+  dialog.innerHTML = `<div class="gv-magscan-content"><h2>Scan magazine metadata</h2><p class="sub">${items.length} issue(s). Scanner UI v7.1.6 — Local OCR and LaunchBox title lookup. Nothing is saved automatically.</p><label>Scan scope <select data-scan-scope><option value="1">Cover only</option><option value="12">First 12 pages (cover, contents, masthead)</option><option value="300"${fromDetail?' selected':''}>Full issue (up to 300 pages)</option></select></label><p class="sub">Uses detailed cover recognition, OCR on interior pages, and selective vision refinement. Review suggestions before saving.</p><p class="sub" data-scan-status aria-live="polite">Start a scan to review suggested fields. Layout-aware English OCR and catalog matching. All magazine fields are checked; uncertain or unavailable values are not guessed. Review all proposed editorial data.</p><progress data-scan-progress value="0" max="1"></progress><div data-scan-results></div><div class="gv-magscan-actions"><button class="ghost" type="button" data-scan-close>Close</button><button class="ghost" type="button" data-scan-stop hidden>Stop</button><button class="ghost" type="button" data-scan-copy disabled>Copy Scan Report</button><button class="primary" type="button" data-scan-start>Start scan</button><button class="primary" type="button" data-scan-stage disabled>${fromDetail?'Apply selected suggestions':'Stage selected suggestions'}</button></div></div>`;
   (inlineHost || document.body).appendChild(dialog);
   const q = s => dialog.querySelector(s);
   const session = { controller:null, running:false, rows:[], dialog, inline:!!inlineHost, itemId:metadataManagerItemId(items[0]) };
@@ -19092,7 +19092,11 @@ function gvMagazineCoverEvidence(row) {
   const key=v=>String(v??'').normalize('NFKC').toLowerCase().replace(/[^\p{L}\p{N}]/gu,'');
   const all=row.suggestions.filter(x=>x.field==='coverSubject'&&gvMagazineValidCover(x.value,row.item.magazineTitle||row.item.series)&&!gvMagazineScanMasthead(row,x.value));
   const dominant=all.filter(x=>x.confidence==='Dominant cover headline — verify');
+  const prominent=all.filter(x=>x.confidence==='Explicit prominent cover callout');
   if(dominant.length)return dominant;
+  if(prominent.length)return prominent;
+  const callouts=all.filter(x=>x.confidence==='Explicit cover editorial callout');
+  if(callouts.length)return callouts;
   const explicit=all.filter(x=>['Explicit contents cover story','Explicit cover subject — verify printed title'].includes(x.confidence));
   if(explicit.length)return explicit;
   const fragments=gvMagazineCoverFragmentEvidence(row);
@@ -19128,7 +19132,9 @@ function gvMagazineCoverageSummary(row,titles,readField) {
   if(cover&&gvMagazineValidCover(cover,title)){
     const coverKey=v=>String(v??'').normalize('NFKC').toLowerCase().replace(/[^\p{L}\p{N}]/gu,'');
     const story=row.suggestions.find(x=>x.field==='coverSubject'&&x.page===1&&coverKey(x.value)===coverKey(cover)&&/strategy True|aligned instructional lead-in/i.test(x.evidence));
-    sentences.push(`It features ${cover} on the cover${story?', with gameplay strategy coverage':''}.`);
+    const callout=row.suggestions.find(x=>x.field==='coverSubject'&&x.page===1&&coverKey(x.value)===coverKey(cover)&&/editorial kind: (preview|review)\b/i.test(x.evidence));
+    const kind=callout?.evidence.match(/editorial kind: (preview|review)\b/i)?.[1];
+    sentences.push(`It features ${cover} on the cover${story?', with gameplay strategy coverage':kind?', with a '+kind.toLowerCase():''}.`);
   }
   const list=[...new Map(titles.map(clean).filter(v=>v&&v.toLowerCase()!==cover.toLowerCase()).map(v=>[v.toLowerCase(),v])).values()].slice(0,7);
   const join=a=>a.length<2?a.join(''):a.slice(0,-1).join(', ')+(a.length>2?', and ':' and ')+a[a.length-1];
@@ -19222,6 +19228,7 @@ function gvMagazineScanProposals(row) {
   // Only replace a suspicious year-like stored issue from unambiguous printed cover evidence.
   if(coverIssueValues.length===1 && (!storedIssue || /^(?:19|20)\d{2}$/.test(storedIssue))) fields.set('issueNumber',explicitCoverIssues);
   else if(storedIssue) fields.delete('issueNumber');
+  for(const x of fields.get('coverSubject')||[]) add({...x,field:'featuredGames'});
   const featured=candidates('featuredGames');
   const covered=new Set([...itemArray(row.item.featuredGames).map(canonicalTitle),...featured,acceptedCover].filter(Boolean).map(gameKey));
   if(fields.has('mentionedGames')) fields.set('mentionedGames',fields.get('mentionedGames').filter(x=>!covered.has(gameKey(x.value))));
