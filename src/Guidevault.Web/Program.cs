@@ -2958,6 +2958,19 @@ app.MapPut("/api/items/{id}/metadata", (string id, JsonElement payload) =>
 });
 
 // Magazine OCR scan v1: admin-only, read-only suggestions, bounded page chunks.
+// Phase 3: editorial analysis of the persistent index, admin-only and read-only.
+app.MapGet("/api/items/{id}/document-index/editorial", async (HttpRequest request, string id) =>
+{
+    if (CurrentGuidevaultUser(request)?.IsAdmin != true) return (IResult)Results.StatusCode(403);
+    var item = VisibleLibraryItems(request, cache.GetItemsSnapshot()).FirstOrDefault(i => i.Id == id);
+    if (item is null) return Results.NotFound();
+    if (item.Kind != "Magazine" || !File.Exists(item.Path)) return Results.BadRequest(new { error = "A readable magazine issue is required." });
+    try { return Results.Ok(await GuidevaultDocumentIndex.EditorialAsync(dataRoot,item,launchBoxIntegrationStore.GetSnapshot().Games,request.HttpContext.RequestAborted)); }
+    catch (OperationCanceledException) { return Results.StatusCode(499); }
+    catch (InvalidOperationException ex) { return Results.BadRequest(new { error = ex.Message }); }
+    catch (Exception) { return Results.Problem("Editorial analysis failed."); }
+});
+
 // Document index v8 Phase 1: admin-only; library metadata is never changed.
 app.MapGet("/api/items/{id}/document-index", async (HttpRequest request, string id, int? page, string? q, bool? publication) =>
 {

@@ -397,6 +397,139 @@ public static class GuidevaultDocumentIndex
         }).ToArray();
         return new {revision="v8.0-phase2.3",indexedPages=indexed,totalPages=manifest.TotalPages,relatedIssues=peers.Length,seconds=Math.Round(watch.Elapsed.TotalSeconds,2),fields=report,openingPages,platformSignals};
     }
+    // Phase 3: read-only editorial analysis over the persistent page index.
+    private sealed record EditorialTitle(string Title, string Platform, bool Alias);
+    private sealed record EditorialHit(string Title, int Page, string Kind, string Evidence, string[] Platforms, bool Cover, bool Contents, double Height);
+    private static readonly Regex EditorialWords = new(@"[\p{L}\p{N}]+", RegexOptions.Compiled | RegexOptions.CultureInvariant);
+    private static readonly Regex EditorialKinds = new(@"\b(?:reviews?|previews?|walkthroughs?|strateg(?:y|ies)|tips|hints|cheats?|codes|passwords?|interviews?|news|features?|spotlight|mailbag|letters|contest|competition|editorial|tech talk|scoreboard|high scores|buyers['’]? guide|special report|retrospective)\b", RegexOptions.IgnoreCase | RegexOptions.Compiled | RegexOptions.CultureInvariant);
+    private static readonly Regex Advertising = new(@"\b(?:advertisement|advertising supplement|paid advertisement|order now|call toll.free|send check or money order|limited time offer|while supplies last|suggested retail price)\b", RegexOptions.IgnoreCase | RegexOptions.Compiled);
+    private static string[] EditorialTokens(string s) => EditorialWords.Matches(s).Select(m=>m.Value.ToLowerInvariant()).ToArray();
+    private static bool SequelToken(string s) => int.TryParse(s,out _) || Regex.IsMatch(s,@"^(?:i|ii|iii|iv|v|vi|vii|viii|ix|x|xi|xii)$",RegexOptions.IgnoreCase);
+    private static string Coverage(string text)
+    {
+        if(Regex.IsMatch(text,@"\b(?:walkthroughs?|strateg(?:y|ies)|tips|hints|cheats?|codes|passwords?|advice from the experts)\b",RegexOptions.IgnoreCase))return "Gameplay assistance";
+        if(Regex.IsMatch(text,@"\breviews?\b",RegexOptions.IgnoreCase))return "Review";
+        if(Regex.IsMatch(text,@"\bpreviews?\b",RegexOptions.IgnoreCase))return "Preview";
+        if(Regex.IsMatch(text,@"\binterviews?\b",RegexOptions.IgnoreCase))return "Interview";
+        if(Regex.IsMatch(text,@"\b(?:mailbag|letters|dear)\b",RegexOptions.IgnoreCase))return "Reader letters";
+        if(Regex.IsMatch(text,@"\b(?:contest|competition)\b",RegexOptions.IgnoreCase))return "Competition";
+        if(Regex.IsMatch(text,@"\b(?:tech talk|technical)\b",RegexOptions.IgnoreCase))return "Technical department";
+        if(Regex.IsMatch(text,@"\b(?:editorial|letter from)\b",RegexOptions.IgnoreCase))return "Editorial";
+        if(Regex.IsMatch(text,@"\bnews\b",RegexOptions.IgnoreCase))return "News";
+        if(Regex.IsMatch(text,@"\b(?:features?|spotlight|special report|retrospective)\b",RegexOptions.IgnoreCase))return "Feature";
+        if(Regex.IsMatch(text,@"\b(?:scoreboard|high scores)\b",RegexOptions.IgnoreCase))return "High scores";
+        return "Reference";
+    }
+    public static async Task<object> EditorialAsync(string root, LibraryItem item, IEnumerable<GuidevaultLaunchBoxGame> games, CancellationToken token)
+    {
+        var timer=Stopwatch.StartNew();var fp=Fingerprint(item);var dir=DirectoryFor(root,item,fp);
+        var manifest=await ReadManifest(dir,fp,token)??throw new InvalidOperationException("Index this magazine first.");
+        var pages=new List<PageRecord>();
+        for(int n=1;n<=manifest.TotalPages;n++){token.ThrowIfCancellationRequested();var p=await ReadPage(dir,n,token);if(p is not null)pages.Add(p);}
+        if(pages.Count!=manifest.TotalPages)throw new InvalidOperationException("Complete the document index before analyzing editorial content.");
+        int.TryParse(Regex.Match(item.Year??"",@"\b(?:19|20)\d{2}\b").Value,out int year);
+        var lookup=new Dictionary<string,List<EditorialTitle>>(StringComparer.Ordinal);int gameCount=0;int maxWords=1;
+        var generic=new HashSet<string>("a an the and or it is in on up down out go no yes one two three new all next last first game games magazine challenge review preview news feature features tips hints code codes password passwords action adventure sports racing golf tennis soccer football baseball basketball hockey boxing pool chess checkers pinball poker casino music video computer system master world time power team spot star space war battle combat control super special final force speed drive race test play player home life risk trouble champion championship olympics pro ace target score winner magic monster hero quest".Split(' '),StringComparer.OrdinalIgnoreCase);
+        foreach(var g in games)
+        {
+            token.ThrowIfCancellationRequested();
+            int.TryParse(Regex.Match(g.ReleaseYear??"",@"\b(?:19|20)\d{2}\b").Value,out int release);
+            if(year>0&&release>year+2||string.IsNullOrWhiteSpace(g.Title))continue;
+            gameCount++;
+            foreach(var name in new[]{g.Title}.Concat(g.AlternateNames??new List<string>()))
+            {
+                if(string.IsNullOrWhiteSpace(name))continue;var words=EditorialTokens(name);
+                if(words.Length==0||words.Length>16||string.Concat(words).Length<3)continue;
+                if(words.Length==1&&generic.Contains(words[0]))continue;
+                var key=string.Join(" ",words);maxWords=Math.Max(maxWords,words.Length);
+                if(!lookup.TryGetValue(key,out var list))lookup[key]=list=new();
+                var entry=new EditorialTitle(g.Title.Trim(),g.Platform??"",!string.Equals(name,g.Title,StringComparison.OrdinalIgnoreCase));
+                if(!list.Contains(entry))list.Add(entry);
+            }
+        }
+        var resolved=new Dictionary<string,EditorialTitle[]>(StringComparer.Ordinal);
+        foreach(var pair in lookup)
+        {
+            // Exact names take precedence over aliases; ambiguous distinct numbered titles are not merged.
+            var direct=pair.Value.Where(x=>!x.Alias).ToArray();var options=direct.Length>0?direct:pair.Value.ToArray();
+            if(options.Select(x=>string.Join(" ",EditorialTokens(x.Title))).Distinct(StringComparer.Ordinal).Count()!=1)continue;
+            // A short alias must not silently expand to a different sequel number.
+            if(options.All(x=>x.Alias)&&options.Any(x=>!EditorialTokens(x.Title).Where(SequelToken).SequenceEqual(pair.Key.Split(' ').Where(SequelToken))))continue;
+            resolved[pair.Key]=options;
+        }
+        var hits=new List<EditorialHit>();var headings=new List<object>();var headingKeys=new HashSet<string>();var contentsPages=new List<int>();var advertisingPages=new List<int>();
+        foreach(var p in pages)
+        {
+            token.ThrowIfCancellationRequested();
+            var lines=p.Lines.Where(l=>!string.IsNullOrWhiteSpace(l.Text)).ToArray();
+            bool readerPage=Regex.Matches(p.Text,@"(?im)^\s*Dear\s+").Count>=2;
+            bool contents=!readerPage&&p.Page>1&&p.Page<=8&&(Regex.IsMatch(p.Text,@"\b(?:table of contents|in this issue|inside this issue)\b",RegexOptions.IgnoreCase)||lines.Count(l=>l.Text.Length<=145&&EditorialKinds.IsMatch(l.Text))>=4);
+            if(contents)contentsPages.Add(p.Page);
+            bool advertisement=Advertising.Matches(p.Text).Select(m=>m.Value.ToLowerInvariant()).Distinct().Count()>=2;
+            if(advertisement)advertisingPages.Add(p.Page);
+            string activeKind="Reference";int lastHeading=-10;
+            for(int li=0;li<lines.Length;li++)
+            {
+                token.ThrowIfCancellationRequested();var l=lines[li];var text=l.Text.Trim();if(text.Length>2000)continue;
+                double height=p.Height>0?l.Height/p.Height:0;
+                var localKind=Coverage(text);bool shortLine=text.Length<=145;
+                bool heading=shortLine&&localKind!="Reference"&&(contents||height>=.025||Regex.IsMatch(text,@"^[\p{Lu}\d][^.!?]{2,70}(?:\s+\d{1,3})?$"));
+                if(heading&&!advertisement&&!Advertising.IsMatch(text))
+                {
+                    activeKind=localKind;lastHeading=li;
+                    if(headingKeys.Add(p.Page+":"+text.ToLowerInvariant()))headings.Add(new{page=p.Page,title=text,kind=localKind,source=contents?"Contents candidate":"Heading candidate",printedPage=PrintedPage(text)});
+                }
+                var matches=EditorialWords.Matches(text);var words=EditorialTokens(text);
+                for(int i=0;i<words.Length;i++)
+                {
+                    for(int len=Math.Min(maxWords,words.Length-i);len>=1;len--)
+                    {
+                        string key=string.Join(" ",words,i,len);
+                        if(!resolved.TryGetValue(key,out var options))continue;
+                        int end=i+len;int charEnd=matches[end-1].Index+matches[end-1].Length;
+                        // Never accept a shorter franchise name when the printed text has a sequel suffix.
+                        if(end<words.Length&&SequelToken(matches[end].Value))continue;
+                        string raw=text.Substring(matches[i].Index,charEnd-matches[i].Index);
+                        bool marked=Regex.IsMatch(text.Substring(charEnd),@"^\s*[™®©]");
+                        bool titleCase=raw.Any(char.IsUpper);bool standalone=words.Length<=len+2;
+                        bool prominent=height>=.035&&shortLine;
+                        string near=heading||p.Page==1?localKind:"Reference";
+                        if(near=="Reference"&&contents&&standalone&&li+1<lines.Length&&Regex.IsMatch(lines[li+1].Text,@"^\s*(?:our|a|the)\s+(?:special\s+)?",RegexOptions.IgnoreCase))near=Coverage(lines[li+1].Text);
+                        if(near=="Reference"&&contents&&li-lastHeading<=2)near=activeKind;
+                        if(readerPage)near="Reader letters";
+                        // Single ordinary words require title typography or explicit editorial context, not raw frequency.
+                        if(len==1&&(!titleCase&&!marked||!marked&&!standalone&&!prominent&&near=="Reference")){i=end-1;break;}
+                        bool ad=advertisement||Advertising.IsMatch(text);string kind=ad?"Possible advertising":near;
+                        if(!ad&&kind=="Reference"&&contents&&standalone)kind="Contents reference";
+                        if(!ad&&kind=="Reference"&&p.Page==1&&(marked||prominent||standalone))kind="Cover reference";
+                        if(!ad&&kind=="Reference"&&prominent&&standalone)kind="Heading reference";
+                        var canonical=options.OrderBy(x=>x.Alias).ThenBy(x=>x.Title.Length).ThenBy(x=>x.Title,StringComparer.Ordinal).First().Title;
+                        var platforms=options.Select(x=>x.Platform).Where(x=>!string.IsNullOrWhiteSpace(x)).Distinct(StringComparer.OrdinalIgnoreCase).OrderBy(x=>x).ToArray();
+                        hits.Add(new EditorialHit(canonical,p.Page,kind,text,platforms,p.Page==1,contents,height));i=end-1;break;
+                    }
+                }
+            }
+        }
+        bool Featured(EditorialHit h)=>h.Kind is "Review" or "Preview" or "Gameplay assistance" or "Feature" or "Interview" or "Cover reference" or "Heading reference" or "Contents reference";
+        var groups=hits.GroupBy(h=>string.Join(" ",EditorialTokens(h.Title))).Select(g=>new{
+            title=g.First().Title, featured=g.Any(Featured), editorialPages=g.Where(Featured).Select(h=>h.Page).Distinct().OrderBy(x=>x).ToArray(),
+            pages=g.Select(h=>h.Page).Distinct().OrderBy(x=>x).ToArray(),cover=g.Any(h=>h.Cover&&h.Kind!="Possible advertising"),contents=g.Any(h=>h.Contents&&Featured(h)),
+            platforms=g.SelectMany(h=>h.Platforms).Distinct(StringComparer.OrdinalIgnoreCase).OrderBy(x=>x).ToArray(),
+            kinds=g.Select(h=>h.Kind).Distinct().OrderBy(x=>x).ToArray(),evidence=g.OrderByDescending(Featured).ThenBy(h=>h.Page).GroupBy(h=>new{h.Page,h.Kind}).Select(x=>x.First()).Take(12).Select(h=>new{h.Page,h.Kind,h.Evidence}).ToArray()
+        }).OrderByDescending(g=>g.featured).ThenByDescending(g=>g.cover).ThenByDescending(g=>g.contents).ThenByDescending(g=>g.editorialPages.Length).ThenBy(g=>g.title).ToArray();
+        // No automatic cover winner: unreadable artwork/typography cannot be recovered from text alone.
+        var coverCandidates=groups.Where(g=>g.cover||g.contents&&g.kinds.Contains("Review")).Take(20).Select(g=>new{g.title,source=g.cover?"Cover text":"Contents review only; cover unverified",g.editorialPages}).ToArray();
+        var platformSignals=groups.Where(g=>g.featured&&g.platforms.Length==1).GroupBy(g=>g.platforms[0],StringComparer.OrdinalIgnoreCase).Select(g=>new{platform=g.Key,featuredTitles=g.Count(),titles=g.Select(x=>x.title).ToArray()}).OrderByDescending(g=>g.featuredTitles).ToArray();
+        string? primary=platformSignals.Length>0&&platformSignals[0].featuredTitles>=2&&(platformSignals.Length==1||platformSignals[0].featuredTitles>=platformSignals[1].featuredTitles*2+1)?platformSignals[0].platform:null;
+        if(Fingerprint(item)!=fp)throw new InvalidOperationException("Source changed during analysis. Re-index the document.");
+        return new{revision="v8.0-phase3",indexedPages=pages.Count,totalPages=manifest.TotalPages,catalogGames=gameCount,contentsPages,advertisingPages,coverCandidates,primarySystemCandidate=primary,platformSignals,featuredCount=groups.Count(g=>g.featured),mentionedCount=groups.Count(g=>!g.featured&&g.kinds.Any(k=>k!="Possible advertising")),advertisingOnlyCount=groups.Count(g=>g.kinds.All(k=>k=="Possible advertising")),games=groups,headings,seconds=Math.Round(timer.Elapsed.TotalSeconds,2)};
+    }
+    private static int? PrintedPage(string text)
+    {
+        var m=Regex.Match(text,@"(?:\.{2,}|\s{3,}|\bpage\s+)\s*(\d{1,4})\s*$",RegexOptions.IgnoreCase);
+        return m.Success&&int.TryParse(m.Groups[1].Value,out int n)&&n>0?n:null;
+    }
+
     private static bool IsPdf(LibraryItem item) => Path.GetExtension(item.Path).Equals(".pdf",StringComparison.OrdinalIgnoreCase);
     private static bool Usable(Extraction p) => Regex.Matches(string.Join(" ",p.Lines.Select(l=>l.Text)),@"\p{L}{2,}").Count>=12;
     private static double Number(string? s) => double.TryParse(s,NumberStyles.Float,CultureInfo.InvariantCulture,out var d)&&double.IsFinite(d)?d:0;
