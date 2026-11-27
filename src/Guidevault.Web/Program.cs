@@ -3009,20 +3009,20 @@ app.MapPost("/api/items/{id}/document-index/catalog/undo", (HttpRequest request,
 });
 
 // Phase 3: editorial analysis of the persistent index, admin-only and read-only.
-app.MapGet("/api/items/{id}/document-index/editorial", async (HttpRequest request, string id) =>
+app.MapGet("/api/items/{id}/document-index/editorial", async (HttpRequest request, string id, bool? partial) =>
 {
     if (CurrentGuidevaultUser(request)?.IsAdmin != true) return (IResult)Results.StatusCode(403);
     var item = VisibleLibraryItems(request, cache.GetItemsSnapshot()).FirstOrDefault(i => i.Id == id);
     if (item is null) return Results.NotFound();
     if (item.Kind != "Magazine" || !File.Exists(item.Path)) return Results.BadRequest(new { error = "A readable magazine issue is required." });
-    try { return Results.Ok(await GuidevaultDocumentIndex.EditorialAsync(dataRoot,item,launchBoxIntegrationStore.GetSnapshot().Games,request.HttpContext.RequestAborted)); }
+    try { return Results.Ok(await GuidevaultDocumentIndex.EditorialAsync(dataRoot,item,launchBoxIntegrationStore.GetSnapshot().Games,request.HttpContext.RequestAborted,partial==true)); }
     catch (OperationCanceledException) { return Results.StatusCode(499); }
     catch (InvalidOperationException ex) { return Results.BadRequest(new { error = ex.Message }); }
     catch (Exception) { return Results.Problem("Editorial analysis failed."); }
 });
 
 // Document index v8 Phase 1: admin-only; library metadata is never changed.
-app.MapGet("/api/items/{id}/document-index", async (HttpRequest request, string id, int? page, string? q, bool? publication) =>
+app.MapGet("/api/items/{id}/document-index", async (HttpRequest request, string id, int? page, string? q, bool? publication, bool? partial) =>
 {
     if (CurrentGuidevaultUser(request)?.IsAdmin != true) return (IResult)Results.StatusCode(403);
     var item = VisibleLibraryItems(request, cache.GetItemsSnapshot()).FirstOrDefault(i => i.Id == id);
@@ -3031,7 +3031,7 @@ app.MapGet("/api/items/{id}/document-index", async (HttpRequest request, string 
     var token = request.HttpContext.RequestAborted;
     try
     {
-        if (publication == true) return Results.Ok(await GuidevaultDocumentIndex.PublicationAsync(dataRoot, item, VisibleLibraryItems(request, cache.GetItemsSnapshot()), token));
+        if (publication == true) return Results.Ok(await GuidevaultDocumentIndex.PublicationAsync(dataRoot, item, VisibleLibraryItems(request, cache.GetItemsSnapshot()), token,partial==true));
         if (page.HasValue)
         {
             var record = await GuidevaultDocumentIndex.GetPageAsync(dataRoot, item, page.Value, token);
