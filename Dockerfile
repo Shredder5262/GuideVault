@@ -39,7 +39,7 @@ RUN apt-get update \
     && /opt/guidevault-vision/bin/pip install --no-cache-dir transformers==4.57.2 pillow==11.3.0 \
     && rm -rf /var/lib/apt/lists/*
 COPY vision/cover_ocr.py /opt/guidevault-vision/cover_ocr.py
-RUN /opt/guidevault-vision/bin/python -m py_compile /opt/guidevault-vision/cover_ocr.py && test "$(/opt/guidevault-vision/bin/python /opt/guidevault-vision/cover_ocr.py --self-test)" = "guidevault-vision-deep-v7.1.2"
+RUN /opt/guidevault-vision/bin/python -m py_compile /opt/guidevault-vision/cover_ocr.py && test "$(/opt/guidevault-vision/bin/python /opt/guidevault-vision/cover_ocr.py --self-test)" = "guidevault-vision-deep-v7.1.3"
 RUN mkdir -p /data/library
 
 COPY --from=build /app/publish .

@@ -11,7 +11,7 @@ public static class GuidevaultMagazineContentScanner
     public sealed record Suggestion(string Field, string Value, int Page, string Evidence, string Confidence);
     public sealed record ScanResult(int TotalPages, int Start, int Scanned, int ReadablePages, List<Suggestion> Suggestions, List<string> Warnings)
     {
-        public string ScannerRevision => "v7.1.2";
+        public string ScannerRevision => "v7.1.3";
         public int CachedPages { get; init; }
     }
     private static readonly SemaphoreSlim Gate = new(1, 1);
@@ -75,12 +75,17 @@ public static class GuidevaultMagazineContentScanner
             var sourceInfo = new FileInfo(item.Path);
             bool fullVision = engine is "full" or "vision";
             bool visionOnly = engine == "vision";
-            if (fullVision)
+            bool balanced = engine == "balanced";
+            var refinePages = new List<int>();
+            // A fixed early-page window bounds vision cost across independent HTTP chunks.
+            // Cover always receives deep recognition; at most three interior pages receive one pass each.
+            if (balanced && start == 0) refinePages.Add(0);
+            if (fullVision || balanced)
             {
                 const string script = "/opt/guidevault-vision/cover_ocr.py";
-                const string protocol = "guidevault-vision-deep-v7.1.2";
+                const string protocol = "guidevault-vision-deep-v7.1.3";
                 if (!File.Exists(script) || !(await File.ReadAllTextAsync(script, token)).Contains(protocol, StringComparison.Ordinal))
-                    throw new InvalidOperationException("Incompatible vision runtime: rebuild and deploy the matching v7.1.2 Docker image. No magazine recognition was started.");
+                    throw new InvalidOperationException("Incompatible vision runtime: rebuild and deploy the matching v7.1.3 Docker image. No magazine recognition was started.");
                 var verified = await Run("/opt/guidevault-vision/bin/python", [script, "--self-test"], token);
                 if (!string.Equals(verified.Trim(), protocol, StringComparison.Ordinal))
                     throw new InvalidOperationException("Vision runtime compatibility self-test failed. Rebuild and deploy the matching Docker image.");
@@ -183,6 +188,13 @@ public static class GuidevaultMagazineContentScanner
                     if (Words.Matches(text).Count >= 3)
                     {
                         var excluded = ExcludedPageReason(text, i + 1, total);
+                        if (balanced && i > 0 && i <= 3 && excluded.Length == 0)
+                        {
+                            int words = Words.Matches(text).Count;
+                            var confidence = layout.Lines.Where(l => l.Confidence >= 0).Select(l => l.Confidence).DefaultIfEmpty(0).Average();
+                            bool contents = Regex.IsMatch(text, @"\b(?:table of contents|contents|in this issue|inside this issue)\b", RegexOptions.IgnoreCase);
+                            if (words < 60 || confidence < 65 || contents) refinePages.Add(i);
+                        }
                         if (excluded.Length > 0)
                         {
                             result.Warnings.Add($"Page {i+1}: {excluded}; excluded from current-issue metadata evidence.");
@@ -199,15 +211,33 @@ public static class GuidevaultMagazineContentScanner
                         }
                         result = result with { ReadablePages = result.ReadablePages + 1 };
                     }
-                    else result.Warnings.Add($"Page {i + 1}: little or no readable text.");
+                    else
+                    {
+                        result.Warnings.Add($"Page {i + 1}: little or no readable text.");
+                        if (balanced && i > 0 && i <= 3) refinePages.Add(i);
+                    }
                 }
-                catch (Exception ex) when (ex is not OperationCanceledException) { result.Warnings.Add($"Page {i + 1}: {ex.Message}"); }
+                catch (Exception ex) when (ex is not OperationCanceledException)
+                {
+                    result.Warnings.Add($"Page {i + 1}: {ex.Message}");
+                    if (balanced && i > 0 && i <= 3) refinePages.Add(i);
+                }
                 result = result with { Scanned = result.Scanned + 1 };
             }
-            if (fullVision)
+            if (fullVision || (balanced && refinePages.Count > 0))
             {
-                var batch = await ReadVisionBatch(item, sourceInfo, pdf, temp, start, Math.Min(start + count, total), result.Warnings, token);
-                if (batch.Count > 0 && batch.All(p => p.Json is null))
+                var batch = new List<(int Index,string? Json,bool Cached)>();
+                if (fullVision)
+                    batch = await ReadVisionBatch(item, sourceInfo, pdf, temp, start, Math.Min(start + count, total), result.Warnings, token);
+                else
+                {
+                    if (refinePages.Contains(0))
+                        batch.AddRange(await ReadVisionBatch(item, sourceInfo, pdf, temp, 0, 1, result.Warnings, token));
+                    var interior = refinePages.Where(i=>i>0).Distinct().ToArray();
+                    if (interior.Length > 0)
+                        batch.AddRange(await ReadVisionBatch(item, sourceInfo, pdf, temp, start, Math.Min(start + count, total), result.Warnings, token, false, interior));
+                }
+                if (fullVision && batch.Count > 0 && batch.All(p => p.Json is null))
                     throw new InvalidOperationException("All vision pages in this batch failed. No metadata suggestions returned for this batch. " + string.Join(" | ", result.Warnings.TakeLast(3)));
                 foreach(var (index, json, cached) in batch)
                 {
@@ -223,7 +253,7 @@ public static class GuidevaultMagazineContentScanner
                     catch(Exception ex) when(ex is not OperationCanceledException) { result.Warnings.Add($"Page {index+1}: vision analysis failed: {ex.Message}"); }
                 }
             }
-            if (vision && !fullVision && start == 0)
+            if (vision && !fullVision && !balanced && start == 0)
             {
                 try
                 {
@@ -315,17 +345,18 @@ public static class GuidevaultMagazineContentScanner
     }
 
     // Cache only extracted regions, never source images. Source identity and pipeline version invalidate stale results.
-    private static async Task<List<(int Index,string? Json,bool Cached)>> ReadVisionBatch(LibraryItem item,FileInfo source,bool pdf,string temp,int start,int end,List<string> warnings,CancellationToken token)
+    private static async Task<List<(int Index,string? Json,bool Cached)>> ReadVisionBatch(LibraryItem item,FileInfo source,bool pdf,string temp,int start,int end,List<string> warnings,CancellationToken token,bool deep=true,int[]? selected=null)
     {
         var output=new List<(int Index,string? Json,bool Cached)>();
         var pending=new List<(int Index,string Input,string Cache)>();
-        var cacheRoot=Path.Combine(Environment.GetEnvironmentVariable("GUIDEVAULT_DATA")??"/data","vision-page-cache","v7.1.2");
+        var cacheRoot=Path.Combine(Environment.GetEnvironmentVariable("GUIDEVAULT_DATA")??"/data","vision-page-cache",deep?"v7.1.2":"v7.1.3-balanced");
         bool cacheEnabled=true;
         try { Directory.CreateDirectory(cacheRoot); } catch(Exception ex) { cacheEnabled=false; warnings.Add("Vision disk cache unavailable: "+ex.Message); }
         for(int i=start;i<end;i++)
         {
             token.ThrowIfCancellationRequested();
-            var identity=$"{source.FullName}\n{source.Length}\n{source.LastWriteTimeUtc.Ticks}\n{i}\nflorence-base-00921df-adaptive-1800-1024-v712\n{Environment.GetEnvironmentVariable("GUIDEVAULT_VISION_RETRY_DEPTH")??"1"}";
+            if(selected is not null && !selected.Contains(i)) continue;
+            var identity=$"{source.FullName}\n{source.Length}\n{source.LastWriteTimeUtc.Ticks}\n{i}\n{(deep?"florence-base-00921df-adaptive-1800-1024-v712":"florence-base-00921df-overview-1800-768-v713")}\n{Environment.GetEnvironmentVariable("GUIDEVAULT_VISION_RETRY_DEPTH")??"1"}";
             var key=Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(Encoding.UTF8.GetBytes(identity)));
             var cachePath=Path.Combine(cacheRoot,key+".json");
             try
@@ -362,7 +393,7 @@ public static class GuidevaultMagazineContentScanner
         {
             try
             {
-                var args=new[]{"/opt/guidevault-vision/cover_ocr.py","--deep-batch"}.Concat(pending.Select(p=>p.Input)).ToArray();
+                var args=new[]{"/opt/guidevault-vision/cover_ocr.py",deep?"--deep-batch":"--batch"}.Concat(pending.Select(p=>p.Input)).ToArray();
                 var raw=await Run("/opt/guidevault-vision/bin/python",args,token,2400);
                 using var doc=System.Text.Json.JsonDocument.Parse(raw);
                 var pages=doc.RootElement.EnumerateArray().ToArray();
@@ -403,7 +434,7 @@ public static class GuidevaultMagazineContentScanner
         if(excluded.Length>0){warnings.Add($"Page {page}: vision {excluded}; excluded from current-issue evidence.");return true;}
         var found=new List<Suggestion>();
         if(root.TryGetProperty("truncated",out var cut) && cut.ValueKind==System.Text.Json.JsonValueKind.True)
-            warnings.Add($"Page {page}: adaptive retries could not complete all regions; coverage may be incomplete. Result not cached.");
+            warnings.Add($"Page {page}: vision output reached its limit; coverage may be incomplete. Result not cached.");
         var passes=root.TryGetProperty("passes",out var passCount)?passCount.GetInt32():1;
         var retries=root.TryGetProperty("retries",out var retryCount)?retryCount.GetInt32():0;
         var recovered=root.TryGetProperty("recovered",out var recoveryCount)?recoveryCount.GetInt32():0;

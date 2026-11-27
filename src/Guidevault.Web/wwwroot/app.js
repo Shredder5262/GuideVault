@@ -18669,7 +18669,7 @@ function gvMagazineScanDialog(items, fromDetail = false, inlineHost = null) {
   if (!items.length || items.length > 5) { metadataManagerSetStatus('Select 1–5 magazine issues per scan.','error'); return; }
   const dialog = document.createElement(inlineHost ? 'div' : 'dialog');
   dialog.className = inlineHost ? 'gv-magscan-inline' : 'gv-magscan-dialog';
-  dialog.innerHTML = `<div class="gv-magscan-content"><h2>Scan magazine metadata</h2><p class="sub">${items.length} issue(s). Scanner UI v7.1.2 — Local OCR and LaunchBox title lookup. Nothing is saved automatically.</p><label>Scan scope <select data-scan-scope><option value="1">Cover only</option><option value="12">First 12 pages (cover, contents, masthead)</option><option value="300"${fromDetail?' selected':''}>Full issue (up to 300 pages)</option></select></label><label>Recognition engine <select data-scan-engine><option value="ocr">Standard OCR (Tesseract)</option><option value="hybrid">Hybrid — Cover (v6.2)</option><option value="full">Hybrid — Full magazine (Experimental)</option><option value="vision">Florence-2 only (Experimental)</option></select></label><p class="sub">Full vision modes process each selected page with an overview, four overlapping detail regions and bounded adaptive retries, in batches of three. Only completed page recognition is cached on disk. Vision-only skips Tesseract; review all suggestions. Full scans may take many minutes.</p><p class="sub" data-scan-status aria-live="polite">Start a scan to review suggested fields. Layout-aware English OCR and catalog matching. All magazine fields are checked; uncertain or unavailable values are not guessed. Review all proposed editorial data.</p><progress data-scan-progress value="0" max="1"></progress><div data-scan-results></div><div class="gv-magscan-actions"><button class="ghost" type="button" data-scan-close>Close</button><button class="ghost" type="button" data-scan-stop hidden>Stop</button><button class="ghost" type="button" data-scan-copy disabled>Copy Scan Report</button><button class="primary" type="button" data-scan-start>Start scan</button><button class="primary" type="button" data-scan-stage disabled>${fromDetail?'Apply selected suggestions':'Stage selected suggestions'}</button></div></div>`;
+  dialog.innerHTML = `<div class="gv-magscan-content"><h2>Scan magazine metadata</h2><p class="sub">${items.length} issue(s). Scanner UI v7.1.3 — Local OCR and LaunchBox title lookup. Nothing is saved automatically.</p><label>Scan scope <select data-scan-scope><option value="1">Cover only</option><option value="12">First 12 pages (cover, contents, masthead)</option><option value="300"${fromDetail?' selected':''}>Full issue (up to 300 pages)</option></select></label><label>Recognition engine <select data-scan-engine><option value="balanced" selected>Intelligent Hybrid (Recommended)</option><option value="ocr">Standard OCR (Tesseract)</option><option value="full">Deep Vision + OCR (Slow)</option><option value="vision">Deep Vision Only (Slow)</option></select></label><p class="sub">Intelligent Hybrid uses detailed cover vision, OCR on every page, and at most three single-pass vision refinements on early pages with weak OCR or contents headings. Deep modes are much slower; use only when needed. Review all suggestions.</p><p class="sub" data-scan-status aria-live="polite">Start a scan to review suggested fields. Layout-aware English OCR and catalog matching. All magazine fields are checked; uncertain or unavailable values are not guessed. Review all proposed editorial data.</p><progress data-scan-progress value="0" max="1"></progress><div data-scan-results></div><div class="gv-magscan-actions"><button class="ghost" type="button" data-scan-close>Close</button><button class="ghost" type="button" data-scan-stop hidden>Stop</button><button class="ghost" type="button" data-scan-copy disabled>Copy Scan Report</button><button class="primary" type="button" data-scan-start>Start scan</button><button class="primary" type="button" data-scan-stage disabled>${fromDetail?'Apply selected suggestions':'Stage selected suggestions'}</button></div></div>`;
   (inlineHost || document.body).appendChild(dialog);
   const q = s => dialog.querySelector(s);
   const session = { controller:null, running:false, rows:[], dialog, inline:!!inlineHost, itemId:metadataManagerItemId(items[0]) };
@@ -18741,7 +18741,7 @@ function gvMagazineScanDialog(items, fromDetail = false, inlineHost = null) {
       if(row.item.issueNumber&&printedIssues.some(v=>String(v).trim().replace(/^0+(?=\d)/,'')!==String(row.item.issueNumber).trim().replace(/^0+(?=\d)/,''))) reviewWarnings.push(`Printed issue number(s): ${printedIssues.join(', ')}. Existing issue #${row.item.issueNumber}; review printed cover evidence before changing.`);
       if(coverConflict) reviewWarnings.push(`Cover headings detected: ${coverNames.join(', ')}. ${existingCover?'Existing cover subject retained: '+existingCover+'. ':''}OCR headings do not establish the primary cover story; edit Metadata after checking the cover.`);
       if (reviewWarnings.length) { const w = document.createElement('details'); w.innerHTML = `<summary>${reviewWarnings.length} scan warning(s)</summary><p>${reviewWarnings.map(escapeHtml).join('<br>')}</p>`; block.appendChild(w); }
-      if(row.revision!=='v7.1.2'){root.appendChild(block);return;}
+      if(row.revision!=='v7.1.3'){root.appendChild(block);return;}
       const proposals = gvMagazineScanProposals(row);
       const corrections=[];
       const coverProposal=proposals.find(p=>p.field==='coverSubject');
@@ -18814,6 +18814,9 @@ function gvMagazineScanDialog(items, fromDetail = false, inlineHost = null) {
     q('[data-scan-scope]').disabled = true; q('[data-scan-start]').disabled = true; q('[data-scan-close]').disabled = true; q('[data-scan-stop]').hidden = false; q('[data-scan-stage]').disabled = true;
     q('[data-scan-results]').innerHTML = '';
     const progress = q('[data-scan-progress]'); progress.max = items.length; progress.value = 0;
+    const startedAt=Date.now(); let statusText='Preparing scan…';
+    const updateElapsed=()=>{const seconds=Math.floor((Date.now()-startedAt)/1000);q('[data-scan-status]').textContent=`${statusText} · elapsed ${Math.floor(seconds/60)}m ${String(seconds%60).padStart(2,'0')}s`;};
+    const elapsedTimer=setInterval(updateElapsed,1000);
     try {
       for (let i=0; i<items.length; i++) {
         const item=items[i], id=metadataManagerItemId(item);
@@ -18821,12 +18824,12 @@ function gvMagazineScanDialog(items, fromDetail = false, inlineHost = null) {
         let start = 0;
         try {
           do {
-            q('[data-scan-status]').textContent = `Scanning issue ${i+1}/${items.length}: ${metadataManagerItemName(item)} — page ${start+1}${row.total ? ' of '+Math.min(scope,row.total) : ''}`;
-            const res=await fetch(`/api/items/${encodeURIComponent(id)}/magazine-scan?start=${start}&count=${Math.min(3,scope-start)}&vision=${vision}&engine=${encodeURIComponent(engine)}`,{method:'POST',signal:session.controller.signal});
+            statusText = `Scanning issue ${i+1}/${items.length}: ${metadataManagerItemName(item)} — page ${start+1}${row.total ? ' of '+Math.min(scope,row.total) : ''}${engine==='balanced'?(start===0?' · cover OCR + detailed vision':start<4?' · OCR / selective vision':' · OCR'):''}`; updateElapsed();
+            const res=await fetch(`/api/items/${encodeURIComponent(id)}/magazine-scan?start=${start}&count=${Math.min(engine==='balanced'||engine==='ocr'?1:3,scope-start)}&vision=${vision}&engine=${encodeURIComponent(engine)}`,{method:'POST',signal:session.controller.signal});
             if (!res.ok) { let msg=`HTTP ${res.status}`; try { msg=(await res.json()).error||msg; } catch {} throw new Error(msg); }
             const data=await res.json();
             row.revision=String(data.scannerRevision||'not reported');
-            if(row.revision!=='v7.1.2') { row.suggestions=[]; throw new Error(`Scanner backend revision ${row.revision}; expected v7.1.2. Deploy the matching image and reload before scanning.`); }
+            if(row.revision!=='v7.1.3') { row.suggestions=[]; throw new Error(`Scanner backend revision ${row.revision}; expected v7.1.3. Deploy the matching image and reload before scanning.`); }
             row.total=data.totalPages; row.scanned+=data.scanned; row.readable+=data.readablePages; row.cached+=Number(data.cachedPages||0); row.suggestions.push(...(data.suggestions||[])); row.warnings.push(...(data.warnings||[]));
             if (!data.scanned) break; start+=data.scanned; progress.value=i+Math.min(1,start/Math.min(scope,row.total));
           } while(start<Math.min(scope,row.total));
@@ -18836,7 +18839,7 @@ function gvMagazineScanDialog(items, fromDetail = false, inlineHost = null) {
       }
       q('[data-scan-status]').textContent=`Review the proposals and their evidence. Select the proposals you want to ${fromDetail?'apply to this magazine':'stage'}. Only measured or checksum-valid empty fields are preselected; no field is saved yet.`;
     } catch(err) { q('[data-scan-status]').textContent=session.controller.signal.aborted?'Scan stopped. Completed page results remain available for review.':String(err.message||err); }
-    finally { session.running=false; q('[data-scan-engine]').disabled=false; q('[data-scan-start]').disabled=false; q('[data-scan-close]').disabled=false; q('[data-scan-scope]').disabled=false; q('[data-scan-stop]').hidden=true; render(); }
+    finally { clearInterval(elapsedTimer); session.running=false; q('[data-scan-engine]').disabled=false; q('[data-scan-start]').disabled=false; q('[data-scan-close]').disabled=false; q('[data-scan-scope]').disabled=false; q('[data-scan-stop]').hidden=true; render(); }
   };
   q('[data-scan-stage]').onclick = async () => {
     if (session.running) return;
@@ -18940,7 +18943,7 @@ function gvMagazineEditableCorrection(row,field,value,reason) {
   return {field,current,value,evidence:[{value:value||'Clear field',page:0,evidence:reason,confidence:'Manual correction — review required'}],conflict:false,locked:false,safe:false};
 }
 function gvMagazineScanReport(rows,root) {
-  const report=['GuideVault magazine scan report — UI v7.1.2'];
+  const report=['GuideVault magazine scan report — UI v7.1.3'];
   const blocks=[...root.querySelectorAll('.gv-magscan-result')];
   rows.forEach((row,i)=>{
     const block=blocks[i];if(!block)return;

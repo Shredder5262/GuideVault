@@ -6,7 +6,7 @@ os.environ["HF_HUB_DISABLE_XET"] = "1"
 os.environ["TOKENIZERS_PARALLELISM"] = "false"
 os.environ["OMP_NUM_THREADS"] = "2"
 os.environ["MKL_NUM_THREADS"] = "2"
-RUNTIME_PROTOCOL = "guidevault-vision-deep-v7.1.2"
+RUNTIME_PROTOCOL = "guidevault-vision-deep-v7.1.3"
 
 def dispatch(args, recognize_page):
     if not args:
