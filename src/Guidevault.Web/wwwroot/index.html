@@ -45,7 +45,7 @@
         <button class="nav" data-view="magazine-series" data-filter="Magazine" title="Magazines"><span class="nav-icon homebar-icon"><img src="/assets/icons/homebar/magazines.png" data-fallback-src="/assets/icons/homebar/magainzes.png" alt="" loading="eager" draggable="false" onerror="if(this.dataset.fallbackUsed!=='1'&&this.dataset.fallbackSrc){this.dataset.fallbackUsed='1';this.src=this.dataset.fallbackSrc}else{this.classList.add('homebar-icon-missing')}" /></span><span class="nav-label">Magazines</span><em id="countMags">0</em></button>
         <button class="nav" data-view="favorites" data-filter="Favorites" title="Favorites"><span class="nav-icon">&#x2605;</span><span class="nav-label">Favorites</span><em id="countFavs">0</em></button>
         <button id="collectionsNav" class="nav" data-view="collections" data-filter="All Content" title="Collections"><span class="nav-icon">&#x2637;</span><span class="nav-label">Collections</span><em id="countCollections">0</em></button>
-        <button id="dossiersNav" class="nav hidden" data-view="dossiers" data-filter="All Content" title="Game Dossiers"><span class="nav-icon">&#x1F5C3;</span><span class="nav-label">Dossiers</span><em id="countDossiers">0</em></button>
+        
         <div id="customSideNavItems" class="custom-side-nav-items" aria-label="Custom side navigation"></div>
       </nav>
       <nav id="settingsSideNav" class="settings-side-nav hidden" aria-label="Settings navigation">
@@ -56,7 +56,7 @@
           <button id="settingsPreferencesNav" class="settings-subnav" data-settings-tab="preferences" type="button">Preferences</button>
           <button id="settingsKeybindsNav" class="settings-subnav" data-settings-tab="keybinds" type="button">Key Binds</button>
           <button id="settingsReadingProfilesNav" class="settings-subnav" data-settings-tab="reading-profiles" type="button">Reading Profiles</button>
-          <button id="settingsDossiersNav" class="settings-subnav" data-settings-tab="dossiers" type="button">Game Dossiers</button>
+          
           <button id="settingsCustomizeNav" class="settings-subnav" data-settings-tab="customize" type="button">Customize</button>
           <button id="settingsDevicesNav" class="settings-subnav" data-settings-tab="devices" type="button">Devices</button>
         </div>
@@ -134,6 +134,7 @@
           </button>
           <div id="userMenuPanel" class="top-user-menu hidden" role="menu" aria-label="User menu">
             <button id="userMenuProfile" type="button" role="menuitem">My Profile</button>
+            <button id="userMenuScanLibrary" type="button" role="menuitem" hidden>Scan Library</button>
             <button id="userMenuHelp" type="button" role="menuitem">Help</button>
             <button id="userMenuLogout" type="button" role="menuitem">Log out</button>
           </div>
@@ -221,18 +222,7 @@
                     <option value="Manual Only">Manual Only</option>
                   </select></label>
                   <label id="editCategoryLabel">Preferred Platform<input id="editCategory" /></label>
-                  <label id="editEsrbRatingLabel" class="esrb-metadata-field hidden">ESRB Rating<select id="editEsrbRating">
-                    <option value="">Not Rated / Unspecified</option>
-                    <option value="E">Everyone</option>
-                    <option value="E10+">Everyone 10+</option>
-                    <option value="T">Teen</option>
-                    <option value="M">Mature 17+</option>
-                    <option value="AO">Adults Only 18+</option>
-                    <option value="RP">Rating Pending</option>
-                    <option value="EC">Early Childhood</option>
-                    <option value="KA">Kids to Adults</option>
-                    <option value="None">Not Rated</option>
-                  </select></label>
+                  
                   <label id="editAssociatedPlatformsLabel">Associated Platforms<input id="editAssociatedPlatforms" placeholder="PlayStation 2, Nintendo GameCube" /></label>
                   <label id="editPlatformMatchLabel" class="metadata-legacy-match-field hidden">Detected Match<input id="editPlatformMatchTitle" placeholder="Detected game/title match" /></label>
                   <label id="editGameTitleLabel" class="strategy-metadata-field manual-metadata-field hidden">Game Title<input id="editGameTitle" /></label>
@@ -324,7 +314,7 @@
                   <button id="unlockAllMetadataFieldsBtn" class="metadata-unlock-all-button" type="button" title="Unlock all visible metadata fields">Unlock All</button>
                   <button id="openLibrarySearchBtn" class="metadata-lookup-button" type="button" title="Search Open Library metadata">Open Library</button>
                   <button id="igdbSearchBtn" class="metadata-lookup-button" type="button" title="Find a game on IGDB and import game metadata">IGDB</button>
-                  <button id="esrbSearchBtn" class="metadata-lookup-button" type="button" title="Search ESRB rating">ESRB</button>
+                  
                 </div>
               </section>
               <section id="magazine-scanPanel" class="tab-panel hidden">
@@ -517,23 +507,7 @@
               </article>
             </div>
           </section>
-          <section id="settingsDossiersPanel" class="settings-section-panel hidden dossier-settings-panel">
-            <div class="settings-title-row">
-              <div>
-                <div class="settings-page-kicker">ACCOUNT</div>
-                <h1>Game Dossiers</h1>
-                <p class="sub">Game-centric records created from IGDB. Each dossier groups matched GuideVault documents, series data, related games, expansions, and editions.</p>
-              </div>
-              <button id="dossiersRefresh" class="ghost" type="button">Refresh</button>
-            </div>
-            <article class="settings-card dossier-settings-help">
-              <h3>Create a Game Dossier</h3>
-              <p class="sub">Start the guided workflow, search your GuideVault library for a manual or strategy guide, match it to the correct IGDB game, and save the dossier.</p>
-              <button id="dossiersChooseItem" class="primary" type="button">Choose a Manual or Guide</button>
-            </article>
-            <div id="dossierSettingsList" class="dossier-settings-list"></div>
-            <p id="dossiersStatus" class="sub account-status" aria-live="polite"></p>
-          </section>
+          
           <section id="settingsPreferencesPanel" class="settings-section-panel hidden">
             <div class="settings-title-row">
               <div>
@@ -597,16 +571,7 @@
                         <span class="gv-toggle-track"><span class="gv-toggle-thumb"></span></span>
                       </label>
                     </div>
-                    <div class="preference-toggle-row preference-toggle-row-child">
-                      <div>
-                        <h3>Game Dossiers</h3>
-                        <p class="sub">Tint dossier tiles and dashboard containers from the game cover.</p>
-                      </div>
-                      <label class="gv-toggle" for="preferenceColorscapeDossiers">
-                        <input id="preferenceColorscapeDossiers" type="checkbox" />
-                        <span class="gv-toggle-track"><span class="gv-toggle-thumb"></span></span>
-                      </label>
-                    </div>
+                    
                   </div>
                 </div>
                 <p class="sub colorscape-preview-note">Main menu Colorscape affects only the outer container of each menu tile. Cover previews and text stay unchanged.</p>
@@ -1248,7 +1213,7 @@
                     <div class="metadata-source-provider-strip" aria-label="Batch lookup sources">
                       <label class="metadata-source-provider-pill"><input type="checkbox" data-metadata-batch-source-toggle="openLibrary" data-metadata-batch-source="openLibrary" checked /> <span>Open Library</span><small>guide/book metadata</small></label>
                       <label class="metadata-source-provider-pill"><input type="checkbox" data-metadata-batch-source-toggle="igdb" data-metadata-batch-source="igdb" /> <span>IGDB</span><small>game metadata scraper</small></label>
-                      <label class="metadata-source-provider-pill"><input type="checkbox" data-metadata-batch-source-toggle="esrb" data-metadata-batch-source="esrb" /> <span>ESRB</span><small>rating scraper</small></label>
+                      
                     </div>
                     <label class="metadata-source-import-mode" for="metadataBatchSourceImportMode"><span>Import mode</span>
                       <select id="metadataBatchSourceImportMode">
@@ -1302,18 +1267,7 @@
                         <label><input type="checkbox" data-metadata-batch-source="igdb" data-metadata-batch-field="preferredPlatform" checked /> Preferred</label>
                       </div>
                     </div>
-                    <div class="metadata-source-fields-card" data-metadata-batch-fields-card="esrb">
-                      <div class="metadata-source-fields-head">
-                        <div>
-                          <strong>ESRB fields</strong>
-                          <span>Rating only.</span>
-                        </div>
-                        <div class="settings-actions inline-actions metadata-source-fields-actions"><button class="ghost tiny" type="button" data-metadata-batch-select-fields="esrb">All</button><button class="ghost tiny" type="button" data-metadata-batch-clear-fields="esrb">Clear</button></div>
-                      </div>
-                      <div class="metadata-source-field-chip-grid compact">
-                        <label><input type="checkbox" data-metadata-batch-source="esrb" data-metadata-batch-field="rating" checked /> ESRB Rating</label>
-                      </div>
-                    </div>
+                    
                   </div>
                 </div>
                 <div id="metadataBatchSourceResults" class="metadata-batch-source-results"><p class="sub">No batch lookup results yet.</p></div>
@@ -1410,6 +1364,12 @@
                     <section class="backup-step-card">
                       <h4>1. Create or choose backup</h4>
                       <div id="serverBackupList" class="backup-list empty">No backups loaded yet.</div>
+                      <div class="inline-actions" style="margin-top:10px;flex-wrap:wrap">
+                        <button id="serverBackupSelectAll" class="ghost tiny" type="button">Select all</button>
+                        <button id="serverBackupClearSelection" class="ghost tiny" type="button">Clear</button>
+                        <button id="serverDeleteBackups" class="danger" type="button" disabled>Delete selected</button>
+                      </div>
+                      <p id="serverBackupDeleteCount" class="sub" aria-live="polite">0 selected for deletion</p>
                     </section>
                     <section class="backup-step-card">
                       <h4>2. Preview restore</h4>
@@ -1688,17 +1648,7 @@
               
                 </div>
               </details>
-              <details name="guidevault-integrations" class="settings-card integration-source-card integration-esrb-card integration-accordion">
-                <summary class="integration-card-head integration-accordion-toggle">
-                  <span class="integration-source-icon integration-source-icon-image"><img src="assets/integrations/esrb.png" alt="" /></span>
-                  <div class="integration-accordion-title"><h2>ESRB.org</h2><p class="sub">Official game rating lookup for manuals and strategy guides.</p></div>
-                <span class="integration-accordion-chevron" aria-hidden="true">&#x203A;</span></summary>
-                <div class="integration-accordion-body">
-                  <p class="integration-readonly-note">Available by default. No API credentials or connection settings are required.</p>
-                <div class="integration-chip-row"><span>Enabled by default</span><span>No API key</span><span>Game ratings</span></div>
               
-                </div>
-              </details>
               <details name="guidevault-integrations" class="settings-card integration-source-card integration-homeassistant-card integration-accordion">
                 <summary class="integration-card-head integration-accordion-toggle">
                   <span class="integration-source-icon integration-source-icon-image"><img src="assets/integrations/home-assistant.png" alt="" /></span>
@@ -1742,7 +1692,7 @@
                   <span class="integration-source-icon integration-source-icon-image"><img src="assets/integrations/igdb.png" alt="" /></span>
                   <div class="integration-accordion-title">
                     <h2>IGDB</h2>
-                    <p class="sub">Expanded game metadata lookup and Game Dossier creation using Twitch Developer app credentials.</p>
+                    <p class="sub">Expanded game metadata lookup using Twitch Developer app credentials.</p>
                   </div>
                 <span class="integration-accordion-chevron" aria-hidden="true">&#x203A;</span></summary>
                 <div class="integration-accordion-body">
@@ -1764,7 +1714,7 @@
                       <option value="brazil">Brazil</option>
                       <option value="automatic">IGDB Default</option>
                     </select>
-                    <span class="field-help">Prioritizes this region in dossier covers. If IGDB has no separate regional image, its default cover is treated as the selected locale.</span>
+                    <span class="field-help">Prioritizes this region when available in IGDB cover previews.</span>
                   </label>
                 </div>
                 <div class="settings-actions inline-actions integrations-actions">
@@ -3665,27 +3615,7 @@
     </main>
 
 
-  <dialog id="dossierItemPickerDialog" class="dossier-item-picker-dialog">
-    <div class="dossier-item-picker-card">
-      <header class="dossier-item-picker-head">
-        <div>
-          <span>GAME DOSSIER WIZARD &#183; STEP 1 OF 3</span>
-          <h2>Choose a Manual or Strategy Guide</h2>
-          <p>Search the accessible GuideVault library and select the document that belongs to the game dossier.</p>
-        </div>
-        <button id="dossierItemPickerClose" class="ghost" type="button">Close</button>
-      </header>
-      <div class="dossier-item-picker-search-row">
-        <label>Search your library<input id="dossierItemPickerSearch" type="search" placeholder="Search title, game, platform, publisher, or tag..." autocomplete="off" /></label>
-        <label>Document type<select id="dossierItemPickerKind"><option value="">Manuals and Strategy Guides</option><option value="Manual">Manuals only</option><option value="Strategy Guide">Strategy Guides only</option></select></label>
-      </div>
-      <div id="dossierItemPickerResults" class="dossier-item-picker-results"></div>
-      <footer class="dossier-item-picker-footer">
-        <p id="dossierItemPickerStatus" class="sub" aria-live="polite">Select one document to continue.</p>
-        <div><button id="dossierItemPickerCancel" class="ghost" type="button">Cancel</button><button id="dossierItemPickerContinue" class="primary" type="button" disabled>Continue to IGDB</button></div>
-      </footer>
-    </div>
-  </dialog>
+  
 
 
   <div id="appConfirmModal" class="app-modal hidden" role="dialog" aria-modal="true" aria-labelledby="appConfirmTitle">
@@ -3738,6 +3668,6 @@
   </dialog>
 
 
-  <script src="/app.js?v=1.3.2-controlled-v1&amp;rev=launchbox-magazine-1&amp;bulk=publication-actions-v1&amp;mm=workspace-v1&amp;mmsections=v1&amp;mmfields=v1&amp;mmimport=v1&amp;magscan=v7.2.2&amp;documentindex=v8-phase4.6&amp;magscantab=v1&amp;magapply=v1&amp;magoverview=v1&amp;magdetailpolish=v1&amp;formatui=v1&amp;libraryfileui=v1"></script>
+  <script src="/app.js?v=1.3.2-controlled-v1&amp;rev=launchbox-magazine-1&amp;bulk=publication-actions-v1&amp;mm=workspace-v1&amp;mmsections=v1&amp;mmfields=v1&amp;mmimport=v1&amp;magscan=v7.2.2&amp;documentindex=v8-phase4.6&amp;cleanup=library-ui-v1&amp;magscantab=v1&amp;magapply=v1&amp;magoverview=v1&amp;magdetailpolish=v1&amp;formatui=v1&amp;libraryfileui=v1"></script>
 </body>
 </html>

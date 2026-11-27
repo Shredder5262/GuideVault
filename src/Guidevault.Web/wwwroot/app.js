@@ -421,7 +421,7 @@ function platformIconBadgeHtml(name) {
   return `<span class="card-platform-icon-badge" title="${escapeForAttribute(label)}" aria-label="${escapeForAttribute(label)}">${icon || `<span>${escapeHtml(platformInitials(label))}</span>`}</span>`;
 }
 function magazinePublicationIconHtml(sizeClass = 'magazine-publication-icon') {
-  return `<span class="${escapeForAttribute(sizeClass)}" aria-hidden="true">\u25A6</span>`;
+  return `<span class="${escapeForAttribute(sizeClass)}" aria-hidden="true"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" style="display:block;flex:none"><path d="M12 5.5C9.3 3.8 6 3.6 2.5 4.5v14c3.5-.9 6.8-.7 9.5 1 2.7-1.7 6-1.9 9.5-1v-14c-3.5-.9-6.8-.7-9.5 1zM12 5.5v14M5.5 8h3.7v4H5.5zM5.5 15h3.7M15 8h3.5M15 11.5h3.5M15 15h3.5"/></svg></span>`;
 }
 function categoryDisplayIconHtml(kind, name, sizeClass = 'platform-icon tiny') {
   return kind === 'Magazine' ? magazinePublicationIconHtml(sizeClass.includes('large') ? 'magazine-publication-icon large' : 'magazine-publication-icon tiny') : platformIconHtml(name, sizeClass);
@@ -1883,6 +1883,7 @@ function applyAuthenticatedUserAccess() {
     if ($(id)) $(id).hidden = !isAdmin;
   });
   if ($('accountEditLogin')) $('accountEditLogin').hidden = !currentUserHasPermission('Change Password');
+  if ($('userMenuScanLibrary')) { $('userMenuScanLibrary').hidden = !isAdmin; $('userMenuScanLibrary').classList.toggle('hidden', !isAdmin); }
 }
 function guidevaultUserStorageKey(baseKey) {
   const identity = String(authenticatedServerUser()?.userId || authenticatedServerUser()?.email || '').trim().toLowerCase();
@@ -2798,7 +2799,6 @@ function showAuthenticatedApp() {
   startDeviceHeartbeat();
   startLaunchBoxOpenSignalPolling();
   loadReaderBackgrounds();
-  loadGameDossiers(false);
   pollTasks(false);
   if (currentUserIsAdmin()) {
     startHomeAssistantCommandPolling();
@@ -5122,7 +5122,6 @@ async function saveServerSettings(source = 'general') {
     state.serverSettings = normalizeServerSettings(await res.json());
     renderServerSettings();
     if (state.dossiers?.selected && !$('dossierDetailView')?.classList.contains('hidden')) renderGameDossierPage(state.dossiers.selected);
-    if (source === 'integrations' && state.dossiers?.loaded) await loadGameDossiers(true);
     if (state.serverSettings.homeAssistantEnabled && state.serverSettings.homeAssistantCommandEnabled) startHomeAssistantCommandPolling();
     else stopHomeAssistantCommandPolling();
     const msg = source === 'media' ? 'Media settings saved.'
@@ -5539,24 +5538,70 @@ async function loadServerBackups(showStatus = false) {
     return [];
   }
 }
+const guidevaultBackupDeleteNames = new Set();
+let guidevaultBackupDeleting = false;
+function isGeneratedBackupName(name) { return /^guidevault-library-backup-\d{8}-\d{6}\.zip$/i.test(String(name || '')); }
+function updateBackupDeleteControls() {
+  const count = guidevaultBackupDeleteNames.size;
+  if ($('serverDeleteBackups')) { $('serverDeleteBackups').disabled = !count || guidevaultBackupDeleting; $('serverDeleteBackups').textContent = count ? `Delete selected (${count})` : 'Delete selected'; }
+  if ($('serverBackupDeleteCount')) $('serverBackupDeleteCount').textContent = `${count} selected for deletion`;
+  if ($('serverBackupSelectAll')) $('serverBackupSelectAll').disabled = guidevaultBackupDeleting || !(state.serverBackups || []).some(b => isGeneratedBackupName(b.fileName));
+  if ($('serverBackupClearSelection')) $('serverBackupClearSelection').disabled = guidevaultBackupDeleting || !count;
+}
+function clearSelectedBackupPreview() {
+  state.serverBackupPreviewed = null;
+  if ($('serverRestoreBackup')) $('serverRestoreBackup').disabled = true;
+  if ($('serverRestorePreview')) { $('serverRestorePreview').classList.add('empty'); $('serverRestorePreview').textContent = 'Select or upload a backup to preview what will be restored.'; }
+}
 function renderServerBackups(backups = []) {
   const host = $('serverBackupList');
   if (!host) return;
+  const names = new Set(backups.map(b => String(b.fileName || '')));
+  for (const name of guidevaultBackupDeleteNames) if (!names.has(name)) guidevaultBackupDeleteNames.delete(name);
+  if (!names.has(state.serverBackupSelected)) {
+    state.serverBackupSelected = backups[0]?.fileName || '';
+    if (state.serverBackupRestoreMode !== 'upload') clearSelectedBackupPreview();
+  }
   if (!backups.length) {
     host.classList.add('empty');
     host.textContent = 'No backup ZIPs found in the configured backup directory yet.';
+    updateBackupDeleteControls();
     return;
   }
   host.classList.remove('empty');
-  const selected = state.serverBackupSelected || backups[0]?.fileName || '';
-  state.serverBackupSelected = selected;
+  const selected = state.serverBackupSelected;
   host.innerHTML = backups.map(backup => {
     const name = String(backup.fileName || '').trim();
     const date = backup.createdAt ? new Date(backup.createdAt).toLocaleString() : 'Unknown date';
     const size = fmtBytes(Number(backup.sizeBytes || 0));
     const isSelected = name === selected;
-    return `<div class="backup-entry ${isSelected ? 'selected' : ''}" data-backup-file="${escapeForAttribute(name)}"><div><strong>${escapeHtml(name)}</strong><span>${escapeHtml(date)} \u2022 ${escapeHtml(size)}</span></div><button class="ghost tiny" type="button" data-backup-select="${escapeForAttribute(name)}">${isSelected ? 'Selected' : 'Select'}</button></div>`;
+    const canDelete = isGeneratedBackupName(name);
+    return `<div class="backup-entry ${isSelected ? 'selected' : ''}" data-backup-file="${escapeForAttribute(name)}"><div style="display:flex;align-items:center;gap:9px;min-width:0"><input type="checkbox" data-backup-delete-name="${escapeForAttribute(name)}" aria-label="Select ${escapeForAttribute(name)} for deletion" ${guidevaultBackupDeleteNames.has(name) ? 'checked' : ''} ${!canDelete || guidevaultBackupDeleting ? 'disabled' : ''} style="width:16px;height:16px;flex:none"/><div style="min-width:0"><strong>${escapeHtml(name)}</strong><span>${escapeHtml(date)} \u2022 ${escapeHtml(size)}</span></div></div><button class="ghost tiny" type="button" data-backup-select="${escapeForAttribute(name)}" ${guidevaultBackupDeleting ? 'disabled' : ''}>${isSelected ? 'Selected' : 'Select'}</button></div>`;
   }).join('');
+  updateBackupDeleteControls();
+}
+async function deleteSelectedServerBackups() {
+  if (!currentUserIsAdmin() || guidevaultBackupDeleting) return;
+  const fileNames = [...guidevaultBackupDeleteNames];
+  if (!fileNames.length) return;
+  const confirmed = await showAppConfirm({ title: `Delete ${fileNames.length} backup${fileNames.length === 1 ? '' : 's'}?`, message: 'Permanently delete the checked backup ZIPs? This does not delete library files or live settings. Deleted backups cannot be restored.', okText: 'Delete backups', cancelText: 'Cancel', danger: true });
+  if (!confirmed || guidevaultBackupDeleting) return;
+  guidevaultBackupDeleting = true;
+  renderServerBackups(state.serverBackups || []);
+  try {
+    const response = await fetch('/api/server/backups/delete', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({fileNames})});
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(data.error || `HTTP ${response.status}`);
+    const deleted = Array.isArray(data.deleted) ? data.deleted : [];
+    const failures = Array.isArray(data.failures) ? data.failures : [];
+    deleted.forEach(name => guidevaultBackupDeleteNames.delete(name));
+    if (state.serverBackupRestoreMode !== 'upload' && deleted.includes(state.serverBackupSelected)) clearSelectedBackupPreview();
+    await loadServerBackups(false);
+    const message = `${deleted.length} backup(s) deleted.${failures.length ? ' Not deleted: ' + failures.map(f => `${f.fileName}: ${f.error}`).join('; ') : ''}`;
+    setServerSettingsStatus(message, failures.length ? 'error' : 'success');
+    showGuidevaultMessageToast(message, failures.length ? 'error' : 'success');
+  } catch (err) { setServerSettingsStatus(`Backup deletion failed: ${err?.message || err}`, 'error'); }
+  finally { guidevaultBackupDeleting = false; renderServerBackups(state.serverBackups || []); }
 }
 function renderBackupPreview(preview = {}) {
   const host = $('serverRestorePreview');
@@ -5586,6 +5631,7 @@ async function previewSelectedServerBackup() {
     const res = await fetch(`/api/server/backups/${encodeURIComponent(fileName)}/preview`, { cache: 'no-store' });
     const data = await res.json().catch(() => ({}));
     if (!res.ok) throw new Error(data?.error || `Preview failed: ${res.status}`);
+    if (fileName !== state.serverBackupSelected || guidevaultBackupDeleting) return;
     state.serverBackupRestoreMode = 'selected';
     renderBackupPreview(data);
     setServerSettingsStatus('Backup preview ready.', 'success');
@@ -5612,12 +5658,13 @@ async function previewUploadedServerBackup() {
   }
 }
 async function restorePreviewedServerBackup() {
+  if (guidevaultBackupDeleting) return;
   const preview = state.serverBackupPreviewed || null;
   if (!preview) { setServerSettingsStatus('Preview a backup before restoring.', 'error'); return; }
   const confirmed = typeof showAppConfirm === 'function'
     ? await showAppConfirm({ title: 'Restore GuideVault backup?', message: 'This overwrites GuideVault app data with the previewed backup. A safety backup will be created first. Source manuals, guides, magazines, and original library files are not touched.', okText: 'Restore backup', cancelText: 'Cancel', danger: true })
     : window.confirm('Restore the previewed GuideVault backup? A safety backup will be created first.');
-  if (!confirmed) return;
+  if (!confirmed || guidevaultBackupDeleting) return;
   try {
     setServerSettingsStatus('Restoring backup...', 'info');
     const form = new FormData();
@@ -11446,7 +11493,7 @@ function normalizeCustomize(value = {}) {
   const activeTab = requestedTab === 'side-nav' || requestedTab === 'collections' ? requestedTab : 'home';
   return {
     activeTab,
-    homeShelves: clean.length ? [...new Set(clean)] : ['recently-added'],
+    homeShelves: [...new Set(clean)],
     collections,
     sideNav: normalizeSideNavSettings(value?.sideNav || {})
   };
@@ -11470,20 +11517,32 @@ function persistCustomizeSettingsLocal() {
   try { localStorage.setItem(GUIDEVAULT_CUSTOMIZE_KEY, JSON.stringify(state.customize)); } catch {}
   return state.customize;
 }
-async function saveCustomizeSettingsToServer(settings = state.customize) {
+let guidevaultCustomizeSaveQueue = Promise.resolve();
+function saveCustomizeSettingsToServer(settings = state.customize) {
+  const snapshot = JSON.stringify(normalizeCustomize(settings || {}));
+  const save = async () => {
   try {
-    await fetch('/api/customize/settings', {
+    const response = await fetch('/api/customize/settings', {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(normalizeCustomize(settings || {}))
+      body: snapshot
     });
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
   } catch (err) {
+    setCustomizeStatus('Home layout saved locally, but server save failed. ' + (err?.message || err), 'error');
     console.warn('Customize settings could not be saved to the server.', err);
   }
+  };
+  guidevaultCustomizeSaveQueue = guidevaultCustomizeSaveQueue.then(save, save);
+  return guidevaultCustomizeSaveQueue;
 }
-function saveCustomizeSettings() {
+let guidevaultCustomizeMutation = 0;
+function saveCustomizeSettings(immediate = false) {
+  guidevaultCustomizeMutation++;
   const saved = persistCustomizeSettingsLocal();
   if (guidevaultCustomizeSaveTimer) window.clearTimeout(guidevaultCustomizeSaveTimer);
+  guidevaultCustomizeSaveTimer = null;
+  if (immediate) return saveCustomizeSettingsToServer(saved);
   guidevaultCustomizeSaveTimer = window.setTimeout(() => {
     guidevaultCustomizeSaveTimer = null;
     saveCustomizeSettingsToServer(saved);
@@ -11493,10 +11552,12 @@ async function syncCustomizeSettingsFromServer(renderAfter = false) {
   if (guidevaultCustomizeSyncInFlight) return state.customize || loadCustomizeSettings();
   guidevaultCustomizeSyncInFlight = true;
   const local = state.customize || loadCustomizeSettings();
+  const mutation = guidevaultCustomizeMutation;
   try {
     const res = await fetch(`/api/customize/settings?_=${Date.now()}`, { cache: 'no-store' });
     if (!res.ok) throw new Error(await res.text());
     const server = normalizeCustomize(await res.json());
+    if (mutation !== guidevaultCustomizeMutation || guidevaultCustomizeSaveTimer) return state.customize;
     const localHasContent = customizeSettingsHasUserContent(local);
     const serverHasContent = customizeSettingsHasUserContent(server);
     state.customize = serverHasContent || !localHasContent ? server : normalizeCustomize(local);
@@ -11980,9 +12041,14 @@ function handleCustomizeShelfAction(e) {
   const index = shelves.indexOf(id);
   if (index < 0) return;
   const action = btn.dataset.shelfAction;
-  if (action === 'remove') shelves.splice(index, 1);
+  if (action === 'remove') {
+    shelves.splice(index, 1);
+    const collectionId = collectionIdFromShelfId(id);
+    const collection = collectionId ? collectionById(collectionId) : null;
+    if (collection) { collection.homeDisplay = 'hidden'; collection.showOnHome = false; }
+  }
   state.customize.homeShelves = shelves;
-  saveCustomizeSettings();
+  saveCustomizeSettings(true);
   renderCustomizeSettings();
   render();
   setCustomizeStatus(action === 'remove' ? 'Home shelf removed.' : 'Home shelf layout updated.', 'success');
@@ -12111,12 +12177,12 @@ function renderHomeShelves() {
   const host = $('homeShelves');
   if (!host) return;
   const settings = state.customize || loadCustomizeSettings();
-  const configuredShelves = settings.homeShelves?.length ? settings.homeShelves : ['recently-added'];
+  const configuredShelves = Array.isArray(settings.homeShelves) ? settings.homeShelves : ['recently-added'];
   const nonEmptyShelves = configuredShelves.filter(id => {
     const collectionId = collectionIdFromShelfId(id);
     return !collectionId || collectionHasLibraryItems(collectionById(collectionId));
   });
-  const shelves = nonEmptyShelves.length ? nonEmptyShelves : ['recently-added'];
+  const shelves = nonEmptyShelves;
   state.homeShelfOffsets = state.homeShelfOffsets || {};
   state.homeShelfSlideDirection = state.homeShelfSlideDirection || {};
   cancelCoverLoadsForRoot(host);
@@ -12228,10 +12294,6 @@ function cardActionMenuMarkup(item) {
       <details class="card-action-submenu">
         <summary><span class="card-action-icon" aria-hidden="true">&#x25A6;</span><span>Add to collection</span><span class="card-action-caret" aria-hidden="true">&#x203A;</span></summary>
         <div class="card-action-submenu-list">${cardActionMenuCollectionsHtml(itemId)}</div>
-      </details>
-      <details class="card-action-submenu">
-        <summary><span class="card-action-icon" aria-hidden="true">&#x25C8;</span><span>Add to dossier</span><span class="card-action-caret" aria-hidden="true">&#x203A;</span></summary>
-        <div class="card-action-submenu-list">${cardActionMenuDossiersHtml(itemId)}</div>
       </details>
     </div>`;
 }
@@ -13675,7 +13737,7 @@ function buildCurrentMetadataPayloadFromForm(extra = {}) {
     pageCount: numericInput('editPageCount'),
     metadataPageCount: numericInput('editPageCount'),
     writer: $('editWriter')?.value || '',
-    rating: selectedKind === 'Magazine' ? '' : ($('editEsrbRating')?.value || ''),
+    rating: state.selected?.rating || '', // Preserve legacy access-control metadata; no ESRB editor.
     language: $('editLanguageTag')?.value || '',
     languageTag: $('editLanguageTag')?.value || '',
     summary: $('editSummary')?.value || '',
@@ -13893,7 +13955,7 @@ function normalizeOpenLibraryLanguage(value = '') {
 }
 
 
-const STRATEGY_GUIDE_METADATA_SOURCE_LOOKUPS = new Set(['openLibrary', 'igdb', 'esrb']);
+const STRATEGY_GUIDE_METADATA_SOURCE_LOOKUPS = new Set(['openLibrary', 'igdb']);
 
 function metadataLookupSelectedItemKey(item = state.selected || {}) {
   try {
@@ -14368,51 +14430,7 @@ function esrbResultTitle(result = {}) {
   return [result.title || result.gameTitle, esrbDisplayLabel(result.ratingShort || result.rating), esrbListLabel(result.platforms)].filter(Boolean).join(' - ') || 'ESRB rating result';
 }
 
-function ensureEsrbMetadataUi() {
-  if (!$('esrbDialog')) {
-    const dialog = document.createElement('dialog');
-    dialog.id = 'esrbDialog';
-    dialog.className = 'openlibrary-dialog esrb-dialog';
-    dialog.innerHTML = `
-      <div class="openlibrary-modal esrb-modal">
-        <header class="openlibrary-modal-head esrb-modal-head">
-          <div>
-            <h3>Search ESRB Rating</h3>
-            <p>Search ESRB.org by game title first, optionally using platform as a hint. Review the existing Guidevault rating beside the ESRB value before importing.</p>
-          </div>
-          <button type="button" id="esrbCloseBtn" class="ghost tiny">Close</button>
-        </header>
-        <div id="esrbDialogBody" class="openlibrary-modal-body esrb-modal-body"></div>
-      </div>`;
-    document.body.appendChild(dialog);
-  }
-
-  const existing = $('esrbSearchBtn');
-  if (existing) {
-    existing.classList.remove('ghost');
-    existing.classList.add('metadata-lookup-button', 'esrb-action-button');
-    existing.type = 'button';
-    existing.textContent = 'ESRB';
-    existing.dataset.defaultTitle = 'Search ESRB.org by strategy-guide game title and review the rating before importing it.';
-    updateMetadataSourceActionVisibility();
-    return;
-  }
-
-  const target = $('igdbSearchBtn')?.parentElement
-    || $('openLibrarySearchBtn')?.parentElement
-    || $('metadataPanel');
-  if (target) {
-    const btn = document.createElement('button');
-    btn.id = 'esrbSearchBtn';
-    btn.type = 'button';
-    btn.className = 'metadata-lookup-button esrb-action-button';
-    btn.textContent = 'ESRB';
-    btn.title = 'Search ESRB.org by strategy-guide game title and review the rating before importing it.';
-    btn.dataset.defaultTitle = btn.title;
-    target.appendChild(btn);
-    updateMetadataSourceActionVisibility();
-  }
-}
+function ensureEsrbMetadataUi() { /* ESRB lookup retired. */ }
 
 function esrbSetStatus(message = '', tone = '') {
   const el = $('esrbStatus');
@@ -14882,7 +14900,7 @@ function renderIgdbDialog(step = state.igdb.step || 'search') {
 
 async function openIgdbMetadataDialog(options = {}) {
   if (!state.selected) return;
-  state.igdb.dossierIntent = options.dossierIntent === true;
+  state.igdb.dossierIntent = false;
   ensureIgdbMetadataUi();
   resetIndividualMetadataLookupState('igdb', state.selected, true);
   renderIgdbDialog('search');
@@ -16149,7 +16167,6 @@ const METADATA_MANAGER_ALL_COLUMNS = [
   { key:'metadataSource', label:'Source', description:'Where the current metadata came from.' },
   { key:'summary', label:'Summary', description:'Description or overview text.' },
   { key:'writer', label:'Writer', description:'Writer/author field.' },
-  { key:'rating', label:'Rating', description:'Rating or ESRB-style metadata.' },
   { key:'webLink', label:'Web Link', description:'Reference URL.' },
   { key:'asin', label:'ASIN', description:'Amazon ASIN/book identifier.' },
   { key:'isbn10', label:'ISBN-10', description:'ISBN-10 book identifier.' },
@@ -16198,7 +16215,7 @@ const METADATA_MANAGER_ALL_COLUMNS = [
 const METADATA_MANAGER_KIND_FILTERS = ['Manual', 'Strategy Guide', 'Magazine'];
 // GuideVault: content-specific Metadata Manager columns v1.
 const METADATA_MANAGER_COMMON_FIELDS = ['kind','metadataStatus','name','languageTag','region','publisher','pageCount','writer','summary','includedExtras','tags','notes','metadataSource'];
-const METADATA_MANAGER_GAME_FIELDS = ['gameTitle','category','franchise','developer','gamePublisher','gameReleaseYear','genre','rating','charactersCovered'];
+const METADATA_MANAGER_GAME_FIELDS = ['gameTitle','category','franchise','developer','gamePublisher','gameReleaseYear','genre','charactersCovered'];
 const METADATA_MANAGER_AUTO_COLUMNS_BY_KIND = {
   Manual: [...METADATA_MANAGER_COMMON_FIELDS,...METADATA_MANAGER_GAME_FIELDS,'manualType','includedSections','controlScheme','itemsCovered','warrantySupport'],
   'Strategy Guide': [...METADATA_MANAGER_COMMON_FIELDS,...METADATA_MANAGER_GAME_FIELDS,'associatedPlatforms','publicationDate','isbn10','isbn13','guideType','edition','coveredGames','coveredPlatforms','guideTopics','specialFeatures','locationsCovered'],
@@ -17534,7 +17551,7 @@ function metadataBatchGameMetadataItems() {
   return metadataManagerSelectedItems().filter(item => item?.kind === 'Strategy Guide' || item?.kind === 'Manual');
 }
 
-const METADATA_BATCH_SOURCE_ORDER = ['openLibrary', 'igdb', 'esrb'];
+const METADATA_BATCH_SOURCE_ORDER = ['openLibrary', 'igdb'];
 
 function metadataBatchSourceToggles() {
   return Array.from(document.querySelectorAll('input[data-metadata-batch-source-toggle]'))
@@ -19716,9 +19733,9 @@ function manualOverviewHtml(item) {
   const identityTags = [manualType, systemLabel, item.gameReleaseYear || item.year].filter(Boolean);
   const rating = String(item?.rating || '').trim();
   const esrbLabel = esrbDisplayLabel(rating);
-  const esrbHtml = `<img class="manual-hero-esrb" src="${escapeHtml(esrbIconUrl(rating))}" alt="${escapeHtml(esrbLabel)}" title="${escapeHtml(esrbLabel)}" onerror="this.onerror=null;this.src='/assets/ESRB/RatedNone.png';" />`;
+  const esrbHtml = '';
   return `
-    <div class="manual-hero-overview has-hero-esrb">
+    <div class="manual-hero-overview">
       <div class="manual-hero-copy">
         <div class="manual-hero-kicker">Manual</div>
         <h2>${escapeHtml(gameTitle || manualTitle || 'Game Manual')}</h2>
@@ -20170,8 +20187,7 @@ function handleMetadataCoverPickerClick(e) {
 }
 
 function isEsrbIconEligible(item) {
-  const kind = String(item?.kind || '').trim().toLowerCase();
-  return kind === 'strategy guide';
+  return false;
 }
 
 function normalizeEsrbRating(value) {
@@ -20798,7 +20814,7 @@ async function saveSelectedMetadata(extra = {}, options = {}) {
       pageCount: numericInput('editPageCount'),
       metadataPageCount: numericInput('editPageCount'),
       writer: $('editWriter').value,
-      rating: selectedKind === 'Magazine' ? '' : ($('editEsrbRating')?.value || ''),
+      rating: state.selected?.rating || '', // Preserve legacy access-control metadata; no ESRB editor.
       summary: $('editSummary').value,
       tags,
       notes: $('notesText').value,
@@ -25572,7 +25588,7 @@ function activateSettingsTab(tab = 'account') {
   if (tab === 'files') tab = 'files-organize';
   if (!currentUserIsAdmin() && GUIDEVAULT_ADMIN_SETTINGS_TABS.has(tab)) tab = 'account';
   const serverFilesTabs = new Set(['files-organize', 'files-writeback', 'files-convert']);
-  const allowed = new Set(['account', 'preferences', 'keybinds', 'reading-profiles', 'dossiers', 'customize', 'opds', 'devices', 'insights-devices', 'statistics', 'server', 'files-organize', 'files-writeback', 'files-convert', 'integrations', 'metadata-manager', 'launchbox-match-review', 'media', 'email', 'users', 'tasks', 'info', 'events']);
+  const allowed = new Set(['account', 'preferences', 'keybinds', 'reading-profiles', 'customize', 'opds', 'devices', 'insights-devices', 'statistics', 'server', 'files-organize', 'files-writeback', 'files-convert', 'integrations', 'metadata-manager', 'launchbox-match-review', 'media', 'email', 'users', 'tasks', 'info', 'events']);
   const active = allowed.has(tab) ? tab : 'account';
   const previousGroup = settingsGroupForTab(state.settingsActiveTab || 'account');
   state.settingsActiveTab = active;
@@ -25649,6 +25665,7 @@ function bindGuidevaultTopbarAction(id, handler) {
 function bindGuidevaultTopbarActions() {
   bindGuidevaultTopbarAction('userMenuBtn', e => { e.preventDefault(); e.stopPropagation(); toggleUserMenu(); });
   bindGuidevaultTopbarAction('userMenuProfile', e => { e.preventDefault(); e.stopPropagation(); setUserMenuOpen(false); showUserProfilePage(); });
+  bindGuidevaultTopbarAction('userMenuScanLibrary', async e => { e.preventDefault(); e.stopPropagation(); setUserMenuOpen(false); if (!currentUserIsAdmin()) return; setTaskPanelVisible(true); try { await rescanLibrary(); } catch (err) { showGuidevaultMessageToast(`Library scan failed: ${err?.message || err}`, 'error'); } });
   bindGuidevaultTopbarAction('userMenuHelp', e => { e.preventDefault(); setUserMenuOpen(false); showSettingsScreen('keybinds'); });
   bindGuidevaultTopbarAction('userMenuLogout', e => { e.preventDefault(); setUserMenuOpen(false); logoutGuidevault(); });
   bindGuidevaultTopbarAction('settingsBtn', e => { e.preventDefault(); e.stopPropagation(); showSettingsScreen('account'); });
@@ -27768,6 +27785,15 @@ if ($('serverPreviewSelectedBackup')) $('serverPreviewSelectedBackup').addEventL
 if ($('serverPreviewUploadedBackup')) $('serverPreviewUploadedBackup').addEventListener('click', e => { e.preventDefault(); previewUploadedServerBackup(); });
 if ($('serverRestoreBackup')) $('serverRestoreBackup').addEventListener('click', e => { e.preventDefault(); restorePreviewedServerBackup(); });
 const serverBackupList = $('serverBackupList');
+if (serverBackupList) serverBackupList.addEventListener('change', e => {
+  const box = e.target.closest?.('[data-backup-delete-name]');
+  if (!box || guidevaultBackupDeleting || !isGeneratedBackupName(box.dataset.backupDeleteName)) return;
+  if (box.checked) guidevaultBackupDeleteNames.add(box.dataset.backupDeleteName); else guidevaultBackupDeleteNames.delete(box.dataset.backupDeleteName);
+  updateBackupDeleteControls();
+});
+$('serverBackupSelectAll')?.addEventListener('click', () => { if (guidevaultBackupDeleting) return; (state.serverBackups || []).filter(b => isGeneratedBackupName(b.fileName)).forEach(b => guidevaultBackupDeleteNames.add(b.fileName)); renderServerBackups(state.serverBackups || []); });
+$('serverBackupClearSelection')?.addEventListener('click', () => { if (guidevaultBackupDeleting) return; guidevaultBackupDeleteNames.clear(); renderServerBackups(state.serverBackups || []); });
+$('serverDeleteBackups')?.addEventListener('click', deleteSelectedServerBackups);
 if (serverBackupList) serverBackupList.addEventListener('click', e => {
   const btn = e.target.closest?.('[data-backup-select]');
   if (!btn) return;

@@ -519,6 +519,13 @@ app.Use(async (context, next) =>
     }
 
     context.Items[GuidevaultUserContextKey] = authenticatedUser;
+    if (context.Request.Path.StartsWithSegments("/api/dossiers", StringComparison.OrdinalIgnoreCase)
+        || context.Request.Path.StartsWithSegments("/api/esrb", StringComparison.OrdinalIgnoreCase))
+    {
+        context.Response.StatusCode = StatusCodes.Status410Gone;
+        await context.Response.WriteAsJsonAsync(new { error = "This GuideVault feature has been retired." });
+        return;
+    }
     if (!GuidevaultAuthorization.IsAllowed(authenticatedUser, context.Request, out var denialMessage))
     {
         context.Response.StatusCode = StatusCodes.Status403Forbidden;
@@ -1895,6 +1902,18 @@ app.MapPost("/api/server/backup", () =>
 });
 
 app.MapGet("/api/server/backups", () => Results.Ok(serverSettingsStore.ListLibraryBackups()));
+
+app.MapPost("/api/server/backups/delete", (HttpRequest request, JsonElement payload) =>
+{
+    if (CurrentGuidevaultUser(request)?.IsAdmin != true) return (IResult)Results.StatusCode(403);
+    if (payload.ValueKind != JsonValueKind.Object || !payload.TryGetProperty("fileNames", out var names) || names.ValueKind != JsonValueKind.Array)
+        return Results.BadRequest(new { error = "Select backup file names first." });
+    if (names.GetArrayLength() == 0 || names.GetArrayLength() > 10000 || names.EnumerateArray().Any(n => n.ValueKind != JsonValueKind.String))
+        return Results.BadRequest(new { error = "Invalid backup selection." });
+    var result = serverSettingsStore.DeleteLibraryBackups(names.EnumerateArray().Select(n => n.GetString() ?? string.Empty));
+    if (result.Deleted.Count > 0) RecordSystemEvent("System", "GuideVault backups deleted", $"Deleted {result.Deleted.Count} backup(s).", "backup");
+    return Results.Ok(new { deleted = result.Deleted, failures = result.Failures });
+});
 
 app.MapGet("/api/server/backups/{fileName}/preview", (string fileName) =>
 {
@@ -6744,6 +6763,43 @@ public sealed class GuidevaultServerSettingsStore
                 .Take(50)
                 .Select(info => new GuidevaultBackupFileInfo(info.Name, info.Length, new DateTimeOffset(info.LastWriteTimeUtc, TimeSpan.Zero), _settings.BackupDirectory))
                 .ToList();
+        }
+    }
+
+    public (List<string> Deleted, List<object> Failures) DeleteLibraryBackups(IEnumerable<string> fileNames)
+    {
+        lock (_gate)
+        {
+            var deleted = new List<string>();
+            var failures = new List<object>();
+            var backupDir = Path.GetFullPath(ResolveSettingPath(_contentRoot, _settings.BackupDirectory));
+            foreach (var fileName in fileNames.Distinct(StringComparer.Ordinal))
+            {
+                try
+                {
+                    if (!Regex.IsMatch(fileName, @"\Aguidevault-library-backup-[0-9]{8}-[0-9]{6}\.zip\z", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant))
+                        throw new InvalidOperationException("Not a generated GuideVault backup name.");
+                    var path = Path.Combine(backupDir, fileName);
+                    if (!File.Exists(path)) throw new FileNotFoundException("Backup no longer exists.");
+                    if ((File.GetAttributes(path) & FileAttributes.ReparsePoint) != 0)
+                        throw new InvalidOperationException("Linked files cannot be deleted.");
+                    using (var stream = File.Open(path, FileMode.Open, FileAccess.Read, FileShare.Read))
+                    using (var zip = new ZipArchive(stream, ZipArchiveMode.Read))
+                    {
+                        var entry = zip.GetEntry("manifest.json");
+                        if (entry is null || entry.Length > 1048576) throw new InvalidOperationException("Missing or invalid GuideVault manifest.");
+                        using var manifestStream = entry.Open();
+                        using var manifest = JsonDocument.Parse(manifestStream);
+                        if (manifest.RootElement.ValueKind != JsonValueKind.Object || !manifest.RootElement.TryGetProperty("app", out var appName)
+                            || appName.ValueKind != JsonValueKind.String || !string.Equals(appName.GetString(), "GuideVault", StringComparison.OrdinalIgnoreCase))
+                            throw new InvalidOperationException("Not a GuideVault backup.");
+                    }
+                    File.Delete(path);
+                    deleted.Add(fileName);
+                }
+                catch (Exception ex) { failures.Add(new { fileName, error = ex.Message }); }
+            }
+            return (deleted, failures);
         }
     }
 
@@ -13759,7 +13815,7 @@ public sealed class GuidevaultCustomizeSettingsStore
             var shelfId = $"collection:{collection.Id}";
             if (!shelves.Contains(shelfId, StringComparer.OrdinalIgnoreCase)) shelves.Add(shelfId);
         }
-        if (shelves.Count == 0) shelves.Add("recently-added");
+        // An explicitly empty shelf list is a valid layout. The model supplies the default for new settings.
 
         var items = (value.SideNav?.CustomItems ?? new List<GuidevaultCustomSideNavItem>())
             .Select((item, index) => NormalizeItem(item, index))
