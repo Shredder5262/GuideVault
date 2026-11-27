@@ -145,6 +145,7 @@ public static class GuidevaultDocumentIndex
     {
         var key=Key(value);
         if(field=="issueNumber" || field=="volume") return int.TryParse(key,NumberStyles.None,CultureInfo.InvariantCulture,out int n)?n.ToString(CultureInfo.InvariantCulture):key;
+        if(field=="publisher") return Key(Regex.Replace(value??"",@"[,\s]+(?:Inc\.?|Ltd\.?|Limited|Corp\.?|Corporation|LLC)\s*$","",RegexOptions.IgnoreCase));
         if(field=="region") return key switch {"usa" or "us" or "unitedstatesofamerica" or "unitedstates" => "unitedstates", "uk" or "unitedkingdom" or "greatbritain" => "unitedkingdom", _=>key};
         if(field=="languageTag") return key switch {"en" or "enus" or "engb" => "english", "fr"=>"french", "de"=>"german", "es"=>"spanish", "it"=>"italian", "pt"=>"portuguese", _=>key};
         if(field=="primarySystem") return key switch {"mastersystem"=>"segamastersystem", "gamegear"=>"segagamegear", "megadrive" or "segamegadrive" or "genesis"=>"segagenesis", "snes"=>"supernintendoentertainmentsystem", "supernintendo"=>"supernintendoentertainmentsystem", _=>key};
@@ -170,7 +171,7 @@ public static class GuidevaultDocumentIndex
             ("magazineTitle","Publication title",item.MagazineTitle,false), ("issueNumber","Issue number",item.IssueNumber,false),
             ("volume","Volume",item.Volume,false), ("coverDate","Cover date",item.CoverDate,false), ("year","Year",item.Year,false),
             ("publicationDate","Publication date",item.PublicationDate,false), ("publisher","Publisher",item.Publisher,true),
-            ("writer","Editor",item.Writer,false), ("region","Region",item.Region,true), ("languageTag","Language",item.LanguageTag,true),
+            ("copyrightHolder","Copyright holder (index only)","",false), ("writer","Editor",item.Writer,false), ("region","Region",item.Region,true), ("languageTag","Language",item.LanguageTag,true),
             ("primarySystem","Primary system",item.PrimarySystem,true), ("platformFocus","Platform focus",item.PlatformFocus,true),
             ("magazineCategory","Magazine category",item.MagazineCategory,true), ("barcodeUpcIssn","ISSN / barcode",item.BarcodeUpcIssn,false),
             ("coverPrice","Cover price (index only)","",false), ("frequency","Publication frequency (index only)","",false),
@@ -180,6 +181,7 @@ public static class GuidevaultDocumentIndex
         var openingPages = new List<object>();
         var languageWords = new Dictionary<string,int>(StringComparer.OrdinalIgnoreCase);
         var platformPages = new Dictionary<string,HashSet<int>>(StringComparer.OrdinalIgnoreCase);
+        var contactOrganizations = new List<(string Name,int Page,string Proof)>();
         void Add(string field,string value,int? page,string source,string proof)
         {
             value=Regex.Replace(value.Trim(),@"\s+"," ").Trim(' ',':',';','–','—');
@@ -222,6 +224,34 @@ public static class GuidevaultDocumentIndex
                 seen.Add(page);
             }
             bool titleOnPage=ContainsTitle(p.Text,item.MagazineTitle);
+            // Publication-related correspondence, not arbitrary reader addresses or advertisements.
+            // Restrict to opening/closing editorial pages; require an organizational address and publication context.
+            if(page<=8 || page>=manifest.TotalPages-1)
+            {
+                const string organization=@"([\p{Lu}][\p{L}\p{N} &'’.\-]{1,75}?(?:,?\s+(?:Inc\.?|Ltd\.?|Limited|Corporation|Corp\.?|LLC|Company|Publications|Publishing|Press)))";
+                const string usAddress=@"\b\d{1,6}\s+[^\n]{3,95},\s*[^\n,]{2,45},?\s+(?:AL|AK|AZ|AR|CA|CO|CT|DE|FL|GA|HI|ID|IL|IN|IA|KS|KY|LA|ME|MD|MA|MI|MN|MS|MO|MT|NE|NV|NH|NJ|NM|NY|NC|ND|OH|OK|OR|PA|RI|SC|SD|TN|TX|UT|VT|VA|WA|WV|WI|WY|DC)\s+\d{5}(?:-\d{4})?\b";
+                var textLines=p.Text.Split('\n');
+                for(int j=0;j<textLines.Length;j++)
+                {
+                    string addressLine=textLines[j].Trim();
+                    if(!Regex.IsMatch(addressLine,usAddress,RegexOptions.CultureInvariant))continue;
+                    var context=string.Join(" ",textLines.Skip(Math.Max(0,j-3)).Take(Math.Min(4,j+1)));
+                    if(!Regex.IsMatch(context,@"\b(?:newsletter|magazine|editorial|publication|subscription|mailing label|change of address|mailbag|letters to the editor)\b",ci))continue;
+                    var org=Regex.Match(addressLine,organization+@"\s*,\s*(?=\d{1,6}\s)",RegexOptions.CultureInvariant);
+                    if(!org.Success)continue;
+                    string name=org.Groups[1].Value.Trim();
+                    if(name.Length<3)continue;
+                    Add("region","USA",page,"Publication correspondence address candidate",context);
+                    contactOrganizations.Add((name.TrimEnd('.'),page,context));
+                }
+                // Explicit editorial announcement of a change in issues per year. Avoid reader wishes or ads.
+                foreach(Match m in Regex.Matches(p.Text,@"\bwe\s+(?:are\s+now\s+|are\s+|will\s+be\s+)?(?:expanding|increasing|changing)\s+from\s+(?:\d{1,2}|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve)\s+issues\s+(?:a|per|each)\s+year\s+to\s+(\d{1,2}|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve)\b",ci))
+                {
+                    var numbers=new[]{"","one","two","three","four","five","six","seven","eight","nine","ten","eleven","twelve"};
+                    int n=int.TryParse(m.Groups[1].Value,out int parsed)?parsed:Array.IndexOf(numbers,m.Groups[1].Value.ToLowerInvariant());
+                    if(n>0 && n<=52)Add("frequency",n.ToString(CultureInfo.InvariantCulture)+" issues per year",page,"Printed publication frequency announcement",m.Value);
+                }
+            }
             bool creditPage=Regex.IsMatch(p.Text,@"\b(?:editor[\s–—-]+in[\s–—-]+chief|ISSN|masthead|publication date|publisher\s*:|published\s+(?:by|monthly|weekly|quarterly|biweekly|bimonthly|annually)|all rights reserved|copyright)\b|©",ci);
             bool roles=Regex.IsMatch(p.Text,@"\b(?:editor[\s–—-]+in[\s–—-]+chief|managing editor|executive editor|art director)\b|\beditor\s*:",ci);
             bool masthead=creditPage && (titleOnPage || roles && Regex.IsMatch(p.Text,@"\b(?:publisher|published|ISSN|managing editor|art director)\b",ci));
@@ -278,10 +308,10 @@ public static class GuidevaultDocumentIndex
                     var pub=Regex.Match(text,publisherPattern,ci);
                     if(!pub.Success)pub=Regex.Match(joined,publisherPattern,ci);
                     if(pub.Success)Add("publisher",pub.Groups[1].Value.TrimEnd('.'),page,"Publication-linked publisher credit",text==joined||Regex.IsMatch(text,publisherPattern,ci)?text:joined);
-                    // Copyright holder is not necessarily publisher; preserve as a separate lower-confidence candidate.
+                    // Copyright holder is not necessarily publisher; record the explicit copyright separately.
                     var rights=Regex.Match(text,@"(?:©|\(c\)|\bcopyright\b)\s*(?:(?:19|20)\d{2}\s*[,–-]?\s*)?([\p{L}][\p{L}\p{N} &'’.()-]{2,80}?)(?=\s+(?:all rights|copyright|ISSN|printed)\b|[,;]|$)",ci);
                     if(rights.Success && (masthead || titleLine) && Regex.IsMatch(rights.Groups[1].Value,@"\b(?:inc\.?|ltd\.?|limited|corporation|corp\.?|company|publishing|publications|press|media|of America)\b",ci))
-                        Add("publisher",rights.Groups[1].Value.TrimEnd('.'),page,"Copyright holder candidate (not proof of publisher)",text);
+                        Add("copyrightHolder",rights.Groups[1].Value.TrimEnd('.'),page,"Printed copyright statement (not publisher credit)",text);
                     Match("region",@"\b(?:printed|published) in (?:the )?(United States(?: of America)?|U\.?S\.?A\.?|United Kingdom|U\.?K\.?|Canada|Australia|Japan|Germany|France)\b","Printed publication location");
                     if(Regex.IsMatch(joined,@"\b(?:published by|publisher|editorial office|publication office|subscriptions)\b",ci) && Regex.IsMatch(joined,@"\b(?:AL|AK|AZ|AR|CA|CO|CT|DE|FL|GA|HI|ID|IL|IN|IA|KS|KY|LA|ME|MD|MA|MI|MN|MS|MO|MT|NE|NV|NH|NJ|NM|NY|NC|ND|OH|OK|OR|PA|RI|SC|SD|TN|TX|UT|VT|VA|WA|WV|WI|WY|DC)\s+\d{5}(?:-\d{4})?\b",RegexOptions.CultureInvariant))
                         Add("region","USA",page,"Publication address candidate",joined);
@@ -333,6 +363,17 @@ public static class GuidevaultDocumentIndex
         var scores=languageSets.Select(l=>new {name=l.Key,hits=l.Value.Sum(w=>Math.Min(languageWords.GetValueOrDefault(w),20)),distinct=l.Value.Count(w=>languageWords.GetValueOrDefault(w)>0)}).OrderByDescending(l=>l.hits).ToArray();
         if(scores[0].hits>=25 && scores[0].distinct>=7 && scores[0].hits>=scores[1].hits*2.0)
             Add("languageTag",scores[0].name,null,"Indexed language inference",$"{scores[0].distinct} distinct common words; capped hits {scores[0].hits} vs {scores[1].hits} for {scores[1].name}. Not an explicit printed language label.");
+        // Only suggest a correspondence organization as publisher when repeated or consistent with current metadata;
+        // never promote it to a direct publishing credit. A direct printed publisher credit takes precedence.
+        if(!evidence.Any(e=>e.Field=="publisher"))
+        {
+            foreach(var group in contactOrganizations.GroupBy(x=>EvidenceKey("publisher",x.Name)))
+            {
+                var contacts=group.ToArray();
+                if(contacts.Select(x=>x.Page).Distinct().Count()<2 && EvidenceKey("publisher",item.Publisher)!=group.Key)continue;
+                foreach(var c in contacts)Add("publisher",c.Name,c.Page,"Publication correspondence organization candidate (not proof of publisher)",c.Proof);
+            }
+        }
         var explicitSystems=evidence.Where(e=>e.Field=="primarySystem" && e.Source=="Explicit publication platform dedication").GroupBy(e=>EvidenceKey("primarySystem",e.Value)).ToArray();
         if(explicitSystems.Length==1){var e=explicitSystems[0].First();Add("platformFocus",e.Value,e.Page,"Explicit publication platform dedication",e.Evidence);}
         // Platform mentions are coverage signals only; never infer exclusive dedication from game references.
@@ -354,7 +395,7 @@ public static class GuidevaultDocumentIndex
             var status=candidates.Length>1?"Conflicting evidence":candidates.Length==0?"No indexed evidence":!Meaningful(f.Current)?"Candidate":EvidenceKey(f.Key,f.Current)==EvidenceKey(f.Key,candidates[0].value)?"Matches current":"Differs from current";
             return new {field=f.Key,label=f.Label,current=f.Current,locked=MetadataLockHelper.IsLocked(item.MetadataLocks,f.Key),status,candidates};
         }).ToArray();
-        return new {revision="v8.0-phase2.2",indexedPages=indexed,totalPages=manifest.TotalPages,relatedIssues=peers.Length,seconds=Math.Round(watch.Elapsed.TotalSeconds,2),fields=report,openingPages,platformSignals};
+        return new {revision="v8.0-phase2.3",indexedPages=indexed,totalPages=manifest.TotalPages,relatedIssues=peers.Length,seconds=Math.Round(watch.Elapsed.TotalSeconds,2),fields=report,openingPages,platformSignals};
     }
     private static bool IsPdf(LibraryItem item) => Path.GetExtension(item.Path).Equals(".pdf",StringComparison.OrdinalIgnoreCase);
     private static bool Usable(Extraction p) => Regex.Matches(string.Join(" ",p.Lines.Select(l=>l.Text)),@"\p{L}{2,}").Count>=12;
