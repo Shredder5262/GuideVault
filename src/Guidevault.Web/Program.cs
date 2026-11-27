@@ -2961,14 +2961,21 @@ app.MapPut("/api/items/{id}/metadata", (string id, JsonElement payload) =>
 app.MapPost("/api/items/{id}/magazine-scan", async (HttpRequest request, string id, int? start, int? count, bool? vision, string? engine) =>
 {
     if (CurrentGuidevaultUser(request)?.IsAdmin != true) return Results.StatusCode(403);
-    if (GuidevaultLibraryIoGate.ShouldDeferArchiveReads) return Results.Conflict(new { error = "A library scan or file rewrite is running. Try again afterward." });
+    // Magazine scans are read-only, but must not race with archive writers or library rebuilds.
+    if (!GuidevaultLibraryIoGate.TryBeginArchiveWrite(out var magazineReadLease, out _, allowConcurrentArchiveReads: true) || magazineReadLease is null)
+    {
+        var active = taskMonitor.RecentTasks().Where(t => t.Status == "running" || t.Status == "queued").Select(t => t.Title + ": " + t.Message).Take(5).ToArray();
+        var details = active.Length > 0 ? " Active tasks (not necessarily lock owners): " + string.Join("; ", active) : " No tracked active task was reported; a file operation may still be finishing.";
+        return Results.Conflict(new { error = "Magazine scan blocked by a library operation. Retry after it finishes." + details });
+    }
+    using var magazineLease = magazineReadLease;
     var item = VisibleLibraryItems(request, cache.GetItemsSnapshot()).FirstOrDefault(i => i.Id == id);
     if (item is null) return Results.NotFound();
     if (item.Kind != "Magazine" || !File.Exists(item.Path)) return Results.BadRequest(new { error = "A readable magazine issue is required." });
     if (start is < 0 or >= 300) return Results.BadRequest(new { error = "Scan start must be between 0 and 299." });
     try
     {
-        var result = await GuidevaultMagazineContentScanner.ScanAsync(item, launchBoxIntegrationStore.GetSnapshot().Games, start ?? 0, Math.Min(count ?? 3, 300 - (start ?? 0)), request.HttpContext.RequestAborted, vision == true, engine);
+        var result = await GuidevaultMagazineContentScanner.ScanAsync(item, launchBoxIntegrationStore.GetSnapshot().Games, start ?? 0, Math.Min(count ?? 3, 300 - (start ?? 0)), request.HttpContext.RequestAborted, true, "balanced");
         return Results.Ok(result);
     }
     catch (OperationCanceledException) { return Results.StatusCode(499); }
