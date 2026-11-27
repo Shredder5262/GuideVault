@@ -141,6 +141,22 @@ public static class GuidevaultDocumentIndex
     public sealed record PublicationEvidence(string Field, string Value, int? Page, string Source, string Evidence);
     private static string Key(string? value) => Regex.Replace((value ?? "").ToLowerInvariant(), @"[^\p{L}\p{N}]", "");
     private static bool Meaningful(string? value) => !string.IsNullOrWhiteSpace(value) && !Regex.IsMatch(value.Trim(), @"^(?:unknown|unspecified|none|n/?a|magazine|not specified|unreviewed|multi.platform)$", RegexOptions.IgnoreCase);
+    private static string EvidenceKey(string field, string? value)
+    {
+        var key=Key(value);
+        if(field=="issueNumber" || field=="volume") return int.TryParse(key,NumberStyles.None,CultureInfo.InvariantCulture,out int n)?n.ToString(CultureInfo.InvariantCulture):key;
+        if(field=="region") return key switch {"usa" or "us" or "unitedstatesofamerica" or "unitedstates" => "unitedstates", "uk" or "unitedkingdom" or "greatbritain" => "unitedkingdom", _=>key};
+        if(field=="languageTag") return key switch {"en" or "enus" or "engb" => "english", "fr"=>"french", "de"=>"german", "es"=>"spanish", "it"=>"italian", "pt"=>"portuguese", _=>key};
+        if(field=="primarySystem") return key switch {"mastersystem"=>"segamastersystem", "gamegear"=>"segagamegear", "megadrive" or "segamegadrive" or "genesis"=>"segagenesis", "snes"=>"supernintendoentertainmentsystem", "supernintendo"=>"supernintendoentertainmentsystem", _=>key};
+        return key;
+    }
+    private static bool ContainsTitle(string text,string title)
+    {
+        var words=Regex.Matches(title??"",@"[\p{L}\p{N}]+").Select(m=>Regex.Escape(m.Value)).ToArray();
+        return words.Length>0 && Key(title).Length>=4 && Regex.IsMatch(text,@"(?<![\p{L}\p{N}])"+string.Join(@"[^\p{L}\p{N}]+",words)+@"(?![\p{L}\p{N}])",RegexOptions.IgnoreCase|RegexOptions.CultureInvariant);
+    }
+    private static string PlatformName(string value) => EvidenceKey("primarySystem",value) switch {
+        "segamastersystem"=>"Sega Master System", "segagamegear"=>"Sega Game Gear", "segagenesis"=>"Sega Genesis", "supernintendoentertainmentsystem"=>"Super Nintendo Entertainment System", _=>value.Trim() };
     private static bool Person(string value)
     {
         if (Regex.IsMatch(value, @"\b(?:editor|chief|publisher|publishing|director|staff|department|magazine|editorial|assistant|management|production|contact|copyright|office|subscription|design|team)\b", RegexOptions.IgnoreCase)) return false;
@@ -161,26 +177,57 @@ public static class GuidevaultDocumentIndex
             ("pageCount","Digital page count",item.PageCount>0?item.PageCount.ToString(CultureInfo.InvariantCulture):"",false)
         };
         var evidence = new List<PublicationEvidence>(); int indexed=0;
+        var openingPages = new List<object>();
+        var languageWords = new Dictionary<string,int>(StringComparer.OrdinalIgnoreCase);
+        var platformPages = new Dictionary<string,HashSet<int>>(StringComparer.OrdinalIgnoreCase);
         void Add(string field,string value,int? page,string source,string proof)
         {
             value=Regex.Replace(value.Trim(),@"\s+"," ").Trim(' ',':',';','–','—');
             if (!Meaningful(value) || value.Length>120 || Key(value).Length==0) return;
-            if (evidence.Any(e=>e.Field==field && Key(e.Value)==Key(value) && e.Page==page && e.Source==source)) return;
+            if (evidence.Any(e=>e.Field==field && EvidenceKey(field,e.Value)==EvidenceKey(field,value) && e.Page==page && e.Source==source)) return;
             evidence.Add(new(field,value,page,source,proof[..Math.Min(500,proof.Length)]));
         }
         const string months = @"January|February|March|April|May|June|July|August|September|October|November|December|Jan\.?|Feb\.?|Mar\.?|Apr\.?|Jun\.?|Jul\.?|Aug\.?|Sept?\.?|Oct\.?|Nov\.?|Dec\.?|Spring|Summer|Autumn|Fall|Winter";
         string datePattern = $@"(?:{months})(?:\s*[/–-]\s*(?:{months}))?\s+(?:19|20)\d{{2}}";
         const RegexOptions ci = RegexOptions.IgnoreCase | RegexOptions.CultureInvariant;
         string titleKey=Key(item.MagazineTitle);
+        const string platformPattern = @"(?:Sega\s+Master System|Master System|Sega\s+Game Gear|Game Gear|Sega\s+Genesis|Genesis|Mega[ -]Drive|Super Nintendo(?: Entertainment System)?|SNES|Nintendo 64|Nintendo Entertainment System|Game Boy(?: Color| Advance)?|PlayStation(?:\s+[2345])?|Sega Saturn|Dreamcast|TurboGrafx[ -]16|Atari 2600|Commodore 64|Amiga)";
+        string filename=Path.GetFileNameWithoutExtension(item.FileName??"");
+        if(string.IsNullOrWhiteSpace(filename))filename=Path.GetFileNameWithoutExtension(item.Path);
+        // File identity is useful, but is not independent printed evidence.
+        if(ContainsTitle(filename,item.MagazineTitle))
+        {
+            Add("magazineTitle",item.MagazineTitle,null,"Filename identity candidate",filename);
+            var issue=Regex.Match(filename,@"(?:\bissue\s*(?:number|no\.?|#)?\s*|#)\s*(\d{1,4})(?!\d)",ci);
+            if(!issue.Success)
+            {
+                var titleWords=Regex.Matches(item.MagazineTitle,@"[\p{L}\p{N}]+").Select(m=>Regex.Escape(m.Value)).ToArray();
+                issue=Regex.Match(filename,@"^"+string.Join(@"[^\p{L}\p{N}]+",titleWords)+@"[ _.-]+(\d{1,3})(?=$|[ _.-]|[([])",ci);
+            }
+            if(issue.Success && int.TryParse(issue.Groups[1].Value,out int fileIssue) && fileIssue>0 && fileIssue is not (>=1900 and <=2099)) Add("issueNumber",fileIssue.ToString(CultureInfo.InvariantCulture),null,"Filename identity candidate",filename);
+            var fileDate=Regex.Match(filename,datePattern,ci);
+            if(fileDate.Success){Add("coverDate",fileDate.Value,null,"Filename identity candidate",filename);Add("year",Regex.Match(fileDate.Value,@"(?:19|20)\d{2}").Value,null,"Filename identity candidate",filename);}
+        }
         for (int page=1;page<=manifest.TotalPages;page++)
         {
             token.ThrowIfCancellationRequested(); var p=await ReadPage(dir,page,token); if(p is null) continue; indexed++;
-            // All pages are checked for explicit publication-credit contexts; only cover provides unlabeled issue dates/prices.
-            bool titleOnPage=titleKey.Length>=4 && Key(p.Text).Contains(titleKey,StringComparison.Ordinal);
-            bool creditPage=Regex.IsMatch(p.Text,@"\b(?:editor[\s–—-]+in[\s–—-]+chief|ISSN|masthead|publication date|publisher\s*:|published\s+(?:monthly|weekly|quarterly|biweekly|bimonthly|annually))\b",ci);
-            if (page>8 && !creditPage) continue;
-            bool masthead=creditPage && (titleOnPage || Regex.IsMatch(p.Text,@"\b(?:editor[\s–—-]+in[\s–—-]+chief)\b",ci) && Regex.IsMatch(p.Text,@"\b(?:publisher|published|ISSN|managing editor|art director)\b",ci));
+            if(page<=3) openingPages.Add(new {page,source=p.Source,warning=p.Warning,text=p.Text[..Math.Min(3500,p.Text.Length)],truncated=p.Text.Length>3500});
+            // Sample readable words across the issue; avoid inferring language from the OCR model setting.
+            foreach(Match word in Regex.Matches(p.Text,@"\b[\p{L}]{2,20}\b").Take(400))
+                languageWords[word.Value]=languageWords.GetValueOrDefault(word.Value)+1;
+            foreach(Match platform in Regex.Matches(p.Text,@"\b"+platformPattern.Replace("|Genesis|","|")+@"\b",ci))
+            {
+                var value=PlatformName(platform.Value);
+                if(!platformPages.TryGetValue(value,out var seen))platformPages[value]=seen=new HashSet<int>();
+                seen.Add(page);
+            }
+            bool titleOnPage=ContainsTitle(p.Text,item.MagazineTitle);
+            bool creditPage=Regex.IsMatch(p.Text,@"\b(?:editor[\s–—-]+in[\s–—-]+chief|ISSN|masthead|publication date|publisher\s*:|published\s+(?:by|monthly|weekly|quarterly|biweekly|bimonthly|annually)|all rights reserved|copyright)\b|©",ci);
+            bool roles=Regex.IsMatch(p.Text,@"\b(?:editor[\s–—-]+in[\s–—-]+chief|managing editor|executive editor|art director)\b|\beditor\s*:",ci);
+            bool masthead=creditPage && (titleOnPage || roles && Regex.IsMatch(p.Text,@"\b(?:publisher|published|ISSN|managing editor|art director)\b",ci));
+            if(page>8 && !creditPage)continue;
             var lines=p.Lines.Where(l=>!string.IsNullOrWhiteSpace(l.Text)).ToList();
+            var coverDates=page==1?lines.Where(l=>Regex.IsMatch(l.Text,datePattern,ci) && !(l.Confidence is double c && c<45)).ToArray():Array.Empty<Line>();
             for(int i=0;i<lines.Count;i++)
             {
                 var line=lines[i]; var text=line.Text.Trim(); if(text.Length>500) continue;
@@ -188,6 +235,23 @@ public static class GuidevaultDocumentIndex
                 void Match(string field,string pattern, string? source=null)
                 {
                     foreach(Match m in Regex.Matches(text,pattern,ci)) Add(field,m.Groups[1].Value,page,source??"Printed text",text);
+                }
+                bool nearCoverDate=page==1 && coverDates.Any(d=>Math.Abs(d.Y-line.Y)<=Math.Max(Math.Max(d.Height,line.Height)*2.0,p.Height*.015));
+                bool titleLine=ContainsTitle(text,item.MagazineTitle);
+                if(titleLine && ((page==1 && (Key(text)==titleKey || line.Y<p.Height*.30 || nearCoverDate)) || masthead && Key(text)==titleKey))
+                    Add("magazineTitle",item.MagazineTitle,page,"Printed publication identity",text);
+                if(page==1 && (nearCoverDate || line.Y<p.Height*.22 || line.Y>p.Height*.82))
+                {
+                    // A standalone #number near the cover date is a common issue marker, not an article number.
+                    var marker=Regex.Match(text,@"^\s*#\s*(\d{1,4})\s*$",ci);
+                    if(!marker.Success && nearCoverDate)marker=Regex.Match(text,datePattern+@"\s*[,–—-]?\s*#\s*(\d{1,4})\s*$",ci);
+                    if(marker.Success && nearCoverDate && int.TryParse(marker.Groups[1].Value,out int coverIssue) && coverIssue>0 && coverIssue is not (>=1900 and <=2099))
+                        Add("issueNumber",coverIssue.ToString(CultureInfo.InvariantCulture),page,"Issue marker near cover date",text+" / "+string.Join(" / ",coverDates.Take(2).Select(d=>d.Text)));
+                    if(Regex.IsMatch(text,@"\b(?:the\s+)?[\p{L}\p{N} &'-]{0,60}\bnewsletter\b",ci) && (nearCoverDate || titleLine || Regex.IsMatch(text,@"\bofficial newsletter\b",ci)))
+                        Add("magazineCategory","Newsletter",page,"Printed publication subtitle",text);
+                    var date=Regex.Match(text,datePattern,ci);
+                    if(date.Success && (nearCoverDate && (titleLine || Regex.IsMatch(text,@"\bnewsletter\b|\bissue\b|#\s*\d+",ci))))
+                    {Add("coverDate",date.Value,page,"Printed cover imprint",text);Add("year",Regex.Match(date.Value,@"(?:19|20)\d{2}").Value,page,"Printed cover imprint",text);}
                 }
                 if (page==1 || masthead)
                 {
@@ -203,16 +267,38 @@ public static class GuidevaultDocumentIndex
                 }
                 if(page==1)
                     Match("coverPrice",@"(?:^|\s)((?:US\s*\$|U\.S\.A\.\s*\$|USA\s*\$|CAN(?:ADA)?\s*\$|UK\s*£|£|\$|€)\s*\d{1,3}[.,]\d{2})(?!\d)","Cover price candidate");
+                // Publication credits can be on the back page or a colophon rather than a labeled masthead.
+                // Join only physically adjacent lines with similar left alignment to avoid crossing columns.
+                var following=Regex.IsMatch(text,@"\b(?:published|publisher|editorial office|publication office|subscriptions)\b",ci)?lines.Where(l=>l.Y>line.Y+line.Height*.45 && l.Y<=line.Y+Math.Max(line.Height*3.0,p.Height*.012) && Math.Abs(l.X-line.X)<=Math.Max(p.Width*.035,12) && !(l.Confidence is double c && c<50)).OrderBy(l=>l.Y).FirstOrDefault():null;
+                string joined=following is null?text:text+" "+following.Text.Trim();
+                bool linkedCredit=titleLine || ContainsTitle(joined,item.MagazineTitle) || masthead;
+                if(linkedCredit && (page<=8 || creditPage))
+                {
+                    const string publisherPattern=@"\bpublished(?:\s+(?:monthly|weekly|quarterly|annually|bimonthly|biweekly))?\s+by\s+([\p{L}][\p{L}\p{N} &'’.()-]{2,90}?)(?=\s+(?:at|located|ISSN|copyright|all rights|subscription)\b|[,;]|$)";
+                    var pub=Regex.Match(text,publisherPattern,ci);
+                    if(!pub.Success)pub=Regex.Match(joined,publisherPattern,ci);
+                    if(pub.Success)Add("publisher",pub.Groups[1].Value.TrimEnd('.'),page,"Publication-linked publisher credit",text==joined||Regex.IsMatch(text,publisherPattern,ci)?text:joined);
+                    // Copyright holder is not necessarily publisher; preserve as a separate lower-confidence candidate.
+                    var rights=Regex.Match(text,@"(?:©|\(c\)|\bcopyright\b)\s*(?:(?:19|20)\d{2}\s*[,–-]?\s*)?([\p{L}][\p{L}\p{N} &'’.()-]{2,80}?)(?=\s+(?:all rights|copyright|ISSN|printed)\b|[,;]|$)",ci);
+                    if(rights.Success && (masthead || titleLine) && Regex.IsMatch(rights.Groups[1].Value,@"\b(?:inc\.?|ltd\.?|limited|corporation|corp\.?|company|publishing|publications|press|media|of America)\b",ci))
+                        Add("publisher",rights.Groups[1].Value.TrimEnd('.'),page,"Copyright holder candidate (not proof of publisher)",text);
+                    Match("region",@"\b(?:printed|published) in (?:the )?(United States(?: of America)?|U\.?S\.?A\.?|United Kingdom|U\.?K\.?|Canada|Australia|Japan|Germany|France)\b","Printed publication location");
+                    if(Regex.IsMatch(joined,@"\b(?:published by|publisher|editorial office|publication office|subscriptions)\b",ci) && Regex.IsMatch(joined,@"\b(?:AL|AK|AZ|AR|CA|CO|CT|DE|FL|GA|HI|ID|IL|IN|IA|KS|KY|LA|ME|MD|MA|MI|MN|MS|MO|MT|NE|NV|NH|NJ|NM|NY|NC|ND|OH|OK|OR|PA|RI|SC|SD|TN|TX|UT|VT|VA|WA|WV|WI|WY|DC)\s+\d{5}(?:-\d{4})?\b",RegexOptions.CultureInvariant))
+                        Add("region","USA",page,"Publication address candidate",joined);
+                    Match("frequency",@"\b(?:published|issued|appears)\s+(monthly|weekly|quarterly|annually|bimonthly|biweekly)\b","Printed publication frequency");
+                }
+                if((page==1 || masthead) && (nearCoverDate || titleLine || masthead || line.Y<p.Height*.25))
+                {
+                    var dedication=Regex.Match(text,@"\b(?:100\s*%\s*(?:Sega\s+)?|(?:official|dedicated|exclusively)\s+(?:magazine|newsletter|coverage|for|to|about|of)\s+(?:for\s+|to\s+|the\s+)*)("+platformPattern+@")\b",ci);
+                    if(!dedication.Success)dedication=Regex.Match(text,@"\b("+platformPattern+@")\s+(?:owners['’]?\s+|gaming\s+)?(?:magazine|newsletter)\b",ci);
+                    if(dedication.Success)Add("primarySystem",PlatformName(dedication.Groups[1].Value),page,"Explicit publication platform dedication",text);
+                }
                 if(!masthead) continue;
                 Match("magazineTitle",@"^([\p{L}][\p{L}\p{N} &'’:.!-]{2,75}?)\s*\(\s*ISSN\b");
                 Match("magazineTitle",@"^(?:magazine|publication) title\s*:\s*(.{3,100})$");
-                // Require title near a published-by statement, or a distinct publisher label on a credit page.
-                var nearby=string.Join(" ",lines.Skip(Math.Max(0,i-2)).Take(5).Select(l=>l.Text));
-                if(titleKey.Length>=4 && Key(nearby).Contains(titleKey,StringComparison.Ordinal))
-                    Match("publisher",@"\bpublished(?:\s+(?:monthly|weekly|quarterly|annually|bimonthly|biweekly))?\s+by\s+([\p{L}][\p{L}\p{N} &'’.()-]{2,80}?)(?=\s+(?:at|of|located|ISSN|copyright|all rights|subscription)\b|[,;]|$)","Publication-linked credit");
                 Match("publisher",@"^publisher\s*[:–—-]\s*([\p{L}][\p{L}\p{N} &'’.()-]{2,80})$","Masthead credit");
                 // Anchored complete role, never fall back to a partial Editor match on Editor-in-Chief.
-                var editor=Regex.Match(text,@"^(?:editor[\s–—-]+in[\s–—-]+chief|(?:managing |executive )?editor)(?:\s*[:–—-]\s*|\s+)(.+)$",ci);
+                var editor=Regex.Match(text,@"^(?:editor[\s–—-]+in[\s–—-]+chief|editor)(?:\s*[:–—-]\s*|\s+)(.+)$",ci);
                 if(editor.Success && Person(editor.Groups[1].Value.Trim())) Add("writer",editor.Groups[1].Value,page,"Masthead credit",text);
                 if(Regex.IsMatch(text,@"^(?:editor[\s–—-]+in[\s–—-]+chief|editor)\s*[:–—-]?\s*$",ci))
                 {
@@ -231,25 +317,26 @@ public static class GuidevaultDocumentIndex
                     if(sum%11==0)Add("barcodeUpcIssn",code.Insert(4,"-"),page,"Checksum-valid printed ISSN",text);
                 }
             }
-            if(page==1)
-            {
-                if(titleOnPage)Add("magazineTitle",item.MagazineTitle,page,"Existing title corroborated on cover","Existing publication title appears in the indexed cover text.");
-                foreach(var line in lines)
-                {
-                    var dedication=Regex.Match(line.Text,@"\b100\s*%\s*(?:Sega\s+)?(Master System|Mega Drive|Genesis|Game Gear|Super Nintendo|Nintendo 64|PlayStation)\b",ci);
-                    if(dedication.Success)Add("primarySystem",dedication.Groups[1].Value,page,"Explicit cover dedication",line.Text);
-                }
-            }
+
         }
         if(indexed!=manifest.TotalPages)throw new InvalidOperationException($"Document index incomplete ({indexed}/{manifest.TotalPages}). Resume indexing first.");
         Add("pageCount",manifest.TotalPages.ToString(CultureInfo.InvariantCulture),null,"Document manifest","Number of indexed digital pages; not necessarily printed pagination.");
-        var filename=Path.GetFileNameWithoutExtension(item.FileName ?? "");
-        var fileIssue=Regex.Match(filename,@"\bissue\s*(?:no\.?|number|#)?\s*0*(\d{1,4})\b",ci);
-        if(fileIssue.Success && int.TryParse(fileIssue.Groups[1].Value,out var fileNum) && fileNum>0 && fileNum is not (>=1900 and <=2099))
-            Add("issueNumber",fileNum.ToString(CultureInfo.InvariantCulture),null,"Filename label (unverified)",filename);
-        var fileDate=Regex.Match(filename,@"\b("+datePattern+@")\b",ci);
-        if(fileDate.Success)Add("coverDate",fileDate.Value,null,"Filename date (unverified)",filename);
-
+        // Language inference uses distinctive common words, not file names or the OCR engine language setting.
+        var languageSets=new Dictionary<string,string[]> {
+            ["English"]=["the","and","with","from","this","that","your","have","will","which","their","you","are","for"],
+            ["French"]=["les","des","une","avec","dans","pour","vous","est","sur","nous","cette","sont"],
+            ["German"]=["der","die","das","und","mit","ist","auf","nicht","eine","auch","den","sich"],
+            ["Spanish"]=["los","las","una","para","con","que","del","por","como","esta","sus","juego"],
+            ["Italian"]=["della","delle","gli","sono","una","che","con","nel","per","questo","anche","dei"],
+            ["Portuguese"]=["uma","dos","das","com","para","que","não","está","mais","este","pela","você"]
+        };
+        var scores=languageSets.Select(l=>new {name=l.Key,hits=l.Value.Sum(w=>Math.Min(languageWords.GetValueOrDefault(w),20)),distinct=l.Value.Count(w=>languageWords.GetValueOrDefault(w)>0)}).OrderByDescending(l=>l.hits).ToArray();
+        if(scores[0].hits>=25 && scores[0].distinct>=7 && scores[0].hits>=scores[1].hits*2.0)
+            Add("languageTag",scores[0].name,null,"Indexed language inference",$"{scores[0].distinct} distinct common words; capped hits {scores[0].hits} vs {scores[1].hits} for {scores[1].name}. Not an explicit printed language label.");
+        var explicitSystems=evidence.Where(e=>e.Field=="primarySystem" && e.Source=="Explicit publication platform dedication").GroupBy(e=>EvidenceKey("primarySystem",e.Value)).ToArray();
+        if(explicitSystems.Length==1){var e=explicitSystems[0].First();Add("platformFocus",e.Value,e.Page,"Explicit publication platform dedication",e.Evidence);}
+        // Platform mentions are coverage signals only; never infer exclusive dedication from game references.
+        var platformSignals=platformPages.OrderByDescending(k=>k.Value.Count).Take(12).Select(k=>new {platform=k.Key,pages=k.Value.OrderBy(x=>x).ToArray()}).ToArray();
         // Reuse only explicitly reviewed or locked peers, exact publication title and compatible region/language.
         var peers=library.Where(x=>x.Id!=item.Id && x.Kind=="Magazine" && titleKey.Length>=4 && Key(x.MagazineTitle)==titleKey &&
             (!Meaningful(item.Region)||!Meaningful(x.Region)||Key(item.Region)==Key(x.Region)) && (!Meaningful(item.LanguageTag)||!Meaningful(x.LanguageTag)||Key(item.LanguageTag)==Key(x.LanguageTag))).ToArray();
@@ -263,11 +350,11 @@ public static class GuidevaultDocumentIndex
         }
         if(Fingerprint(item)!=fp)throw new InvalidOperationException("Source changed. Re-index the magazine first.");
         var report=fields.Select(f=>{
-            var candidates=evidence.Where(e=>e.Field==f.Key).GroupBy(e=>Key(e.Value)).Select(g=>new {value=g.First().Value,evidence=g.Take(8).ToArray()}).ToArray();
-            var status=candidates.Length>1?"Conflicting evidence":candidates.Length==0?"No indexed evidence":!Meaningful(f.Current)?"Candidate":Key(f.Current)==Key(candidates[0].value)?"Matches current":"Differs from current";
+            var candidates=evidence.Where(e=>e.Field==f.Key).GroupBy(e=>EvidenceKey(f.Key,e.Value)).Select(g=>new {value=g.First().Value,evidence=g.OrderBy(e=>e.Source.Contains("candidate",StringComparison.OrdinalIgnoreCase)||e.Source.Contains("inference",StringComparison.OrdinalIgnoreCase)?1:0).Take(8).ToArray(),support=g.All(e=>e.Source.Contains("candidate",StringComparison.OrdinalIgnoreCase)||e.Source.Contains("inference",StringComparison.OrdinalIgnoreCase))?"Indirect":"Direct or reviewed"}).ToArray();
+            var status=candidates.Length>1?"Conflicting evidence":candidates.Length==0?"No indexed evidence":!Meaningful(f.Current)?"Candidate":EvidenceKey(f.Key,f.Current)==EvidenceKey(f.Key,candidates[0].value)?"Matches current":"Differs from current";
             return new {field=f.Key,label=f.Label,current=f.Current,locked=MetadataLockHelper.IsLocked(item.MetadataLocks,f.Key),status,candidates};
         }).ToArray();
-        return new {revision="v8.0-phase2",indexedPages=indexed,totalPages=manifest.TotalPages,relatedIssues=peers.Length,seconds=Math.Round(watch.Elapsed.TotalSeconds,2),fields=report};
+        return new {revision="v8.0-phase2.2",indexedPages=indexed,totalPages=manifest.TotalPages,relatedIssues=peers.Length,seconds=Math.Round(watch.Elapsed.TotalSeconds,2),fields=report,openingPages,platformSignals};
     }
     private static bool IsPdf(LibraryItem item) => Path.GetExtension(item.Path).Equals(".pdf",StringComparison.OrdinalIgnoreCase);
     private static bool Usable(Extraction p) => Regex.Matches(string.Join(" ",p.Lines.Select(l=>l.Text)),@"\p{L}{2,}").Count>=12;
