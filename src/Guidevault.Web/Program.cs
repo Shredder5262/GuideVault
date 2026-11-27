@@ -2959,7 +2959,7 @@ app.MapPut("/api/items/{id}/metadata", (string id, JsonElement payload) =>
 
 // Magazine OCR scan v1: admin-only, read-only suggestions, bounded page chunks.
 // Document index v8 Phase 1: admin-only; library metadata is never changed.
-app.MapGet("/api/items/{id}/document-index", async (HttpRequest request, string id, int? page, string? q) =>
+app.MapGet("/api/items/{id}/document-index", async (HttpRequest request, string id, int? page, string? q, bool? publication) =>
 {
     if (CurrentGuidevaultUser(request)?.IsAdmin != true) return (IResult)Results.StatusCode(403);
     var item = VisibleLibraryItems(request, cache.GetItemsSnapshot()).FirstOrDefault(i => i.Id == id);
@@ -2968,6 +2968,7 @@ app.MapGet("/api/items/{id}/document-index", async (HttpRequest request, string 
     var token = request.HttpContext.RequestAborted;
     try
     {
+        if (publication == true) return Results.Ok(await GuidevaultDocumentIndex.PublicationAsync(dataRoot, item, VisibleLibraryItems(request, cache.GetItemsSnapshot()), token));
         if (page.HasValue)
         {
             var record = await GuidevaultDocumentIndex.GetPageAsync(dataRoot, item, page.Value, token);

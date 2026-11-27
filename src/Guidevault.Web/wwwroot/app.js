@@ -18666,12 +18666,12 @@ function gvOpenInlineMagazineScan() {
 // v8 Phase 1: independent persistent extraction and search; legacy metadata scan remains unchanged.
 function gvAttachDocumentIndex(dialog, session, item) {
   const panel=document.createElement('section'); panel.className='gv-magscan-content';
-  panel.innerHTML=`<h2>Document Index <small>v8.0 Phase 1</small></h2><p class="sub">Extract readable page text once and retain it for future metadata interpretation. No magazine metadata is changed.</p><p class="sub" data-index-status aria-live="polite">Checking document index…</p><progress data-index-progress value="0" max="1"></progress><div class="gv-magscan-actions"><button type="button" class="primary" data-index-start>Index / Resume</button><button type="button" class="ghost" data-index-force>Re-index document</button><button type="button" class="ghost" data-index-stop hidden>Stop</button></div><div class="gv-magscan-actions"><input type="search" data-index-query placeholder="Search indexed text" aria-label="Search indexed text"><button type="button" class="ghost" data-index-search>Search</button><input type="number" min="1" value="1" data-index-page aria-label="Page number"><button type="button" class="ghost" data-index-view>View page</button></div><p class="sub" data-index-message aria-live="polite"></p><div data-index-results></div><hr>`;
+  panel.innerHTML=`<h2>Document Index <small>v8.0 Phase 1</small></h2><p class="sub">Extract readable page text once and retain it for future metadata interpretation. No magazine metadata is changed.</p><p class="sub" data-index-status aria-live="polite">Checking document index…</p><progress data-index-progress value="0" max="1"></progress><div class="gv-magscan-actions"><button type="button" class="primary" data-index-start>Index / Resume</button><button type="button" class="ghost" data-index-force>Re-index document</button><button type="button" class="ghost" data-index-stop hidden>Stop</button></div><div style="display:grid;grid-template-columns:minmax(0,1fr) auto;gap:8px;align-items:center;margin:10px 0"><input type="search" data-index-query placeholder="Search indexed text" aria-label="Search indexed text"><button type="button" class="ghost" data-index-search>Search</button><input type="number" min="1" value="1" data-index-page aria-label="Page number"><button type="button" class="ghost" data-index-view>View page</button></div><p class="sub" data-index-message aria-live="polite"></p><div data-index-results></div><hr><h2>Publication Intelligence <small>v8.0 Phase 2</small></h2><p class="sub">Interpret the completed document index. Review printed evidence and reviewed publication records without repeating OCR. No metadata is modified.</p><div class="gv-magscan-actions"><button type="button" class="primary" data-publication-analyze>Analyze publication</button><button type="button" class="ghost" data-publication-copy disabled>Copy evidence report</button></div><p class="sub" data-publication-status aria-live="polite"></p><div data-publication-results></div><hr>`;
   dialog.prepend(panel);
   const q=s=>panel.querySelector(s), status=q('[data-index-status]'), message=q('[data-index-message]'), progress=q('[data-index-progress]'), results=q('[data-index-results]');
   const endpoint=`/api/items/${encodeURIComponent(metadataManagerItemId(item))}/document-index`;
   let busy=false, controller=null, current=null;
-  const buttons=[q('[data-index-start]'),q('[data-index-force]'),q('[data-index-search]'),q('[data-index-view]')];
+  const buttons=[q('[data-index-start]'),q('[data-index-force]'),q('[data-index-search]'),q('[data-index-view]'),q('[data-publication-analyze]')];
   async function api(params={},method='GET',signal) {
     const res=await fetch(endpoint+'?'+new URLSearchParams(params),{method,signal});
     if(!res.ok){let msg=`HTTP ${res.status}`;try{const e=await res.json();msg=e.error||e.detail||msg;}catch{}throw new Error(msg);}
@@ -18710,6 +18710,32 @@ function gvAttachDocumentIndex(dialog, session, item) {
   q('[data-index-view]').onclick=async()=>{if(busy||session.running)return;results.replaceChildren();try{const p=await api({page:q('[data-index-page]').value});message.textContent=`${p.source} · ${p.width} × ${p.height} ${p.units} · ${p.seconds}s${p.warning?' · '+p.warning:''}`;showText(p.page,p.text,p.source);}catch(e){message.textContent=e.message;}};
   q('[data-index-search]').onclick=async()=>{if(busy||session.running)return;results.replaceChildren();const term=q('[data-index-query]').value.trim();if(term.length<2||term.length>200){message.textContent='Enter 2–200 characters to search.';return;}try{const found=await api({q:term});message.textContent=`${found.matchingPages||0} matching pages (up to 100 shown)`;for(const p of found.hits||[])showText(p.page,p.snippet,p.source);}catch(e){message.textContent=e.message;}};
   q('[data-index-query]').addEventListener('keydown',e=>{if(e.key==='Enter'){e.preventDefault();q('[data-index-search]').click();}});
+  let publicationReport='';
+  q('[data-publication-copy]').onclick=async()=>{try{await navigator.clipboard.writeText(publicationReport);q('[data-publication-status]').textContent+=' · Report copied';}catch{q('[data-publication-status]').textContent='Clipboard unavailable; select and copy the visible evidence.';}};
+  q('[data-publication-analyze]').onclick=async()=>{
+    if(busy||session.running)return;
+    const output=q('[data-publication-results]'), msg=q('[data-publication-status]'), copy=q('[data-publication-copy]');
+    output.replaceChildren();copy.disabled=true;publicationReport='';busy=true;session.running=true;controller=new AbortController();session.controller=controller;
+    const legacy=['[data-scan-start]','[data-scan-stage]','[data-scan-close]'].map(s=>dialog.querySelector(s)).filter(Boolean);const previous=legacy.map(b=>b.disabled);legacy.forEach(b=>b.disabled=true);buttons.forEach(b=>b.disabled=true);
+    msg.textContent='Reading the saved document index…';
+    try{
+      const report=await api({publication:'true'},'GET',controller.signal);
+      const fields=report.fields||[];const found=fields.filter(f=>(f.candidates||[]).length).length;const conflicts=fields.filter(f=>f.status==='Conflicting evidence').length;
+      msg.textContent=`${report.indexedPages}/${report.totalPages} indexed pages · ${found}/${fields.length} fields with evidence · ${conflicts} conflicts · ${report.relatedIssues} related issues · ${report.seconds}s · No metadata changed`;
+      const lines=[`Publication Intelligence ${report.revision}`,msg.textContent];
+      for(const field of fields){
+        const section=document.createElement('details');section.style.margin='8px 0';section.open=field.status==='Conflicting evidence'||field.status==='Differs from current'||field.status==='Candidate';
+        const summary=document.createElement('summary');summary.textContent=`${field.label} — ${field.status}${field.locked?' · Locked':''}`;section.append(summary);
+        const current=document.createElement('p');current.className='sub';current.textContent=`Current: ${field.current||'—'}`;section.append(current);lines.push('',summary.textContent,current.textContent);
+        for(const c of field.candidates||[]){const value=document.createElement('strong');value.textContent=c.value;section.append(value);lines.push('Candidate: '+c.value);
+          const ul=document.createElement('ul');for(const e of c.evidence||[]){const li=document.createElement('li');li.textContent=`${e.page?'Page '+e.page+' · ':''}${e.source}: ${e.evidence}`;ul.append(li);lines.push(li.textContent);}section.append(ul);}
+        if(!(field.candidates||[]).length){const empty=document.createElement('p');empty.className='sub';empty.textContent='No reliable candidate was found in indexed text or reviewed publication records. Existing value retained.';section.append(empty);}
+        output.append(section);
+      }
+      publicationReport=lines.join('\n');copy.disabled=false;
+    }catch(e){msg.textContent=e.message;}
+    finally{busy=false;session.running=false;session.controller=null;controller=null;buttons.forEach(b=>b.disabled=false);legacy.forEach((b,i)=>b.disabled=previous[i]);}
+  };
   refresh();
 }
 
