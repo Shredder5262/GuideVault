@@ -18669,7 +18669,7 @@ function gvMagazineScanDialog(items, fromDetail = false, inlineHost = null) {
   if (!items.length || items.length > 5) { metadataManagerSetStatus('Select 1–5 magazine issues per scan.','error'); return; }
   const dialog = document.createElement(inlineHost ? 'div' : 'dialog');
   dialog.className = inlineHost ? 'gv-magscan-inline' : 'gv-magscan-dialog';
-  dialog.innerHTML = `<div class="gv-magscan-content"><h2>Scan magazine metadata</h2><p class="sub">${items.length} issue(s). Scanner UI v7.2 — Local OCR and LaunchBox title lookup. Nothing is saved automatically.</p><label>Scan scope <select data-scan-scope><option value="1">Cover only</option><option value="12">First 12 pages (cover, contents, masthead)</option><option value="300"${fromDetail?' selected':''}>Full issue (up to 300 pages)</option></select></label><p class="sub">Uses detailed cover recognition, contextual analysis of up to five opening pages, OCR on remaining pages, and bounded selective vision refinement. Review suggestions before saving.</p><p class="sub" data-scan-status aria-live="polite">Start a scan to review suggested fields. Layout-aware English OCR and catalog matching. All magazine fields are checked; uncertain or unavailable values are not guessed. Review all proposed editorial data.</p><progress data-scan-progress value="0" max="1"></progress><div data-scan-results></div><div class="gv-magscan-actions"><button class="ghost" type="button" data-scan-close>Close</button><button class="ghost" type="button" data-scan-stop hidden>Stop</button><button class="ghost" type="button" data-scan-copy disabled>Copy Scan Report</button><button class="primary" type="button" data-scan-start>Start scan</button><button class="primary" type="button" data-scan-stage disabled>${fromDetail?'Apply selected suggestions':'Stage selected suggestions'}</button></div></div>`;
+  dialog.innerHTML = `<div class="gv-magscan-content"><h2>Scan magazine metadata</h2><p class="sub">${items.length} issue(s). Scanner UI v7.2.1 — Local OCR and LaunchBox title lookup. Nothing is saved automatically.</p><label>Scan scope <select data-scan-scope><option value="1">Cover only</option><option value="12">First 12 pages (cover, contents, masthead)</option><option value="300"${fromDetail?' selected':''}>Full issue (up to 300 pages)</option></select></label><p class="sub">Uses detailed cover recognition, contextual analysis of up to five opening pages, OCR on remaining pages, and bounded selective vision refinement. Review suggestions before saving.</p><p class="sub" data-scan-status aria-live="polite">Start a scan to review suggested fields. Layout-aware English OCR and catalog matching. All magazine fields are checked; uncertain or unavailable values are not guessed. Review all proposed editorial data.</p><progress data-scan-progress value="0" max="1"></progress><div data-scan-results></div><div class="gv-magscan-actions"><button class="ghost" type="button" data-scan-close>Close</button><button class="ghost" type="button" data-scan-stop hidden>Stop</button><button class="ghost" type="button" data-scan-copy disabled>Copy Scan Report</button><button class="primary" type="button" data-scan-start>Start scan</button><button class="primary" type="button" data-scan-stage disabled>${fromDetail?'Apply selected suggestions':'Stage selected suggestions'}</button></div></div>`;
   (inlineHost || document.body).appendChild(dialog);
   const q = s => dialog.querySelector(s);
   const session = { controller:null, running:false, rows:[], dialog, inline:!!inlineHost, itemId:metadataManagerItemId(items[0]) };
@@ -18741,7 +18741,7 @@ function gvMagazineScanDialog(items, fromDetail = false, inlineHost = null) {
       if(row.item.issueNumber&&printedIssues.some(v=>String(v).trim().replace(/^0+(?=\d)/,'')!==String(row.item.issueNumber).trim().replace(/^0+(?=\d)/,''))) reviewWarnings.push(`Printed issue number(s): ${printedIssues.join(', ')}. Existing issue #${row.item.issueNumber}; review printed cover evidence before changing.`);
       if(coverConflict) reviewWarnings.push(`Cover headings detected: ${coverNames.join(', ')}. ${existingCover?'Existing cover subject retained: '+existingCover+'. ':''}OCR headings do not establish the primary cover story; edit Metadata after checking the cover.`);
       if (reviewWarnings.length) { const w = document.createElement('details'); w.innerHTML = `<summary>${reviewWarnings.length} scan warning(s)</summary><p>${reviewWarnings.map(escapeHtml).join('<br>')}</p>`; block.appendChild(w); }
-      if(row.revision!=='v7.2'||!row.complete){root.appendChild(block);return;}
+      if(row.revision!=='v7.2.1'||!row.complete){root.appendChild(block);return;}
       const proposals = gvMagazineScanProposals(row);
       const corrections=[];
       const coverProposal=proposals.find(p=>p.field==='coverSubject');
@@ -18828,7 +18828,7 @@ function gvMagazineScanDialog(items, fromDetail = false, inlineHost = null) {
             if (!res.ok) { let msg=`HTTP ${res.status}`; try { msg=(await res.json()).error||msg; } catch {} throw new Error(msg); }
             const data=await res.json();
             row.revision=String(data.scannerRevision||'not reported');
-            if(row.revision!=='v7.2') { row.suggestions=[]; throw new Error(`Scanner backend revision ${row.revision}; expected v7.2. Deploy the matching image and reload before scanning.`); }
+            if(row.revision!=='v7.2.1') { row.suggestions=[]; throw new Error(`Scanner backend revision ${row.revision}; expected v7.2.1. Deploy the matching image and reload before scanning.`); }
             row.total=data.totalPages; row.scanned+=data.scanned; row.readable+=data.readablePages; row.cached+=Number(data.cachedPages||0); row.suggestions.push(...(data.suggestions||[])); row.warnings.push(...(data.warnings||[]));
             if (!data.scanned) {row.warnings.push('No pages returned; scan incomplete.');break;} start+=data.scanned; progress.value=i+Math.min(1,start/Math.min(scope,row.total));
           } while(start<Math.min(scope,row.total));
@@ -18945,7 +18945,7 @@ function gvMagazineEditableCorrection(row,field,value,reason) {
   return {field,current,value,evidence:[{value:value||'Clear field',page:0,evidence:reason,confidence:'Manual correction — review required'}],conflict:false,locked:false,safe:false};
 }
 function gvMagazineScanReport(rows,root) {
-  const report=['GuideVault magazine scan report — UI v7.2'];
+  const report=['GuideVault magazine scan report — UI v7.2.1'];
   const blocks=[...root.querySelectorAll('.gv-magscan-result')];
   rows.forEach((row,i)=>{
     const block=blocks[i];if(!block)return;
@@ -19090,19 +19090,23 @@ function gvMagazineCoverTrace(row) {
 }
 function gvMagazineCoverEvidence(row) {
   const key=v=>String(v??'').normalize('NFKC').toLowerCase().replace(/[^\p{L}\p{N}]/gu,'');
-  const all=row.suggestions.filter(x=>x.field==='coverSubject'&&gvMagazineValidCover(x.value,row.item.magazineTitle||row.item.series)&&!gvMagazineScanMasthead(row,x.value));
+  const excluded=new Set(row.suggestions.filter(x=>x.field==='coverDiagnostic'&&x.confidence==='Promotional cover candidate excluded').map(x=>key(x.value)));
+  const all=row.suggestions.filter(x=>x.field==='coverSubject'&&gvMagazineValidCover(x.value,row.item.magazineTitle||row.item.series)&&!gvMagazineScanMasthead(row,x.value)&&!excluded.has(key(x.value)));
+  const visualDominant=all.filter(x=>x.confidence==='Dominant visual cover — verify');
+  if(visualDominant.length)return visualDominant;
   const contextual=all.filter(x=>x.confidence==='Contextual editorial cover');
   if(contextual.length)return contextual;
   const dominant=all.filter(x=>x.confidence==='Dominant cover headline — verify');
   const prominent=all.filter(x=>x.confidence==='Explicit prominent cover callout');
-  if(dominant.length)return dominant;
+  if(dominant.length&&!row.suggestions.some(x=>x.field==='coverDiagnostic'&&x.confidence==='Vision inconclusive — require independent editorial evidence'))return dominant;
   if(prominent.length)return prominent;
   const callouts=all.filter(x=>x.confidence==='Explicit cover editorial callout');
   if(callouts.length)return callouts;
   const explicit=all.filter(x=>['Explicit contents cover story','Explicit cover subject — verify printed title'].includes(x.confidence));
   if(explicit.length)return explicit;
-  const fragments=gvMagazineCoverFragmentEvidence(row);
+  const fragments=gvMagazineCoverFragmentEvidence(row).filter(x=>!excluded.has(key(x.value)));
   if(fragments.length===1)return fragments;
+  if(row.suggestions.some(x=>x.field==='coverDiagnostic'&&x.confidence==='Vision inconclusive — require independent editorial evidence'))return [];
   const articles=new Set(row.suggestions.filter(x=>x.field==='featuredGames').map(x=>key(x.value)));
   const confirmed=all.filter(x=>['Visual cover candidate','Ambiguous cover heading'].includes(x.confidence)&&articles.has(key(x.value)));
   const visual=confirmed.filter(x=>x.confidence==='Visual cover candidate' && x.page===1);
