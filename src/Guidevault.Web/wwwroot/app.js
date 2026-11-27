@@ -18669,7 +18669,7 @@ function gvMagazineScanDialog(items, fromDetail = false, inlineHost = null) {
   if (!items.length || items.length > 5) { metadataManagerSetStatus('Select 1–5 magazine issues per scan.','error'); return; }
   const dialog = document.createElement(inlineHost ? 'div' : 'dialog');
   dialog.className = inlineHost ? 'gv-magscan-inline' : 'gv-magscan-dialog';
-  dialog.innerHTML = `<div class="gv-magscan-content"><h2>Scan magazine metadata</h2><p class="sub">${items.length} issue(s). Scanner UI v7.1.4 — Local OCR and LaunchBox title lookup. Nothing is saved automatically.</p><label>Scan scope <select data-scan-scope><option value="1">Cover only</option><option value="12">First 12 pages (cover, contents, masthead)</option><option value="300"${fromDetail?' selected':''}>Full issue (up to 300 pages)</option></select></label><p class="sub">Uses detailed cover recognition, OCR on interior pages, and selective vision refinement. Review suggestions before saving.</p><p class="sub" data-scan-status aria-live="polite">Start a scan to review suggested fields. Layout-aware English OCR and catalog matching. All magazine fields are checked; uncertain or unavailable values are not guessed. Review all proposed editorial data.</p><progress data-scan-progress value="0" max="1"></progress><div data-scan-results></div><div class="gv-magscan-actions"><button class="ghost" type="button" data-scan-close>Close</button><button class="ghost" type="button" data-scan-stop hidden>Stop</button><button class="ghost" type="button" data-scan-copy disabled>Copy Scan Report</button><button class="primary" type="button" data-scan-start>Start scan</button><button class="primary" type="button" data-scan-stage disabled>${fromDetail?'Apply selected suggestions':'Stage selected suggestions'}</button></div></div>`;
+  dialog.innerHTML = `<div class="gv-magscan-content"><h2>Scan magazine metadata</h2><p class="sub">${items.length} issue(s). Scanner UI v7.1.5 — Local OCR and LaunchBox title lookup. Nothing is saved automatically.</p><label>Scan scope <select data-scan-scope><option value="1">Cover only</option><option value="12">First 12 pages (cover, contents, masthead)</option><option value="300"${fromDetail?' selected':''}>Full issue (up to 300 pages)</option></select></label><p class="sub">Uses detailed cover recognition, OCR on interior pages, and selective vision refinement. Review suggestions before saving.</p><p class="sub" data-scan-status aria-live="polite">Start a scan to review suggested fields. Layout-aware English OCR and catalog matching. All magazine fields are checked; uncertain or unavailable values are not guessed. Review all proposed editorial data.</p><progress data-scan-progress value="0" max="1"></progress><div data-scan-results></div><div class="gv-magscan-actions"><button class="ghost" type="button" data-scan-close>Close</button><button class="ghost" type="button" data-scan-stop hidden>Stop</button><button class="ghost" type="button" data-scan-copy disabled>Copy Scan Report</button><button class="primary" type="button" data-scan-start>Start scan</button><button class="primary" type="button" data-scan-stage disabled>${fromDetail?'Apply selected suggestions':'Stage selected suggestions'}</button></div></div>`;
   (inlineHost || document.body).appendChild(dialog);
   const q = s => dialog.querySelector(s);
   const session = { controller:null, running:false, rows:[], dialog, inline:!!inlineHost, itemId:metadataManagerItemId(items[0]) };
@@ -18906,6 +18906,15 @@ function gvMagazineScanDialog(items, fromDetail = false, inlineHost = null) {
         return actual!==String(metadataManagerFieldValue(item,field)??'').trim();
       }).length;
       if(gvMagazineScanSession!==session || !dialog.isConnected || metadataManagerItemId(state.selected)!==id)return;
+      // The successful, validated server response is the navigation trigger, not the local change count.
+      const notApplied=Math.max(0,count-applied+skipped);
+      const saveMessage=`Saved to this magazine: ${applied} field(s) updated.${notApplied?` ${notApplied} selected field(s) unchanged or skipped.`:''}`;
+      if(state.activeTab==='magazine-scan') {
+        activateTab('overview');
+        const main=document.querySelector('.main');
+        if(main) main.scrollTop=0;
+        showGuidevaultMessageToast(saveMessage,notApplied?'warning':'success',{title:'Magazine metadata saved'});
+      }
       session.rows[0].item=merged; items[0]=merged;
       // Preserve unsubmitted text edits and selections while refreshing the proposals.
       const pending=[...root.querySelectorAll('input[data-scan-field]')].map(input=>({field:input.dataset.scanField,checked:input.checked,value:input.closest('.gv-magscan-field').querySelector('textarea').value})).filter(x=>!Object.hasOwn(directChanges,x.field));
@@ -18915,16 +18924,7 @@ function gvMagazineScanDialog(items, fromDetail = false, inlineHost = null) {
         const input=[...root.querySelectorAll('input[data-scan-field]')].find(el=>el.dataset.scanField===p.field);
         if(input&&!input.disabled) { input.checked=p.checked;input.closest('.gv-magscan-field').querySelector('textarea').value=p.value; }
       }
-      const notApplied=Math.max(0,count-applied+skipped);
-      const saveMessage=`Saved to this magazine: ${applied} field(s) updated.${notApplied?` ${notApplied} selected field(s) unchanged or skipped.`:''}`;
-      q('[data-scan-status]').textContent=saveMessage+(applied?' Unsubmitted suggestions remain available in the scanner.':' Review the remaining suggestions before retrying.');
-      // Return to the same issue's overview only after a verified change, and do not hijack later navigation.
-      if(applied>0 && state.activeTab==='magazine-scan') {
-        activateTab('overview');
-        const main=document.querySelector('.main');
-        if(main) main.scrollTop=0;
-        showGuidevaultMessageToast(saveMessage,notApplied?'warning':'success',{title:'Magazine metadata updated'});
-      }
+      q('[data-scan-status]').textContent=saveMessage+(applied?' Unsubmitted suggestions remain available in the scanner.':' No changed fields were detected; review the remaining suggestions if needed.');
     } catch(err) {
       q('[data-scan-status]').textContent=`Unable to confirm metadata save: ${err.message||err}. Selections retained; refresh if the save outcome is uncertain.`;
     } finally {
