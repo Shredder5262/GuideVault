@@ -151,6 +151,7 @@ public static class GuidevaultDocumentIndex
         return new {matchingPages=matching,hits};
     }
     // Phase 2 deliberately reads the Phase 1 index without changing its revision or contents.
+    private static bool IncompletePublisher(string value)=>Regex.IsMatch(value.TrimEnd(' ','.'),@"\b(?:of|the|and|for|by|in|at|de|du|des|van|von|&)\s*$",RegexOptions.IgnoreCase|RegexOptions.CultureInvariant)||value.TrimEnd().EndsWith("&",StringComparison.Ordinal);
     public sealed record PublicationEvidence(string Field, string Value, int? Page, string Source, string Evidence);
     private static string Key(string? value) => Regex.Replace((value ?? "").ToLowerInvariant(), @"[^\p{L}\p{N}]", "");
     private static bool Meaningful(string? value) => !string.IsNullOrWhiteSpace(value) && !Regex.IsMatch(value.Trim(), @"^(?:unknown|unspecified|none|n/?a|magazine|not specified|unreviewed|multi.platform)$", RegexOptions.IgnoreCase);
@@ -201,6 +202,9 @@ public static class GuidevaultDocumentIndex
         {
             value=Regex.Replace(value.Trim(),@"\s+"," ").Trim(' ',':',';','–','—');
             if(field=="coverDate"||field=="publicationDate")value=Regex.Replace(value,@",\s*"," ");
+            // Do not offer a clipped organization name as authoritative metadata.
+            if(field=="publisher"&&IncompletePublisher(value))return;
+            if(field=="copyrightHolder")value=Regex.Replace(value,@"^by\s+","",RegexOptions.IgnoreCase);
             if(field=="writer"&&value.Any(char.IsLetter)&&!value.Any(char.IsLower)&&Person(value))value=CultureInfo.InvariantCulture.TextInfo.ToTitleCase(value.ToLowerInvariant());
             if (!Meaningful(value) || value.Length>120 || Key(value).Length==0) return;
             if (evidence.Any(e=>e.Field==field && EvidenceKey(field,e.Value)==EvidenceKey(field,value) && e.Page==page && e.Source==source)) return;
@@ -369,7 +373,7 @@ public static class GuidevaultDocumentIndex
                 {
                     const string publisherPattern=@"\bpublished(?:\s+(?:monthly|weekly|quarterly|annually|bimonthly|biweekly|quar-\s*terly|month-\s*ly|week-\s*ly|annu-\s*ally))?\s+by\s+([\p{L}][\p{L}\p{N} &'’.()-]{2,90}?)(?=\s+(?:at|located|ISSN|copyright|all rights|subscription)\b|[,;]|$)";
                     var pub=Regex.Match(text,publisherPattern,ci);
-                    if(!pub.Success)pub=Regex.Match(joined,publisherPattern,ci);
+                    if(!pub.Success||IncompletePublisher(pub.Groups[1].Value))pub=Regex.Match(joined,publisherPattern,ci);
                     if(!pub.Success&&masthead&&titleLine&&Regex.IsMatch(text,@"\bpublished\b",ci))
                     {
                         var wrapped=Regex.Match(p.Text,@"\bpublished(?:\s+(?:monthly|weekly|quarterly|annually|bimonthly|biweekly|quar-\s*terly|month-\s*ly|week-\s*ly|annu-\s*ally))?\s+by\s+([\p{L}][\p{L}\p{N} &'’.()-]{2,90}?)(?=\s+(?:at|located|ISSN|copyright|all rights|subscription)\b|[,;]|\r?\n|$)",ci);
@@ -493,7 +497,7 @@ public static class GuidevaultDocumentIndex
             var status=candidates.Length>1?(f.Key=="coverPrice"?"Multiple price candidates":"Conflicting evidence"):candidates.Length==0?"No indexed evidence":!Meaningful(f.Current)?"Candidate":EvidenceKey(f.Key,f.Current)==EvidenceKey(f.Key,candidates[0].value)&&(f.Key!="writer"||string.Equals(f.Current,candidates[0].value,StringComparison.Ordinal))?"Matches current":"Differs from current";
             return new {field=f.Key,label=f.Label,current=f.Current,locked=MetadataLockHelper.IsLocked(item.MetadataLocks,f.Key),status,candidates};
         }).ToArray();
-        return new {revision="v8.0-phase2.8",indexedPages=indexed,totalPages=manifest.TotalPages,relatedIssues=peers.Length,editionMismatch,editionRegionCandidate=coverMarket,seconds=Math.Round(watch.Elapsed.TotalSeconds,2),fields=report,openingPages,platformSignals};
+        return new {revision="v8.0-phase2.8.1",indexedPages=indexed,totalPages=manifest.TotalPages,relatedIssues=peers.Length,editionMismatch,editionRegionCandidate=coverMarket,seconds=Math.Round(watch.Elapsed.TotalSeconds,2),fields=report,openingPages,platformSignals};
     }
     // Phase 3: read-only editorial analysis over the persistent page index.
     // Cover wording establishes a guide's focus, not exclusive publication identity.
@@ -1125,7 +1129,7 @@ public static class GuidevaultDocumentIndex
         var filtered=JsonSerializer.SerializeToElement(update,Json);
         foreach(var c in changes.Where(c=>!filtered.TryGetProperty(c.Field,out var v)||v.ValueKind==JsonValueKind.Null).ToArray()){changes.Remove(c);held.Add(c.Field+": protected by field alias lock");}
         if(changes.Count>0&&!manual)update=update with{MetadataSource="Magazine document index v8.0 Phase 4.6"};
-        return new CatalogPlan("v8.0-phase4.6",fp,update,changes,held,publication,editorial,Math.Round(clock.Elapsed.TotalSeconds,2));
+        return new CatalogPlan("v8.0-phase4.6.1",fp,update,changes,held,publication,editorial,Math.Round(clock.Elapsed.TotalSeconds,2));
     }
     public static async Task SaveCatalogReportAsync(string root,LibraryItem item,CatalogPlan plan,CancellationToken token)
     {
@@ -1157,6 +1161,7 @@ public static class GuidevaultDocumentIndex
         public HashSet<int> Recovered { get; } = new();
         public int[] Missing { get; set; } = [];
         public object? Report { get; set; }
+        public Func<string[],object>? ApplyPreview { get; set; }
     }
     private static object Snapshot(IndexJob j)
     {
@@ -1171,6 +1176,37 @@ public static class GuidevaultDocumentIndex
     public static object? JobStatus(string id)
     {
         lock(JobLock) return Jobs.TryGetValue(id,out var j)?Snapshot(j):null;
+    }
+    public static void RegisterCatalogPreview(string id,Func<string[],object> apply)
+    {
+        lock(JobLock)
+        {
+            if(!Jobs.TryGetValue(id,out var job)||job.State!="running"||job.Stop.IsCancellationRequested)throw new OperationCanceledException();
+            job.ApplyPreview=apply;
+        }
+    }
+    public static object ApplyCatalogPreview(string id,string jobId,string[] fields)
+    {
+        lock(JobLock)
+        {
+            if(!Jobs.TryGetValue(id,out var job)||job.Id!=jobId||job.State!="complete"||job.ApplyPreview is null)throw new InvalidOperationException("Scan preview expired or was already applied. Scan magazine again.");
+            if(fields.Length==0)throw new InvalidOperationException("Select at least one suggestion.");
+            var result=job.ApplyPreview(fields);
+            job.ApplyPreview=null;job.Report=result;job.Message="Selected suggestions applied";
+            return result;
+        }
+    }
+    public static CatalogPlan SelectCatalogChanges(CatalogPlan plan,string[] fields,LibraryItem item)
+    {
+        var wanted=fields.ToHashSet(StringComparer.Ordinal);
+        var changes=plan.Changes.Where(c=>wanted.Contains(c.Field)).ToList();
+        if(changes.Count==0||changes.Count!=wanted.Count)throw new InvalidOperationException("Selection is not part of this scan preview.");
+        var values=changes.ToDictionary(c=>c.Field,c=>c.After,StringComparer.Ordinal);
+        var update=MetadataLockHelper.FilterLockedFields(ItemMetadataJsonReader.Read(JsonSerializer.SerializeToElement(values,Json)),item.MetadataLocks);
+        var filtered=JsonSerializer.SerializeToElement(update,Json);
+        if(changes.Any(c=>!filtered.TryGetProperty(c.Field,out var v)||v.ValueKind==JsonValueKind.Null))throw new InvalidOperationException("Metadata locks changed. Scan magazine again.");
+        update=update with{MetadataSource=plan.Update.MetadataSource};
+        return plan with{Update=update,Changes=changes,Held=plan.Held.Concat(plan.Changes.Where(c=>!wanted.Contains(c.Field)).Select(c=>c.Field+": not selected")).ToList()};
     }
     public static object? StopJob(string id)
     {
@@ -1252,10 +1288,10 @@ public static class GuidevaultDocumentIndex
                     if(Fingerprint(item)!=fp)throw new InvalidOperationException("Source changed during indexing; cataloging cancelled.");
                     if(complete&&catalog&&saveCatalog is not null)
                     {
-                        lock(JobLock)j.Message="Interpreting and saving catalog metadata";
-                        var report=await saveCatalog(token);lock(JobLock)j.Report=report;
+                        lock(JobLock)j.Message="Analyzing magazine metadata";
+                        var report=await saveCatalog(token);lock(JobLock){if(j.ApplyPreview is not null)token.ThrowIfCancellationRequested();j.Report=report;}
                     }
-                    lock(JobLock){j.State=complete?"complete":"incomplete";j.Message=complete?(catalog?"Cataloging complete":"Indexing complete"):"Failed pages retained in report. Resume to retry; cataloging not started.";}
+                    lock(JobLock){j.State=complete?"complete":"incomplete";j.Message=complete?(catalog?(j.ApplyPreview is not null?"Scan complete; suggestions ready":"Cataloging complete"):"Indexing complete"):"Failed pages retained in report. Resume to retry; cataloging not started.";}
                 }
                 catch(OperationCanceledException){lock(JobLock){j.State="stopped";j.Message="Stopped; completed page records retained. Check history if catalog saving had begun.";}}
                 catch(Exception ex){logger.LogError(ex,"Document index job {Job} failed",j.Id);lock(JobLock){j.State="failed";j.Message=ex.Message;}}

@@ -18681,183 +18681,60 @@ function gvOpenInlineMagazineScan() {
   gvMagazineScanDialog([item], true, host);
 }
 // v8 Phase 1: independent persistent extraction and search; legacy metadata scan remains unchanged.
-function gvAttachDocumentIndex(dialog, session, item) {
-  const panel=document.createElement('section'); panel.className='gv-magscan-content';
-  panel.innerHTML=`<h2>Automatic Cataloging <small>v8.0 Phase 4.6</small></h2><p class="sub">Index missing pages once, analyze the issue and save supported metadata. Existing populated values, reviewed records and locked fields are protected by default. Supported refinements of year-only cover dates and explicit unknown placeholders may be filled on unprotected records.</p><label><input type="checkbox" data-catalog-replace> Replace supported unreviewed metadata (existing game lists and summary may be replaced)</label><div class="gv-magscan-actions"><button type="button" class="primary" data-catalog-start>Scan magazine</button><button type="button" class="ghost" data-catalog-download disabled>Download catalog report</button><button type="button" class="ghost" data-catalog-history>Refresh change history</button><button type="button" class="ghost" data-catalog-undo disabled>Undo last catalog save</button></div><p class="sub" data-catalog-status aria-live="polite">Ready. No additional AI models are used.</p><textarea data-catalog-report rows="12" readonly hidden style="width:100%" aria-label="Catalog evidence report"></textarea><details><summary>Catalog change history</summary><div data-catalog-history-results></div></details><hr><h2>Document Index <small>Server job · Phase 4.3</small></h2><p class="sub">Extract readable page text once and retain it for future metadata interpretation. No magazine metadata is changed.</p><p class="sub" data-index-status aria-live="polite">Checking document index…</p><progress data-index-progress value="0" max="1"></progress><label>Concurrent pages <select data-index-workers><option value="1">1 — Low resource</option><option value="2" selected>2 — Balanced</option><option value="4">4 — High performance</option></select></label><p class="sub">Indexing continues on the server if you close this page. Completed pages are saved individually. OCR recovery runs only after an error. Index / Resume retries missing pages without repeating successful pages.</p><label><input type="checkbox" data-index-partial> Allow partial evidence reports (read-only; automatic catalog saving still requires a complete index)</label><div class="gv-magscan-actions"><button type="button" class="primary" data-index-start>Index / Resume</button><button type="button" class="ghost" data-index-force>Re-index document</button><button type="button" class="ghost" data-index-stop hidden>Stop</button></div><div style="display:grid;grid-template-columns:minmax(0,1fr) auto;gap:8px;align-items:center;margin:10px 0"><input type="search" data-index-query placeholder="Search indexed text" aria-label="Search indexed text"><button type="button" class="ghost" data-index-search>Search</button><input type="number" min="1" value="1" data-index-page aria-label="Page number"><button type="button" class="ghost" data-index-view>View page</button></div><p class="sub" data-index-message aria-live="polite"></p><div data-index-results></div><hr><h2>Publication Intelligence <small>v8.0 Phase 2.5</small></h2><p class="sub">Interpret the completed document index. Review printed evidence, file identity and clearly labeled inferences without repeating OCR. No metadata is modified.</p><div class="gv-magscan-actions"><button type="button" class="primary" data-publication-analyze>Analyze publication</button><button type="button" class="ghost" data-publication-copy disabled>Copy evidence report</button></div><p class="sub" data-publication-status aria-live="polite"></p><div data-publication-results></div><hr><h2>Editorial Intelligence <small>v8.0 Phase 3.3</small></h2><p class="sub">Find editorial headings, game coverage and platform candidates using the saved index. No additional OCR or AI calls. Candidates only; metadata remains unchanged.</p><div class="gv-magscan-actions"><button type="button" class="primary" data-editorial-analyze>Analyze editorial content</button><button type="button" class="ghost" data-editorial-copy disabled>Copy editorial report</button><button type="button" class="ghost" data-editorial-download disabled>Download report</button></div><p class="sub" data-editorial-status aria-live="polite"></p><textarea data-editorial-report rows="12" readonly hidden style="width:100%" aria-label="Complete editorial report"></textarea><div data-editorial-results></div><hr>`;
-  dialog.prepend(panel);
-  const q=s=>panel.querySelector(s), status=q('[data-index-status]'), message=q('[data-index-message]'), progress=q('[data-index-progress]'), results=q('[data-index-results]');
+function gvAttachDocumentIndex(dialog,session,item) {
+  const panel=document.createElement('section');panel.className='gv-magscan-content gv-scan-workspace';
+  panel.innerHTML=`<section class="gv-scan-card"><div class="gv-scan-heading"><h2>Scan magazine metadata</h2><small data-scan-revision>Phase 4.6</small></div>
+    <div class="gv-scan-actions"><button type="button" class="primary" data-start>Scan Magazine</button><button type="button" class="ghost" data-stop disabled>Stop Scan</button><button type="button" class="ghost" data-copy disabled>Copy Output</button><button type="button" class="primary" data-apply disabled>Apply Suggestions</button></div>
+    <p class="gv-scan-status" data-status role="status">Ready to scan. No metadata is saved until you apply suggestions.</p><progress data-progress value="0" max="1" aria-label="Scan progress"></progress><p class="sub" data-progress-info aria-live="polite">Checking document index…</p><p class="sub" data-active></p></section>
+    <section class="gv-scan-card" data-output hidden><h3>Output summary</h3><div class="gv-scan-metrics" data-metrics></div><div data-summary></div><p class="sub" data-copy-status role="status"></p><textarea data-copy-fallback hidden readonly rows="10" aria-label="Diagnostic output"></textarea></section>`;
+  dialog.append(panel);
+  const q=s=>panel.querySelector(s), status=q('[data-status]'), progress=q('[data-progress]'), info=q('[data-progress-info]'), active=q('[data-active]'), start=q('[data-start]'), stop=q('[data-stop]'), copy=q('[data-copy]'), apply=q('[data-apply]');
   const endpoint=`/api/items/${encodeURIComponent(metadataManagerItemId(item))}/document-index`;
-  let busy=false, controller=null, current=null;
-  const buttons=[q('[data-index-start]'),q('[data-index-force]'),q('[data-index-partial]'),q('[data-index-search]'),q('[data-index-view]'),q('[data-publication-analyze]'),q('[data-editorial-analyze]'),q('[data-catalog-start]'),q('[data-catalog-replace]'),q('[data-catalog-history]')];
-  async function api(params={},method='GET',signal) {
-    const res=await fetch(endpoint+'?'+new URLSearchParams(params),{method,signal});
-    if(!res.ok){let msg=`HTTP ${res.status}`;try{const e=await res.json();msg=e.error||e.detail||msg;}catch{}throw new Error(msg);}
-    return res.json();
+  let timer=null, polling=false, busy=false, applying=false, starting=false, initial=true, report=null, jobId='', seen='', diagnostics='';
+  const el=(tag,text,cls)=>{const n=document.createElement(tag);if(text!=null)n.textContent=String(text);if(cls)n.className=cls;return n;};
+  const value=v=>Array.isArray(v)?v.join(', ')||'—':v==null||v===''?'—':typeof v==='object'?JSON.stringify(v):String(v);
+  const label=k=>({writer:'Editor',magazineTitle:'Publication title',barcodeUpcIssn:'ISSN / barcode',pageCount:'Digital page count',languageTag:'Language',magazineCategory:'Category'}[k]||String(k||'').replace(/([a-z])([A-Z])/g,'$1 $2').replace(/^./,x=>x.toUpperCase()));
+  const selected=()=>[...panel.querySelectorAll('input[data-suggestion]:checked')].map(n=>n.dataset.suggestion);
+  const empty=v=>v==null||v===''||v===0||Array.isArray(v)&&!v.length||typeof v==='string'&&/^(unknown|unspecified|not specified|n\/?a)$/i.test(v.trim());
+  function controls(){start.disabled=busy||applying||starting||initial;stop.disabled=!busy||applying||starting;copy.disabled=!diagnostics;apply.disabled=busy||applying||!report?.preview||!selected().length;panel.querySelectorAll('input[data-suggestion]').forEach(n=>n.disabled=busy||applying||!report?.preview);}
+  async function request(path='',params={},method='GET'){
+    const timeout=new AbortController();const handle=setTimeout(()=>timeout.abort(),20000);try{const res=await fetch(endpoint+path+'?'+new URLSearchParams(params),{method,cache:'no-store',signal:timeout.signal});if(!res.ok){let msg=`HTTP ${res.status}`;try{const body=await res.json();msg=body.error||body.detail||msg;}catch{}throw new Error(msg);}return await res.json();}finally{clearTimeout(handle);}
   }
-  function showStatus(s) {
-    current=s;const total=Number(s.totalPages||0), done=(s.indexedPages||[]).length, warnings=(s.warningPages||[]).length;
-    progress.max=Math.max(1,total);progress.value=done;
-    status.textContent=total?`${done} / ${total} pages indexed · ${warnings} sparse-text page(s) · ${(s.recoveredPages||[]).length} recovered · ${s.extractionSeconds||0}s recorded extraction time${done===total?' · Complete':''}`:'Not indexed for the current source file.';
-    q('[data-index-page]').max=String(Math.max(1,total));
-    if(total&&done<total)message.textContent=[`Missing pages: ${(s.missingPages||[]).join(', ')}`,...(s.failedPages||[]).map(p=>`Failed page ${p.page}: ${p.error}`)].join('\n');
-    message.style.whiteSpace='pre-wrap';
+  function render(r){
+    if(metadataManagerItemId(r.item)!==metadataManagerItemId(item))throw new Error('Unexpected magazine response. Refresh the page.');
+    report=r;const changes=r.changes||[],held=r.held||[],ed=r.editorial||{},pub=r.publication||{};
+    q('[data-scan-revision]').textContent=r.revision||'Phase 4.6';q('[data-output]').hidden=false;
+    const metrics=q('[data-metrics]'), summary=q('[data-summary]');metrics.replaceChildren();summary.replaceChildren();
+    const metric=(name,n)=>{const box=el('div',null,'gv-scan-metric');box.append(el('small',name),el('strong',n));metrics.append(box);};
+    metric('Pages indexed',`${ed.indexedPages??pub.indexedPages??0}/${ed.totalPages??pub.totalPages??0}`);metric(r.preview?'Suggestions':'Fields saved',changes.length);metric('Retained / uncertain',held.length);metric('Interpretation',`${r.seconds??'—'}s`);metric('Featured candidates',ed.featuredCount??'—');metric('Mentioned candidates',ed.mentionedCount??'—');
+    summary.append(el('h4',r.preview?'Suggestions':'Applied changes'));
+    if(r.preview)summary.append(el('p','New fields are selected by default. Select existing fields only if the proposed replacement is better. Reviewed and locked fields are protected.','sub'));
+    if(!changes.length)summary.append(el('p','No supported changes found.','sub'));
+    for(const c of changes){const row=el('div',null,'gv-scan-suggestion'),head=el('label',null,'gv-scan-selection');if(r.preview){const check=el('input');check.type='checkbox';check.dataset.suggestion=c.field;check.checked=empty(c.before);check.addEventListener('change',controls);head.append(check);}head.append(el('strong',label(c.field)));row.append(head);const pair=el('div',null,'gv-scan-values');for(const [name,v] of [['Current',c.before],[r.preview?'Suggested':'Saved',c.after]]){const cell=el('div');cell.append(el('small',name),el('div',value(v),'gv-scan-value'));pair.append(cell);}row.append(pair,el('p',c.reason,'sub'));summary.append(row);}
+    if(held.length){const d=el('details',null,'gv-scan-held');d.append(el('summary',`Retained or uncertain fields (${held.length})`));for(const h of held){const txt=String(h),i=txt.indexOf(':');d.append(el('p',i>0?label(txt.slice(0,i))+': '+txt.slice(i+1).trim():txt,'sub'));}summary.append(d);}
+    if(ed.coverCandidates?.length)summary.append(el('p','Cover candidates (not artwork verification): '+ed.coverCandidates.map(c=>c.title).join(', '),'sub'));
+    diagnostics=[`Automatic Cataloging ${r.revision}`,`${changes.length} field(s) ${r.preview?'suggested (not saved)':'saved'} · ${r.seconds}s interpretation · ${held.length} held`,...changes.map(c=>`${c.field}: ${JSON.stringify(c.before)} → ${JSON.stringify(c.after)} (${c.reason})`),'','Retained or uncertain fields:',...held,'','Publication evidence:',JSON.stringify(pub,null,2),'','Editorial evidence:',JSON.stringify(ed,null,2)].join('\n');
+    q('[data-copy-fallback]').hidden=true;q('[data-copy-status]').textContent='';controls();
   }
-  async function refresh(){try{showStatus(await api());}catch(e){status.textContent=e.message;}}
-  function showText(page,text,source){const details=document.createElement('details');details.open=true;const summary=document.createElement('summary');summary.textContent=`Page ${page} · ${source}`;const body=document.createElement('pre');body.style.whiteSpace='pre-wrap';body.style.overflowWrap='anywhere';body.textContent=text||'(No readable text)';details.append(summary,body);results.append(details);}
-  // Job lifetime belongs to the server. Closing this panel stops polling only.
-  let jobPolling=false,jobTimer=null,lastResult='',lastState='';
-  async function jobRequest(params={},method='GET'){
-    const timeout=new AbortController();const timer=setTimeout(()=>timeout.abort(),15000);
-    try{const res=await fetch(endpoint+'/job?'+new URLSearchParams(params),{method,signal:timeout.signal,cache:'no-store'});
-      if(!res.ok){let msg=`HTTP ${res.status}`;try{const e=await res.json();msg=e.error||e.detail||msg;}catch{}throw new Error(msg);}return await res.json();}
-    finally{clearTimeout(timer);}
+  async function refreshIndex(){try{const s=await request();if(!panel.isConnected||busy)return;const total=Number(s.totalPages||0),done=(s.indexedPages||[]).length;progress.max=Math.max(1,total);progress.value=done;info.textContent=total?`${done} / ${total} pages indexed`:'Document not indexed. Scan Magazine will create the index.';}catch(e){info.textContent=e.message;}}
+  function showJob(j){
+    busy=j.state==='running';session.running=busy;jobId=j.jobId||'';controls();
+    if(j.state==='idle'){refreshIndex();return;}
+    progress.max=Math.max(1,j.totalPages||1);progress.value=j.indexed||0;
+    const eta=busy&&j.remainingSeconds!=null?` · ~${Math.ceil(j.remainingSeconds/60)} min remaining`:'';
+    info.textContent=`${j.indexed||0} / ${j.totalPages||0} pages indexed · ${j.seconds??0}s elapsed${eta}`;
+    active.textContent=[...(j.active||[]).map(p=>`Page ${p.page}: ${p.stage}`),...(j.failed||[]).map(p=>`Page ${p.page}: ${p.error}`)].join(' · ');
+    status.textContent=j.message||j.state;
+    if(j.state==='complete'&&j.report){const key=jobId+':'+String(j.report.preview===true);if(key!==seen){seen=key;render(j.report);}status.textContent=j.report.preview?`${j.report.changes.length} suggestions ready. Select fields to apply.`:`${j.report.changes.length} fields saved.`;}
+    else if(j.state!=='running'&&j.state!=='complete'){report=null;diagnostics=JSON.stringify(j,null,2);q('[data-output]').hidden=false;q('[data-summary]').textContent=j.message||j.state;q('[data-metrics]').replaceChildren();}
+    controls();
   }
-  function applyJob(j){
-    const running=j.state==='running';const observedRunning=lastState==='running';
-    busy=running;session.running=running;buttons.forEach(b=>b.disabled=running);
-    q('[data-index-workers]').disabled=running;q('[data-index-stop]').hidden=!running;
-    const legacy=['[data-scan-start]','[data-scan-stage]'].map(s=>dialog.querySelector(s)).filter(Boolean);
-    if(running&&lastState!=='running')legacy.forEach(b=>{b.dataset.indexWasDisabled=String(b.disabled);b.disabled=true;});
-    if(!running&&lastState==='running')legacy.forEach(b=>{b.disabled=b.dataset.indexWasDisabled==='true';delete b.dataset.indexWasDisabled;});
-    lastState=j.state;
-    if(j.state==='idle')return;
-    progress.max=Math.max(1,j.force?j.target:j.totalPages);progress.value=j.force?j.processed:j.indexed;
-    const eta=j.remainingSeconds==null?'':` · ~${Math.ceil(j.remainingSeconds/60)} min remaining`;
-    status.textContent=`${j.indexed} / ${j.totalPages} indexed · ${j.processed}/${j.target} attempted this run · ${j.pagesPerMinute} pages/min · ${j.seconds}s${eta}`;
-    const active=(j.active||[]).map(p=>`Page ${p.page}: ${p.stage}`);
-    const failed=(j.failed||[]).map(p=>`Page ${p.page}: ${p.error}`);
-    message.textContent=[j.message,...active,...(j.recovered?.length?[`Recovered pages: ${j.recovered.join(', ')}`]:[]),...(j.missing?.length?[`Missing pages: ${j.missing.join(', ')}`]:[]),...failed.map(s=>'Failed: '+s)].join('\n');message.style.whiteSpace='pre-wrap';
-    if(j.catalog)catalogStatus.textContent=j.message;
-    if(j.report&&j.jobId!==lastResult){lastResult=j.jobId;displayCatalogReport(j.report,observedRunning);}
-    else if(j.report&&j.catalog)catalogStatus.textContent=`Saved ${j.report.changes.length} field(s) · ${j.report.held.length} held · ${j.report.seconds}s interpretation.`;
-  }
-  async function pollJob(){
-    if(jobPolling||!panel.isConnected)return;jobPolling=true;
-    try{const j=await jobRequest();if(!panel.isConnected)return;applyJob(j);if(j.state==='running')jobTimer=setTimeout(pollJob,2000);else if(j.state==='idle')await refresh();}
-    catch(e){if(panel.isConnected){message.textContent=`Job status unavailable: ${e.message}. Retrying; server job is independent of this connection.`;jobTimer=setTimeout(pollJob,4000);}}
-    finally{jobPolling=false;}
-  }
-  async function run(force,catalogAfter=false){
-    if(busy||session.running){message.textContent='Another scan is active.';return;}
-    if(force&&!window.confirm('Re-extract every page? Existing indexed pages will be replaced only after each successful extraction.'))return;
-    busy=true;session.running=true;buttons.forEach(b=>b.disabled=true);message.textContent='Starting server indexing job…';
-    clearTimeout(jobTimer);
-    try{const j=await jobRequest({force:String(force),catalog:String(catalogAfter),replace:String(q('[data-catalog-replace]').checked),workers:q('[data-index-workers]').value},'POST');applyJob(j);}
-    catch(e){message.textContent=`Start response: ${e.message}. Checking whether the server accepted the job.`;}
-    finally{if(panel.isConnected){await pollJob();}}
-  }
-  q('[data-index-start]').onclick=()=>run(false);q('[data-index-force]').onclick=()=>run(true);
-  q('[data-index-stop]').onclick=async()=>{try{applyJob(await jobRequest({action:'stop'},'POST'));}catch(e){message.textContent=e.message;}await pollJob();};
-  q('[data-index-view]').onclick=async()=>{if(busy||session.running)return;results.replaceChildren();try{const p=await api({page:q('[data-index-page]').value});message.textContent=`${p.source} · ${p.width} × ${p.height} ${p.units} · ${p.seconds}s${p.warning?' · '+p.warning:''}`;showText(p.page,p.text,p.source);}catch(e){message.textContent=e.message;}};
-  q('[data-index-search]').onclick=async()=>{if(busy||session.running)return;results.replaceChildren();const term=q('[data-index-query]').value.trim();if(term.length<2||term.length>200){message.textContent='Enter 2–200 characters to search.';return;}try{const found=await api({q:term});message.textContent=`${found.matchingPages||0} matching pages (up to 100 shown)`;for(const p of found.hits||[])showText(p.page,p.snippet,p.source);}catch(e){message.textContent=e.message;}};
-  q('[data-index-query]').addEventListener('keydown',e=>{if(e.key==='Enter'){e.preventDefault();q('[data-index-search]').click();}});
-  let publicationReport='';
-  q('[data-publication-copy]').onclick=async()=>{
-    if(!publicationReport)return;
-    const previous=q('[data-publication-copy-fallback]');if(previous)previous.remove();
-    if(navigator.clipboard?.writeText){try{await navigator.clipboard.writeText(publicationReport);const notice=document.createElement('p');notice.dataset.publicationCopyFallback='1';notice.className='sub';notice.textContent='Evidence report copied.';q('[data-publication-results]').before(notice);return;}catch{/* HTTP or denied clipboard permission */}}
-    const fallback=document.createElement('div');fallback.dataset.publicationCopyFallback='1';fallback.className='gv-magscan-field';
-    const note=document.createElement('p');note.className='sub';note.textContent='Clipboard access is restricted. Press Ctrl+C to copy the selected complete report, or download it.';
-    const reportBox=document.createElement('textarea');reportBox.readOnly=true;reportBox.rows=14;reportBox.style.width='100%';reportBox.value=publicationReport;reportBox.setAttribute('aria-label','Complete publication evidence report');
-    const download=document.createElement('button');download.type='button';download.className='ghost';download.textContent='Download evidence report';
-    download.onclick=()=>{const url=URL.createObjectURL(new Blob([reportBox.value],{type:'text/plain;charset=utf-8'}));const link=document.createElement('a');link.href=url;link.download='GuideVault-publication-evidence.txt';fallback.append(link);link.click();link.remove();setTimeout(()=>URL.revokeObjectURL(url),1000);};
-    fallback.append(note,reportBox,download);q('[data-publication-results]').before(fallback);reportBox.focus();reportBox.select();
-    try{if(document.execCommand('copy'))note.textContent='Report copied. You can also copy the text below or download it.';}catch{/* selected text remains available */}
-  };
-  q('[data-publication-analyze]').onclick=async()=>{
-    if(busy||session.running)return;
-    const output=q('[data-publication-results]'), msg=q('[data-publication-status]'), copy=q('[data-publication-copy]');
-    q('[data-publication-copy-fallback]')?.remove();output.replaceChildren();copy.disabled=true;publicationReport='';busy=true;session.running=true;controller=new AbortController();session.controller=controller;
-    const legacy=['[data-scan-start]','[data-scan-stage]','[data-scan-close]'].map(s=>dialog.querySelector(s)).filter(Boolean);const previous=legacy.map(b=>b.disabled);legacy.forEach(b=>b.disabled=true);buttons.forEach(b=>b.disabled=true);
-    msg.textContent='Reading the saved document index…';
-    try{
-      const report=await api({publication:'true',partial:String(q('[data-index-partial]').checked)},'GET',controller.signal);
-      const fields=report.fields||[];const found=fields.filter(f=>(f.candidates||[]).length).length;const direct=fields.filter(f=>(f.candidates||[]).some(c=>c.support==='Direct or reviewed')).length;const conflicts=fields.filter(f=>f.status==='Conflicting evidence').length;
-      msg.textContent=`${report.indexedPages<report.totalPages?'PARTIAL EVIDENCE — ':''}${report.indexedPages}/${report.totalPages} indexed pages · ${found}/${fields.length} fields with evidence (${direct} direct or reviewed) · ${conflicts} conflicts · ${report.relatedIssues} related issues · ${report.seconds}s · No metadata changed`;
-      const lines=[`Publication Intelligence ${report.revision}`,msg.textContent];
-      for(const field of fields){
-        const section=document.createElement('details');section.style.margin='8px 0';section.open=field.status==='Conflicting evidence'||field.status==='Differs from current'||field.status==='Candidate';
-        const summary=document.createElement('summary');summary.textContent=`${field.label} — ${field.status}${field.locked?' · Locked':''}`;section.append(summary);
-        const current=document.createElement('p');current.className='sub';current.textContent=`Current: ${field.current||'—'}`;section.append(current);lines.push('',summary.textContent,current.textContent);
-        for(const c of field.candidates||[]){const value=document.createElement('strong');value.textContent=c.value+(c.support?' · '+c.support:'');section.append(value);lines.push('Candidate: '+value.textContent);
-          const ul=document.createElement('ul');for(const e of c.evidence||[]){const li=document.createElement('li');li.textContent=`${e.page?'Page '+e.page+' · ':''}${e.source}: ${e.evidence}`;ul.append(li);lines.push(li.textContent);}section.append(ul);}
-        if(!(field.candidates||[]).length){const empty=document.createElement('p');empty.className='sub';empty.textContent='No reliable candidate was found. Existing value retained; absence of evidence is not verification.';section.append(empty);}
-        output.append(section);
-      }
-      const signals=report.platformSignals||[];
-      if(signals.length){const d=document.createElement('details');const title=document.createElement('summary');title.textContent='Platform mentions (coverage signals, not primary-platform proof)';d.append(title);lines.push('',title.textContent);for(const signal of signals){const p=document.createElement('p');p.textContent=`${signal.platform}: pages ${signal.pages.join(', ')}`;d.append(p);lines.push(p.textContent);}output.append(d);}
-      for(const page of report.openingPages||[]){const d=document.createElement('details');const title=document.createElement('summary');title.textContent=`Indexed page ${page.page} · ${page.source}${page.warning?' · '+page.warning:''}`;d.append(title);const pre=document.createElement('pre');pre.style.whiteSpace='pre-wrap';pre.style.overflowWrap='anywhere';pre.textContent=page.text+(page.truncated?'\n[Excerpt truncated; use View page for full text.]':'');d.append(pre);output.append(d);lines.push('',title.textContent,pre.textContent);}
-      publicationReport=lines.join('\n');copy.disabled=false;
-    }catch(e){msg.textContent=e.message;}
-    finally{busy=false;session.running=false;session.controller=null;controller=null;buttons.forEach(b=>b.disabled=false);legacy.forEach((b,i)=>b.disabled=previous[i]);}
-  };
-  let editorialReport='';
-  q('[data-editorial-download]').onclick=()=>{if(!editorialReport)return;const url=URL.createObjectURL(new Blob([editorialReport],{type:'text/plain;charset=utf-8'}));const a=document.createElement('a');a.href=url;a.download='GuideVault-editorial-evidence.txt';panel.append(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(url),1000);};
-  q('[data-editorial-copy]').onclick=async()=>{
-    if(!editorialReport)return;const area=q('[data-editorial-report]');area.hidden=false;area.value=editorialReport;area.focus();area.select();
-    try{if(navigator.clipboard?.writeText){await navigator.clipboard.writeText(editorialReport);return;}}catch{}
-    try{document.execCommand('copy');}catch{}
-  };
-  q('[data-editorial-analyze]').onclick=async()=>{
-    if(busy||session.running)return;
-    const output=q('[data-editorial-results]'),msg=q('[data-editorial-status]'),copy=q('[data-editorial-copy]'),download=q('[data-editorial-download]'),area=q('[data-editorial-report]');
-    output.replaceChildren();copy.disabled=true;download.disabled=true;area.hidden=true;area.value='';editorialReport='';busy=true;session.running=true;controller=new AbortController();session.controller=controller;
-    const legacy=['[data-scan-start]','[data-scan-stage]','[data-scan-close]'].map(s=>dialog.querySelector(s)).filter(Boolean);const previous=legacy.map(b=>b.disabled);legacy.forEach(b=>b.disabled=true);buttons.forEach(b=>b.disabled=true);
-    msg.textContent='Analyzing indexed pages and LaunchBox titles…';
-    try{
-      const response=await fetch(endpoint+'/editorial?partial='+String(q('[data-index-partial]').checked),{signal:controller.signal});if(!response.ok){let error=`HTTP ${response.status}`;try{const data=await response.json();error=data.error||data.detail||error;}catch{}throw new Error(error);}
-      const report=await response.json();msg.textContent=`${report.indexedPages<report.totalPages?'PARTIAL EVIDENCE — ':''}${report.indexedPages}/${report.totalPages} pages · ${report.featuredCount} featured candidates · ${report.mentionedCount} reference-only · ${report.advertisingOnlyCount} advertising-only · ${report.seconds}s · No metadata changed`;
-      const lines=[`Editorial Intelligence ${report.revision}`,msg.textContent,`Eligible LaunchBox records: ${report.catalogGames}`,`Contents candidates (digital pages): ${(report.contentsPages||[]).join(', ')||'None'}`,`Possible advertising pages: ${(report.advertisingPages||[]).join(', ')||'None'}`,`Primary system candidate: ${report.primarySystemCandidate||'Unresolved'}`];
-      function group(title,rows,open=false){const d=document.createElement('details');d.open=open;const s=document.createElement('summary');s.textContent=`${title} (${rows.length})`;d.append(s);lines.push('',s.textContent);for(const row of rows){const p=document.createElement('p');p.style.whiteSpace='pre-wrap';p.style.overflowWrap='anywhere';p.textContent=row;d.append(p);lines.push(row);}output.append(d);}
-      const note=document.createElement('p');note.className='sub';note.textContent=`Contents candidates: ${(report.contentsPages||[]).join(', ')||'None'} · Primary system candidate: ${report.primarySystemCandidate||'Unresolved'}. All page references are digital unless explicitly labeled printed. Cover candidates are not confirmed cover subjects.`;output.append(note);
-      group('Cover candidates',(report.coverCandidates||[]).map(g=>`${g.title} — ${g.source}`),true);
-      const gameRow=g=>`${g.title} — ${g.kinds.join(', ')}\nDigital pages: ${g.pages.join(', ')}${g.editorialPages.length?' · Editorial candidates: '+g.editorialPages.join(', '):''}\nCatalog platforms: ${g.platforms.join(', ')||'Unknown'}\n${g.evidence.map(e=>`Page ${e.page} · ${e.kind}: ${e.evidence}`).join('\n')}`;
-      const games=report.games||[];
-      group('Featured game candidates',games.filter(g=>g.featured).map(gameRow),true);
-      group('Mentioned game candidates',games.filter(g=>!g.featured&&g.kinds.some(k=>k!=='Possible advertising')).map(gameRow));
-      group('Possible advertising only',games.filter(g=>g.kinds.every(k=>k==='Possible advertising')).map(gameRow));
-      group('Editorial headings and departments',(report.headings||[]).map(h=>`Digital page ${h.page} · ${h.kind} · ${h.source}: ${h.title}${h.printedPage?' · Printed page reference '+h.printedPage:''}`));
-      group('Excluded incidental candidates',(report.excluded||[]).map(g=>`${g.title} — ${g.reason} · Pages ${g.pages.join(', ')}`));
-      group('Platform evidence from unambiguous catalog titles',(report.platformSignals||[]).map(p=>`${p.platform} — ${p.featuredTitles} title(s): ${p.titles.join(', ')}`));
-      editorialReport=lines.join('\n');copy.disabled=false;download.disabled=false;
-    }catch(e){msg.textContent=e.message;}
-    finally{busy=false;session.running=false;session.controller=null;controller=null;buttons.forEach(b=>b.disabled=false);legacy.forEach((b,i)=>b.disabled=previous[i]);}
-  };
-  // One action: reuse or finish the index, then reconcile and save supported metadata.
-  let catalogReport='';
-  const catalogStatus=q('[data-catalog-status]'), catalogHistory=q('[data-catalog-history-results]');
-  function displayHistory(history){
-    catalogHistory.replaceChildren();q('[data-catalog-undo]').disabled=!history?.available;
-    for(const entry of history?.entries||[]){const d=document.createElement('details');const s=document.createElement('summary');s.textContent=`${new Date(entry.created).toLocaleString()} · ${entry.changes.length} change(s)${entry.undone?' · Undone':''}`;d.append(s);for(const change of entry.changes){const p=document.createElement('p');p.textContent=`${change.field}: ${JSON.stringify(change.before)} → ${JSON.stringify(change.after)} (${change.reason})`;d.append(p);}catalogHistory.append(d);}
-  }
-  async function catalogRequest(path='',method='GET',signal){
-    const res=await fetch(endpoint+'/catalog'+path,{method,signal});if(!res.ok){let msg=`HTTP ${res.status}`;try{const e=await res.json();msg=e.error||e.detail||msg;}catch{}throw new Error(msg);}return res.json();
-  }
-  function clearCatalogClientFields(changes){const key=metadataOverrideKey(item);const map=readClientMetadataOverrides();if(!map[key])return;for(const c of changes||[])delete map[key][c.field];delete map[key].metadataSource;writeClientMetadataOverrides(map);}
-  function displayCatalogReport(report,applyToClient=false){
-    if(metadataManagerItemId(report.item)!==metadataManagerItemId(item))throw new Error('Unexpected save response. Refresh to verify metadata.');
-    if(applyToClient){replaceItemInState(report.item);if(report.changes?.length)clearCatalogClientFields(report.changes);}
-    const lines=[`Automatic Cataloging ${report.revision}`,`${report.changes.length} field(s) saved · ${report.seconds}s interpretation · ${report.held.length} held`];
-    for(const c of report.changes)lines.push(`${c.field}: ${JSON.stringify(c.before)} → ${JSON.stringify(c.after)} (${c.reason})`);
-    lines.push('', 'Retained or uncertain fields:',...report.held,'','Publication evidence:',JSON.stringify(report.publication,null,2),'','Editorial evidence:',JSON.stringify(report.editorial,null,2));
-    catalogReport=lines.join('\n');q('[data-catalog-report]').value=catalogReport;q('[data-catalog-report]').hidden=false;q('[data-catalog-download]').disabled=false;
-    catalogStatus.textContent=`Saved ${report.changes.length} field(s) · ${report.held.length} retained or uncertain · ${report.seconds}s interpretation. Existing indexed pages reused. See report for details.`;
-    displayHistory(report.history);
-  }
-  q('[data-catalog-start]').onclick=()=>run(false,true);
-  q('[data-catalog-download]').onclick=()=>{if(!catalogReport)return;const url=URL.createObjectURL(new Blob([catalogReport],{type:'text/plain;charset=utf-8'}));const a=document.createElement('a');a.href=url;a.download='GuideVault-catalog-report.txt';panel.append(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(url),1000);};
-  async function refreshHistory(){try{displayHistory(await catalogRequest('/history'));}catch(e){catalogStatus.textContent=e.message;}}
-  q('[data-catalog-history]').onclick=()=>{if(!busy&&!session.running)refreshHistory();};
-  q('[data-catalog-undo]').onclick=async()=>{
-    if(busy||session.running||!window.confirm('Undo the most recent automatic catalog save? Later metadata edits will prevent undo.'))return;
-    busy=true;session.running=true;buttons.forEach(b=>b.disabled=true);q('[data-catalog-undo]').disabled=true;
-    const legacy=['[data-scan-start]','[data-scan-stage]','[data-scan-close]'].map(s=>dialog.querySelector(s)).filter(Boolean);const previous=legacy.map(b=>b.disabled);legacy.forEach(b=>b.disabled=true);
-    try{const result=await catalogRequest('/undo','POST');if(metadataManagerItemId(result.item)!==metadataManagerItemId(item))throw new Error('Unexpected undo response. Refresh to verify.');replaceItemInState(result.item);clearCatalogClientFields(result.history?.entries?.[0]?.changes);catalogStatus.textContent='Previous metadata restored. Refresh the page to reload all metadata views.';displayHistory(result.history);}
-    catch(e){catalogStatus.textContent=e.message;}
-    finally{busy=false;session.running=false;buttons.forEach(b=>b.disabled=false);legacy.forEach((b,i)=>b.disabled=previous[i]);await refreshHistory();}
-  };
-  refreshHistory();
-  pollJob();
+  async function poll(){if(polling||!panel.isConnected||applying||starting)return;polling=true;try{const j=await request('/job');if(!panel.isConnected)return;initial=false;showJob(j);if(busy)timer=setTimeout(poll,1800);}catch(e){status.textContent='Unable to retrieve scan status: '+e.message;timer=setTimeout(poll,4000);}finally{polling=false;}}
+  start.onclick=async()=>{if(busy||applying||starting||initial)return;starting=true;clearTimeout(timer);report=null;diagnostics='';seen='';q('[data-output]').hidden=true;busy=true;session.running=true;controls();status.textContent='Starting scan…';try{showJob(await request('/job',{catalog:'true',preview:'true',replace:'true',workers:'2'},'POST'));}catch(e){status.textContent='Start response: '+e.message+' — checking server status.';}finally{starting=false;controls();await poll();}};
+  stop.onclick=async()=>{if(!busy)return;status.textContent='Stopping scan…';try{showJob(await request('/job',{action:'stop'},'POST'));}catch(e){status.textContent=e.message;}await poll();};
+  copy.onclick=async()=>{if(!diagnostics)return;const fallback=q('[data-copy-fallback]'),note=q('[data-copy-status]');try{if(!navigator.clipboard?.writeText)throw new Error('Clipboard unavailable');await navigator.clipboard.writeText(diagnostics);note.textContent='Diagnostic output copied.';return;}catch{}fallback.hidden=false;fallback.value=diagnostics;fallback.focus();fallback.select();try{if(document.execCommand('copy')){fallback.hidden=true;note.textContent='Diagnostic output copied.';return;}}catch{}note.textContent='Clipboard unavailable. Press Ctrl+C to copy the selected output.';};
+  apply.onclick=async()=>{const fields=selected();if(!report?.preview||!fields.length||busy||applying)return;if(!window.confirm(`Apply ${fields.length} selected metadata suggestion(s)?`))return;applying=true;session.running=true;controls();status.textContent='Applying selected suggestions…';clearTimeout(timer);try{const r=await request('/job',{action:'apply',jobId,fields:fields.join(',')},'POST');if(metadataManagerItemId(r.item)!==metadataManagerItemId(item)||r.preview!==false)throw new Error('Unexpected apply response.');const key=metadataOverrideKey(item),map=readClientMetadataOverrides();if(map[key]){for(const c of r.changes||[])delete map[key][c.field];delete map[key].metadataSource;writeClientMetadataOverrides(map);}replaceItemInState(r.item);seen=jobId+':false';render(r);status.textContent=`Applied ${r.changes.length} selected field(s).`;}catch(e){report=null;status.textContent='Apply could not be confirmed: '+e.message+' Refresh metadata or scan again.';}finally{applying=false;session.running=false;controls();}};
+  controls();poll();
 }
 
 function gvMagazineScanDialog(items, fromDetail = false, inlineHost = null) {
@@ -18871,7 +18748,7 @@ function gvMagazineScanDialog(items, fromDetail = false, inlineHost = null) {
   const q = s => dialog.querySelector(s);
   const session = { controller:null, running:false, rows:[], dialog, inline:!!inlineHost, itemId:metadataManagerItemId(items[0]) };
   gvMagazineScanSession = session;
-  if (inlineHost && items.length === 1) gvAttachDocumentIndex(dialog, session, items[0]);
+  if (inlineHost && items.length === 1) { dialog.replaceChildren(); gvAttachDocumentIndex(dialog, session, items[0]); return; }
   function close() { if (session.running) return; if (inlineHost) gvDisposeInlineMagazineScan(); else dialog.close(); }
   if (inlineHost) {
     q('[data-scan-close]').textContent = 'Back to Metadata';

@@ -7,6 +7,35 @@
   <link rel="icon" type="image/x-icon" href="/assets/favicon.ico?v=0.9.228" />
   <link rel="shortcut icon" type="image/x-icon" href="/assets/favicon.ico?v=0.9.228" />
   <link rel="stylesheet" href="/styles.css?v=1.3.2-controlled-v1&amp;rev=launchbox-magazine-1&amp;bulk=publication-actions-v1&amp;mm=workspace-v1&amp;mmimport=v1&amp;magscan=v4.2&amp;magscantab=v1&amp;magoverview=v1&amp;magdetailpolish=v1&amp;formatui=v1&amp;libraryfileui=v1" />
+<style id="gv-magazine-scan-workspace-v1">
+#detailMagazineScanHost .gv-scan-workspace{display:grid;gap:12px;min-width:0;padding:0}
+#detailMagazineScanHost .gv-scan-card{border:1px solid var(--border,rgba(139,157,205,.25));border-radius:12px;padding:16px;background:var(--panel,rgba(128,145,190,.055));min-width:0}
+#detailMagazineScanHost .gv-scan-card[hidden],#detailMagazineScanHost [hidden]{display:none!important}
+#detailMagazineScanHost .gv-scan-heading{display:flex;justify-content:space-between;align-items:baseline;gap:8px;flex-wrap:wrap}
+#detailMagazineScanHost h2,#detailMagazineScanHost h3{margin:0 0 10px}
+#detailMagazineScanHost .gv-scan-heading small,#detailMagazineScanHost .gv-scan-metric small,#detailMagazineScanHost .gv-scan-values small{opacity:.75;font-size:.8rem}
+#detailMagazineScanHost .gv-scan-actions{display:flex;flex-wrap:wrap;gap:8px;margin:10px 0 16px}
+#detailMagazineScanHost .gv-scan-status{font-weight:600;overflow-wrap:anywhere}
+#detailMagazineScanHost progress{width:100%;height:10px;display:block;margin:10px 0}
+#detailMagazineScanHost .gv-scan-metrics{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,125px),1fr));gap:8px;margin:10px 0 16px}
+#detailMagazineScanHost .gv-scan-metric{display:flex;flex-direction:column;gap:4px;border:1px solid var(--border,rgba(139,157,205,.22));border-radius:8px;padding:10px}
+#detailMagazineScanHost .gv-scan-metric strong{font-size:1.18rem;font-variant-numeric:tabular-nums}
+#detailMagazineScanHost .gv-scan-suggestion{border-top:1px solid var(--border,rgba(139,157,205,.22));padding:12px 0}
+#detailMagazineScanHost .gv-scan-selection{display:flex;align-items:center;gap:8px;margin:0 0 8px}
+#detailMagazineScanHost .gv-scan-selection input{width:auto;margin:0;flex:none}
+#detailMagazineScanHost .gv-scan-values{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}
+#detailMagazineScanHost .gv-scan-values>div{min-width:0;padding:8px;background:rgba(128,145,190,.06);border-radius:6px}
+#detailMagazineScanHost .gv-scan-value{overflow-wrap:anywhere;white-space:pre-wrap;font-size:.88rem;max-height:150px;overflow:auto;margin-top:4px}
+#detailMagazineScanHost .gv-scan-held{border-top:1px solid var(--border,rgba(139,157,205,.22));padding-top:12px;margin-top:12px;overflow-wrap:anywhere}
+#detailMagazineScanHost .gv-scan-held summary{cursor:pointer;font-weight:600}
+#detailMagazineScanHost [data-copy-fallback]{width:100%;box-sizing:border-box;font-family:monospace;resize:vertical}
+#detailMagazineScanHost [data-active]:empty,#detailMagazineScanHost [data-copy-status]:empty{display:none}
+body.colorscape-active #detailMagazineScanHost .gv-scan-card{background:linear-gradient(135deg,rgba(var(--colorscape-rgb),.16),rgba(var(--colorscape-rgb),.045));border-color:rgba(var(--colorscape-rgb),.42)}
+body.colorscape-active #detailMagazineScanHost .gv-scan-metric,body.colorscape-active #detailMagazineScanHost .gv-scan-suggestion,body.colorscape-active #detailMagazineScanHost .gv-scan-held{border-color:rgba(var(--colorscape-rgb),.30)}
+body.colorscape-active #detailMagazineScanHost .gv-scan-values>div{background:rgba(var(--colorscape-rgb),.09)}
+body.colorscape-active #detailMagazineScanHost progress,body.colorscape-active #detailMagazineScanHost input[type=checkbox]{accent-color:rgb(var(--colorscape-rgb))}
+@media(max-width:600px){#detailMagazineScanHost .gv-scan-values{grid-template-columns:1fr}}
+</style>
 </head>
 <body class="right-collapsed auth-locked">
   <section id="loginView" class="login-view" aria-labelledby="loginTitle">
@@ -3668,6 +3697,6 @@
   </dialog>
 
 
-  <script src="/app.js?v=1.3.2-controlled-v1&amp;rev=launchbox-magazine-1&amp;bulk=publication-actions-v1&amp;mm=workspace-v1&amp;mmsections=v1&amp;mmfields=v1&amp;mmimport=v1&amp;magscan=v7.2.2&amp;documentindex=v8-phase4.6&amp;cleanup=library-ui-v1&amp;magscantab=v1&amp;magapply=v1&amp;magoverview=v1&amp;magdetailpolish=v1&amp;formatui=v1&amp;libraryfileui=v1"></script>
+  <script src="/app.js?v=1.3.2-controlled-v1&amp;rev=launchbox-magazine-1&amp;bulk=publication-actions-v1&amp;mm=workspace-v1&amp;mmsections=v1&amp;mmfields=v1&amp;mmimport=v1&amp;magscan=v7.2.2&amp;documentindex=v8-phase4.6&amp;cleanup=library-ui-v1&amp;scanworkspace=v1&amp;magscantab=v1&amp;magapply=v1&amp;magoverview=v1&amp;magdetailpolish=v1&amp;formatui=v1&amp;libraryfileui=v1"></script>
 </body>
 </html>
