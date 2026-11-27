@@ -18683,7 +18683,7 @@ function gvOpenInlineMagazineScan() {
 // v8 Phase 1: independent persistent extraction and search; legacy metadata scan remains unchanged.
 function gvAttachDocumentIndex(dialog,session,item) {
   const panel=document.createElement('section');panel.className='gv-magscan-content gv-scan-workspace';
-  panel.innerHTML=`<section class="gv-scan-card"><div class="gv-scan-heading"><h2>Scan magazine metadata</h2><small data-scan-revision>Phase 4.6</small></div>
+  panel.innerHTML=`<section class="gv-scan-card"><div class="gv-scan-heading"><h2>Scan magazine metadata</h2><small data-scan-revision>Phase 4.6.2</small></div>
     <div class="gv-scan-actions"><button type="button" class="primary" data-start>Scan Magazine</button><button type="button" class="ghost" data-stop disabled>Stop Scan</button><button type="button" class="ghost" data-copy disabled>Copy Output</button><button type="button" class="primary" data-apply disabled>Apply Suggestions</button></div>
     <p class="gv-scan-status" data-status role="status">Ready to scan. No metadata is saved until you apply suggestions.</p><progress data-progress value="0" max="1" aria-label="Scan progress"></progress><p class="sub" data-progress-info aria-live="polite">Checking document index…</p><p class="sub" data-active></p></section>
     <section class="gv-scan-card" data-output hidden><h3>Output summary</h3><div class="gv-scan-metrics" data-metrics></div><div data-summary></div><p class="sub" data-copy-status role="status"></p><textarea data-copy-fallback hidden readonly rows="10" aria-label="Diagnostic output"></textarea></section>`;
@@ -18694,6 +18694,13 @@ function gvAttachDocumentIndex(dialog,session,item) {
   const el=(tag,text,cls)=>{const n=document.createElement(tag);if(text!=null)n.textContent=String(text);if(cls)n.className=cls;return n;};
   const value=v=>Array.isArray(v)?v.join(', ')||'—':v==null||v===''?'—':typeof v==='object'?JSON.stringify(v):String(v);
   const label=k=>({writer:'Editor',magazineTitle:'Publication title',barcodeUpcIssn:'ISSN / barcode',pageCount:'Digital page count',languageTag:'Language',magazineCategory:'Category'}[k]||String(k||'').replace(/([a-z])([A-Z])/g,'$1 $2').replace(/^./,x=>x.toUpperCase()));
+  const scanValues=(c,preview)=>{
+    const list=['featuredGames','mentionedGames','featuredPlatforms','specialFeatures'].includes(c.field);
+    const before=Array.isArray(c.before)?c.before:[];
+    const after=Array.isArray(c.after)?c.after:[];
+    if(list&&Array.isArray(c.after)&&before.every((v,i)=>v===after[i]))return [['Existing entries retained',`${before.length}`],[preview?'Proposed additions':'Added',after.slice(before.length)]];
+    return [['Current',c.before],[preview?'Suggested':'Saved',c.after]];
+  };
   const selected=()=>[...panel.querySelectorAll('input[data-suggestion]:checked')].map(n=>n.dataset.suggestion);
   const empty=v=>v==null||v===''||v===0||Array.isArray(v)&&!v.length||typeof v==='string'&&/^(unknown|unspecified|not specified|n\/?a)$/i.test(v.trim());
   function controls(){start.disabled=busy||applying||starting||initial;stop.disabled=!busy||applying||starting;copy.disabled=!diagnostics;apply.disabled=busy||applying||!report?.preview||!selected().length;panel.querySelectorAll('input[data-suggestion]').forEach(n=>n.disabled=busy||applying||!report?.preview);}
@@ -18703,14 +18710,14 @@ function gvAttachDocumentIndex(dialog,session,item) {
   function render(r){
     if(metadataManagerItemId(r.item)!==metadataManagerItemId(item))throw new Error('Unexpected magazine response. Refresh the page.');
     report=r;const changes=r.changes||[],held=r.held||[],ed=r.editorial||{},pub=r.publication||{};
-    q('[data-scan-revision]').textContent=r.revision||'Phase 4.6';q('[data-output]').hidden=false;
+    q('[data-scan-revision]').textContent=r.revision||'Phase 4.6.2';q('[data-output]').hidden=false;
     const metrics=q('[data-metrics]'), summary=q('[data-summary]');metrics.replaceChildren();summary.replaceChildren();
     const metric=(name,n)=>{const box=el('div',null,'gv-scan-metric');box.append(el('small',name),el('strong',n));metrics.append(box);};
     metric('Pages indexed',`${ed.indexedPages??pub.indexedPages??0}/${ed.totalPages??pub.totalPages??0}`);metric(r.preview?'Suggestions':'Fields saved',changes.length);metric('Retained / uncertain',held.length);metric('Interpretation',`${r.seconds??'—'}s`);metric('Featured candidates',ed.featuredCount??'—');metric('Mentioned candidates',ed.mentionedCount??'—');
     summary.append(el('h4',r.preview?'Suggestions':'Applied changes'));
-    if(r.preview)summary.append(el('p','New fields are selected by default. Select existing fields only if the proposed replacement is better. Reviewed and locked fields are protected.','sub'));
+    if(r.preview)summary.append(el('p','New fields are selected by default. Game, platform and feature lists only gain entries; select additions to apply them. Existing summaries, reviewed and locked fields are preserved.','sub'));
     if(!changes.length)summary.append(el('p','No supported changes found.','sub'));
-    for(const c of changes){const row=el('div',null,'gv-scan-suggestion'),head=el('label',null,'gv-scan-selection');if(r.preview){const check=el('input');check.type='checkbox';check.dataset.suggestion=c.field;check.checked=empty(c.before);check.addEventListener('change',controls);head.append(check);}head.append(el('strong',label(c.field)));row.append(head);const pair=el('div',null,'gv-scan-values');for(const [name,v] of [['Current',c.before],[r.preview?'Suggested':'Saved',c.after]]){const cell=el('div');cell.append(el('small',name),el('div',value(v),'gv-scan-value'));pair.append(cell);}row.append(pair,el('p',c.reason,'sub'));summary.append(row);}
+    for(const c of changes){const row=el('div',null,'gv-scan-suggestion'),head=el('label',null,'gv-scan-selection');if(r.preview){const check=el('input');check.type='checkbox';check.dataset.suggestion=c.field;check.checked=empty(c.before);check.addEventListener('change',controls);head.append(check);}head.append(el('strong',label(c.field)));row.append(head);const pair=el('div',null,'gv-scan-values');for(const [name,v] of scanValues(c,r.preview)){const cell=el('div');cell.append(el('small',name),el('div',value(v),'gv-scan-value'));pair.append(cell);}row.append(pair,el('p',c.reason,'sub'));summary.append(row);}
     if(held.length){const d=el('details',null,'gv-scan-held');d.append(el('summary',`Retained or uncertain fields (${held.length})`));for(const h of held){const txt=String(h),i=txt.indexOf(':');d.append(el('p',i>0?label(txt.slice(0,i))+': '+txt.slice(i+1).trim():txt,'sub'));}summary.append(d);}
     if(ed.coverCandidates?.length)summary.append(el('p','Cover candidates (not artwork verification): '+ed.coverCandidates.map(c=>c.title).join(', '),'sub'));
     diagnostics=[`Automatic Cataloging ${r.revision}`,`${changes.length} field(s) ${r.preview?'suggested (not saved)':'saved'} · ${r.seconds}s interpretation · ${held.length} held`,...changes.map(c=>`${c.field}: ${JSON.stringify(c.before)} → ${JSON.stringify(c.after)} (${c.reason})`),'','Retained or uncertain fields:',...held,'','Publication evidence:',JSON.stringify(pub,null,2),'','Editorial evidence:',JSON.stringify(ed,null,2)].join('\n');
