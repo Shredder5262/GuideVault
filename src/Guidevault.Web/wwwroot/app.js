@@ -18711,11 +18711,22 @@ function gvAttachDocumentIndex(dialog, session, item) {
   q('[data-index-search]').onclick=async()=>{if(busy||session.running)return;results.replaceChildren();const term=q('[data-index-query]').value.trim();if(term.length<2||term.length>200){message.textContent='Enter 2–200 characters to search.';return;}try{const found=await api({q:term});message.textContent=`${found.matchingPages||0} matching pages (up to 100 shown)`;for(const p of found.hits||[])showText(p.page,p.snippet,p.source);}catch(e){message.textContent=e.message;}};
   q('[data-index-query]').addEventListener('keydown',e=>{if(e.key==='Enter'){e.preventDefault();q('[data-index-search]').click();}});
   let publicationReport='';
-  q('[data-publication-copy]').onclick=async()=>{try{await navigator.clipboard.writeText(publicationReport);q('[data-publication-status]').textContent+=' · Report copied';}catch{q('[data-publication-status]').textContent='Clipboard unavailable; select and copy the visible evidence.';}};
+  q('[data-publication-copy]').onclick=async()=>{
+    if(!publicationReport)return;
+    const previous=q('[data-publication-copy-fallback]');if(previous)previous.remove();
+    if(navigator.clipboard?.writeText){try{await navigator.clipboard.writeText(publicationReport);const notice=document.createElement('p');notice.dataset.publicationCopyFallback='1';notice.className='sub';notice.textContent='Evidence report copied.';q('[data-publication-results]').before(notice);return;}catch{/* HTTP or denied clipboard permission */}}
+    const fallback=document.createElement('div');fallback.dataset.publicationCopyFallback='1';fallback.className='gv-magscan-field';
+    const note=document.createElement('p');note.className='sub';note.textContent='Clipboard access is restricted. Press Ctrl+C to copy the selected complete report, or download it.';
+    const reportBox=document.createElement('textarea');reportBox.readOnly=true;reportBox.rows=14;reportBox.style.width='100%';reportBox.value=publicationReport;reportBox.setAttribute('aria-label','Complete publication evidence report');
+    const download=document.createElement('button');download.type='button';download.className='ghost';download.textContent='Download evidence report';
+    download.onclick=()=>{const url=URL.createObjectURL(new Blob([reportBox.value],{type:'text/plain;charset=utf-8'}));const link=document.createElement('a');link.href=url;link.download='GuideVault-publication-evidence.txt';fallback.append(link);link.click();link.remove();setTimeout(()=>URL.revokeObjectURL(url),1000);};
+    fallback.append(note,reportBox,download);q('[data-publication-results]').before(fallback);reportBox.focus();reportBox.select();
+    try{if(document.execCommand('copy'))note.textContent='Report copied. You can also copy the text below or download it.';}catch{/* selected text remains available */}
+  };
   q('[data-publication-analyze]').onclick=async()=>{
     if(busy||session.running)return;
     const output=q('[data-publication-results]'), msg=q('[data-publication-status]'), copy=q('[data-publication-copy]');
-    output.replaceChildren();copy.disabled=true;publicationReport='';busy=true;session.running=true;controller=new AbortController();session.controller=controller;
+    q('[data-publication-copy-fallback]')?.remove();output.replaceChildren();copy.disabled=true;publicationReport='';busy=true;session.running=true;controller=new AbortController();session.controller=controller;
     const legacy=['[data-scan-start]','[data-scan-stage]','[data-scan-close]'].map(s=>dialog.querySelector(s)).filter(Boolean);const previous=legacy.map(b=>b.disabled);legacy.forEach(b=>b.disabled=true);buttons.forEach(b=>b.disabled=true);
     msg.textContent='Reading the saved document index…';
     try{
