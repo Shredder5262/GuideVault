@@ -73,3 +73,6 @@ cache/
 
 # Local patch staging and installer outputs (not project source)
 /Cleanup-GuideVault-Local-Artifacts.ps1
+
+# Local patch installers
+/update/
