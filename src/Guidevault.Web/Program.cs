@@ -3069,7 +3069,7 @@ app.MapGet("/api/items/{id}/document-index/job", (HttpRequest request,string id)
     if(!VisibleLibraryItems(request,cache.GetItemsSnapshot()).Any(i=>i.Id==id&&i.Kind=="Magazine"))return Results.NotFound();
     return Results.Ok(GuidevaultDocumentIndex.JobStatus(id)??new{state="idle"});
 });
-app.MapPost("/api/items/{id}/document-index/job", (HttpRequest request,string id,string? action,bool? force,bool? catalog,bool? replace,int? workers,bool? preview,string? jobId,string? fields) =>
+app.MapPost("/api/items/{id}/document-index/job", (HttpRequest request,string id,string? action,bool? force,bool? catalog,bool? replace,int? workers,bool? preview,string? jobId,string? fields,string? mode) =>
 {
     if(CurrentGuidevaultUser(request)?.IsAdmin!=true)return (IResult)Results.StatusCode(403);
     var item=VisibleLibraryItems(request,cache.GetItemsSnapshot()).FirstOrDefault(i=>i.Id==id&&i.Kind=="Magazine");
@@ -3086,16 +3086,18 @@ app.MapPost("/api/items/{id}/document-index/job", (HttpRequest request,string id
             catch(Exception ex){app.Logger.LogError(ex,"Unable to apply magazine suggestions");return Results.Problem("Unable to confirm metadata save. Refresh metadata before retrying.");}
         }
     }
+    if(mode is not null&&(mode is not ("add" or "replace")||preview!=true||catalog!=true))return Results.BadRequest(new{error="Update mode requires a catalog preview (add or replace)."});
     if(!File.Exists(item.Path))return Results.BadRequest(new{error="Source magazine is unavailable."});
     if(!GuidevaultLibraryIoGate.TryBeginArchiveWrite(out var lease,out var message,allowConcurrentArchiveReads:true)||lease is null)return Results.Conflict(new{error=message});
     // Capture only application services, immutable identifiers and options; never a request or its cancellation token.
-    var replaceExisting=replace==true;
+    var replaceExisting=mode is null?replace==true:mode=="replace";
+    var scanMode=mode??"legacy";
     async Task<object> Save(CancellationToken token)
     {
         var fresh=cache.GetItemsSnapshot().FirstOrDefault(i=>i.Id==id&&i.Kind=="Magazine")??throw new InvalidOperationException("Magazine no longer exists.");
         if(GuidevaultDocumentIndex.CatalogFingerprint(fresh)!=GuidevaultDocumentIndex.CatalogFingerprint(item))throw new InvalidOperationException("Source changed during indexing; cataloging cancelled.");
         var expected=metadataStore.GetDocumentCatalogOverride(id);fresh=metadataStore.ApplyOverride(fresh);
-        var plan=await GuidevaultDocumentIndex.CatalogAsync(dataRoot,fresh,cache.GetItemsSnapshot(),launchBoxIntegrationStore.GetSnapshot().Games,replaceExisting,token);
+        var plan=await GuidevaultDocumentIndex.CatalogAsync(dataRoot,fresh,cache.GetItemsSnapshot(),launchBoxIntegrationStore.GetSnapshot().Games,replaceExisting,token,scanMode);
         await GuidevaultDocumentIndex.SaveCatalogReportAsync(dataRoot,fresh,plan,token);
         token.ThrowIfCancellationRequested();
         if(preview==true)
@@ -3110,13 +3112,13 @@ app.MapPost("/api/items/{id}/document-index/job", (HttpRequest request,string id
                 var applied=metadataStore.CommitDocumentCatalog(dataRoot,latest,expected,selection);
                 cache.ReplaceCachedItem(applied,persist:false);
                 RecordSystemEvent("Metadata","Magazine cataloged",$"Applied {selection.Changes.Count} selected field(s) for {latest.Title}.","api",id,latest.Title);
-                return new{item=applied,selection.Revision,selection.Changes,selection.Held,selection.Publication,selection.Editorial,selection.Seconds,preview=false,history=metadataStore.DocumentCatalogHistory(dataRoot,id)};
+                return new{item=applied,selection.Revision,selection.Mode,selection.Changes,selection.Held,selection.Publication,selection.Editorial,selection.Seconds,preview=false,history=metadataStore.DocumentCatalogHistory(dataRoot,id)};
             });
-            return new{item=fresh,plan.Revision,plan.Changes,plan.Held,plan.Publication,plan.Editorial,plan.Seconds,preview=true,history=metadataStore.DocumentCatalogHistory(dataRoot,id)};
+            return new{item=fresh,plan.Revision,plan.Mode,plan.Changes,plan.Held,plan.Publication,plan.Editorial,plan.Seconds,preview=true,history=metadataStore.DocumentCatalogHistory(dataRoot,id)};
         }
         var updated=metadataStore.CommitDocumentCatalog(dataRoot,fresh,expected,plan);
         if(plan.Changes.Count>0){cache.ReplaceCachedItem(updated,persist:false);RecordSystemEvent("Metadata","Magazine cataloged",$"Indexed catalog updated {plan.Changes.Count} field(s) for {fresh.Title}.","api",id,fresh.Title);}
-        return new{item=updated,plan.Revision,plan.Changes,plan.Held,plan.Publication,plan.Editorial,plan.Seconds,history=metadataStore.DocumentCatalogHistory(dataRoot,id)};
+        return new{item=updated,plan.Revision,plan.Mode,plan.Changes,plan.Held,plan.Publication,plan.Editorial,plan.Seconds,history=metadataStore.DocumentCatalogHistory(dataRoot,id)};
     }
     try{return Results.Ok(GuidevaultDocumentIndex.StartJob(dataRoot,item,force==true,catalog==true,workers??2,lease,catalog==true?Save:null,app.Lifetime.ApplicationStopping,app.Logger));}
     catch(Exception ex){lease.Dispose();app.Logger.LogError(ex,"Unable to start document index job");return Results.Problem("Unable to start document index job.");}

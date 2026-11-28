@@ -707,10 +707,18 @@ public static class GuidevaultDocumentIndex
     }
     // A strategy list is different from a platform-qualified card: the section header
     // establishes editorial importance, and the page number can be at the right edge.
+    private static Line[] RawContentsRows(IEnumerable<Line> lines)=>lines.Where(l=>l.Height>0&&l.Width>0&&l.Text.Trim().Length is >0 and <=180).OrderBy(l=>l.Y).ThenBy(l=>l.X).ToArray();
     private static List<ContentsCard> ReadStrategyContents(int page,IEnumerable<Line> lines,double height,int totalPages,Dictionary<string,List<EditorialTitle>> lookup,IReadOnlyList<PageRecord> indexed,string source)
     {
+        var raw=RawContentsRows(lines);
+        var separate=ReadStrategyRows(page,raw,height,totalPages,lookup,indexed,source);
+        if(StrongContents(separate))return separate;
+        return ReadStrategyRows(page,ContentsRows(raw,height),height,totalPages,lookup,indexed,source);
+    }
+    private static List<ContentsCard> ReadStrategyRows(int page,Line[] rows,double height,int totalPages,Dictionary<string,List<EditorialTitle>> lookup,IReadOnlyList<PageRecord> indexed,string source)
+    {
         if(height<=0)return new();
-        var rows=ContentsRows(lines,height);var cards=new List<ContentsCard>();
+        var cards=new List<ContentsCard>();
         var headers=rows.Where(r=>Regex.IsMatch(ContentsCompact(r.Text),@"^(?:strategy|strategies|strategyguides|features|mainfeatures|reviews|previews)$")).ToArray();
         foreach(var header in headers)
         {
@@ -722,7 +730,7 @@ public static class GuidevaultDocumentIndex
             {
                 string raw=row.Text.Trim();int number=0;
                 if(Regex.IsMatch(raw,@"^\d+$"))continue;
-                var n=local.Where(r=>Regex.IsMatch(r.Text.Trim(),@"^\d{1,3}$")&&r.X>=row.X+row.Width-height*.005&&Math.Abs(r.Y+r.Height/2-row.Y-row.Height/2)<=height*.009).OrderBy(r=>r.X).FirstOrDefault();
+                var n=local.Where(r=>Regex.IsMatch(r.Text.Trim(),@"^\d{1,3}$")&&r.X>=row.X+row.Width-height*.005&&Math.Abs(r.Y+r.Height/2-row.Y-row.Height/2)<=Math.Min(height*.009,Math.Max(row.Height,r.Height)*.55)).OrderBy(r=>Math.Abs(r.Y+r.Height/2-row.Y-row.Height/2)).ThenBy(r=>r.X).FirstOrDefault();
                 if(n is not null)int.TryParse(n.Text.Trim(),out number);
                 else
                 {
@@ -762,7 +770,13 @@ public static class GuidevaultDocumentIndex
     }
     private static List<ContentsCard> ReadTipContents(int page,IEnumerable<Line> lines,double height,int totalPages,string source)
     {
-        if(height<=0)return new();var sourceLines=lines.ToArray();var rows=ContentsRows(sourceLines,height);var numericRows=sourceLines.Concat(rows).Where(r=>Regex.IsMatch(r.Text.Trim(),@"^\d{1,3}$")).OrderBy(r=>r.Y).ToArray();var cards=new List<ContentsCard>();
+        var raw=RawContentsRows(lines);var separate=ReadTipRows(page,raw,raw,height,totalPages,source);
+        if(separate.Count>=3)return separate;
+        return ReadTipRows(page,ContentsRows(raw,height),raw,height,totalPages,source);
+    }
+    private static List<ContentsCard> ReadTipRows(int page,Line[] rows,Line[] sourceLines,double height,int totalPages,string source)
+    {
+        if(height<=0)return new();var numericRows=sourceLines.Concat(rows).Where(r=>Regex.IsMatch(r.Text.Trim(),@"^\d{1,3}$")).OrderBy(r=>r.Y).ToArray();var cards=new List<ContentsCard>();
         foreach(var row in rows)
         {
             string raw=row.Text.Trim();int number=0;
@@ -786,6 +800,29 @@ public static class GuidevaultDocumentIndex
         }
         var ordered=cards.GroupBy(c=>c.PrintedPage).Select(g=>g.OrderByDescending(c=>c.Platforms.Length).ThenByDescending(c=>c.PrintedTitle.Length).First()).ToList();
         return ordered.Count>=3&&ordered.Zip(ordered.Skip(1),(a,b)=>a.PrintedPage<b.PrintedPage).All(x=>x)?ordered:new();
+    }
+    private static bool OneContentsEdit(string a,string b)
+    {
+        if(a.Length<8||b.Length<8||Math.Abs(a.Length-b.Length)>1||a==b)return false;
+        if(a.Length>b.Length)(a,b)=(b,a);
+        int i=0,j=0,edits=0;
+        while(i<a.Length&&j<b.Length)
+        {
+            if(a[i]==b[j]){i++;j++;continue;}
+            if(++edits>1)return false;
+            if(a.Length==b.Length)i++;
+            j++;
+        }
+        return edits+(a.Length-i)+(b.Length-j)==1;
+    }
+    private static bool RelatedContentsSpelling(string printed,string candidate)
+    {
+        var a=EditorialTokens(printed);var b=EditorialTokens(candidate);
+        if(!a.Where(SequelToken).Select(NumberedToken).SequenceEqual(b.Where(SequelToken).Select(NumberedToken)))return false;
+        if(OneContentsEdit(ContentsCompact(printed),ContentsCompact(candidate)))return true;
+        // Omitted introductory words are allowed only with a full title independently
+        // recognized near the article, and never with a changed sequel number.
+        return a.Length>=2&&ContentsCompact(printed).Length>=8&&b.Length>a.Length&&b.Skip(b.Length-a.Length).SequenceEqual(a);
     }
     private static bool StrongContents(IReadOnlyCollection<ContentsCard> cards)=>cards.Count>=3&&cards.Where(c=>c.Title is not null&&!c.Department).Select(c=>c.Title).Distinct(StringComparer.OrdinalIgnoreCase).Count()>=3&&cards.Count(c=>c.Title is not null||c.Department)*2>=cards.Count;
     public static async Task<object> EditorialAsync(string root, LibraryItem item, IEnumerable<GuidevaultLaunchBoxGame> games, CancellationToken token, bool allowPartial=false)
@@ -1063,6 +1100,38 @@ public static class GuidevaultDocumentIndex
             var h=hits[i];if(h.Kind!="Reference"||h.Contents||!continuationPages.Contains(h.Page)||advertisingPages.Contains(h.Page))continue;
             if(articleAnchors.Any(a=>a.Page==h.Page-1&&string.Equals(a.Title,h.Title,StringComparison.OrdinalIgnoreCase)))hits[i]=h with{Kind="Feature"};
         }
+        var contentsReconciliation=new List<object>();
+        if(contentsAuthoritative)
+        {
+            var catalogTitles=tocLookup.Values.SelectMany(x=>x).GroupBy(t=>TitleKey(EditorialTokens(t.Title))).ToDictionary(g=>g.Key,g=>g.ToArray(),StringComparer.Ordinal);
+            for(int i=0;i<structuredContents.Count;i++)
+            {
+                token.ThrowIfCancellationRequested();var card=structuredContents[i];if(card.Department)continue;
+                int next=i+1<structuredContents.Count?structuredContents[i+1].PrintedPage:card.PrintedPage+8;
+                // Printed pagination may differ from digital pagination. Use a bounded
+                // search window, not an asserted offset, and require exact canonical text.
+                int first=Math.Max(card.ContentsPage+1,card.PrintedPage-2),last=Math.Min(manifest.TotalPages,Math.Min(card.PrintedPage+8,next+5));
+                bool Interior( EditorialHit h)=>h.Page>=first&&h.Page<=last&&!h.Contents&&!h.Cover&&!advertisingPages.Contains(h.Page)&&h.Kind is not ("Possible advertising" or "Reader letters" or "Catalog listing" or "Cover artwork credit")&&ContainsTitle(h.Evidence,h.Title);
+                if(card.Title is null)
+                {
+                    var candidates=hits.Where(h=>!h.Contents&&RelatedContentsSpelling(card.PrintedTitle,h.Title)&&(Interior(h)||h.Page==1&&h.Cover&&h.Kind=="Cover reference"&&ContainsTitle(h.Evidence,h.Title)))
+                        .GroupBy(h=>TitleKey(EditorialTokens(h.Title))).Where(g=>catalogTitles.ContainsKey(g.Key)&&(!card.Platforms.Any(p=>p!="*")||catalogTitles[g.Key].Any(t=>card.Platforms.Contains(t.Platform,StringComparer.OrdinalIgnoreCase))))
+                        .Where(g=>g.Any(Interior)||g.Any(h=>OneContentsEdit(ContentsCompact(card.PrintedTitle),ContentsCompact(h.Title))&&h.Page==1&&h.Cover)).ToArray();
+                    if(candidates.Length==1)
+                    {
+                        var match=candidates[0].First();card=card with{Title=match.Title};
+                        contentsReconciliation.Add(new{printedTitle=card.PrintedTitle,title=card.Title,printedPage=card.PrintedPage,reason="Unique catalog title with exact cover or nearby interior evidence",evidence=candidates[0].Select(h=>new{h.Page,h.Evidence}).Distinct().Take(6).ToArray()});
+                    }
+                }
+                if(card.Title is not null&&card.Platforms.Length==0&&catalogTitles.TryGetValue(TitleKey(EditorialTokens(card.Title)),out var editions))
+                {
+                    var possible=editions.Select(t=>t.Platform).Where(Meaningful).Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
+                    var supported=possible.Length==1?possible:hits.Where(h=>string.Equals(h.Title,card.Title,StringComparison.OrdinalIgnoreCase)&&Interior(h)).SelectMany(h=>h.ExplicitPlatforms??Array.Empty<string>()).Where(p=>possible.Contains(p,StringComparer.OrdinalIgnoreCase)).Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
+                    if(supported.Length>0)card=card with{Platforms=supported};
+                }
+                structuredContents[i]=card;
+            }
+        }
         foreach(var card in structuredContents.Where(c=>c.Title is not null&&!c.Department))contentsLinks.Add((card.Title!,card.ContentsPage,card.PrintedPage));
         var offsetVotes=contentsLinks.SelectMany(link=>hits.Where(h=>h.Page>link.ContentsPage&&!h.Contents&&!h.Cover&&h.Title==link.Title&&h.Kind is not ("Possible advertising" or "Reader letters" or "Catalog listing")&&Math.Abs(h.Page-link.PrintedPage)<=8).Select(h=>new{link.Title,Offset=h.Page-link.PrintedPage})).Distinct().GroupBy(x=>x.Offset).Select(g=>new{offset=g.Key,count=g.Select(x=>x.Title).Distinct().Count()}).OrderByDescending(x=>x.count).ToArray();
         int? printedOffset=offsetVotes.Length>0&&offsetVotes[0].count>=2&&(offsetVotes.Length==1||offsetVotes[0].count>offsetVotes[1].count)?offsetVotes[0].offset:null;
@@ -1271,7 +1340,7 @@ public static class GuidevaultDocumentIndex
         var platformSignals=groups.SelectMany(g=>g.supportedPlatforms.Select(platform=>new{platform,g.title})).GroupBy(g=>g.platform,StringComparer.OrdinalIgnoreCase).Select(g=>new{platform=g.Key,featuredTitles=g.Count(),titles=g.Select(x=>x.title).ToArray()}).OrderByDescending(g=>g.featuredTitles).ToArray();
         string? primary=guidePlatform??reviewPlatform??(!Regex.IsMatch(item.PlatformFocus??"",@"multi[ -]?platform",RegexOptions.IgnoreCase)&&platformSignals.Length>0&&platformSignals[0].featuredTitles>=2&&(platformSignals.Length==1||platformSignals[0].featuredTitles>=platformSignals[1].featuredTitles*2+1)?platformSignals[0].platform:null);
         if(Fingerprint(item)!=fp)throw new InvalidOperationException("Source changed during analysis. Re-index the document.");
-        return new{revision="v8.0-phase3.8",contentsAuthoritative,mainArticleRanges,tocDiagnostics,articleIdentityCorrections,excluded,indexedPages=pages.Count,totalPages=manifest.TotalPages,catalogGames=gameCount,guidePlatform,issueScope,profilePages,structures,articleRegions,contentsMapping,printedOffset,visionStatus,visionDiagnostics,contentsPages,advertisingPages,coverCandidates,primarySystemCandidate=primary,platformSignals,featuredCount=groups.Count(g=>g.featured),mentionedCount=groups.Count(g=>!g.featured&&g.kinds.Any(k=>k!="Possible advertising")),advertisingOnlyCount=groups.Count(g=>g.kinds.All(k=>k=="Possible advertising")),games=groups,headings,seconds=Math.Round(timer.Elapsed.TotalSeconds,2)};
+        return new{revision="v8.0-phase3.9",contentsAuthoritative,mainArticleRanges,tocDiagnostics,contentsReconciliation,articleIdentityCorrections,excluded,indexedPages=pages.Count,totalPages=manifest.TotalPages,catalogGames=gameCount,guidePlatform,issueScope,profilePages,structures,articleRegions,contentsMapping,printedOffset,visionStatus,visionDiagnostics,contentsPages,advertisingPages,coverCandidates,primarySystemCandidate=primary,platformSignals,featuredCount=groups.Count(g=>g.featured),mentionedCount=groups.Count(g=>!g.featured&&g.kinds.Any(k=>k!="Possible advertising")),advertisingOnlyCount=groups.Count(g=>g.kinds.All(k=>k=="Possible advertising")),games=groups,headings,seconds=Math.Round(timer.Elapsed.TotalSeconds,2)};
     }
     private sealed record CoverVisionResult(string Status,double Height,Line[] Lines);
     private static async Task<CoverVisionResult> CoverVisionAsync(string dir,LibraryItem item,CancellationToken token,int page=1)
@@ -1307,10 +1376,11 @@ public static class GuidevaultDocumentIndex
 
     // Phase 4: derive a conservative save plan from the existing read-only reports.
     public sealed record CatalogChange(string Field, JsonElement Before, JsonElement After, string Reason);
-    public sealed record CatalogPlan(string Revision, string Fingerprint, ItemMetadataUpdate Update, List<CatalogChange> Changes, List<string> Held, JsonElement Publication, JsonElement Editorial, double Seconds);
+    public sealed record CatalogPlan(string Revision, string Fingerprint, ItemMetadataUpdate Update, List<CatalogChange> Changes, List<string> Held, JsonElement Publication, JsonElement Editorial, double Seconds, string Mode="legacy");
     public static string CatalogFingerprint(LibraryItem item) => Fingerprint(item);
-    public static async Task<CatalogPlan> CatalogAsync(string root, LibraryItem item, IReadOnlyList<LibraryItem> library, IEnumerable<GuidevaultLaunchBoxGame> games, bool replace, CancellationToken token)
+    public static async Task<CatalogPlan> CatalogAsync(string root, LibraryItem item, IReadOnlyList<LibraryItem> library, IEnumerable<GuidevaultLaunchBoxGame> games, bool replace, CancellationToken token, string mode="legacy")
     {
+        bool replaceMode=mode=="replace", addMode=mode=="add";
         var clock=Stopwatch.StartNew(); var fp=Fingerprint(item);
         var publication=JsonSerializer.SerializeToElement(await PublicationAsync(root,item,library,token),Json);
         var editorial=JsonSerializer.SerializeToElement(await EditorialAsync(root,item,games,token),Json);
@@ -1328,14 +1398,27 @@ public static class GuidevaultDocumentIndex
         void Enrich(string field,IEnumerable<string> candidates,string reason)
         {
             var existing=A(current,field);
+            if(replaceMode)
+            {
+                var unique=new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                var replacement=candidates.Where(Meaningful).Where(x=>unique.Add(ListKey(field,x))).ToArray();
+                // Absence of evidence is not evidence that the list is empty.
+                if(replacement.Length==0){if(existing.Length>0)held.Add(field+": no supported replacement candidates; existing list retained");return;}
+                var prior=existing.Select(x=>x.Trim()).ToHashSet(StringComparer.OrdinalIgnoreCase);
+                var next=replacement.Select(x=>x.Trim()).ToHashSet(StringComparer.OrdinalIgnoreCase);
+                int added=replacement.Count(x=>!prior.Contains(x.Trim()));
+                int removed=existing.Count(x=>!next.Contains(x.Trim()));
+                Offer(field,replacement,$"Replace entire list ({added} added, {removed} removed) — "+reason);
+                return;
+            }
             var seen=new HashSet<string>(existing.Select(x=>ListKey(field,x)),StringComparer.OrdinalIgnoreCase);
             // A game already featured should not be added as a mere mention. Existing overlap is retained.
             if(field=="mentionedGames")foreach(var title in A(current,"featuredGames"))seen.Add(ListKey(field,title));
             var additions=candidates.Where(Meaningful).Where(x=>seen.Add(ListKey(field,x))).ToArray();
             if(additions.Length==0)return;
-            Offer(field,existing.Concat(additions).ToArray(),"Add "+additions.Length.ToString(CultureInfo.InvariantCulture)+" new candidate(s); preserve existing entries — "+reason);
+            Offer(field,existing.Concat(additions).ToArray(),"Add "+additions.Length.ToString(CultureInfo.InvariantCulture)+" new candidate(s); preserve existing entries — "+reason,appendList:true);
         }
-        void Offer(string field,object value,string reason,bool canReplace=true)
+        void Offer(string field,object value,string reason,bool canReplace=true,bool appendList=false)
         {
             var after=JsonSerializer.SerializeToElement(value,Json); if(!Nonempty(after))return;
             var before=current.TryGetProperty(field,out var old)?old:JsonSerializer.SerializeToElement<object?>(null,Json);
@@ -1344,7 +1427,12 @@ public static class GuidevaultDocumentIndex
             if(MetadataLockHelper.IsLocked(item.MetadataLocks,field)){held.Add(field+": protected metadata (field locked) — "+reason);return;}
             bool dateEnrichment=field=="coverDate"&&canReplace&&before.ValueKind==JsonValueKind.String&&Regex.IsMatch(before.GetString()??"",@"^(?:19|20)\d{2}$")&&after.ValueKind==JsonValueKind.String&&Regex.IsMatch(after.GetString()??"",@"^[\p{L}]+\s+"+Regex.Escape(before.GetString()??"")+"$");
             bool emptyPlaceholder=before.ValueKind==JsonValueKind.String&&Regex.IsMatch(before.GetString()??"",@"^\s*(?:unknown|unspecified|not specified|n/?a)\s*$",RegexOptions.IgnoreCase);
-            if((Nonempty(before)||before.ValueKind==JsonValueKind.String&&!string.IsNullOrWhiteSpace(before.GetString()))&&(manual||!canReplace||!replace&&!dateEnrichment&&!emptyPlaceholder)){held.Add(field+": existing value retained ("+(manual?"manual edit source":!replace?"replacement option disabled":"insufficient replacement evidence")+") — "+reason);return;}
+            bool populated=Nonempty(before)||before.ValueKind==JsonValueKind.String&&!string.IsNullOrWhiteSpace(before.GetString());
+            // Explicit replacement of an unreviewed record may correct manually entered data.
+            // Reviewed, locked and manual-only records and field locks still take precedence above.
+            bool manualProtected=manual&&!replaceMode&&!(appendList&&addMode);
+            bool replacementDisabled=!(appendList&&addMode)&&(addMode&&!emptyPlaceholder||!replace&&!dateEnrichment&&!emptyPlaceholder);
+            if(populated&&(manualProtected||!canReplace||replacementDisabled)){held.Add(field+": existing value retained ("+(manualProtected?"manual edit source":replacementDisabled?"replacement option disabled":"insufficient replacement evidence")+") — "+reason);return;}
             values[field]=value;changes.Add(new(field,before,after,reason));
         }
         var conflicting=new HashSet<string>(StringComparer.OrdinalIgnoreCase);
@@ -1362,7 +1450,7 @@ public static class GuidevaultDocumentIndex
             // Compound publishing credits can be truncated by OCR; preserve the evidence, not the incomplete name.
             if(key=="publisher"&&Regex.IsMatch(val,@"\b(?:in conjunction with|in association with|in cooperation with|in partnership with|together with|on behalf of)\b",RegexOptions.IgnoreCase|RegexOptions.CultureInvariant))
             {held.Add(key+": compound publishing credit retained for review — "+val);continue;}
-            if(key=="pageCount"){if(int.TryParse(val,out var count))Offer(key,count,"Indexed digital page count",false);}
+            if(key=="pageCount"){if(int.TryParse(val,out var count))Offer(key,count,"Indexed digital page count",replaceMode);}
             else Offer(key,val,support+" — "+val,direct||key=="region"&&repeatedContact);
         }
         var gameRows=editorial.GetProperty("games").EnumerateArray().ToArray();
@@ -1431,7 +1519,8 @@ public static class GuidevaultDocumentIndex
             else summary+=(primary.Length>0?" focuses on the "+primary:" covers video games")+".";
             if(contentTitles.Length>0)summary+=" Game coverage includes "+JoinNatural(contentTitles)+".";
             if(departments.Length>0)summary+=" Regular sections include "+JoinNatural(departments)+".";
-            Offer("summary",summary,"Fill empty summary from indexed editorial evidence; existing summary retained",false);
+            bool summaryReplacement=replaceMode&&contentsAuthoritative&&!mainRanges.Any(g=>S(g,"title").Length==0&&!g.GetProperty("department").GetBoolean());
+            Offer("summary",summary,summaryReplacement?"Replace summary using validated contents and editorial evidence":"Fill empty summary from indexed editorial evidence; existing summary retained",summaryReplacement);
         }
         if(Fingerprint(item)!=fp)throw new InvalidOperationException("Source changed during cataloging. Re-index first.");
         // Enforce alias locks too, using the existing metadata store filter. Report any removed change.
@@ -1439,8 +1528,8 @@ public static class GuidevaultDocumentIndex
         update=MetadataLockHelper.FilterLockedFields(update,item.MetadataLocks);
         var filtered=JsonSerializer.SerializeToElement(update,Json);
         foreach(var c in changes.Where(c=>!filtered.TryGetProperty(c.Field,out var v)||v.ValueKind==JsonValueKind.Null).ToArray()){changes.Remove(c);held.Add(c.Field+": protected by field alias lock");}
-        if(changes.Count>0&&!manual)update=update with{MetadataSource="Magazine document index v8.0 Phase 4.7"};
-        return new CatalogPlan("v8.0-phase4.8",fp,update,changes,held,publication,editorial,Math.Round(clock.Elapsed.TotalSeconds,2));
+        if(changes.Count>0&&!manual)update=update with{MetadataSource="Magazine document index v8.0 Phase 4.9.1"};
+        return new CatalogPlan("v8.0-phase4.9.1",fp,update,changes,held,publication,editorial,Math.Round(clock.Elapsed.TotalSeconds,2),mode);
     }
     public static async Task SaveCatalogReportAsync(string root,LibraryItem item,CatalogPlan plan,CancellationToken token)
     {
@@ -1509,6 +1598,7 @@ public static class GuidevaultDocumentIndex
     }
     public static CatalogPlan SelectCatalogChanges(CatalogPlan plan,string[] fields,LibraryItem item)
     {
+        if(MetadataStatusHelper.Normalize(item.MetadataStatus) is MetadataStatusHelper.Reviewed or MetadataStatusHelper.Locked or MetadataStatusHelper.ManualOnly)throw new InvalidOperationException("Magazine metadata is protected. Scan again after changing review status.");
         var wanted=fields.ToHashSet(StringComparer.Ordinal);
         var changes=plan.Changes.Where(c=>wanted.Contains(c.Field)).ToList();
         if(changes.Count==0||changes.Count!=wanted.Count)throw new InvalidOperationException("Selection is not part of this scan preview.");
