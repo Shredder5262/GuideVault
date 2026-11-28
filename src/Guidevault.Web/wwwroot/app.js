@@ -18667,6 +18667,7 @@ function gvDisposeInlineMagazineScan() {
   const session = gvMagazineScanSession;
   if (!session?.inline) return;
   session.controller?.abort();
+  session.contentIntelligenceController?.abort();
   session.dialog.remove();
   gvMagazineScanSession = null;
 }
@@ -18707,6 +18708,81 @@ function gvPublicationVerificationRows(report) {
     else if(direct.length||manifest){status='Detected — not proposed';}
     return {field:f.field,label:({region:'Country / Region',magazineTitle:'Magazine Title',writer:'Editor'}[f.field]||f.label||f.field),current:f.current,candidates,evidence,source,state,status,reasons,locked:!!f.locked,indexOnly,change};
   });
+}
+
+// Content Intelligence review: read-only and scoped to the selected indexed issue.
+function gvAttachContentIntelligence(dialog, session, item) {
+  const panel = document.createElement('section');
+  panel.className = 'gv-magscan-content gv-scan-workspace';
+  panel.innerHTML = `<section class="gv-scan-card"><div class="gv-scan-heading"><h2>Content Intelligence</h2><small>v4.8 · Review only</small></div>
+    <p class="sub">Find game profiles and article navigation using the completed document index. No game links or metadata are saved.</p>
+    <div class="gv-scan-actions"><button type="button" class="primary" data-ci-run>Analyze Content</button><button type="button" class="ghost" data-ci-stop disabled>Stop</button><button type="button" class="ghost" data-ci-refresh>Load Last Review</button></div>
+    <label><input type="checkbox" data-ci-visual> Recover missing headings with targeted OCR (PDF / CBZ)</label>
+    <p class="sub" role="status" data-ci-status>Loading saved review…</p>
+    <div class="gv-scan-metrics" data-ci-metrics></div>
+    <div data-ci-tools hidden><label>Show <select data-ci-view><option value="games">Game matches</option><option value="navigation_leads">Sections</option><option value="unresolved_evidence">Unresolved evidence</option></select></label> <label>Filter <input type="search" data-ci-search placeholder="Game, platform, page…"></label></div>
+    <div data-ci-results></div></section>`;
+  dialog.append(panel);
+  const q = s => panel.querySelector(s);
+  const endpoint = `/api/items/${encodeURIComponent(metadataManagerItemId(item))}/content-intelligence`;
+  const status = q('[data-ci-status]'), run = q('[data-ci-run]'), stop = q('[data-ci-stop]'), refresh = q('[data-ci-refresh]');
+  const visual = q('[data-ci-visual]'), view = q('[data-ci-view]'), search = q('[data-ci-search]');
+  const format = String(item.format || item.Format || '').toUpperCase();
+  visual.disabled = !['PDF','CBZ','ZIP'].includes(format);
+  let report = null, controller = null, busy = false;
+  const node = (tag, value, cls) => { const n=document.createElement(tag); if(value!=null)n.textContent=String(value); if(cls)n.className=cls; return n; };
+  const confidence = v => ({platform_supported_review:'Platform-supported · review',section_inferred_review:'Inferred · review',unresolved:'Unresolved'}[v]||String(v||'Unverified'));
+  const pageLink = n => {
+    if (!Number.isInteger(n) || n < 1 || n > (report?.total_pages||0)) return node('span','—');
+    const a=node('a',`Page ${n}`); const id=encodeURIComponent(metadataManagerItemId(item));
+    a.href=format==='PDF'?`/api/items/${id}/file#page=${n}`:`/api/items/${id}/page/${n-1}?ci=${encodeURIComponent(report.source_fingerprint)}`;
+    a.target='_blank';a.rel='noopener noreferrer';return a;
+  };
+  function evidenceDetails(e) {
+    const d=node('details');d.append(node('summary',`${e.printed_title||'Untitled evidence'} · ${confidence(e.confidence)}`));
+    d.append(pageLink(e.digital_page),node('p',e.content_kind||'Unclassified','sub'));
+    const candidates=(e.catalog_candidates||[]).map(c=>`${c.title} — ${c.platform}${c.platform_conflict?' (platform conflict)':''}`);
+    if(candidates.length)d.append(node('p','Catalog possibilities: '+candidates.join('; '),'sub'));
+    const pre=node('pre',JSON.stringify(e.evidence||e,null,2));pre.style.whiteSpace='pre-wrap';pre.style.overflowWrap='anywhere';d.append(pre);return d;
+  }
+  function render() {
+    const out=q('[data-ci-results]'), metrics=q('[data-ci-metrics]');out.replaceChildren();metrics.replaceChildren();q('[data-ci-tools]').hidden=!report;
+    if(!report)return;
+    for(const [label,count] of [['Game leads',report.games?.length],['Sections',report.navigation_leads?.length],['Unresolved',report.unresolved_evidence?.length]]){
+      const m=node('div');m.append(node('strong',count??0),node('small',label));metrics.append(m);
+    }
+    const key=view.value, filter=search.value.trim().toLowerCase();
+    const records=(report[key]||[]).filter(r=>!filter||JSON.stringify(r).toLowerCase().includes(filter));
+    out.append(node('p',`${records.length} result(s) · All coverage and page ranges are unverified.`, 'sub'));
+    for(const r of records){
+      const row=node('div',null,'gv-scan-suggestion');
+      if(key==='games'){
+        row.append(node('strong',r.title),node('p',`${r.platform} · ${confidence(r.confidence)}`,'sub'));
+        for(const e of r.evidence||[])row.append(evidenceDetails(e));
+      }else if(key==='unresolved_evidence')row.append(evidenceDetails(r));
+      else {
+        const d=node('details');d.append(node('summary',r.heading||r.title||r.printed_title||r.section_title||'Section navigation lead'));
+        const start=r.digital_start?.digital??r.digital_page;d.append(pageLink(start));
+        const pre=node('pre',JSON.stringify(r,null,2));pre.style.whiteSpace='pre-wrap';pre.style.overflowWrap='anywhere';d.append(pre);row.append(d);
+      }
+      out.append(row);
+    }
+  }
+  function controls(){run.disabled=busy;stop.disabled=!busy;refresh.disabled=busy;visual.disabled=busy||!['PDF','CBZ','ZIP'].includes(format);}
+  async function request(method){
+    if(busy)return;busy=true;controller=new AbortController();session.contentIntelligenceController=controller;controls();
+    status.textContent=method==='POST'?'Analyzing indexed magazine (up to 120 seconds)…':'Loading saved review…';
+    try{
+      const response=await fetch(endpoint+(method==='POST'?`?visual=${visual.checked}`:''),{method,cache:'no-store',signal:controller.signal});
+      const data=await response.json();if(!response.ok)throw new Error(data.error||data.detail||`HTTP ${response.status}`);
+      if(!panel.isConnected)return;
+      report=data.report||null;render();status.textContent=report?`Review ready · ${report.label||''}${data.seconds!=null?' · '+data.seconds+'s':''}. No metadata saved.`:'No saved Content Intelligence review for the current source.';
+    }catch(e){if(panel.isConnected)status.textContent=e.name==='AbortError'?'Request stopped. Load Last Review to check the saved result.':e.message;}
+    finally{busy=false;controller=null;session.contentIntelligenceController=null;controls();}
+  }
+  run.onclick=()=>{if(!session.running)void request('POST');else status.textContent='Wait for the current metadata scan to finish.';};
+  stop.onclick=()=>controller?.abort();refresh.onclick=()=>void request('GET');view.onchange=render;search.oninput=render;
+  controls();void request('GET');
 }
 
 function gvAttachDocumentIndex(dialog,session,item) {
@@ -18827,6 +18903,7 @@ function gvAttachDocumentIndex(dialog,session,item) {
     }finally{applying=false;session.running=false;controls();}
   };
   controls();poll();
+  gvAttachContentIntelligence(dialog,session,item);
 }
 
 function gvMagazineScanDialog(items, fromDetail = false, inlineHost = null) {

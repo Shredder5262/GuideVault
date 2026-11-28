@@ -1800,6 +1800,8 @@ public static class GuidevaultDocumentIndex
     public sealed record CatalogChange(string Field, JsonElement Before, JsonElement After, string Reason);
     public sealed record CatalogPlan(string Revision, string Fingerprint, ItemMetadataUpdate Update, List<CatalogChange> Changes, List<string> Held, JsonElement Publication, JsonElement Editorial, double Seconds, string Mode="legacy");
     public static string CatalogFingerprint(LibraryItem item) => Fingerprint(item);
+    public static string ContentIntelligenceKey(LibraryItem item) => Hash(item.Id) + "/" + Fingerprint(item);
+    public static string ContentIntelligenceDirectory(string root, LibraryItem item, string fingerprint) => DirectoryFor(root, item, fingerprint);
     public static async Task<CatalogPlan> CatalogAsync(string root, LibraryItem item, IReadOnlyList<LibraryItem> library, IEnumerable<GuidevaultLaunchBoxGame> games, bool replace, CancellationToken token, string mode="legacy")
     {
         bool replaceMode=mode=="replace", addMode=mode=="add";

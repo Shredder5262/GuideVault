@@ -76,3 +76,10 @@ cache/
 
 # Local patch installers
 /update/
+
+# Local source-review artifacts, never part of releases.
+/.guidevault-patch-backups/
+/publish-test/
+/build-errors.txt
+/SOURCE-REVIEW-MANIFEST.json
+/REVIEW-PACKAGE-README.txt

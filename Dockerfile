@@ -26,6 +26,7 @@ ENV PAGEQUEST_LIBRARY_PATH=/data/library
 
 RUN apt-get update \
     && apt-get install -y --no-install-recommends poppler-utils tesseract-ocr tesseract-ocr-eng \
+    && command -v pdfinfo \
     && command -v pdftoppm \
     && command -v pdftocairo \
     && command -v tesseract \
@@ -38,8 +39,14 @@ RUN apt-get update \
     && /opt/guidevault-vision/bin/pip install --no-cache-dir torch==2.7.1+cpu torchvision==0.22.1+cpu --index-url https://pypi.org/simple --extra-index-url https://download.pytorch.org/whl/cpu \
     && /opt/guidevault-vision/bin/pip install --no-cache-dir transformers==4.57.2 pillow==11.3.0 \
     && rm -rf /var/lib/apt/lists/*
-COPY vision/cover_ocr.py /opt/guidevault-vision/cover_ocr.py
+COPY vision/cover_ocr.py vision/content_intelligence.py /opt/guidevault-vision/
 RUN /opt/guidevault-vision/bin/python -m py_compile /opt/guidevault-vision/cover_ocr.py && test "$(/opt/guidevault-vision/bin/python /opt/guidevault-vision/cover_ocr.py --self-test)" = "guidevault-vision-deep-v7.1.3"
+# Exercise the packaged CLI and verify OCR dependencies without downloading weights.
+RUN /opt/guidevault-vision/bin/python -m py_compile /opt/guidevault-vision/content_intelligence.py \
+    && /opt/guidevault-vision/bin/python /opt/guidevault-vision/content_intelligence.py --help \
+    && /opt/guidevault-vision/bin/python -c "from PIL import Image; import torch, torchvision, transformers; from transformers import Florence2ForConditionalGeneration, Qwen2ForCausalLM" \
+    && tesseract --list-langs | grep -Fx eng \
+    && test "$(/opt/guidevault-vision/bin/python /opt/guidevault-vision/cover_ocr.py --semantic-self-test)" = "guidevault-semantic-v7.2.2"
 RUN mkdir -p /data/library
 
 COPY --from=build /app/publish .

@@ -3063,6 +3063,33 @@ app.MapGet("/api/items/{id}/document-index", async (HttpRequest request, string 
     catch (InvalidOperationException ex) { return Results.BadRequest(new { error = ex.Message }); }
     catch (Exception) { return Results.Problem("Could not read the document index."); }
 });
+// Content Intelligence: single-issue, admin-only review; separate from metadata cataloging.
+app.MapGet("/api/items/{id}/content-intelligence", async (HttpRequest request, string id) =>
+{
+    if (CurrentGuidevaultUser(request)?.IsAdmin != true) return (IResult)Results.StatusCode(403);
+    var item = VisibleLibraryItems(request, cache.GetItemsSnapshot()).FirstOrDefault(i => i.Id == id && i.Kind == "Magazine");
+    if (item is null) return Results.NotFound();
+    try { return Results.Ok(new { report = await GuidevaultContentIntelligence.LatestAsync(dataRoot, item, request.HttpContext.RequestAborted) }); }
+    catch (OperationCanceledException) { return Results.StatusCode(499); }
+    catch (InvalidOperationException ex) { return Results.Conflict(new { error = ex.Message }); }
+    catch (Exception ex) { app.Logger.LogError(ex, "Content Intelligence review load failed"); return Results.Problem("Could not load the review report."); }
+});
+app.MapPost("/api/items/{id}/content-intelligence", async (HttpRequest request, string id, bool? visual) =>
+{
+    if (CurrentGuidevaultUser(request)?.IsAdmin != true) return (IResult)Results.StatusCode(403);
+    var item = VisibleLibraryItems(request, cache.GetItemsSnapshot()).FirstOrDefault(i => i.Id == id && i.Kind == "Magazine");
+    if (item is null) return Results.NotFound();
+    if (!GuidevaultLibraryIoGate.TryBeginArchiveWrite(out var lease, out var message, allowConcurrentArchiveReads: true) || lease is null)
+        return Results.Conflict(new { error = message });
+    using (lease)
+    {
+        try { return Results.Ok(await GuidevaultContentIntelligence.ScanAsync(dataRoot, item, launchBoxIntegrationPath, visual == true, request.HttpContext.RequestAborted)); }
+        catch (OperationCanceledException) { return Results.StatusCode(499); }
+        catch (InvalidOperationException ex) { return Results.Conflict(new { error = ex.Message }); }
+        catch (Exception ex) { app.Logger.LogError(ex, "Content Intelligence scan failed"); return Results.Problem("Content Intelligence scan failed."); }
+    }
+});
+
 app.MapGet("/api/items/{id}/document-index/job", (HttpRequest request,string id) =>
 {
     if(CurrentGuidevaultUser(request)?.IsAdmin!=true)return (IResult)Results.StatusCode(403);

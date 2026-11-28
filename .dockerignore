@@ -19,3 +19,16 @@
 *.suo
 *.tmp
 *.log
+
+# Local source-review artifacts, never part of releases.
+/.guidevault-patch-backups/
+/publish-test/
+/build-errors.txt
+/SOURCE-REVIEW-MANIFEST.json
+/REVIEW-PACKAGE-README.txt
+guidevault-data/
+library/
+.env
+.env.*
+docker-compose.yml
+**/*.zip
