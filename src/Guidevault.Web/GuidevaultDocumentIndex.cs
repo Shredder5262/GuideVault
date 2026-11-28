@@ -713,7 +713,8 @@ public static class GuidevaultDocumentIndex
         var raw=RawContentsRows(lines);
         var separate=ReadStrategyRows(page,raw,height,totalPages,lookup,indexed,source);
         if(StrongContents(separate))return separate;
-        return ReadStrategyRows(page,ContentsRows(raw,height),height,totalPages,lookup,indexed,source);
+        var joined=ReadStrategyRows(page,ContentsRows(raw,height),height,totalPages,lookup,indexed,source);
+        return joined.Count>separate.Count?joined:separate;
     }
     private static List<ContentsCard> ReadStrategyRows(int page,Line[] rows,double height,int totalPages,Dictionary<string,List<EditorialTitle>> lookup,IReadOnlyList<PageRecord> indexed,string source)
     {
@@ -737,7 +738,13 @@ public static class GuidevaultDocumentIndex
                     var m=Regex.Match(raw,@"^(.+?)[\s.·…]+(\d{1,3})\s*$");
                     if(m.Success){raw=m.Groups[1].Value.Trim();int.TryParse(m.Groups[2].Value,out number);}
                 }
-                if(number<=page||number>totalPages+8||raw.Length>90||raw.Length<3||Regex.IsMatch(raw,@"^\d+$"))continue;
+                if(number<=page||number>totalPages+8||raw.Length>90||raw.Length==0||Regex.IsMatch(raw,@"^\d+$"))continue;
+                // Join a colon-terminated title continuation in the same left-aligned column.
+                var prefix=local.Where(r=>r.Y<row.Y&&row.Y-r.Y<=height*.035&&Math.Abs(r.X-row.X)<=height*.008&&r.Text.TrimEnd().EndsWith(":"))
+                    .OrderByDescending(r=>r.Y).FirstOrDefault();
+                if(prefix is not null&&!local.Any(r=>Regex.IsMatch(r.Text.Trim(),@"^\d{1,3}$")&&r.X>=prefix.X+prefix.Width-height*.005&&Math.Abs(r.Y+r.Height/2-prefix.Y-prefix.Height/2)<=height*.009))
+                    raw=prefix.Text.Trim()+" "+raw;
+                if(raw.Length>150)continue;
                 var keys=new[]{ContentsCompact(raw),ContentsCompact(TitleKey(EditorialTokens(raw)))}.Distinct();
                 var choices=keys.Where(lookup.ContainsKey).SelectMany(k=>lookup[k]).Distinct().ToArray();
                 // A direct short name and a subtitle alias can represent different games.
@@ -753,15 +760,26 @@ public static class GuidevaultDocumentIndex
                 section.Add(new(page,number,raw,Array.Empty<string>(),title,source,false));
             }
             var ordered=section.GroupBy(c=>c.PrintedPage).Where(g=>g.Select(c=>ContentsCompact(c.PrintedTitle)).Distinct().Count()==1).Select(g=>g.First()).ToList();
-            if(ordered.Count>=3&&ordered.Zip(ordered.Skip(1),(a,b)=>a.PrintedPage<b.PrintedPage).All(x=>x)&&StrongContents(ordered))cards.AddRange(ordered);
+            bool orderedRows=ordered.Count>=3&&ordered.Zip(ordered.Skip(1),(a,b)=>a.PrintedPage<b.PrintedPage).All(x=>x);
+            bool explicitStrategy=Regex.IsMatch(ContentsCompact(header.Text),@"^(?:strategy|strategies|strategyguides)$");
+            // Strong geometry plus an explicit strategy heading establishes contents even if titles are unresolved.
+            // Require at least three page-number anchors in a tight column (or three already resolved rows).
+            var anchors=local.Where(r=>Regex.IsMatch(r.Text.Trim(),@"^\d{1,3}$")&&ordered.Any(c=>c.PrintedPage.ToString(CultureInfo.InvariantCulture)==r.Text.Trim())).ToArray();
+            bool aligned=anchors.Any(r=>anchors.Count(n=>Math.Abs(n.X-r.X)<=height*.015)>=3);
+            if(orderedRows&&(explicitStrategy&&aligned||ResolvedContents(ordered)))
+                cards.AddRange(explicitStrategy&&aligned?ordered.Select(c=>c with{Source=c.Source.Replace("strategy list","validated strategy list",StringComparison.Ordinal)}):ordered);
         }
         return cards;
     }
     private static string[] TipPlatforms(string text)
     {
         string compact=ContentsCompact(text);
-        if(!compact.EndsWith("tips",StringComparison.Ordinal))return [];
-        var exact=ContentsPlatforms(compact[..^4]);if(exact.Length>0)return exact;
+        bool hasTips=compact.EndsWith("tips",StringComparison.Ordinal);
+        // A bare multi-platform heading is accepted only in a numbered tips directory.
+        if(!hasTips&&(!text.Contains('/')||text.TrimEnd().EndsWith('/')))return [];
+        var label=hasTips?compact[..^4]:compact;
+        if(label.StartsWith("classic",StringComparison.Ordinal))label=label[7..];
+        var exact=ContentsPlatforms(label);if(exact.Length>0)return exact;
         // A bare CD label in a slash-separated list is ambiguous (CD-i, Sega CD, Neo Geo CD).
         // Keep explicit platform names rather than guessing that missing suffix.
         var labels=Regex.Split(Regex.Replace(text,@"tips\s*$","",RegexOptions.IgnoreCase),@"[/,]").Select(ContentsCompact).Where(x=>x.Length>0).ToArray();
@@ -782,6 +800,8 @@ public static class GuidevaultDocumentIndex
             string raw=row.Text.Trim();int number=0;
             var trailing=Regex.Match(raw,@"^(.+?tips)[\s.]+(\d{1,3})$",RegexOptions.IgnoreCase);
             if(trailing.Success){raw=trailing.Groups[1].Value;int.TryParse(trailing.Groups[2].Value,out number);}
+            // A slash-terminated upper line belongs to this continuation, not a second section.
+            if(rows.Any(r=>r.Y<row.Y&&row.Y-r.Y<=height*.035&&r.Text.TrimEnd().EndsWith('/')&&r.X<row.X+row.Width&&r.X+r.Width>row.X&&TipPlatforms(r.Text.Trim()+" "+raw).Length>0))continue;
             var platforms=TipPlatforms(raw);Line anchor=row;
             if(platforms.Length==0)
             {
@@ -794,12 +814,21 @@ public static class GuidevaultDocumentIndex
             {
                 var n=numericRows.Where(r=>r.Y+r.Height/2>anchor.Y+anchor.Height/2&&r.Y-anchor.Y<=height*.085&&Math.Abs(r.X+r.Width/2-row.X-row.Width/2)<=Math.Max(row.Width*.35,height*.04)).OrderBy(r=>r.Y).FirstOrDefault();
                 if(n is not null)int.TryParse(n.Text.Trim(),out number);
+                else
+                {
+                    // A page badge can be merged with adjacent decorative OCR text. Keep it only
+                    // below the heading, within the same column and before the next platform heading.
+                    double nextHeading=rows.Where(r=>r.Y>anchor.Y&&TipPlatforms(r.Text).Length>0&&r.X<row.X+row.Width&&r.X+r.Width>row.X).Select(r=>r.Y).DefaultIfEmpty(double.MaxValue).Min();
+                    var mixed=sourceLines.Where(r=>r.Y>anchor.Y&&r.Y<nextHeading&&r.Y-anchor.Y<=height*.085&&r.X<row.X+row.Width&&r.X+r.Width>row.X+row.Width/2&&Math.Abs(r.X+r.Width/2-row.X-row.Width/2)<=Math.Max(row.Width*.35,height*.04))
+                        .Select(r=>Regex.Match(r.Text.Trim(),@"^[^\d]{1,40}\s+(\d{1,3})$")).Where(m=>m.Success).Select(m=>int.Parse(m.Groups[1].Value,CultureInfo.InvariantCulture)).Distinct().ToArray();
+                    if(mixed.Length==1)number=mixed[0];
+                }
             }
             if(number<=page||number>totalPages+8)continue;
             cards.Add(new(page,number,raw,platforms,null,source,true));
         }
-        var ordered=cards.GroupBy(c=>c.PrintedPage).Select(g=>g.OrderByDescending(c=>c.Platforms.Length).ThenByDescending(c=>c.PrintedTitle.Length).First()).ToList();
-        return ordered.Count>=3&&ordered.Zip(ordered.Skip(1),(a,b)=>a.PrintedPage<b.PrintedPage).All(x=>x)?ordered:new();
+        var ordered=cards.GroupBy(c=>new{c.PrintedPage,Title=ContentsCompact(c.PrintedTitle)}).Select(g=>g.OrderByDescending(c=>c.Platforms.Length).First()).ToList();
+        return ordered.Count>=3&&ordered.Zip(ordered.Skip(1),(a,b)=>a.PrintedPage<=b.PrintedPage).All(x=>x)?ordered:new();
     }
     private static bool OneContentsEdit(string a,string b)
     {
@@ -815,16 +844,27 @@ public static class GuidevaultDocumentIndex
         }
         return edits+(a.Length-i)+(b.Length-j)==1;
     }
+    private static bool LongContentsNear(string a,string b)
+    {
+        if(Math.Min(a.Length,b.Length)<14||Math.Abs(a.Length-b.Length)>3||a==b)return false;
+        var prev=Enumerable.Range(0,b.Length+1).ToArray();var cur=new int[b.Length+1];
+        for(int i=1;i<=a.Length;i++){cur[0]=i;for(int j=1;j<=b.Length;j++)cur[j]=Math.Min(Math.Min(prev[j]+1,cur[j-1]+1),prev[j-1]+(a[i-1]==b[j-1]?0:1));(prev,cur)=(cur,prev);}
+        return prev[b.Length]<=3;
+    }
     private static bool RelatedContentsSpelling(string printed,string candidate)
     {
         var a=EditorialTokens(printed);var b=EditorialTokens(candidate);
         if(!a.Where(SequelToken).Select(NumberedToken).SequenceEqual(b.Where(SequelToken).Select(NumberedToken)))return false;
         if(OneContentsEdit(ContentsCompact(printed),ContentsCompact(candidate)))return true;
+        // OCR can alter several letters inside a longer title. Require same first token,
+        // length >= 14 and at most three edits; the caller still requires unique exact evidence.
+        if(a.Length>=2&&b.Length>=2&&a[0]==b[0]&&LongContentsNear(ContentsCompact(printed),ContentsCompact(candidate)))return true;
         // Omitted introductory words are allowed only with a full title independently
         // recognized near the article, and never with a changed sequel number.
         return a.Length>=2&&ContentsCompact(printed).Length>=8&&b.Length>a.Length&&b.Skip(b.Length-a.Length).SequenceEqual(a);
     }
-    private static bool StrongContents(IReadOnlyCollection<ContentsCard> cards)=>cards.Count>=3&&cards.Where(c=>c.Title is not null&&!c.Department).Select(c=>c.Title).Distinct(StringComparer.OrdinalIgnoreCase).Count()>=3&&cards.Count(c=>c.Title is not null||c.Department)*2>=cards.Count;
+    private static bool ResolvedContents(IReadOnlyCollection<ContentsCard> cards)=>cards.Count>=3&&cards.Where(c=>c.Title is not null&&!c.Department).Select(c=>c.Title).Distinct(StringComparer.OrdinalIgnoreCase).Count()>=3&&cards.Count(c=>c.Title is not null||c.Department)*2>=cards.Count;
+    private static bool StrongContents(IReadOnlyCollection<ContentsCard> cards)=>ResolvedContents(cards)||cards.Count(c=>!c.Department&&c.Source.EndsWith("validated strategy list",StringComparison.Ordinal))>=3;
     public static async Task<object> EditorialAsync(string root, LibraryItem item, IEnumerable<GuidevaultLaunchBoxGame> games, CancellationToken token, bool allowPartial=false)
     {
         var timer=Stopwatch.StartNew();var fp=Fingerprint(item);var dir=DirectoryFor(root,item,fp);
@@ -838,7 +878,7 @@ public static class GuidevaultDocumentIndex
         string? reviewPlatform=PrintedReviewPlatform(coverText);
         var earlySystems=pages.Where(p=>p.Page<=8&&!SubscriptionAdvertisement(p.Text)).SelectMany(p=>EditorialPlatformContext(p.Text,new[]{"Nintendo Entertainment System","Super Nintendo Entertainment System","Sega Genesis","Sega Saturn","Sega Game Gear","Sega Master System","Nintendo Game Boy","Sega CD","3DO Interactive Multiplayer"})).Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
         string? issueScope=reviewPlatform??(guidePlatform is null&&earlySystems.Length==1&& !Regex.IsMatch(item.PlatformFocus??"",@"multi[ -]?platform",RegexOptions.IgnoreCase)&&Meaningful(item.PlatformFocus)&&earlySystems[0].StartsWith(item.PlatformFocus,StringComparison.OrdinalIgnoreCase)?earlySystems[0]:null);
-        var lookup=new Dictionary<string,List<EditorialTitle>>(StringComparer.Ordinal);int gameCount=0;int maxWords=1;
+        var lookup=new Dictionary<string,List<EditorialTitle>>(StringComparer.Ordinal);var shortContentsTitles=new List<EditorialTitle>();int gameCount=0;int maxWords=1;
         var generic=new HashSet<string>("a an the and or it is in on up down out go no yes one two three new all next last first game games magazine challenge review preview news feature features tips hints code codes password passwords action adventure sports racing golf tennis soccer football baseball basketball hockey boxing pool chess checkers pinball poker casino music video computer system master world time power team spot star space war battle combat control super special final force speed drive race test play player home life risk trouble champion championship olympics pro ace target score winner magic monster hero quest".Split(' '),StringComparer.OrdinalIgnoreCase);
         foreach(var g in games)
         {
@@ -846,6 +886,8 @@ public static class GuidevaultDocumentIndex
             int.TryParse(Regex.Match(g.ReleaseYear??"",@"\b(?:19|20)\d{2}\b").Value,out int release);
             if(year>0&&release>year+2||string.IsNullOrWhiteSpace(g.Title))continue;
             gameCount++;
+            if((ContentsCompact(g.Title).Length is 1 or 2) && Regex.IsMatch(g.Title.Trim(),@"^[\p{L}]{1,2}$"))
+                shortContentsTitles.Add(new EditorialTitle(g.Title.Trim(),g.Platform??"",false));
             // Subtitle abbreviations are allowed only if the base contains at least two words;
             // ambiguity and sequel tokens are checked below, just like catalog aliases.
             var colon=g.Title.IndexOf(':');
@@ -879,6 +921,11 @@ public static class GuidevaultDocumentIndex
         // First read the publisher's numbered, platform-qualified contents cards from the existing index.
         // Vision is bounded to three early-page overview attempts, cached by source fingerprint and page.
         var tocLookup=ContentsTitleLookup(lookup);
+        foreach(var t in shortContentsTitles.Distinct())
+        {
+            string key=ContentsCompact(t.Title);if(!tocLookup.TryGetValue(key,out var list))tocLookup[key]=list=new();
+            if(!list.Contains(t))list.Add(t);
+        }
         var tocDiagnostics=new List<object>();var structuredContents=new List<ContentsCard>();var tipContents=new List<ContentsCard>();
         var earlyPages=pages.Where(p=>p.Page>=2&&p.Page<=10&&!SubscriptionAdvertisement(p.Text)).ToArray();
         List<ContentsCard> ReadMain(PageRecord p,IEnumerable<Line> lines,double height,string source)
@@ -915,7 +962,12 @@ public static class GuidevaultDocumentIndex
         if(StrongContents(structuredContents))structuredContents.AddRange(tipContents.Where(t=>structuredContents.Any(c=>!c.Department&&Math.Abs(c.ContentsPage-t.ContentsPage)<=1)).ToArray());
         // A conflicting page number cannot be used as authoritative evidence. If no reliable
         // structured contents are found, the existing recognition remains the fallback.
-        structuredContents=structuredContents.GroupBy(c=>c.PrintedPage).Where(g=>g.Select(c=>ContentsCompact(c.PrintedTitle)).Distinct().Count()==1).Select(g=>g.First()).OrderBy(c=>c.PrintedPage).ToList();
+        structuredContents=structuredContents.GroupBy(c=>c.PrintedPage).SelectMany(g=>
+        {
+            var main=g.Where(c=>!c.Department).ToArray();
+            var validMain=main.Select(c=>ContentsCompact(c.PrintedTitle)).Distinct().Count()==1?main.OrderByDescending(c=>c.Title is not null).Take(1):Enumerable.Empty<ContentsCard>();
+            return validMain.Concat(g.Where(c=>c.Department).GroupBy(c=>ContentsCompact(c.PrintedTitle)).Select(d=>d.First()));
+        }).OrderBy(c=>c.PrintedPage).ToList();
         bool contentsAuthoritative=StrongContents(structuredContents);
         if(!contentsAuthoritative)structuredContents.Clear();
         var structuredPages=structuredContents.Select(c=>c.ContentsPage).ToHashSet();
@@ -1116,7 +1168,7 @@ public static class GuidevaultDocumentIndex
                 {
                     var candidates=hits.Where(h=>!h.Contents&&RelatedContentsSpelling(card.PrintedTitle,h.Title)&&(Interior(h)||h.Page==1&&h.Cover&&h.Kind=="Cover reference"&&ContainsTitle(h.Evidence,h.Title)))
                         .GroupBy(h=>TitleKey(EditorialTokens(h.Title))).Where(g=>catalogTitles.ContainsKey(g.Key)&&(!card.Platforms.Any(p=>p!="*")||catalogTitles[g.Key].Any(t=>card.Platforms.Contains(t.Platform,StringComparer.OrdinalIgnoreCase))))
-                        .Where(g=>g.Any(Interior)||g.Any(h=>OneContentsEdit(ContentsCompact(card.PrintedTitle),ContentsCompact(h.Title))&&h.Page==1&&h.Cover)).ToArray();
+                        .Where(g=>g.Any(Interior)||g.Any(h=>(OneContentsEdit(ContentsCompact(card.PrintedTitle),ContentsCompact(h.Title))||LongContentsNear(ContentsCompact(card.PrintedTitle),ContentsCompact(h.Title)))&&h.Page==1&&h.Cover)).ToArray();
                     if(candidates.Length==1)
                     {
                         var match=candidates[0].First();card=card with{Title=match.Title};
@@ -1325,7 +1377,7 @@ public static class GuidevaultDocumentIndex
             hits.Add(new EditorialHit(card.Title,card.ContentsPage,"Contents main feature",card.PrintedPage.ToString(CultureInfo.InvariantCulture)+" "+card.PrintedTitle+" — "+string.Join(" / ",card.Platforms),card.Platforms,false,true,0,card.Platforms));
         }
         bool MainFeatured(EditorialHit h)=>contentsAuthoritative?h.Kind=="Contents main feature":Featured(h);
-        var mainArticleRanges=structuredContents.Select((c,i)=>new{title=c.Title,printedTitle=c.PrintedTitle,contentsPage=c.ContentsPage,printedStart=c.PrintedPage,printedEnd=i+1<structuredContents.Count?(int?)(structuredContents[i+1].PrintedPage-1):null,platforms=c.Platforms,department=c.Department,source=c.Source}).ToArray();
+        var mainArticleRanges=structuredContents.Select((c,i)=>new{title=c.Title,printedTitle=c.PrintedTitle,contentsPage=c.ContentsPage,printedStart=c.PrintedPage,printedEnd=structuredContents.Where(n=>n.PrintedPage>c.PrintedPage).Select(n=>(int?)(n.PrintedPage-1)).FirstOrDefault(),platforms=c.Platforms,department=c.Department,source=c.Source}).ToArray();
         var groups=hits.GroupBy(h=>TitleKey(EditorialTokens(h.Title))).Select(g=>new{
             title=g.First().Title, featured=g.Any(MainFeatured), editorialPages=g.Where(h=>MainFeatured(h)||contentsAuthoritative&&g.Any(MainFeatured)&&InteriorCoverage(h)).Select(h=>h.Page).Distinct().OrderBy(x=>x).ToArray(),
             pages=g.Select(h=>h.Page).Distinct().OrderBy(x=>x).ToArray(),cover=g.Any(h=>h.Cover&&h.Kind!="Possible advertising"),contents=g.Any(h=>h.Contents&&MainFeatured(h)),
@@ -1340,7 +1392,7 @@ public static class GuidevaultDocumentIndex
         var platformSignals=groups.SelectMany(g=>g.supportedPlatforms.Select(platform=>new{platform,g.title})).GroupBy(g=>g.platform,StringComparer.OrdinalIgnoreCase).Select(g=>new{platform=g.Key,featuredTitles=g.Count(),titles=g.Select(x=>x.title).ToArray()}).OrderByDescending(g=>g.featuredTitles).ToArray();
         string? primary=guidePlatform??reviewPlatform??(!Regex.IsMatch(item.PlatformFocus??"",@"multi[ -]?platform",RegexOptions.IgnoreCase)&&platformSignals.Length>0&&platformSignals[0].featuredTitles>=2&&(platformSignals.Length==1||platformSignals[0].featuredTitles>=platformSignals[1].featuredTitles*2+1)?platformSignals[0].platform:null);
         if(Fingerprint(item)!=fp)throw new InvalidOperationException("Source changed during analysis. Re-index the document.");
-        return new{revision="v8.0-phase3.9",contentsAuthoritative,mainArticleRanges,tocDiagnostics,contentsReconciliation,articleIdentityCorrections,excluded,indexedPages=pages.Count,totalPages=manifest.TotalPages,catalogGames=gameCount,guidePlatform,issueScope,profilePages,structures,articleRegions,contentsMapping,printedOffset,visionStatus,visionDiagnostics,contentsPages,advertisingPages,coverCandidates,primarySystemCandidate=primary,platformSignals,featuredCount=groups.Count(g=>g.featured),mentionedCount=groups.Count(g=>!g.featured&&g.kinds.Any(k=>k!="Possible advertising")),advertisingOnlyCount=groups.Count(g=>g.kinds.All(k=>k=="Possible advertising")),games=groups,headings,seconds=Math.Round(timer.Elapsed.TotalSeconds,2)};
+        return new{revision="v8.0-phase3.10",contentsAuthoritative,mainArticleRanges,tocDiagnostics,contentsReconciliation,articleIdentityCorrections,excluded,indexedPages=pages.Count,totalPages=manifest.TotalPages,catalogGames=gameCount,guidePlatform,issueScope,profilePages,structures,articleRegions,contentsMapping,printedOffset,visionStatus,visionDiagnostics,contentsPages,advertisingPages,coverCandidates,primarySystemCandidate=primary,platformSignals,featuredCount=groups.Count(g=>g.featured),mentionedCount=groups.Count(g=>!g.featured&&g.kinds.Any(k=>k!="Possible advertising")),advertisingOnlyCount=groups.Count(g=>g.kinds.All(k=>k=="Possible advertising")),games=groups,headings,seconds=Math.Round(timer.Elapsed.TotalSeconds,2)};
     }
     private sealed record CoverVisionResult(string Status,double Height,Line[] Lines);
     private static async Task<CoverVisionResult> CoverVisionAsync(string dir,LibraryItem item,CancellationToken token,int page=1)
@@ -1388,6 +1440,7 @@ public static class GuidevaultDocumentIndex
         var protectedItem=MetadataStatusHelper.Normalize(item.MetadataStatus) is MetadataStatusHelper.Reviewed or MetadataStatusHelper.Locked or MetadataStatusHelper.ManualOnly;
         bool manual=(item.MetadataSource??"").Contains("Manual edit",StringComparison.OrdinalIgnoreCase);
         var current=JsonSerializer.SerializeToElement(item,Json);
+        bool safeEditorialReplacement=editorial.GetProperty("contentsAuthoritative").GetBoolean()&&!editorial.GetProperty("mainArticleRanges").EnumerateArray().Any(g=>!g.GetProperty("department").GetBoolean()&&g.GetProperty("title").ValueKind!=JsonValueKind.String);
         string S(JsonElement e,string name)=>e.TryGetProperty(name,out var v)&&v.ValueKind==JsonValueKind.String?v.GetString()??"":"";
         string[] A(JsonElement e,string name)=>e.TryGetProperty(name,out var v)&&v.ValueKind==JsonValueKind.Array?v.EnumerateArray().Where(x=>x.ValueKind==JsonValueKind.String).Select(x=>x.GetString()??"").Where(x=>x.Length>0).ToArray():[];
         bool Nonempty(JsonElement e)=>e.ValueKind switch {JsonValueKind.String=>Meaningful(e.GetString()),JsonValueKind.Array=>e.GetArrayLength()>0,JsonValueKind.Number=>e.TryGetInt32(out var n)&&n>0,_=>false};
@@ -1400,6 +1453,7 @@ public static class GuidevaultDocumentIndex
             var existing=A(current,field);
             if(replaceMode)
             {
+                if(existing.Length>0&&!safeEditorialReplacement){held.Add(field+": existing list retained — contents not validated or unresolved main articles; use Add to Existing for partial evidence");return;}
                 var unique=new HashSet<string>(StringComparer.OrdinalIgnoreCase);
                 var replacement=candidates.Where(Meaningful).Where(x=>unique.Add(ListKey(field,x))).ToArray();
                 // Absence of evidence is not evidence that the list is empty.
@@ -1465,7 +1519,7 @@ public static class GuidevaultDocumentIndex
         {
             foreach(var entry in mainRanges.Where(g=>S(g,"title").Length==0&&!g.GetProperty("department").GetBoolean()))held.Add("Featured games: unresolved contents entry — "+S(entry,"printedTitle")+" (printed page "+entry.GetProperty("printedStart").GetInt32()+")");
         }
-        else if(editorial.GetProperty("contentsPages").GetArrayLength()==0)held.Add("Editorial structure: no validated contents page; using previous recognition fallback.");
+        else held.Add("Editorial structure: no validated structured contents; fallback candidates only. Populated editorial lists are held in Replace Existing mode.");
         var mentioned=relevant.Where(g=>!featured.Contains(S(g,"title"),StringComparer.OrdinalIgnoreCase)&&A(g,"kinds").Any(k=>k is not "Possible advertising" and not "Catalog listing" and not "Cover artwork credit")).Select(g=>S(g,"title")).Where(Meaningful).Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
         if(primary.Length>0)
         {
@@ -1528,8 +1582,8 @@ public static class GuidevaultDocumentIndex
         update=MetadataLockHelper.FilterLockedFields(update,item.MetadataLocks);
         var filtered=JsonSerializer.SerializeToElement(update,Json);
         foreach(var c in changes.Where(c=>!filtered.TryGetProperty(c.Field,out var v)||v.ValueKind==JsonValueKind.Null).ToArray()){changes.Remove(c);held.Add(c.Field+": protected by field alias lock");}
-        if(changes.Count>0&&!manual)update=update with{MetadataSource="Magazine document index v8.0 Phase 4.9.1"};
-        return new CatalogPlan("v8.0-phase4.9.1",fp,update,changes,held,publication,editorial,Math.Round(clock.Elapsed.TotalSeconds,2),mode);
+        if(changes.Count>0&&!manual)update=update with{MetadataSource="Magazine document index v8.0 Phase 5.0"};
+        return new CatalogPlan("v8.0-phase5.0",fp,update,changes,held,publication,editorial,Math.Round(clock.Elapsed.TotalSeconds,2),mode);
     }
     public static async Task SaveCatalogReportAsync(string root,LibraryItem item,CatalogPlan plan,CancellationToken token)
     {
