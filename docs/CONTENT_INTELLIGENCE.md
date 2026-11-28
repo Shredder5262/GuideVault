@@ -1,4 +1,4 @@
-# Content Intelligence (v5.0) — review-only preview
+# Content Intelligence (v5.1) — review-only preview
 
 The existing Scan Magazine workspace now exposes a separate Content Intelligence panel for administrators. It consumes a complete current v8.0-phase1 document index and the synced LaunchBox catalog; it does not create an index, change metadata, or save game relationships. Run Scan Magazine to build the index first. Applying metadata suggestions is not required to run Content Intelligence.
 
@@ -6,7 +6,7 @@ The existing Scan Magazine workspace now exposes a separate Content Intelligence
 - Recover missing headings: optional targeted Tesseract pass on PDF or ZIP-based CBZ, with the same overall budget. It is off by default; other archive formats use indexed OCR only.
 - Load Last Review: loads the last successfully published report for the exact item ID and current source fingerprint. A changed source needs a fresh review.
 - Stop: cancels the browser request and requests server-side termination. A previous successful review is retained on failure/cancellation. Individual run artifacts remain for diagnostics.
-- Game matches, Sections and Unresolved evidence are separate tabs. Unresolved rows group identical candidate ID sets and keep every page and evidence record. Suppressed cover branding and unsupported single-word alphabetic aliases are retained in `suppressed_evidence`, outside the normal review list. Earlier saved reports can still be viewed; analyze again to apply v5.0. Page links use the reader's zero-based archive page API or the PDF viewer's one-based page fragment. Article ranges and platform inference are suggestions, not confirmed coverage.
+- Game matches, Sections and Unresolved evidence are separate tabs. Unresolved rows group identical candidate ID sets and keep every page and evidence record. Suppressed cover branding and unsupported single-word alphabetic aliases are retained in `suppressed_evidence`, outside the normal review list. Earlier saved reports can still be viewed; analyze again to apply v5.1. Page links use the reader's zero-based archive page API or the PDF viewer's one-based page fragment. Article ranges and platform inference are suggestions, not confirmed coverage.
 
 ## Image and persistence
 
@@ -39,3 +39,7 @@ Local v4.9 patch validation: cached report replay preserved all 58 Sega Force ga
 ## v5.0 contextual review
 
 Explicit review/preview headings, prominent full title headings and repeated body mentions can create tentative game review leads when exactly one catalog identity is compatible with the chronology and available platform evidence. A checklist or cover reference cannot create a game lead by itself; it may supplement an existing uniquely compatible game identity. Review evidence records retain all catalog alternatives and separately expose viable candidates. Preferred reader pages favor substantive coverage. Existing TOC and visual-profile logic remains unchanged. Page classifications are conservative and do not independently confirm article coverage; classified checklist references are not automatically published or individually classified as upcoming releases.
+
+## v5.1 region review
+
+A bounded, read-only region pass uses existing layout OCR to find title-led tips in a tips column, prominent game features beside that column, and game-specific captions or explicit preview statements inside hardware features. It uses original catalog discovery records, including low-priority candidates, without inventing IDs. A manufacturer editorial plus the specific Power Base, SegaScope and Light Phaser references can support a tentative Master System inference for this period; this is not an explicit issue platform or verified coverage. Contents and scoreboards are supporting references, not independent game leads. The new `region-leads.json` retains OCR geometry, candidate provenance, and unresolved full titles. Mixed-page classification remains heuristic. Missing or incompatible catalog identities remain unresolved. No metadata, relationship, index or catalog writes are introduced.

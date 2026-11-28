@@ -1,7 +1,7 @@
 using System.Diagnostics;
 using System.Text.Json;
 
-// Review-only bridge to the image-owned v5.0 engine. Never writes library metadata.
+// Review-only bridge to the image-owned v5.1 engine. Never writes library metadata.
 internal static class GuidevaultContentIntelligence
 {
     private const string Python = "/opt/guidevault-vision/bin/python";
