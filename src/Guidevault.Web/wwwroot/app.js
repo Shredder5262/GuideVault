@@ -18714,13 +18714,15 @@ function gvPublicationVerificationRows(report) {
 function gvAttachContentIntelligence(dialog, session, item) {
   const panel = document.createElement('section');
   panel.className = 'gv-magscan-content gv-scan-workspace gv-ci-workspace';
-  panel.innerHTML = `<section class="gv-scan-card gv-ci-card"><div class="gv-scan-heading"><h2>Content Intelligence</h2><small>v5.2 · Human review</small></div>
-    <p class="sub">Analyze magazines, inspect coverage and explicitly approve or reject game relationships. Analysis never saves links.</p>
-    <div class="gv-scan-actions"><button type="button" class="primary" data-ci-run>Analyze Content</button><button type="button" class="ghost" data-ci-stop disabled>Stop</button><button type="button" class="ghost" data-ci-refresh>Load Last Review</button></div>
+  panel.innerHTML = `<section class="gv-scan-card gv-ci-card"><div class="gv-scan-heading"><h2>Content Intelligence</h2><small>v5.3 · Unified analysis</small></div>
+    <p class="sub">Indexes missing pages, analyzes publication metadata and game coverage. Metadata and game links are saved only when explicitly approved.</p>
+    <div class="gv-scan-actions"><button type="button" class="primary" data-ci-run>Analyze Content</button><button type="button" class="ghost" data-ci-stop disabled>Stop</button><button type="button" class="ghost" data-ci-refresh>Load Last Scan</button></div>
     <label class="gv-ci-toggle"><input type="checkbox" data-ci-visual><span>Recover missing headings with targeted OCR (PDF / CBZ)</span></label>
+    <label>Metadata update mode <select data-ci-mode><option value="add">Add to Existing</option><option value="replace">Review replacements</option></select></label>
     <p class="sub" role="status" data-ci-status>Loading saved review…</p>
+    <progress data-ci-progress max="1" value="0" aria-label="Current processing stage"></progress><p class="sub" data-ci-timing aria-live="polite"></p><p class="sub" data-ci-active></p>
     <div class="gv-scan-metrics" data-ci-metrics></div>
-    <div class="gv-ci-tools" data-ci-tools hidden><div class="gv-ci-tabs" role="group" aria-label="Review category"><button type="button" data-ci-view="games" aria-pressed="true">Game matches</button><button type="button" data-ci-view="navigation_leads" aria-pressed="false">Sections</button><button type="button" data-ci-view="references" aria-pressed="false">References</button><button type="button" data-ci-view="saved" aria-pressed="false">Saved decisions</button><button type="button" data-ci-view="unresolved_evidence" aria-pressed="false">Unresolved</button></div><label class="gv-ci-filter">Filter <input type="search" data-ci-search placeholder="Game, platform, page…"></label></div>
+    <div class="gv-ci-tools" data-ci-tools hidden><div class="gv-ci-tabs" role="group" aria-label="Review category"><button type="button" data-ci-view="overview" aria-pressed="true">Overview Metadata</button><button type="button" data-ci-view="games" aria-pressed="false">Game matches</button><button type="button" data-ci-view="navigation_leads" aria-pressed="false">Sections</button><button type="button" data-ci-view="references" aria-pressed="false">References</button><button type="button" data-ci-view="unresolved_evidence" aria-pressed="false">Unresolved</button></div><label class="gv-ci-filter">Filter <input type="search" data-ci-search placeholder="Game, platform, page…"></label></div>
     <div data-ci-results></div></section>`;
   dialog.append(panel);
   const q = s => panel.querySelector(s);
@@ -18728,10 +18730,14 @@ function gvAttachContentIntelligence(dialog, session, item) {
   const status = q('[data-ci-status]'), run = q('[data-ci-run]'), stop = q('[data-ci-stop]'), refresh = q('[data-ci-refresh]');
   const visual = q('[data-ci-visual]'), search = q('[data-ci-search]'), tabs = [...panel.querySelectorAll('[data-ci-view]')];
   const format = String(item.format || item.Format || '').toUpperCase();
-  let report = null, controller = null, busy = false, view = 'games', reviewToken = '', decisions = [];
+  let report = null, controller = null, busy = false, view = 'overview', reviewToken = '', decisions = [], metadata=null, job=null, timer=null, polling=false, scanning=false;
+  const jobEndpoint=`/api/items/${encodeURIComponent(metadataManagerItemId(item))}/document-index/job`;
+  const mode=q('[data-ci-mode]'), progress=q('[data-ci-progress]'), timing=q('[data-ci-timing]'), active=q('[data-ci-active]');
+  const selectedFields=new Set();
+  const coverageChoices=['Game Review','Game Feature','Game Preview','Walkthrough','Strategy Guide','Tips & Tricks','Cheats & Secrets','Level Guide','Boss Guide','Maps & Diagrams','Game Spotlight','Game Overview','Game News','Game Comparison','Interview','Reader Q&A','Reader Tips','Retrospective'];
   const decisionFor = id => decisions.find(d=>d.gameId===id);
-  const referenceKind = k => /^(Cover mention|Catalog \/ checklist reference|Contents reference|High-score \/ competition reference|Possible advertisement)$/i.test(k||'');
-  const substantive = k => /^(Game review|Game feature|Game profile|Preview|Game preview|Tips|Gameplay|Cheats|Walkthrough|Strategy|Game title heading)/i.test(k||'');
+  const referenceKind = k => /^(Cover mention|Catalog \/ checklist reference|Contents reference|High-score \/ competition reference|Possible advertisement|Brief Mention|Illustrated Reference)$/i.test(k||'');
+  const substantive = k => /^(Game review|Game feature|Game profile|Preview|Game preview|Tips|Gameplay|Cheats|Walkthrough|Strategy|Game title heading|Game Spotlight|Game Overview|Game News|Game Comparison|Interview|Reader Q&A|Reader Tips|Retrospective|Boss Guide|Level Guide|Map \/ level guide|Maps & Diagrams)/i.test(k||'');
   const primaryKinds = r => [...new Set((r.evidence||[]).filter(e=>e.digital_page===r.primary_digital_page&&substantive(e.content_kind)).map(e=>e.content_kind))].join(' / ');
   const node = (tag, value, cls) => { const n=document.createElement(tag); if(value!=null)n.textContent=String(value); if(cls)n.className=cls; return n; };
   const confidence = v => ({platform_supported_review:'Platform-supported · review',section_inferred_review:'Inferred · review',unresolved:'Unresolved'}[v]||String(v||'Unverified'));
@@ -18770,15 +18776,20 @@ function gvAttachContentIntelligence(dialog, session, item) {
   function decisionControls(body,r){
     const d=decisionFor(r.game_id);const box=node('div',null,'gv-ci-decision');
     const validPages=[...new Set((r.evidence||[]).filter(e=>substantive(e.content_kind)&&Number.isInteger(e.digital_page)).map(e=>e.digital_page))].sort((a,b)=>a-b);
-    field(box,'Saved relationship',d?`${d.status}${d.fingerprint&&d.fingerprint!==report.source_fingerprint?' · source changed; review again':''}`:'No saved decision');
+    field(box,'LaunchBox relationship',d?`${d.status}${d.fingerprint&&d.fingerprint!==report.source_fingerprint?' · source changed; review again':''}`:'No saved decision');
     const lbl=node('label','Reviewed destination: '), sel=node('select');sel.setAttribute('aria-label','Reviewed destination page');
     for(const n of validPages){const option=node('option',`Page ${n}`);option.value=String(n);sel.append(option);}
     if(validPages.includes(d?.preferredPage)&&d?.fingerprint===report.source_fingerprint)sel.value=String(d.preferredPage);else if(validPages.includes(r.primary_digital_page))sel.value=String(r.primary_digital_page);
     if(validPages.length){lbl.append(sel);box.append(lbl);}
+    const classify=node('details');classify.append(node('summary','Edit coverage classifications (optional)'));
+    const checks=new Map();for(const name of coverageChoices){const label=node('label',null,'gv-ci-toggle'),cb=node('input');cb.type='checkbox';checks.set(name,cb);label.append(cb,node('span',name));classify.append(label);}
+    const savedCoverage=d?.fingerprint===report.source_fingerprint?d.coverage:'';
+    for(const name of coverageChoices)if(savedCoverage?.split(' / ').includes(name))checks.get(name).checked=true;
+    classify.append(node('small','Leave all unchecked to use the detected page coverage. Selections are your manual review, not scanner evidence.'));box.append(classify);
     const actions=node('div',null,'gv-scan-actions');
     const confirm=node('button','Confirm','primary'),reject=node('button','Reject','ghost'),correct=node('button','Correct Match','ghost');
     for(const b of [confirm,reject,correct]){b.type='button';actions.append(b);}
-    const canApprove=!!validPages.length&&!!reviewToken;confirm.disabled=!canApprove;correct.disabled=!canApprove;reject.disabled=!reviewToken;
+    const canApprove=!scanning&&!!validPages.length&&!!reviewToken;confirm.disabled=!canApprove;correct.disabled=!canApprove;reject.disabled=scanning||!reviewToken;
     box.append(actions);
     const correction=node('div',null,'gv-ci-correction');correction.hidden=true;
     const query=node('input');query.type='search';query.placeholder='Search LaunchBox game title';query.value=r.title;
@@ -18787,18 +18798,18 @@ function gvAttachContentIntelligence(dialog, session, item) {
     const result=node('p','','sub');correction.append(node('small','Correction rejects the original association and confirms the selected game. Verify the page applies to that exact game and platform.'),query,find,options,save,result);box.append(correction);body.append(box);
     let choices=[];
     const submit=async(action,target)=>{
-      if(busy)return;
+      if(busy||scanning)return;
       const page=action==='reject'?null:Number(sel.value);
       const message=action==='reject'?`Reject ${r.title} (${r.platform}) for this magazine? This removes it from active game literature.`:action==='correct'?`Reject ${r.title} (${r.platform}) and confirm ${target.title} (${target.platform}) on digital page ${page}?`: `Confirm ${r.title} (${r.platform}) on digital page ${page}? This makes the magazine available to game clients.`;
       if(!window.confirm(message))return;
       busy=true;controls();for(const b of box.querySelectorAll('button'))b.disabled=true;
       status.textContent='Saving reviewed relationship…';
-      try{const response=await fetch(endpoint+'/decision',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action,gameId:r.game_id,targetGameId:target?.id||'',page,reviewToken,expectedVersion:d?.version||''})});const data=await response.json();if(!response.ok)throw new Error(data.error||data.detail||`HTTP ${response.status}`);decisions=data.decisions||[];if(panel.isConnected){render();status.textContent=data.message;}}
+      try{const response=await fetch(endpoint+'/decision',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action,gameId:r.game_id,targetGameId:target?.id||'',page,reviewToken,expectedVersion:d?.version||'',coverageTypes:[...checks].filter(([,c])=>c.checked).map(([name])=>name)})});const data=await response.json();if(!response.ok)throw new Error(data.error||data.detail||`HTTP ${response.status}`);decisions=data.decisions||[];if(panel.isConnected){render();status.textContent=data.message;}}
       catch(e){if(panel.isConnected){status.textContent=e.message+' Reload the review before retrying.';render();}}
       finally{busy=false;controls();}
     };
     confirm.onclick=()=>void submit('confirm');reject.onclick=()=>void submit('reject');correct.onclick=()=>{correction.hidden=!correction.hidden;};
-    find.onclick=async()=>{if(busy)return;find.disabled=true;save.disabled=true;options.replaceChildren();result.textContent='Searching…';try{const response=await fetch(endpoint+'/catalog?q='+encodeURIComponent(query.value.trim()),{cache:'no-store'});const data=await response.json();if(!response.ok)throw new Error(data.error||`HTTP ${response.status}`);choices=data.filter(g=>g.id!==r.game_id);for(const g of choices){const opt=node('option',`${g.title} — ${g.platform}${g.region?' · '+g.region:''}${g.releaseYear?' · '+g.releaseYear:''}`);opt.value=g.id;options.append(opt);}save.disabled=!choices.length;result.textContent=choices.length?`${choices.length} candidate(s). Verify the platform and edition.`:'No alternative games found.';}catch(e){result.textContent=e.message;}finally{find.disabled=false;}};
+    find.onclick=async()=>{if(busy||scanning)return;find.disabled=true;save.disabled=true;options.replaceChildren();result.textContent='Searching…';try{const response=await fetch(endpoint+'/catalog?q='+encodeURIComponent(query.value.trim()),{cache:'no-store'});const data=await response.json();if(!response.ok)throw new Error(data.error||`HTTP ${response.status}`);choices=data.filter(g=>g.id!==r.game_id);for(const g of choices){const opt=node('option',`${g.title} — ${g.platform}${g.region?' · '+g.region:''}${g.releaseYear?' · '+g.releaseYear:''}`);opt.value=g.id;options.append(opt);}save.disabled=!choices.length;result.textContent=choices.length?`${choices.length} candidate(s). Verify the platform and edition.`:'No alternative games found.';}catch(e){result.textContent=e.message;}finally{find.disabled=false;}};
     save.onclick=()=>{const target=choices.find(g=>g.id===options.value);if(target)void submit('correct',target);};
   }
   function resultRow(title,platform,pages,state,fillBody,coverage="—"){
@@ -18806,18 +18817,18 @@ function gvAttachContentIntelligence(dialog, session, item) {
     head.append(node('strong',title),node('span',platform||'—'),node('span',coverage||'—'),node('span',pages||'—'),node('span',state,state==='Confirmed'?'gv-ci-confirmed':'gv-ci-warning'));d.append(head);d.addEventListener('toggle',()=>{if(d.open&&d.childNodes.length===1){const body=node('div',null,'gv-ci-row-body');fillBody(body);d.append(body);}});return d;
   }
   function render(){
-    const out=q('[data-ci-results]'), metrics=q('[data-ci-metrics]');out.replaceChildren();metrics.replaceChildren();q('[data-ci-tools]').hidden=!report;if(!report)return;
-    const raw=report.unresolved_evidence||[];
+    const out=q('[data-ci-results]'), metrics=q('[data-ci-metrics]');out.replaceChildren();metrics.replaceChildren();q('[data-ci-tools]').hidden=!report&&!metadata;if(!report&&!metadata)return;
+    const raw=report?.unresolved_evidence||[];
     const refs=groupedUnresolved(raw.filter(e=>referenceKind(e.content_kind)));
     const grouped=groupedUnresolved(raw.filter(e=>!referenceKind(e.content_kind)));
-    const saved=decisions.filter(d=>['Confirmed','Rejected'].includes(d.status));
-    const counts={games:report.games?.length||0,navigation_leads:report.navigation_leads?.length||0,references:refs.length,unresolved_evidence:grouped.length,saved:saved.length};
-    for(const [key,label] of [['games','Game leads'],['navigation_leads','Sections'],['references','Reference groups'],['unresolved_evidence','Unresolved groups'],['saved','Saved decisions']]){const m=node('div',null,'gv-scan-metric');m.append(node('strong',counts[key]),node('small',label));metrics.append(m);}
-    const names={games:'Game matches',navigation_leads:'Sections',references:'References',unresolved_evidence:'Unresolved',saved:'Saved decisions'};for(const tab of tabs){const key=tab.dataset.ciView;tab.textContent=`${names[key]} (${counts[key]})`;tab.setAttribute('aria-pressed',String(key===view));}
+    const counts={overview:metadata?.changes?.length||0,games:report?.games?.length||0,navigation_leads:report?.navigation_leads?.length||0,references:refs.length,unresolved_evidence:grouped.length};
+    for(const [key,label] of [['games','Game leads'],['navigation_leads','Sections'],['references','Reference groups'],['unresolved_evidence','Unresolved groups']]){const m=node('div',null,'gv-scan-metric');m.append(node('strong',counts[key]),node('small',label));metrics.append(m);}
+    const names={overview:'Overview Metadata',games:'Game matches',navigation_leads:'Sections',references:'References',unresolved_evidence:'Unresolved'};for(const tab of tabs){const key=tab.dataset.ciView;tab.textContent=`${names[key]} (${counts[key]})`;tab.setAttribute('aria-pressed',String(key===view));}
+    search.disabled=view==='overview';if(view==='overview'){renderOverview(out);return;}
     const filter=search.value.trim().toLowerCase();const matches=r=>!filter||JSON.stringify(r).toLowerCase().includes(filter);
-    const records=(view==='unresolved_evidence'?grouped:view==='references'?refs:view==='saved'?saved:report[view]||[]).filter(matches);
-    const suppressed=report.summary?.suppressed_evidence||0;
-    out.append(node('p',`${records.length} result(s) · Scanner evidence and ranges are unverified. Saved decisions reflect human review.${view==='references'?' Reference-only entries do not create game links.':''}${suppressed?` ${suppressed} low-confidence / branding records held in diagnostics.`:''}`,'sub'));
+    const records=(view==='unresolved_evidence'?grouped:view==='references'?refs:report?.[view]||[]).filter(matches);
+    const suppressed=report?.summary?.suppressed_evidence||0;
+    out.append(node('p',`${records.length} result(s) · Scanner evidence and ranges are unverified. Confirmed relationships are managed in LaunchBox Links.${view==='references'?' Reference-only entries do not create game links.':''}${suppressed?` ${suppressed} low-confidence / branding records held in diagnostics.`:''}`,'sub'));
     if(!records.length){out.append(node('p',filter?'No results match this filter.':`No ${names[view].toLowerCase()} for this review.`,'gv-ci-empty'));return;}
     const header=node('div',null,'gv-ci-row-head gv-ci-table-head');for(const h of [view==='navigation_leads'?'Section':'Game / title','Platform','Coverage','Digital page(s)','Status'])header.append(node('span',h));out.append(header);
     for(const r of records){if(view==='games'){
@@ -18829,142 +18840,70 @@ function gvAttachContentIntelligence(dialog, session, item) {
       },current&&d?.status==='Confirmed'&&d.coverage?d.coverage:primaryKinds(r)||'Coverage needs review'));
     }else if(view==='unresolved_evidence'||view==='references'){
       const pages=[...r.pages].sort((a,b)=>a-b);out.append(resultRow(r.title,[...r.platforms].join(', '),pages.join(', '),view==='references'?'Reference only':'Unresolved',body=>{links(body,pages);for(const e of r.evidence||[])body.append(details(e,false));},[...new Set(r.evidence.map(e=>e.content_kind))].join(' / ')));
-    }else if(view==='saved'){
-      const current=r.fingerprint===report.source_fingerprint;out.append(resultRow(r.title,r.platform,current&&r.preferredPage?String(r.preferredPage):'—',r.fingerprint&&!current?r.status+' · re-review':r.status,body=>{field(body,'Decision source',r.source);field(body,'Coverage',current?r.coverage:null);if(current&&r.preferredPage)links(body,[r.preferredPage]);if(r.fingerprint&&!current)field(body,'Source changed','Approved page is no longer current. Re-analyze and review.');field(body,'Manage','Use the current Game Matches row or LaunchBox Links to change this relationship.');},current?r.coverage:'—'));
     }else{const start=r.digital_start?.digital??r.digital_page,end=r.digital_end_upper_bound?.digital;out.append(resultRow(r.heading||'Section navigation lead','—',start?`${start}${end?'–'+end:''}`:'—','Unverified',body=>{links(body,[start]);field(body,'Printed page',r.printed_start);field(body,'Proposed digital range',start?`${start}${end?'–'+end:''} (unverified)`:'Not mapped');field(body,'Mapping method',human(r.digital_start?.method));field(body,'Contents evidence',(r.contents_observations||[]).map(x=>x.locator_evidence||x.heading).filter(Boolean));for(const opt of r.title_options||[])field(body,'Possible game',(opt.catalog_candidates||[]).map(c=>`${c.title} — ${c.platform}`));},'Section'));}
     }
   }
-  function controls(){run.disabled=busy;stop.disabled=!controller;refresh.disabled=busy;visual.disabled=busy||!['PDF','CBZ','ZIP'].includes(format);}
-  async function request(method){
-    if(busy)return;busy=true;controller=new AbortController();session.contentIntelligenceController=controller;controls();
-    status.textContent=method==='POST'?'Analyzing indexed magazine (up to 120 seconds)…':'Loading saved review…';
-    try{const response=await fetch(endpoint+(method==='POST'?`?visual=${visual.checked}`:''),{method,cache:'no-store',signal:controller.signal});const data=await response.json();if(!response.ok)throw new Error(data.error||data.detail||`HTTP ${response.status}`);if(!panel.isConnected)return;report=data.report||null;reviewToken=data.reviewToken||'';decisions=data.decisions||[];if(method==='POST')view=report?.games?.length?'games':report?.unresolved_evidence?.length?'unresolved_evidence':'navigation_leads';render();status.textContent=report?`Review ready · ${report.label||''}${data.seconds!=null?' · '+data.seconds+'s':''}. Analysis did not save relationships.${report.engine_revision==='content-intelligence-v5.1-region-context'?'':' Saved review uses earlier matching rules; analyze again to refresh.'}`:'No saved Content Intelligence review for the current source.';
-    }catch(e){if(panel.isConnected)status.textContent=e.name==='AbortError'?'Request stopped. Load Last Review to check the saved result.':e.message;}
-    finally{busy=false;controller=null;session.contentIntelligenceController=null;controls();}
-  }
-  run.onclick=()=>{if(!session.running)void request('POST');else status.textContent='Wait for the current metadata scan to finish.';};stop.onclick=()=>controller?.abort();refresh.onclick=()=>void request('GET');for(const tab of tabs)tab.onclick=()=>{view=tab.dataset.ciView;render();};search.oninput=render;
-  controls();void request('GET');
-}
-
-function gvAttachDocumentIndex(dialog,session,item) {
-  const panel=document.createElement('section');panel.className='gv-magscan-content gv-scan-workspace';
-  panel.innerHTML=`<section class="gv-scan-card"><div class="gv-scan-heading"><h2>Scan magazine metadata</h2><small data-scan-revision>Ready</small></div>
-    <div class="gv-scan-mode"><label for="gv-scan-mode">Update mode</label><select id="gv-scan-mode" data-mode><option value="add">Add to Existing</option><option value="replace">Replace Existing</option></select><p class="sub" data-mode-note></p></div>
-    <div class="gv-scan-actions"><button type="button" class="primary" data-start>Scan Magazine</button><button type="button" class="ghost" data-stop disabled>Stop Scan</button><button type="button" class="ghost" data-copy disabled>Copy Output</button><button type="button" class="primary" data-apply disabled>Apply Suggestions</button></div>
-    <p class="gv-scan-status" data-status role="status">Ready to scan. No metadata is saved until you apply suggestions.</p><progress data-progress value="0" max="1" aria-label="Scan progress"></progress><p class="sub" data-progress-info aria-live="polite">Checking document index…</p><p class="sub" data-active></p></section>
-    <section class="gv-scan-card" data-output hidden><h3>Output summary</h3><div class="gv-scan-metrics" data-metrics></div><div data-summary></div><div data-verification></div><p class="sub" data-copy-status role="status"></p><textarea data-copy-fallback hidden readonly rows="10" aria-label="Diagnostic output"></textarea></section>`;
-  dialog.append(panel);
-  const q=s=>panel.querySelector(s), status=q('[data-status]'), progress=q('[data-progress]'), info=q('[data-progress-info]'), active=q('[data-active]'), start=q('[data-start]'), stop=q('[data-stop]'), copy=q('[data-copy]'), apply=q('[data-apply]'), mode=q('[data-mode]'), modeNote=q('[data-mode-note]');
-  const endpoint=`/api/items/${encodeURIComponent(metadataManagerItemId(item))}/document-index`;
-  let timer=null, polling=false, busy=false, applying=false, starting=false, initial=true, report=null, jobId='', seen='', diagnostics='';
-  const el=(tag,text,cls)=>{const n=document.createElement(tag);if(text!=null)n.textContent=String(text);if(cls)n.className=cls;return n;};
-  const value=v=>Array.isArray(v)?v.join(', ')||'—':v==null||v===''?'—':typeof v==='object'?JSON.stringify(v):String(v);
-  const label=k=>({writer:'Editor',magazineTitle:'Publication title',barcodeUpcIssn:'ISSN / barcode',pageCount:'Digital page count',languageTag:'Language',magazineCategory:'Category'}[k]||String(k||'').replace(/([a-z])([A-Z])/g,'$1 $2').replace(/^./,x=>x.toUpperCase()));
-  const scanValues=(c,preview,scanMode)=>{
-    const list=['featuredGames','mentionedGames','featuredPlatforms','specialFeatures'].includes(c.field);
-    const before=Array.isArray(c.before)?c.before:[];
-    const after=Array.isArray(c.after)?c.after:[];
-    if(list&&Array.isArray(c.after)&&scanMode==='replace'){
-      const key=v=>String(v).trim().toLowerCase(), oldKeys=new Set(before.map(key)), newKeys=new Set(after.map(key));
-      return [[preview?'Replacement list':'Saved list',after],[preview?'To add':'Added',after.filter(v=>!oldKeys.has(key(v)))],[preview?'To remove':'Removed',before.filter(v=>!newKeys.has(key(v)))]];
+  const display=v=>Array.isArray(v)?v.join(', ')||'—':v==null||v===''||v===0?'—':String(v);
+  function renderOverview(out){
+    const fields=[['magazineTitle','Publication title'],['issueNumber','Issue number'],['coverDate','Cover date'],['primarySystem','Primary system'],['publisher','Publisher'],['pageCount','Physical page count'],['region','Country of publication / region'],['languageTag','Language'],['magazineCategory','Magazine category'],['coverSubject','Cover game subject'],['summary','Description'],['volume','Volume'],['year','Publication year'],['publicationDate','Publication date'],['barcodeUpcIssn','Barcode / UPC / ISSN'],['writer','Editor'],['specialFeatures','Sections and departments'],['mentionedGames','Mentioned games'],['featuredPlatforms','Featured platforms'],['featuredGames','Featured games']];
+    if(!metadata){out.append(node('p','Analyze Content to generate a publication metadata preview. Existing game review results remain available in Game Matches.','sub'));}
+    const current=metadata?.item||item, changes=metadata?.changes||[], proof=gvPublicationVerificationRows(metadata), editable=metadata?.preview===true&&job?.state==='complete'&&job?.unified;
+    out.append(node('p',`Digital images/pages indexed: ${report?.total_pages??job?.totalPages??'—'}. Physical page count is a separate metadata value; an existing value may be unverified. Review all proposed changes before applying.`, 'sub'));
+    const actions=node('div',null,'gv-scan-actions'),apply=node('button','Apply selected metadata','primary'),all=node('button','Select all proposals','ghost');apply.type=all.type='button';actions.append(apply,all);out.append(actions);
+    function updateApply(){apply.disabled=busy||!editable||!selectedFields.size;apply.textContent=`Apply selected metadata (${selectedFields.size})`;all.disabled=busy||!editable||!changes.length;}
+    const list=node('div',null,'gv-verify-table');out.append(list);
+    const toggles=new Map();
+    for(const [key,label] of fields){
+      const c=changes.find(c=>c.field===key),v=proof.find(p=>p.field===key),held=(metadata?.held||[]).filter(h=>String(h).startsWith(key+':'));
+      const d=node('details',null,'gv-verify-row'),head=node('summary',null,'gv-verify-head'),name=node('span',null,'gv-verify-field');name.append(node('strong',label));
+      if(editable&&c){const cb=node('input');cb.type='checkbox';cb.checked=selectedFields.has(key);cb.setAttribute('aria-label','Apply '+label);cb.onclick=e=>e.stopPropagation();cb.onchange=()=>{if(cb.checked)selectedFields.add(key);else selectedFields.delete(key);updateApply();};toggles.set(key,cb);name.append(cb);}
+      const before=node('span',null,'gv-verify-cell');before.append(node('small','Existing'),node('span',display(c?.before??current[key]??v?.current)));
+      const detected=node('span',null,'gv-verify-cell');const candidate=key==='pageCount'&&!c?'Not verified (physical total)':v?.candidates?.map(p=>display(p.value)).join(' / ');detected.append(node('small',c?'Proposed / applied':'Detected'),node('span',c?display(c.after):candidate||'—'));
+      const st=node('span',null,'gv-verify-cell');st.append(node('small',c?(editable?'Proposal':metadata?.preview===false?'Applied':'Saved proposal'):key==='pageCount'?'Verify printed total':v?.status||'No new proposal'));head.append(name,before,detected,st);d.append(head);
+      const body=node('div',null,'gv-verify-evidence');if(c)body.append(node('p',c.reason,'sub'));for(const h of held)body.append(node('p',h,'sub'));if(key!=='pageCount')for(const candidate of v?.candidates||[]){for(const e of candidate.evidence||[])body.append(node('p',`${e.page?'Page '+e.page+' · ':''}${e.source||'Evidence'}: ${e.evidence||display(e.value)}`,'sub'));}else if(!c)body.append(node('p','Digital image count is not evidence of physical pagination.','sub'));d.append(body);list.append(d);
     }
-    if(list&&Array.isArray(c.after)&&before.every((v,i)=>v===after[i]))return [['Existing entries retained',`${before.length}`],[preview?'Proposed additions':'Added',after.slice(before.length)]];
-    return [['Current',c.before],[preview?'Suggested':'Saved',c.after]];
-  };
-  const selected=()=>[...panel.querySelectorAll('input[data-suggestion]:checked')].map(n=>n.dataset.suggestion);
-  const empty=v=>v==null||v===''||v===0||Array.isArray(v)&&!v.length||typeof v==='string'&&/^(unknown|unspecified|not specified|n\/?a)$/i.test(v.trim());
-  function controls(){mode.disabled=busy||applying||starting||initial;modeNote.textContent=mode.value==='replace'?'Replace selected fields with supported scan results. Entries absent from a replacement list are removed. Missing or uncertain fields are retained; review the preview.':'Keep existing values, fill missing fields and append supported list entries.';start.disabled=busy||applying||starting||initial;stop.disabled=!busy||applying||starting;copy.disabled=!diagnostics;apply.disabled=busy||applying||!report?.preview||report.mode!==mode.value||!selected().length;apply.textContent=applying?"Applying…":selected().length?`Apply Suggestions (${selected().length})`:"Apply Suggestions";apply.title=selected().length?"Apply selected fields":"Select at least one suggested field first";panel.querySelectorAll('input[data-suggestion]').forEach(n=>n.disabled=busy||applying||!report?.preview);}
-  async function request(path='',params={},method='GET'){
-    const timeout=new AbortController();const handle=setTimeout(()=>timeout.abort(),params.action==='apply'?90000:20000);try{const res=await fetch(endpoint+path+'?'+new URLSearchParams(params),{method,cache:'no-store',signal:timeout.signal});if(!res.ok){let msg=`HTTP ${res.status}`;try{const body=await res.json();msg=body.error||body.detail||msg;}catch{}throw new Error(msg);}return await res.json();}finally{clearTimeout(handle);}
+    all.onclick=()=>{for(const [k,cb] of toggles){cb.checked=true;selectedFields.add(k);}updateApply();};
+    apply.onclick=async()=>{
+      const fields=[...selectedFields];if(!editable||busy||scanning||!fields.length)return;
+      busy=true;controls();updateApply();status.textContent='Applying selected metadata…';
+      try{const saved=await jobRequest({action:'apply',jobId:job.jobId,fields:fields.join(',')},'POST');if(saved.preview!==false||!saved.item)throw new Error('Unexpected save response; reload before retrying.');metadata=saved;selectedFields.clear();const key=metadataOverrideKey(item),map=readClientMetadataOverrides();if(map[key]){for(const c of saved.changes||[])delete map[key][c.field];delete map[key].metadataSource;writeClientMetadataOverrides(map);}replaceItemInState(saved.item);status.textContent=`Saved ${saved.changes.length} field(s) to Overview.`;}
+      catch(e){status.textContent='Save not confirmed: '+e.message+' — Load Last Scan before retrying.';}
+      finally{busy=false;controls();render();}
+    };updateApply();
   }
-  function renderVerification(r,root){
-    const rows=gvPublicationVerificationRows(r);
-    root.replaceChildren();if(!rows.length){root.append(el('p','Publication verification is unavailable in this report. Scan Magazine to refresh it.','sub'));return;}
-    const section=el('details',null,'gv-scan-verification');section.open=true;
-    const counts={verified:0,change:0,uncertain:0,missing:0};for(const row of rows)counts[row.state]++;
-    section.append(el('summary',`Metadata verification (${rows.length} fields)`),el('p',`${counts.verified} verified · ${counts.change} ${r.preview?'corrections':'applied'} · ${counts.uncertain} other evidence / uncertain · ${counts.missing} not detected`,'sub'),el('p','Values at scan time. Printed evidence is OCR-derived, not a manual review. Library and filename matches are not proof of printed metadata. Expand a field to inspect its evidence. Diagnostic-only values cannot be applied.','sub'));
-    const table=el('div',null,'gv-verify-table');
-    for(const row of rows){
-      const d=el('details',null,'gv-verify-row'),head=el('summary',null,'gv-verify-head');
-      const field=el('span',null,'gv-verify-field');field.append(el('strong',row.label));if(row.locked)field.append(el('small','Locked','sub'));if(row.indexOnly)field.append(el('small','Diagnostic only','sub'));
-      const current=el('span',null,'gv-verify-cell');current.append(el('small','Existing'),el('span',value(row.current)));
-      const detected=el('span',null,'gv-verify-cell');detected.append(el('small','Detected'),el('span',row.candidates.map(c=>value(c.value)).join(' / ')||'—'));
-      const statusCell=el('span',null,'gv-verify-cell');statusCell.append(el('span',row.status,'gv-verify-status gv-verify-'+row.state),el('small',row.source));
-      head.append(field,current,detected,statusCell);d.append(head);
-      const body=el('div',null,'gv-verify-evidence');
-      if(row.change)body.append(el('p',`${r.preview?'Proposed':'Applied'}: ${value(row.change.after)} — ${row.change.reason||''}`,'sub'));
-      for(const reason of row.reasons)body.append(el('p','Retained: '+reason,'sub'));
-      if(!row.evidence.length)body.append(el('p','No indexed evidence was returned for this field.','sub'));
-      for(const c of row.candidates){body.append(el('strong',value(c.value)));for(const e of c.evidence||[]){const line=el('div',null,'gv-verify-proof');line.append(el('small',`${e.page!=null?'Digital page '+e.page+' · ':''}${e.source||'Evidence'} · ${value(e.value)}`),el('p',e.evidence||'—'));body.append(line);}}
-      d.append(body);table.append(d);
-    }
-    section.append(table);root.append(section);
+  function controls(){run.disabled=busy||scanning||polling;stop.disabled=!scanning;refresh.disabled=busy||scanning;mode.disabled=busy||scanning;visual.disabled=busy||scanning||!['PDF','CBZ','ZIP'].includes(format);session.running=busy||scanning;}
+  async function jobRequest(params={},method='GET'){
+    const res=await fetch(jobEndpoint+'?'+new URLSearchParams(params),{method,cache:'no-store'});const data=await res.json();if(!res.ok)throw new Error(data.error||data.detail||`HTTP ${res.status}`);return data;
   }
-  function render(r){
-    if(metadataManagerItemId(r.item)!==metadataManagerItemId(item))throw new Error('Unexpected magazine response. Refresh the page.');
-    report=r;if(r.mode==='add'||r.mode==='replace')mode.value=r.mode;const changes=r.changes||[],held=r.held||[],ed=r.editorial||{},pub=r.publication||{};
-    q('[data-scan-revision]').textContent=r.revision||'Scanner revision not reported';q('[data-output]').hidden=false;
-    const metrics=q('[data-metrics]'), summary=q('[data-summary]');metrics.replaceChildren();summary.replaceChildren();
-    const metric=(name,n)=>{const box=el('div',null,'gv-scan-metric');box.append(el('small',name),el('strong',n));metrics.append(box);};
-    metric('Pages indexed',`${ed.indexedPages??pub.indexedPages??0}/${ed.totalPages??pub.totalPages??0}`);metric(r.preview?'Suggestions':'Fields saved',changes.length);metric('Retained / uncertain',held.length);metric('Interpretation',`${r.seconds??'—'}s`);metric('Featured candidates',ed.featuredCount??'—');metric('Mentioned candidates',ed.mentionedCount??'—');
-    summary.append(el('h4',r.preview?'Suggestions':'Applied changes'));
-    if(r.preview)summary.append(el('p',r.mode==='replace'?'Replace Existing — selected fields will be overwritten with the proposed values. Review every removal, especially if contents entries are unresolved. Existing populated fields are not selected automatically. Reviewed, locked and manual-only records stay protected. Unreviewed manual values can be replaced when selected.':r.mode==='add'?'Add to Existing — new fields are selected by default; lists gain entries and existing values are retained.':'This preview predates update modes. Scan again before applying.','sub'));
-    if(!changes.length)summary.append(el('p','No supported changes found.','sub'));
-    for(const c of changes){const row=el('div',null,'gv-scan-suggestion'),head=el('label',null,'gv-scan-selection');if(r.preview){const check=el('input');check.type='checkbox';check.dataset.suggestion=c.field;check.checked=empty(c.before);check.addEventListener('change',controls);head.append(check);}head.append(el('strong',label(c.field)));row.append(head);const pair=el('div',null,'gv-scan-values');for(const [name,v] of scanValues(c,r.preview,r.mode)){const cell=el('div');cell.append(el('small',name),el('div',value(v),'gv-scan-value'));pair.append(cell);}row.append(pair,el('p',c.reason,'sub'));summary.append(row);}
-    if(held.length){const d=el('details',null,'gv-scan-held');d.append(el('summary',`Retained or uncertain fields (${held.length})`));for(const h of held){const txt=String(h),i=txt.indexOf(':');d.append(el('p',i>0?label(txt.slice(0,i))+': '+txt.slice(i+1).trim():txt,'sub'));}summary.append(d);}
-    if(ed.coverCandidates?.length)summary.append(el('p','Cover candidates (not artwork verification): '+ed.coverCandidates.map(c=>c.title).join(', '),'sub'));
-    renderVerification(r,q('[data-verification]'));
-    diagnostics=[`Automatic Cataloging ${r.revision}`,`Mode: ${r.mode||"legacy"}`,`${changes.length} field(s) ${r.preview?'suggested (not saved)':'saved'} · ${r.seconds}s interpretation · ${held.length} held`,...changes.map(c=>`${c.field}: ${JSON.stringify(c.before)} → ${JSON.stringify(c.after)} (${c.reason})`),'','Retained or uncertain fields:',...held,'','Publication evidence:',JSON.stringify(pub,null,2),'','Editorial evidence:',JSON.stringify(ed,null,2)].join('\n');
-    q('[data-copy-fallback]').hidden=true;q('[data-copy-status]').textContent='';controls();
+  async function loadReview(){
+    const response=await fetch(endpoint,{cache:'no-store'});const data=await response.json();if(!response.ok)throw new Error(data.error||data.detail||`HTTP ${response.status}`);if(!panel.isConnected)return;report=data.report||null;reviewToken=data.reviewToken||'';decisions=data.decisions||[];if(!metadata&&data.metadata){metadata={...data.metadata,item,preview:null};status.textContent='Saved analysis loaded (read-only metadata proposals; analyze again to apply).';}
   }
-  async function refreshIndex(){try{const s=await request();if(!panel.isConnected||busy)return;const total=Number(s.totalPages||0),done=(s.indexedPages||[]).length;progress.max=Math.max(1,total);progress.value=done;info.textContent=total?`${done} / ${total} pages indexed`:'Document not indexed. Scan Magazine will create the index.';}catch(e){info.textContent=e.message;}}
+  const seconds=v=>`${Math.floor(Math.max(0,Math.round(v))/60)}:${String(Math.round(Math.max(0,v))%60).padStart(2,'0')}`;
   function showJob(j){
-    busy=j.state==='running';session.running=busy;jobId=j.jobId||'';controls();
-    if(j.state==='idle'){refreshIndex();return;}
-    progress.max=Math.max(1,j.totalPages||1);progress.value=j.indexed||0;
-    const eta=busy&&j.remainingSeconds!=null?` · ~${Math.ceil(j.remainingSeconds/60)} min remaining`:'';
-    info.textContent=`${j.indexed||0} / ${j.totalPages||0} pages indexed · ${j.seconds??0}s elapsed${eta}`;
+    job=j;scanning=j.state==='running';controls();
+    if(j.state==='idle')return;
+    const phase=j.phase||'preparing',indexed=Number(j.indexed||0),total=Number(j.totalPages||0),done=Number(j.stageDone||0),stageTotal=Number(j.stageTotal||0);
+    if(j.state==='complete'){progress.max=1;progress.value=1;}
+    else if(phase==='indexing'&&total&&indexed<total){progress.max=total;progress.value=indexed;}
+    else if(scanning&&stageTotal>0&&done<stageTotal){progress.max=stageTotal;progress.value=done;}
+    else if(scanning){progress.removeAttribute('value');}
+    else {progress.max=1;progress.value=0;}
+    const elapsed=Number(j.seconds||0),eta=j.remainingSeconds;
+    timing.textContent=`${total?`${indexed}/${total} digital pages indexed · `:''}${stageTotal?`${done}/${stageTotal} stage units · `:''}Elapsed ${seconds(elapsed)}${scanning?(eta!=null?` · ${phase==='indexing'?'Index':'Stage'} ETA ${seconds(eta)} · Finish at ${seconds(elapsed+Number(eta))} elapsed`:' · Remaining: estimating…'):''}${j.budgetSeconds?` · Run budget ${seconds(j.budgetSeconds)}`:''}`;
     active.textContent=[...(j.active||[]).map(p=>`Page ${p.page}: ${p.stage}`),...(j.failed||[]).map(p=>`Page ${p.page}: ${p.error}`)].join(' · ');
     status.textContent=j.message||j.state;
-    if(j.state==='complete'&&j.report){const key=jobId+':'+String(j.report.preview===true);if(key!==seen){seen=key;render(j.report);}status.textContent=j.report.preview?`${j.report.changes.length} suggestions ready. Select fields to apply.`:`${j.report.changes.length} fields saved.`;}
-    else if(j.state!=='running'&&j.state!=='complete'){report=null;diagnostics=JSON.stringify(j,null,2);q('[data-output]').hidden=false;q('[data-summary]').textContent=j.message||j.state;q('[data-metrics]').replaceChildren();q('[data-verification]').replaceChildren();}
-    controls();
+    if(j.state==='complete'&&j.unified&&j.report){metadata=j.report;selectedFields.clear();status.textContent=metadata.preview?`Analysis complete · ${metadata.changes.length} metadata proposal(s). Nothing saved automatically.`:'Metadata saved. Game links are managed in LaunchBox Links.';}
   }
-  async function poll(){if(polling||!panel.isConnected||applying||starting)return;polling=true;try{const j=await request('/job');if(!panel.isConnected)return;initial=false;showJob(j);if(busy)timer=setTimeout(poll,1800);}catch(e){status.textContent='Unable to retrieve scan status: '+e.message;timer=setTimeout(poll,4000);}finally{polling=false;}}
-  mode.onchange=()=>{report=null;diagnostics='';q('[data-output]').hidden=true;status.textContent='Update mode changed. Scan Magazine to generate a new preview using the existing index.';controls();};
-  start.onclick=async()=>{if(busy||applying||starting||initial)return;starting=true;clearTimeout(timer);report=null;diagnostics='';seen='';q('[data-output]').hidden=true;busy=true;session.running=true;controls();status.textContent='Starting scan…';try{showJob(await request('/job',{catalog:'true',preview:'true',replace:String(mode.value==='replace'),mode:mode.value,workers:'2'},'POST'));}catch(e){status.textContent='Start response: '+e.message+' — checking server status.';}finally{starting=false;controls();await poll();}};
-  stop.onclick=async()=>{if(!busy)return;status.textContent='Stopping scan…';try{showJob(await request('/job',{action:'stop'},'POST'));}catch(e){status.textContent=e.message;}await poll();};
-  copy.onclick=async()=>{if(!diagnostics)return;const fallback=q('[data-copy-fallback]'),note=q('[data-copy-status]');try{if(!navigator.clipboard?.writeText)throw new Error('Clipboard unavailable');await navigator.clipboard.writeText(diagnostics);note.textContent='Diagnostic output copied.';return;}catch{}fallback.hidden=false;fallback.value=diagnostics;fallback.focus();fallback.select();try{if(document.execCommand('copy')){fallback.hidden=true;note.textContent='Diagnostic output copied.';return;}}catch{}note.textContent='Clipboard unavailable. Press Ctrl+C to copy the selected output.';};
-  apply.onclick=async()=>{
-    const fields=selected();if(!report?.preview||report.mode!==mode.value||!fields.length||busy||applying)return;
-    applying=true;session.running=true;controls();status.textContent='Applying selected suggestions…';clearTimeout(timer);
-    const submittedJob=jobId;
-    const valid=r=>r?.preview===false&&metadataManagerItemId(r.item)===metadataManagerItemId(item)&&Array.isArray(r.changes)&&r.changes.length===fields.length&&fields.every(f=>r.changes.some(c=>c.field===f));
-    let saved=null;
-    try{
-      try{const r=await request('/job',{action:'apply',jobId:submittedJob,fields:fields.join(',')},'POST');if(!valid(r))throw new Error('Unexpected apply response.');saved=r;}
-      catch(e){
-        // Never blindly submit again after a timeout: check the existing server result.
-        let j=null;try{j=await request('/job');}catch{}
-        if(j?.jobId===submittedJob&&valid(j.report))saved=j.report;
-        else {const message='Apply not confirmed: '+e.message+(j?.jobId===submittedJob&&j?.report?.preview===true?' — preview retained; retry after resolving the error.':' — refresh or rescan before retrying.');status.textContent=message;diagnostics+='\n\nApply error: '+message;if(j?.jobId!==submittedJob||j?.report?.preview!==true){report=null;}return;}
-      }
-      // A confirmed server commit must not be reported as a failed write when a UI
-      // refresh or navigation fails. Keep the selected item consistent with the server.
-      report=saved;seen=submittedJob+':false';
-      const success=`Applied ${saved.changes.length} selected field(s).`;
-      try{
-        const key=metadataOverrideKey(item),map=readClientMetadataOverrides();
-        if(map[key]){for(const c of saved.changes)delete map[key][c.field];delete map[key].metadataSource;writeClientMetadataOverrides(map);}
-        replaceItemInState(saved.item);render(saved);status.textContent=success;
-        if(gvMagazineScanSession===session&&panel.isConnected&&metadataManagerItemId(state.selected)===metadataManagerItemId(item)&&!$('detailView')?.classList.contains('hidden')){
-          if(state.activeTab==='magazine-scan')activateTab('overview');if(state.activeTab==='overview')renderDetails(state.selected);const main=document.querySelector('.main');if(main)main.scrollTop=0;showGuidevaultMessageToast(success,'success',{title:'Magazine metadata saved'});
-        }
-      }catch(e){status.textContent=success+' Refresh the page to update the display: '+e.message;diagnostics+='\n\nSaved; UI refresh error: '+e.message;}
-    }finally{applying=false;session.running=false;controls();}
-  };
-  controls();poll();
-  gvAttachContentIntelligence(dialog,session,item);
+  async function poll(){
+    if(polling||!panel.isConnected)return;polling=true;clearTimeout(timer);
+    try{const j=await jobRequest();if(!panel.isConnected)return;showJob(j);if(scanning)timer=setTimeout(poll,900);else{await loadReview();render();}}
+    catch(e){if(panel.isConnected){status.textContent='Unable to check analysis: '+e.message;timer=setTimeout(poll,2500);}}
+    finally{polling=false;controls();}
+  }
+  run.onclick=async()=>{if(busy||scanning||polling)return;busy=true;controls();clearTimeout(timer);metadata=null;selectedFields.clear();status.textContent='Starting unified analysis…';try{showJob(await jobRequest({catalog:'true',preview:'true',unified:'true',visual:String(visual.checked),mode:mode.value,replace:String(mode.value==='replace'),workers:'2'},'POST'));view='overview';render();}catch(e){status.textContent='Start not confirmed: '+e.message;}finally{busy=false;controls();void poll();}};
+  stop.onclick=async()=>{if(!scanning)return;try{showJob(await jobRequest({action:'stop'},'POST'));}catch(e){status.textContent=e.message;}void poll();};
+  refresh.onclick=()=>void poll();for(const tab of tabs)tab.onclick=()=>{view=tab.dataset.ciView;render();};search.oninput=render;
+  controls();void poll();
 }
 
 function gvMagazineScanDialog(items, fromDetail = false, inlineHost = null) {
@@ -18978,7 +18917,7 @@ function gvMagazineScanDialog(items, fromDetail = false, inlineHost = null) {
   const q = s => dialog.querySelector(s);
   const session = { controller:null, running:false, rows:[], dialog, inline:!!inlineHost, itemId:metadataManagerItemId(items[0]) };
   gvMagazineScanSession = session;
-  if (inlineHost && items.length === 1) { dialog.replaceChildren(); gvAttachDocumentIndex(dialog, session, items[0]); return; }
+  if (inlineHost && items.length === 1) { dialog.replaceChildren(); gvAttachContentIntelligence(dialog, session, items[0]); return; }
   function close() { if (session.running) return; if (inlineHost) gvDisposeInlineMagazineScan(); else dialog.close(); }
   if (inlineHost) {
     q('[data-scan-close]').textContent = 'Back to Metadata';

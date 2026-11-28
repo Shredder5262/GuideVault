@@ -42,6 +42,12 @@ internal static class GuidevaultContentIntelligence
             .Select(e => e.GetProperty("content_kind").GetString() ?? "")
             .Where(IsSubstantive).Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
         if (types.Length == 0) throw new InvalidOperationException("Choose a substantive coverage page, not a checklist or cover reference.");
+        if(payload.CoverageTypes is { Length: > 0 })
+        {
+            var allowed=new[]{"Game Review","Game Feature","Game Preview","Walkthrough","Strategy Guide","Tips & Tricks","Cheats & Secrets","Level Guide","Boss Guide","Maps & Diagrams","Game Spotlight","Game Overview","Game News","Game Comparison","Interview","Reader Q&A","Reader Tips","Retrospective"};
+            if(payload.CoverageTypes.Length>allowed.Length||payload.CoverageTypes.Any(k=>!allowed.Contains(k,StringComparer.Ordinal)))throw new InvalidOperationException("Invalid reviewed coverage classification.");
+            return (fingerprint,string.Join(" / ",payload.CoverageTypes.Distinct(StringComparer.Ordinal)));
+        }
         return (fingerprint, string.Join(" / ", types));
     }
 
@@ -51,7 +57,9 @@ internal static class GuidevaultContentIntelligence
         catch (Exception) { return false; }
     }
 
+    internal static bool IsReference(string kind) => new[]{"Cover mention","Catalog / checklist reference","Contents reference","High-score / competition reference","Possible advertisement","Brief Mention","Illustrated Reference"}.Contains(kind,StringComparer.OrdinalIgnoreCase);
     internal static bool IsSubstantive(string kind) =>
+        new[]{"Game Spotlight","Game Overview","Game News","Game Comparison","Interview","Reader Q&A","Reader Tips","Retrospective","Boss Guide","Level Guide","Map / level guide","Maps & Diagrams"}.Any(k=>kind.StartsWith(k,StringComparison.OrdinalIgnoreCase)) ||
         kind.StartsWith("Game review", StringComparison.OrdinalIgnoreCase) ||
         kind.StartsWith("Game feature", StringComparison.OrdinalIgnoreCase) ||
         kind.StartsWith("Game profile", StringComparison.OrdinalIgnoreCase) ||
@@ -72,7 +80,7 @@ internal static class GuidevaultContentIntelligence
         return await ReadReportAsync(path, key, token);
     }
 
-    public static async Task<(JsonElement Report, double Seconds)> ScanAsync(string root, LibraryItem item, string catalogPath, bool visual, CancellationToken token)
+    public static async Task<(JsonElement Report, double Seconds)> ScanAsync(string root, LibraryItem item, string catalogPath, bool visual, CancellationToken token, Action<string,string,int,int>? progress=null)
     {
         if (!File.Exists(Python) || !File.Exists(Script))
             throw new InvalidOperationException("Packaged Content Intelligence runtime is missing. Rebuild the GuideVault image.");
@@ -105,7 +113,21 @@ internal static class GuidevaultContentIntelligence
         deadline.CancelAfter(TimeSpan.FromSeconds(120));
         var watch = Stopwatch.StartNew();
         process.Start();
-        var stdout = process.StandardOutput.ReadToEndAsync();
+        async Task ReadProgress()
+        {
+            while(await process.StandardOutput.ReadLineAsync() is string line)
+            {
+                var match=System.Text.RegularExpressions.Regex.Match(line,@"^(\d+)/(\d+) (pages scanned|page \d+:)");
+                if(match.Success&&int.TryParse(match.Groups[1].Value,out var done)&&int.TryParse(match.Groups[2].Value,out var total))
+                {
+                    var crops=match.Groups[3].Value.StartsWith("page ",StringComparison.Ordinal);
+                    progress?.Invoke(crops?"targeted-ocr":"content",crops?"Recovering missing headings":"Scanning indexed game titles",done,total);
+                }
+                else if(line.StartsWith("Rail retry:",StringComparison.Ordinal)||line.StartsWith("Visual stage:",StringComparison.Ordinal))progress?.Invoke("classification","Resolving recovered headings and coverage",0,0);
+                else if(line.StartsWith("Magazine review:",StringComparison.Ordinal))progress?.Invoke("classification","Preparing game review results",0,0);
+            }
+        }
+        var stdout = ReadProgress();
         var stderr = process.StandardError.ReadToEndAsync();
         try
         {
@@ -151,4 +173,5 @@ public sealed class GuidevaultContentDecision
     public string ReviewToken { get; set; } = "";
     public string ExpectedVersion { get; set; } = "";
     public int? Page { get; set; }
+    public string[]? CoverageTypes { get; set; }
 }

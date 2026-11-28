@@ -3,7 +3,7 @@
 import argparse, json, os, re, sys, time, tempfile, unicodedata, statistics
 from collections import Counter, defaultdict
 from pathlib import Path
-REV = 'content-intelligence-v5.1-region-context'
+REV = 'content-intelligence-v5.3-unified-coverage'
 DATA = Path(os.environ.get("GUIDEVAULT_DATA", "/data"))
 def read(p):
     return json.loads(p.read_text(encoding='utf-8-sig'))
@@ -1329,6 +1329,35 @@ def region_leads(pages, candidates, contexts, year, explicit_scope=None):
     return records, platform, scope
 
 
+def descriptive_coverage(r, p, selected):
+    # Interpret local evidence independently of whether the LaunchBox identity is resolved.
+    # Never turn a distant page-level keyword into a game-specific article.
+    hints=list(dict.fromkeys(e['kind_hint'] for e in r.get('kind_evidence',[]) if e.get('kind_hint')))
+    if hints: return ' / '.join(hints)
+    keys=[r['title_key'],*r.get('matched_alias_keys',[])]
+    if fragmented_heading(r['title_key'],p): return 'Classification Pending'
+    rows=(p or {}).get('layout_lines',[])
+    size=(p or {}).get('layout_size',[])
+    if len(size)>=2 and size[1]>0:
+        w,h=size[:2]
+        for row in rows:
+            if not coords(row) or not any(title_line_match(k,row[0]) for k in keys): continue
+            x,y,ww,hh=row[1:5]
+            if hh<h*.014 or ww<w*.06: continue
+            local=[n[0] for n in rows if coords(n) and y+hh*.8<=n[2]<=y+h*.20 and n[1]<x+ww+w*.05 and n[1]+n[3]>x-w*.05 and len(tokens(n[0]))>=5 and n[4]<hh*.85]
+            text=' '.join(local)
+            if len(tokens(text))>=25:
+                if re.search(r'\b(?:boss|defeat)\b',text,re.I) and re.search(r'\b(?:attack|weakness|dodge|hit|kick)\b',text,re.I): return 'Boss Guide'
+                if re.search(r'\b(?:interview|we asked|Q&A)\b',text,re.I): return 'Interview'
+                if re.search(r'\b(?:coming soon|in development|upcoming|scheduled for release)\b',text,re.I): return 'Game Preview'
+                return 'Game Feature'
+            if len(tokens(text))>=8: return 'Game Spotlight'
+    if r.get('nearby_gameplay_text'): return 'Gameplay information (review lead)'
+    if selected: return 'Game title heading (coverage unverified)'
+    if r.get('heading_evidence'): return 'Game heading reference'
+    return 'Brief Mention'
+
+
 def unified_review(out, document_key=None):
     """Create a read-only review contract; never promote a candidate into a relationship."""
     out=Path(out)
@@ -1469,7 +1498,7 @@ def unified_review(out, document_key=None):
             options=supported if context or toc_supported else viable
             if len({c['id'] for c in options})==1: selected=options[0]
         kinds=sorted({e['kind_hint'] for e in r.get('kind_evidence',[]) if e.get('kind_hint')})
-        kind=r.get('kind') or (kinds[0]+' (review lead)' if selected and len(kinds)==1 else 'Game title heading (coverage unverified)' if selected else 'Unclassified title mention')
+        kind=r.get('kind') or descriptive_coverage(r,p,selected)
         if full_review: kind='Game review (explicit heading)' if pc['kind']=='review' else 'Game preview (explicit heading)'
         elif pc['kind']=='cover': kind='Cover mention'
         elif pc['kind']=='checklist': kind='Catalog / checklist reference'
@@ -1545,7 +1574,7 @@ def unified_review(out, document_key=None):
         def priority(e):
             k=e['content_kind'].casefold()
             if 'review (explicit' in k: return 0
-            if 'feature / article' in k or 'cheat' in k or 'guide' in k or 'tips' in k: return 1
+            if 'game feature' in k or 'cheat' in k or 'guide' in k or 'tips' in k: return 1
             if 'profile' in k or 'preview' in k: return 2
             if 'cover' in k or 'checklist' in k or 'contents reference' in k or 'high-score' in k: return 4
             if 'gameplay information' in k: return 1

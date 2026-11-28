@@ -280,6 +280,13 @@ public static class GuidevaultDocumentIndex
                     var digits=barcode.Groups[1].Value+barcode.Groups[2].Value+barcode.Groups[3].Value;
                     if(Enumerable.Range(0,13).Sum(k=>(digits[k]-'0')*(k%2==0?1:3))%10==0)Add("barcodeUpcIssn",digits,page,"Checksum-valid printed EAN-13",barcode.Value);
                 }
+                foreach(Match upc in Regex.Matches(p.Text,@"(?im)^\s*(?:UPC(?:-A)?\s*[:#]?\s*)?(\d[\d -]{10,20}\d)\s*$"))
+                {
+                    var digits=Regex.Replace(upc.Groups[1].Value,@"[ -]","");
+                    // Avoid interpreting arbitrary unlabelled score/phone numbers as UPCs.
+                    if(digits.Length==12&&(upc.Value.TrimStart().StartsWith("UPC",StringComparison.OrdinalIgnoreCase)||Regex.IsMatch(upc.Groups[1].Value,@"^\d\s+\d{5}\s+\d{5}\s+\d$"))&&Enumerable.Range(0,12).Sum(k=>(digits[k]-'0')*(k%2==0?3:1))%10==0)
+                        Add("barcodeUpcIssn",digits,page,"Checksum-valid printed UPC-A",upc.Value);
+                }
                 if(guide is not null)Add("primarySystem",guide,page,"Explicit cover guide subject",p.Text[..Math.Min(500,p.Text.Length)]);
                 var market=Regex.Match(p.Text,@"(?im)^\s*\$\s*\d{1,3}[.,]\d{2}\s*[^\r\n\d]{0,12}\$\s*\d{1,3}[.,]\d{2}\s*Canada\b");
                 if(market.Success){coverMarket="USA";Add("region","USA",page,"North American cover pricing candidate",market.Value);}
@@ -1085,7 +1092,7 @@ public static class GuidevaultDocumentIndex
     }
     private static bool ResolvedContents(IReadOnlyCollection<ContentsCard> cards)=>cards.Count>=3&&cards.Where(c=>c.Title is not null&&!c.Department).Select(c=>c.Title).Distinct(StringComparer.OrdinalIgnoreCase).Count()>=3&&cards.Count(c=>c.Title is not null||c.Department)*2>=cards.Count;
     private static bool StrongContents(IReadOnlyCollection<ContentsCard> cards)=>ResolvedContents(cards)||cards.Count(c=>!c.Department&&c.Source.EndsWith("validated strategy list",StringComparison.Ordinal))>=3;
-    public static async Task<object> EditorialAsync(string root, LibraryItem item, IEnumerable<GuidevaultLaunchBoxGame> games, CancellationToken token, bool allowPartial=false)
+    public static async Task<object> EditorialAsync(string root, LibraryItem item, IEnumerable<GuidevaultLaunchBoxGame> games, CancellationToken token, bool allowPartial=false, bool cachedVisionOnly=false)
     {
         var timer=Stopwatch.StartNew();var fp=Fingerprint(item);var dir=DirectoryFor(root,item,fp);
         var manifest=await ReadManifest(dir,fp,token)??throw new InvalidOperationException("Index this magazine first.");
@@ -1250,7 +1257,7 @@ public static class GuidevaultDocumentIndex
                 .Select(p=>new{Page=p,Score=indexedCards[p.Page].Count*15+p.Lines.Count(l=>ContentsPlatforms(l.Text).Length>0)*4+(Regex.IsMatch(p.Text,@"\b(?:table of contents|in this issue|contents)\b",RegexOptions.IgnoreCase)?12:0)+(p.Lines.Any(l=>Regex.IsMatch(l.Text.Trim(),@"^(?:table of contents|contents)\s*[:.]?$",RegexOptions.IgnoreCase))?75:0)+(p.Page==4?12:p.Page is >=5 and <=6?8:p.Page==7?4:0)+(p.Lines.Any(l=>Regex.IsMatch(ContentsCompact(l.Text),@"^(?:strategy|strategies|strategyguides|departments)$"))?35:0)+(tipContents.Any(t=>t.ContentsPage==p.Page+1)?100:0)+(NeedsCompanion()&&structuredContents.Any(c=>c.ContentsPage+1==p.Page)?100:0)-(Regex.IsMatch(p.Text,@"\beditor in chief\b|\ball rights reserved\b",RegexOptions.IgnoreCase)?15:0)})
                 .OrderByDescending(x=>x.Score).ThenBy(x=>x.Page.Page).FirstOrDefault();
             if(candidate is null)break;token.ThrowIfCancellationRequested();var p=candidate.Page;attempted.Add(p.Page);
-            var vision=await CoverVisionAsync(dir,item,token,p.Page);
+            var vision=await CoverVisionAsync(dir,item,token,p.Page,cachedVisionOnly);
             var cards=ReadMain(p,vision.Lines,vision.Height,"Vision");var tips=ReadTipContents(p.Page,vision.Lines,vision.Height,manifest.TotalPages,"Vision platform tips");
             tocDiagnostics.Add(new{page=p.Page,source="Vision",status=vision.Status,entries=cards.Concat(tips).ToArray(),regions=vision.Lines.Take(120).Select(l=>new{l.Text,l.X,l.Y,l.Width,l.Height}).ToArray()});
             if(StrongContents(cards))structuredContents.AddRange(cards);
@@ -1672,7 +1679,7 @@ public static class GuidevaultDocumentIndex
         var visionDiagnostics=new List<object>();
         if(hits.Where(h=>h.Kind=="Cover artwork credit").Select(h=>h.Title).Distinct(StringComparer.OrdinalIgnoreCase).Count()!=1)
         {
-            var vision=await CoverVisionAsync(dir,item,token);visionStatus=vision.Status;
+            var vision=await CoverVisionAsync(dir,item,token,1,cachedVisionOnly);visionStatus=vision.Status;
             if(vision.Lines.Length>0&&vision.Height>0)
             {
                 var combined=new List<Line>();
@@ -1765,10 +1772,11 @@ public static class GuidevaultDocumentIndex
         return new{revision="v8.0-phase3.14",contentsAuthoritative,generalAuthoritative,profileAuthoritative,partialFeatureDirectory,editorialCoverStatements=editorialCoverStatements.Select(x=>new{title=x.Title,page=x.Page,evidence=x.Evidence}),unpagedTipPlatforms=unpagedTips.ToArray(),mainArticleRanges,tocDiagnostics,contentsReconciliation,articleIdentityCorrections,excluded,indexedPages=pages.Count,totalPages=manifest.TotalPages,catalogGames=gameCount,guidePlatform,issueScope,profilePages,structures,articleRegions,contentsMapping,printedOffset,visionStatus,visionDiagnostics,contentsPages,advertisingPages,coverCandidates,primarySystemCandidate=primary,platformSignals,featuredCount=groups.Count(g=>g.featured),mentionedCount=groups.Count(g=>!g.featured&&g.kinds.Any(k=>k!="Possible advertising")),advertisingOnlyCount=groups.Count(g=>g.kinds.All(k=>k=="Possible advertising")),games=groups,headings,seconds=Math.Round(timer.Elapsed.TotalSeconds,2)};
     }
     private sealed record CoverVisionResult(string Status,double Height,Line[] Lines);
-    private static async Task<CoverVisionResult> CoverVisionAsync(string dir,LibraryItem item,CancellationToken token,int page=1)
+    private static async Task<CoverVisionResult> CoverVisionAsync(string dir,LibraryItem item,CancellationToken token,int page=1,bool cachedOnly=false)
     {
         string cache=Path.Combine(dir,page==1?"cover-vision-phase45.json":$"contents-vision-phase47-{page:D6}.json");
         var cached=await Read<CoverVisionResult>(cache,token);if(cached is not null)return cached with{Status="Cached: "+cached.Status};
+        if(cachedOnly)return new("No cached vision evidence; unified analysis uses indexed OCR",0,Array.Empty<Line>());
         const string python="/opt/guidevault-vision/bin/python",script="/opt/guidevault-vision/cover_ocr.py";
         if(!File.Exists(python)||!File.Exists(script))return new("Existing vision runtime unavailable",0,Array.Empty<Line>());
         if(Environment.GetEnvironmentVariable("GUIDEVAULT_INDEX_COVER_VISION")=="0")return new("Disabled by configuration",0,Array.Empty<Line>());
@@ -1802,12 +1810,12 @@ public static class GuidevaultDocumentIndex
     public static string CatalogFingerprint(LibraryItem item) => Fingerprint(item);
     public static string ContentIntelligenceKey(LibraryItem item) => Hash(item.Id) + "/" + Fingerprint(item);
     public static string ContentIntelligenceDirectory(string root, LibraryItem item, string fingerprint) => DirectoryFor(root, item, fingerprint);
-    public static async Task<CatalogPlan> CatalogAsync(string root, LibraryItem item, IReadOnlyList<LibraryItem> library, IEnumerable<GuidevaultLaunchBoxGame> games, bool replace, CancellationToken token, string mode="legacy")
+    public static async Task<CatalogPlan> CatalogAsync(string root, LibraryItem item, IReadOnlyList<LibraryItem> library, IEnumerable<GuidevaultLaunchBoxGame> games, bool replace, CancellationToken token, string mode="legacy", JsonElement? contentReview=null)
     {
         bool replaceMode=mode=="replace", addMode=mode=="add";
         var clock=Stopwatch.StartNew(); var fp=Fingerprint(item);
-        var editorial=JsonSerializer.SerializeToElement(await EditorialAsync(root,item,games,token),Json);
-        var publication=JsonSerializer.SerializeToElement(await PublicationAsync(root,item,library,token,editorialEvidence:editorial),Json);
+        var editorial=JsonSerializer.SerializeToElement(await EditorialAsync(root,item,games,token,cachedVisionOnly:contentReview.HasValue),Json);
+        var publication=JsonSerializer.SerializeToElement(await PublicationAsync(root,item,library,token,editorialEvidence:contentReview.HasValue?null:editorial),Json);
         var changes=new List<CatalogChange>(); var held=new List<string>(); var values=new Dictionary<string,object>();
         var protectedItem=MetadataStatusHelper.Normalize(item.MetadataStatus) is MetadataStatusHelper.Reviewed or MetadataStatusHelper.Locked or MetadataStatusHelper.ManualOnly;
         bool manual=(item.MetadataSource??"").Contains("Manual edit",StringComparison.OrdinalIgnoreCase);
@@ -1907,7 +1915,7 @@ public static class GuidevaultDocumentIndex
             // Compound publishing credits can be truncated by OCR; preserve the evidence, not the incomplete name.
             if(key=="publisher"&&Regex.IsMatch(val,@"\b(?:in conjunction with|in association with|in cooperation with|in partnership with|together with|on behalf of)\b",RegexOptions.IgnoreCase|RegexOptions.CultureInvariant))
             {held.Add(key+": compound publishing credit retained for review — "+val);continue;}
-            if(key=="pageCount"){if(int.TryParse(val,out var count))Offer(key,count,"Indexed digital page count",replaceMode);}
+            if(key=="pageCount"){if(contentReview is null && int.TryParse(val,out var count))Offer(key,count,"Indexed digital page count",replaceMode);}
             else Offer(key,val,support+" — "+val,direct||key=="region"&&repeatedContact);
         }
         var gameRows=editorial.GetProperty("games").EnumerateArray().ToArray();
@@ -2057,19 +2065,85 @@ public static class GuidevaultDocumentIndex
             bool summaryReplacement=replaceMode&&safeEditorialReplacement;
             Offer("summary",summary,summaryReplacement?"Replace summary using validated contents and editorial evidence":"Fill empty summary from indexed editorial evidence; existing summary retained",summaryReplacement);
         }
+        if(contentReview is JsonElement ciReport)
+        {
+            // CI is authoritative for game lists; the publication pass supplies imprint and department evidence.
+            foreach(var field in new[]{"featuredGames","mentionedGames","featuredPlatforms","primarySystem","platformFocus","summary"})
+            { values.Remove(field); changes.RemoveAll(c=>c.Field==field); held.RemoveAll(h=>h.StartsWith(field+":",StringComparison.Ordinal)); }
+            var ciGames=ciReport.GetProperty("games").EnumerateArray().ToArray();
+            var supportedGames=ciGames.Where(g=>g.GetProperty("evidence").EnumerateArray().Any(e=>GuidevaultContentIntelligence.IsSubstantive(S(e,"content_kind")))).ToArray();
+            var ciFeatured=supportedGames.Select(g=>S(g,"title")).Where(Meaningful).Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
+            var ciMentions=ciReport.GetProperty("unresolved_evidence").EnumerateArray().Where(e=>GuidevaultContentIntelligence.IsReference(S(e,"content_kind")))
+                .Select(e=>e.TryGetProperty("viable_catalog_candidates",out var options)&&options.ValueKind==JsonValueKind.Array?options.EnumerateArray().Select(c=>S(c,"title")).Where(Meaningful).Distinct(StringComparer.OrdinalIgnoreCase).ToArray():Array.Empty<string>())
+                .Where(a=>a.Length==1).Select(a=>a[0]).Where(t=>!ciFeatured.Contains(t,StringComparer.OrdinalIgnoreCase)).Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
+            var platformVotes=supportedGames.Where(g=>Meaningful(S(g,"platform"))).GroupBy(g=>S(g,"platform"),StringComparer.OrdinalIgnoreCase)
+                .Select(g=>new{Platform=g.Key,Count=g.SelectMany(x=>x.GetProperty("evidence").EnumerateArray().Where(e=>GuidevaultContentIntelligence.IsSubstantive(S(e,"content_kind"))).Select(e=>e.GetProperty("digital_page").GetInt32())).Distinct().Count(),Games=g.Count()})
+                .OrderByDescending(g=>g.Count).ThenByDescending(g=>g.Games).ToArray();
+            var scope=S(ciReport,"issue_platform_scope");if(!Meaningful(scope))scope=S(ciReport,"inferred_platform_scope");
+            var dominant=Meaningful(scope)?scope:platformVotes.Length>0&&(platformVotes.Length==1||platformVotes[0].Count>platformVotes[1].Count||platformVotes[0].Count==platformVotes[1].Count&&platformVotes[0].Games>platformVotes[1].Games)?platformVotes[0].Platform:"";
+            var ciPlatforms=platformVotes.Select(v=>v.Platform).Concat(Meaningful(scope)?new[]{scope}:Array.Empty<string>()).Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
+            // Scan completeness is not proof of editorial completeness. Keep existing list entries even in replace mode.
+            void CiList(string field,IEnumerable<string> list,string reason)
+            {
+                var prior=A(current,field);var combined=prior.Concat(list).Where(Meaningful).Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
+                if(combined.Length>0)Offer(field,combined,reason,appendList:true);
+            }
+            CiList("featuredGames",ciFeatured,"Content Intelligence substantive game coverage; partial discovery, existing entries retained");
+            CiList("mentionedGames",ciMentions,"Content Intelligence reference-only titles; existing entries retained");
+            CiList("featuredPlatforms",ciPlatforms,"Content Intelligence supported editorial platforms");
+            if(Meaningful(dominant))
+            {
+                if(!conflicting.Contains("primarySystem"))Offer("primarySystem",dominant,"Content Intelligence platform scope or dominant editorial page coverage");
+                if(!conflicting.Contains("platformFocus"))Offer("platformFocus",dominant,"Content Intelligence platform scope or dominant editorial page coverage");
+            }
+            var nav=ciReport.GetProperty("navigation_leads").EnumerateArray().Select(n=>S(n,"heading")).Where(Meaningful).Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
+            if(nav.Length>0)
+            {
+                values.Remove("specialFeatures");changes.RemoveAll(c=>c.Field=="specialFeatures");
+                CiList("specialFeatures",departments.Concat(nav),"Indexed department evidence and Content Intelligence section headings");
+            }
+            if(ciFeatured.Length>0)
+            {
+                var title=values.TryGetValue("magazineTitle",out var tv)?tv.ToString():item.MagazineTitle;
+                if(!Meaningful(title))title=item.Title;
+                var summary=title+" magazine issue"+(Meaningful(dominant)?" with "+dominant+" coverage":"")+". Identified game coverage includes "+string.Join(", ",ciFeatured.Take(10))+".";
+                if(departments.Length>0)summary+=" Sections include "+string.Join(", ",departments.Take(6))+".";
+                Offer("summary",summary,"Summary of Content Intelligence findings; review before applying");
+            }
+            // A physical total needs independent printed evidence. Folios and image counts are not totals.
+            var dir=DirectoryFor(root,item,fp);var manifest=await ReadManifest(dir,fp,token)??throw new InvalidOperationException("Index unavailable.");
+            var totals=new List<(int Count,int Page)>();
+            for(int page=1;page<=manifest.TotalPages;page++)
+            {
+                token.ThrowIfCancellationRequested();var record=await ReadPage(dir,page,token);if(record is null)continue;
+                foreach(var line in record.Lines)
+                {
+                    var m=Regex.Match(line.Text,@"^\s*(?:this (?:issue|magazine) (?:contains|has)\s+(?=\d{1,4}\s+pages\b)|(?:total|printed|publication) pages\s*[:=]\s*)(\d{1,4})(?:\s+pages)?\s*[.!]?\s*$",RegexOptions.IgnoreCase);
+                    if(m.Success&&int.TryParse(m.Groups[1].Value,out var n)&&n>0)totals.Add((n,page));
+                }
+            }
+            if(totals.Select(t=>t.Count).Distinct().Count()==1)Offer("pageCount",totals[0].Count,"Explicit printed total, digital page "+totals[0].Page);
+            else held.Add("pageCount: physical total not established; "+manifest.TotalPages+" digital images/pages indexed. Existing metadata retained; verify printed pagination manually.");
+        }
         if(Fingerprint(item)!=fp)throw new InvalidOperationException("Source changed during cataloging. Re-index first.");
         // Enforce alias locks too, using the existing metadata store filter. Report any removed change.
         var update=ItemMetadataJsonReader.Read(JsonSerializer.SerializeToElement(values,Json));
         update=MetadataLockHelper.FilterLockedFields(update,item.MetadataLocks);
         var filtered=JsonSerializer.SerializeToElement(update,Json);
         foreach(var c in changes.Where(c=>!filtered.TryGetProperty(c.Field,out var v)||v.ValueKind==JsonValueKind.Null).ToArray()){changes.Remove(c);held.Add(c.Field+": protected by field alias lock");}
-        if(changes.Count>0&&!manual)update=update with{MetadataSource="Magazine document index v8.0 Phase 5.5"};
-        return new CatalogPlan("v8.0-phase5.5",fp,update,changes,held,publication,editorial,Math.Round(clock.Elapsed.TotalSeconds,2),mode);
+        if(changes.Count>0&&!manual)update=update with{MetadataSource=contentReview.HasValue?"Content Intelligence v5.3":"Magazine document index v8.0 Phase 5.5"};
+        return new CatalogPlan(contentReview.HasValue?"content-intelligence-v5.3":"v8.0-phase5.5",fp,update,changes,held,publication,editorial,Math.Round(clock.Elapsed.TotalSeconds,2),mode);
     }
     public static async Task SaveCatalogReportAsync(string root,LibraryItem item,CatalogPlan plan,CancellationToken token)
     {
         var fp=Fingerprint(item);if(fp!=plan.Fingerprint)throw new InvalidOperationException("Source changed before saving catalog report.");
         var dir=DirectoryFor(root,item,fp);await Write(Path.Combine(dir,"catalog-report.json"),plan,token);
+    }
+
+    public static async Task<CatalogPlan?> LatestUnifiedCatalogAsync(string root,LibraryItem item,CancellationToken token)
+    {
+        var fp=Fingerprint(item);var plan=await Read<CatalogPlan>(Path.Combine(DirectoryFor(root,item,fp),"catalog-report.json"),token);
+        return plan is not null&&plan.Fingerprint==fp&&plan.Revision=="content-intelligence-v5.3"?plan:null;
     }
 
     // Phase 4.2: bounded server-owned jobs. Saved page records remain the durable resume checkpoint.
@@ -2081,6 +2155,13 @@ public static class GuidevaultDocumentIndex
         public string ItemId { get; init; } = "";
         public bool Force { get; init; }
         public bool Catalog { get; init; }
+        public bool Unified { get; init; }
+        public string Phase { get; set; } = "preparing";
+        public DateTimeOffset? IndexStarted { get; set; }
+        public DateTimeOffset? StageStarted { get; set; }
+        public int StageInitialDone { get; set; }
+        public int StageDone { get; set; }
+        public int StageTotal { get; set; }
         public int Workers { get; init; }
         public CancellationTokenSource Stop { get; } = new();
         public DateTimeOffset Started { get; } = DateTimeOffset.UtcNow;
@@ -2102,16 +2183,24 @@ public static class GuidevaultDocumentIndex
     private static object Snapshot(IndexJob j)
     {
         var elapsed = Math.Max(.01, ((j.Finished ?? DateTimeOffset.UtcNow)-j.Started).TotalSeconds);
-        return new { jobId=j.Id, state=j.State, message=j.Message, totalPages=j.Total, indexed=j.Indexed,
+        var stageElapsed=j.IndexStarted.HasValue?Math.Max(.01,(DateTimeOffset.UtcNow-j.IndexStarted.Value).TotalSeconds):0;
+        var remaining=j.State=="running"&&j.Phase=="indexing"&&j.Processed>0&&j.Processed<j.Target?(double?)Math.Round((j.Target-j.Processed)*stageElapsed/j.Processed,1):null;
+        if(j.State=="running"&&j.Phase=="targeted-ocr"&&j.StageStarted.HasValue&&j.StageDone>j.StageInitialDone&&j.StageDone<j.StageTotal)
+            remaining=Math.Round((j.StageTotal-j.StageDone)*Math.Max(.01,(DateTimeOffset.UtcNow-j.StageStarted.Value).TotalSeconds)/(j.StageDone-j.StageInitialDone),1);
+        return new { jobId=j.Id, state=j.State, message=j.Message, unified=j.Unified, phase=j.Phase, stageDone=j.StageDone, stageTotal=j.StageTotal, totalPages=j.Total, indexed=j.Indexed,
             processed=j.Processed, target=j.Target, force=j.Force, catalog=j.Catalog, workers=j.Workers,
             seconds=Math.Round(elapsed,1), pagesPerMinute=Math.Round(j.Processed*60/elapsed,1),
-            remainingSeconds=j.Processed>0&&j.State=="running"? (double?)Math.Round(Math.Max(0,j.Target-j.Processed)*elapsed/j.Processed):null,
+            remainingSeconds=remaining, estimatedStageFinishSeconds=remaining.HasValue?(double?)Math.Round(elapsed+remaining.Value,1):null, budgetSeconds=j.Unified?120:(int?)null,
             active=j.Active.OrderBy(p=>p.Key).Select(p=>new{page=p.Key,stage=p.Value}).ToArray(),
             failed=j.Failed.OrderBy(p=>p.Key).Select(p=>new{page=p.Key,error=p.Value}).ToArray(), recovered=j.Recovered.OrderBy(p=>p).ToArray(), missing=j.Missing, report=j.Report };
     }
     public static object? JobStatus(string id)
     {
         lock(JobLock) return Jobs.TryGetValue(id,out var j)?Snapshot(j):null;
+    }
+    public static void SetUnifiedStage(string id,string phase,string message,int done=0,int total=0)
+    {
+        lock(JobLock)if(Jobs.TryGetValue(id,out var j)&&j.Unified&&j.State=="running"&&!j.Stop.IsCancellationRequested){if(j.Phase!=phase||j.StageTotal!=total||!j.StageStarted.HasValue){j.StageStarted=DateTimeOffset.UtcNow;j.StageInitialDone=done;}j.Phase=phase;j.Message=message;j.StageDone=done;j.StageTotal=total;}
     }
     public static void RegisterCatalogPreview(string id,Func<string[],object> apply)
     {
@@ -2160,7 +2249,7 @@ public static class GuidevaultDocumentIndex
         }
     }
     public static object StartJob(string root,LibraryItem item,bool force,bool catalog,int workers,IDisposable lease,
-        Func<CancellationToken,Task<object>>? saveCatalog,CancellationToken shutdown,ILogger logger)
+        Func<CancellationToken,Task<object>>? saveCatalog,CancellationToken shutdown,ILogger logger,bool unified=false)
     {
         lock(JobLock)
         {
@@ -2168,11 +2257,12 @@ public static class GuidevaultDocumentIndex
             // Limit retained in-memory results; page checkpoints and catalog reports live on disk.
             foreach(var key in Jobs.Where(x=>x.Value.Finished.HasValue).OrderByDescending(x=>x.Value.Finished).Skip(15).Select(x=>x.Key).ToArray())
                 Jobs.Remove(key);
-            var j=new IndexJob{ItemId=item.Id,Force=force,Catalog=catalog,Workers=Math.Clamp(workers,1,4)};
+            var j=new IndexJob{ItemId=item.Id,Force=force,Catalog=catalog,Unified=unified,Workers=Math.Clamp(workers,1,4)};
             Jobs[item.Id]=j;
             _=Task.Run(async()=>
             {
                 using var linked=CancellationTokenSource.CreateLinkedTokenSource(j.Stop.Token,shutdown);
+                if(j.Unified)linked.CancelAfter(TimeSpan.FromSeconds(120));
                 var token=linked.Token;
                 try
                 {
@@ -2191,7 +2281,7 @@ public static class GuidevaultDocumentIndex
                     var done=new HashSet<int>();
                     for(int p=1;p<=m.TotalPages;p++)if(await ReadPage(dir,p,token)is not null)done.Add(p);
                     var todo=Enumerable.Range(1,m.TotalPages).Where(p=>force||!done.Contains(p)).ToArray();
-                    lock(JobLock){j.Total=m.TotalPages;j.Indexed=done.Count;j.Target=todo.Length;j.Message="Indexing missing pages";}
+                    lock(JobLock){j.Total=m.TotalPages;j.Indexed=done.Count;j.Target=todo.Length;j.Phase="indexing";j.IndexStarted=DateTimeOffset.UtcNow;j.Message="Indexing missing pages";}
                     await Parallel.ForEachAsync(todo,new ParallelOptions{MaxDegreeOfParallelism=j.Workers,CancellationToken=token},async(page,ct)=>
                     {
                         void Stage(string value){lock(JobLock)j.Active[page]=value;logger.LogInformation("Document index {Job} page {Page}: {Stage}",j.Id,page,value);}
@@ -2230,12 +2320,12 @@ public static class GuidevaultDocumentIndex
                     if(Fingerprint(item)!=fp)throw new InvalidOperationException("Source changed during indexing; cataloging cancelled.");
                     if(complete&&catalog&&saveCatalog is not null)
                     {
-                        lock(JobLock)j.Message="Analyzing magazine metadata";
+                        lock(JobLock){j.Phase="analysis";j.Message=j.Unified?"Analyzing game coverage":"Analyzing magazine metadata";}
                         var report=await saveCatalog(token);lock(JobLock){if(j.ApplyPreview is not null)token.ThrowIfCancellationRequested();j.Report=report;}
                     }
-                    lock(JobLock){lease.Dispose();j.State=complete?"complete":"incomplete";j.Message=complete?(catalog?(j.ApplyPreview is not null?"Scan complete; suggestions ready":"Cataloging complete"):"Indexing complete"):"Failed pages retained in report. Resume to retry; cataloging not started.";}
+                    lock(JobLock){lease.Dispose();j.State=complete?"complete":"incomplete";j.Phase=j.State;j.Message=complete?(catalog?(j.ApplyPreview is not null?"Scan complete; suggestions ready":"Cataloging complete"):"Indexing complete"):"Failed pages retained in report. Resume to retry; cataloging not started.";}
                 }
-                catch(OperationCanceledException){lock(JobLock){j.State="stopped";j.Message="Stopped; completed page records retained. Check history if catalog saving had begun.";}}
+                catch(OperationCanceledException){lock(JobLock){j.State=j.Unified&&!j.Stop.IsCancellationRequested&&!shutdown.IsCancellationRequested?"budget":"stopped";j.Message=j.State=="budget"?"120-second budget reached. Completed index pages retained; Analyze Content resumes missing pages.":"Stopped; completed page records retained.";}}
                 catch(Exception ex){logger.LogError(ex,"Document index job {Job} failed",j.Id);lock(JobLock){j.State="failed";j.Message=ex.Message;}}
                 finally{lock(JobLock){j.Active.Clear();j.Finished=DateTimeOffset.UtcNow;}lease.Dispose();logger.LogInformation("Document index job {Job} finished: {State}, {Indexed}/{Total} indexed, {Seconds:0.0}s. {Message}",j.Id,j.State,j.Indexed,j.Total,(j.Finished.Value-j.Started).TotalSeconds,j.Message);}
             });
