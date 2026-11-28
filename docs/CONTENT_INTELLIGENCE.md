@@ -43,3 +43,22 @@ Explicit review/preview headings, prominent full title headings and repeated bod
 ## v5.1 region review
 
 A bounded, read-only region pass uses existing layout OCR to find title-led tips in a tips column, prominent game features beside that column, and game-specific captions or explicit preview statements inside hardware features. It uses original catalog discovery records, including low-priority candidates, without inventing IDs. A manufacturer editorial plus the specific Power Base, SegaScope and Light Phaser references can support a tentative Master System inference for this period; this is not an explicit issue platform or verified coverage. Contents and scoreboards are supporting references, not independent game leads. The new `region-leads.json` retains OCR geometry, candidate provenance, and unresolved full titles. Mixed-page classification remains heuristic. Missing or incompatible catalog identities remain unresolved. No metadata, relationship, index or catalog writes are introduced.
+
+
+## v5.2 — Human review workflow (v5.1 recognition engine unchanged)
+
+Analyze Content remains read-only. In Game Matches, expand a proposed game, inspect its evidence, choose a substantive digital page and explicitly Confirm, Reject, or Correct Match. Correction searches the synchronized LaunchBox catalog; verify exact platform, edition, title and content before committing. Correction saves the rejection of the old pair and confirmation of the new pair together; a target with an existing decision requires separate review in LaunchBox Links. Reference-only entries (cover, checklist, contents, high-score and possible advertisements) are separated from unresolved substantive evidence. They cannot be approved independently by this workspace. Unresolved-only identity repair is not implemented in this first decision UI.
+
+Decisions use the existing LaunchBox relationship store (`/data/config/launchbox.integration.json`), not a separate database or magazine archive/metadata write-back. A saved decision includes the current source fingerprint, a single human-reviewed digital destination and coverage type on the relationship. Confirmed/rejected relationships survive analysis reruns; the existing rematch preserves confirmed/rejected pairs. Resetting/deleting relationships or replacing the synced game catalog can remove them. Review tokens and pair versions guard against stale submissions. The admin-only decision route checks visible magazine access and blocks during a rematch. Take a consistent backup of the integration JSON before the first write test. A source fingerprint mismatch requires re-review and suppresses the CI relationship in the direct and edition-group literature selection; legacy metadata fallback (if independently enabled) is not changed.
+
+The authenticated literature response now includes optional `preferredDigitalPage` (one-based) and `coverageType` for direct, confirmed, current-source Content Intelligence relationships. The existing `readerUrl` remains unchanged. A DreamPause/client or reader update is still needed to open at the approved page automatically. No client update is included here.
+
+### First deployment smoke test
+
+1. Load the saved Sega Challenge review. Check that Game Matches shows the same seven proposals and References separates checklist-only evidence. No analysis rerun required.
+2. Expand OutRun, inspect digital page 6, choose it and Confirm. Reload the saved review and check Saved decisions and LaunchBox Links. Only this game/publication pair should change.
+3. Re-run analysis. The match stays confirmed and the selected page remains 6. Check the authenticated literature API / DreamPause for this magazine.
+4. Test Reject on an intentionally selected test pair, then re-confirm if desired. Test correction only with a real misidentified game and an unused target; do not correct a known-good association just to exercise a button.
+5. Verify that non-admin users cannot call decision/catalog endpoints. Verify no other magazine relationships were modified.
+
+The scanner still uses the existing 120-second request budget. This integration requires .NET compilation, Docker deployment and live decision testing before production approval.

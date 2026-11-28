@@ -18714,13 +18714,13 @@ function gvPublicationVerificationRows(report) {
 function gvAttachContentIntelligence(dialog, session, item) {
   const panel = document.createElement('section');
   panel.className = 'gv-magscan-content gv-scan-workspace gv-ci-workspace';
-  panel.innerHTML = `<section class="gv-scan-card gv-ci-card"><div class="gv-scan-heading"><h2>Content Intelligence</h2><small>v5.1 · Review only</small></div>
-    <p class="sub">Find game profiles, article navigation and contextual title leads. No game links or metadata are saved.</p>
+  panel.innerHTML = `<section class="gv-scan-card gv-ci-card"><div class="gv-scan-heading"><h2>Content Intelligence</h2><small>v5.2 · Human review</small></div>
+    <p class="sub">Analyze magazines, inspect coverage and explicitly approve or reject game relationships. Analysis never saves links.</p>
     <div class="gv-scan-actions"><button type="button" class="primary" data-ci-run>Analyze Content</button><button type="button" class="ghost" data-ci-stop disabled>Stop</button><button type="button" class="ghost" data-ci-refresh>Load Last Review</button></div>
     <label class="gv-ci-toggle"><input type="checkbox" data-ci-visual><span>Recover missing headings with targeted OCR (PDF / CBZ)</span></label>
     <p class="sub" role="status" data-ci-status>Loading saved review…</p>
     <div class="gv-scan-metrics" data-ci-metrics></div>
-    <div class="gv-ci-tools" data-ci-tools hidden><div class="gv-ci-tabs" role="group" aria-label="Review category"><button type="button" data-ci-view="games" aria-pressed="true">Game matches</button><button type="button" data-ci-view="navigation_leads" aria-pressed="false">Sections</button><button type="button" data-ci-view="unresolved_evidence" aria-pressed="false">Unresolved</button></div><label class="gv-ci-filter">Filter <input type="search" data-ci-search placeholder="Game, platform, page…"></label></div>
+    <div class="gv-ci-tools" data-ci-tools hidden><div class="gv-ci-tabs" role="group" aria-label="Review category"><button type="button" data-ci-view="games" aria-pressed="true">Game matches</button><button type="button" data-ci-view="navigation_leads" aria-pressed="false">Sections</button><button type="button" data-ci-view="references" aria-pressed="false">References</button><button type="button" data-ci-view="saved" aria-pressed="false">Saved decisions</button><button type="button" data-ci-view="unresolved_evidence" aria-pressed="false">Unresolved</button></div><label class="gv-ci-filter">Filter <input type="search" data-ci-search placeholder="Game, platform, page…"></label></div>
     <div data-ci-results></div></section>`;
   dialog.append(panel);
   const q = s => panel.querySelector(s);
@@ -18728,7 +18728,11 @@ function gvAttachContentIntelligence(dialog, session, item) {
   const status = q('[data-ci-status]'), run = q('[data-ci-run]'), stop = q('[data-ci-stop]'), refresh = q('[data-ci-refresh]');
   const visual = q('[data-ci-visual]'), search = q('[data-ci-search]'), tabs = [...panel.querySelectorAll('[data-ci-view]')];
   const format = String(item.format || item.Format || '').toUpperCase();
-  let report = null, controller = null, busy = false, view = 'games';
+  let report = null, controller = null, busy = false, view = 'games', reviewToken = '', decisions = [];
+  const decisionFor = id => decisions.find(d=>d.gameId===id);
+  const referenceKind = k => /^(Cover mention|Catalog \/ checklist reference|Contents reference|High-score \/ competition reference|Possible advertisement)$/i.test(k||'');
+  const substantive = k => /^(Game review|Game feature|Game profile|Preview|Game preview|Tips|Gameplay|Cheats|Walkthrough|Strategy|Game title heading)/i.test(k||'');
+  const primaryKinds = r => [...new Set((r.evidence||[]).filter(e=>e.digital_page===r.primary_digital_page&&substantive(e.content_kind)).map(e=>e.content_kind))].join(' / ');
   const node = (tag, value, cls) => { const n=document.createElement(tag); if(value!=null)n.textContent=String(value); if(cls)n.className=cls; return n; };
   const confidence = v => ({platform_supported_review:'Platform-supported · review',section_inferred_review:'Inferred · review',unresolved:'Unresolved'}[v]||String(v||'Unverified'));
   const human = v => String(v||'').replace(/_/g,' ');
@@ -18743,9 +18747,9 @@ function gvAttachContentIntelligence(dialog, session, item) {
     const box=node('div',null,'gv-ci-field');box.append(node('small',label),node('div',Array.isArray(value)?value.join(' · '):value));parent.append(box);
   }
   function links(parent,pages){const bar=node('div',null,'gv-ci-pages');for(const p of [...new Set(pages.filter(Number.isInteger))].sort((a,b)=>a-b))bar.append(pageLink(p));if(bar.childNodes.length)parent.append(bar);}
-  function details(e) {
+  function details(e, showLink=true) {
     const d=node('div',null,'gv-ci-evidence');const x=e.evidence||{};
-    links(d,[e.digital_page]);field(d,'Content type',e.content_kind);field(d,'Printed heading',e.printed_title);
+    if(showLink)links(d,[e.digital_page]);else field(d,'Digital page',e.digital_page);field(d,'Content type',e.content_kind);field(d,'Printed heading',e.printed_title);
     const candidates=e.catalog_candidates||[];const viable=e.viable_catalog_candidates??candidates.filter(c=>!c.platform_conflict&&!['release_later_than_issue','platform_later_era'].includes(c.chronology));const viableIds=new Set(viable.map(c=>c.id));
     if(candidates.length){d.append(node('small','Catalog candidates (excluded candidates marked)'));const list=node('div',null,'gv-ci-candidates');for(const c of candidates){const line=node('div',null,'gv-ci-candidate');line.append(node('strong',c.title),node('span',`${c.platform||'Unknown platform'}${c.release_year?' · '+c.release_year:''}`));if(!viableIds.has(c.id))line.append(node('small',c.platform_conflict?'Excluded: platform conflict':['release_later_than_issue','platform_later_era'].includes(c.chronology)?'Excluded: '+human(c.chronology):'Excluded by contextual platform evidence','gv-ci-warning'));else if(c.chronology==='possible_preview')line.append(node('small','Possible preview — date needs review','gv-ci-warning'));list.append(line);}d.append(list);}
     field(d,'Region classification',x.region_kind);field(d,'Region evidence',x.region_signals);field(d,'Page classification',human(x.page_context?.kind));field(d,'Page classification evidence',x.page_context?.signals);field(d,'Identity method',human(x.identity_method));field(d,'Review reason',human(e.source_status));field(d,'Matching signals',(x.flags||[]).map(human));field(d,'Platform context',x.issue_platform_scope||x.section_platform_hint||(x.platform_hints||[]).join(', '));
@@ -18763,32 +18767,78 @@ function gvAttachContentIntelligence(dialog, session, item) {
       const g=groups.get(key);for(const c of viable)if(c.platform)g.platforms.add(c.platform);g.pages.add(e.digital_page);g.evidence.push(e);
     }return [...groups.values()];
   }
-  function resultRow(title,platform,pages,state,fillBody){
+  function decisionControls(body,r){
+    const d=decisionFor(r.game_id);const box=node('div',null,'gv-ci-decision');
+    const validPages=[...new Set((r.evidence||[]).filter(e=>substantive(e.content_kind)&&Number.isInteger(e.digital_page)).map(e=>e.digital_page))].sort((a,b)=>a-b);
+    field(box,'Saved relationship',d?`${d.status}${d.fingerprint&&d.fingerprint!==report.source_fingerprint?' · source changed; review again':''}`:'No saved decision');
+    const lbl=node('label','Reviewed destination: '), sel=node('select');sel.setAttribute('aria-label','Reviewed destination page');
+    for(const n of validPages){const option=node('option',`Page ${n}`);option.value=String(n);sel.append(option);}
+    if(validPages.includes(d?.preferredPage)&&d?.fingerprint===report.source_fingerprint)sel.value=String(d.preferredPage);else if(validPages.includes(r.primary_digital_page))sel.value=String(r.primary_digital_page);
+    if(validPages.length){lbl.append(sel);box.append(lbl);}
+    const actions=node('div',null,'gv-scan-actions');
+    const confirm=node('button','Confirm','primary'),reject=node('button','Reject','ghost'),correct=node('button','Correct Match','ghost');
+    for(const b of [confirm,reject,correct]){b.type='button';actions.append(b);}
+    const canApprove=!!validPages.length&&!!reviewToken;confirm.disabled=!canApprove;correct.disabled=!canApprove;reject.disabled=!reviewToken;
+    box.append(actions);
+    const correction=node('div',null,'gv-ci-correction');correction.hidden=true;
+    const query=node('input');query.type='search';query.placeholder='Search LaunchBox game title';query.value=r.title;
+    const find=node('button','Search catalog','ghost');find.type='button';const options=node('select');options.setAttribute('aria-label','Correct game identity');
+    const save=node('button','Confirm correction','primary');save.type='button';save.disabled=true;
+    const result=node('p','','sub');correction.append(node('small','Correction rejects the original association and confirms the selected game. Verify the page applies to that exact game and platform.'),query,find,options,save,result);box.append(correction);body.append(box);
+    let choices=[];
+    const submit=async(action,target)=>{
+      if(busy)return;
+      const page=action==='reject'?null:Number(sel.value);
+      const message=action==='reject'?`Reject ${r.title} (${r.platform}) for this magazine? This removes it from active game literature.`:action==='correct'?`Reject ${r.title} (${r.platform}) and confirm ${target.title} (${target.platform}) on digital page ${page}?`: `Confirm ${r.title} (${r.platform}) on digital page ${page}? This makes the magazine available to game clients.`;
+      if(!window.confirm(message))return;
+      busy=true;controls();for(const b of box.querySelectorAll('button'))b.disabled=true;
+      status.textContent='Saving reviewed relationship…';
+      try{const response=await fetch(endpoint+'/decision',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action,gameId:r.game_id,targetGameId:target?.id||'',page,reviewToken,expectedVersion:d?.version||''})});const data=await response.json();if(!response.ok)throw new Error(data.error||data.detail||`HTTP ${response.status}`);decisions=data.decisions||[];if(panel.isConnected){render();status.textContent=data.message;}}
+      catch(e){if(panel.isConnected){status.textContent=e.message+' Reload the review before retrying.';render();}}
+      finally{busy=false;controls();}
+    };
+    confirm.onclick=()=>void submit('confirm');reject.onclick=()=>void submit('reject');correct.onclick=()=>{correction.hidden=!correction.hidden;};
+    find.onclick=async()=>{if(busy)return;find.disabled=true;save.disabled=true;options.replaceChildren();result.textContent='Searching…';try{const response=await fetch(endpoint+'/catalog?q='+encodeURIComponent(query.value.trim()),{cache:'no-store'});const data=await response.json();if(!response.ok)throw new Error(data.error||`HTTP ${response.status}`);choices=data.filter(g=>g.id!==r.game_id);for(const g of choices){const opt=node('option',`${g.title} — ${g.platform}${g.region?' · '+g.region:''}${g.releaseYear?' · '+g.releaseYear:''}`);opt.value=g.id;options.append(opt);}save.disabled=!choices.length;result.textContent=choices.length?`${choices.length} candidate(s). Verify the platform and edition.`:'No alternative games found.';}catch(e){result.textContent=e.message;}finally{find.disabled=false;}};
+    save.onclick=()=>{const target=choices.find(g=>g.id===options.value);if(target)void submit('correct',target);};
+  }
+  function resultRow(title,platform,pages,state,fillBody,coverage="—"){
     const d=node('details',null,'gv-ci-row');const head=node('summary',null,'gv-ci-row-head');
-    head.append(node('strong',title),node('span',platform||'—'),node('span',pages||'—'),node('span',state,'gv-ci-warning'));d.append(head);d.addEventListener('toggle',()=>{if(d.open&&d.childNodes.length===1){const body=node('div',null,'gv-ci-row-body');fillBody(body);d.append(body);}});return d;
+    head.append(node('strong',title),node('span',platform||'—'),node('span',coverage||'—'),node('span',pages||'—'),node('span',state,state==='Confirmed'?'gv-ci-confirmed':'gv-ci-warning'));d.append(head);d.addEventListener('toggle',()=>{if(d.open&&d.childNodes.length===1){const body=node('div',null,'gv-ci-row-body');fillBody(body);d.append(body);}});return d;
   }
   function render(){
     const out=q('[data-ci-results]'), metrics=q('[data-ci-metrics]');out.replaceChildren();metrics.replaceChildren();q('[data-ci-tools]').hidden=!report;if(!report)return;
-    const grouped=groupedUnresolved(report.unresolved_evidence||[]);
-    const counts={games:report.games?.length||0,navigation_leads:report.navigation_leads?.length||0,unresolved_evidence:grouped.length};
-    for(const [key,label] of [['games','Game leads'],['navigation_leads','Sections'],['unresolved_evidence','Unresolved groups']]){const m=node('div',null,'gv-scan-metric');m.append(node('strong',counts[key]),node('small',label));metrics.append(m);}
-    const names={games:'Game matches',navigation_leads:'Sections',unresolved_evidence:'Unresolved'};for(const tab of tabs){const key=tab.dataset.ciView;tab.textContent=`${names[key]} (${counts[key]})`;tab.setAttribute('aria-pressed',String(key===view));}
+    const raw=report.unresolved_evidence||[];
+    const refs=groupedUnresolved(raw.filter(e=>referenceKind(e.content_kind)));
+    const grouped=groupedUnresolved(raw.filter(e=>!referenceKind(e.content_kind)));
+    const saved=decisions.filter(d=>['Confirmed','Rejected'].includes(d.status));
+    const counts={games:report.games?.length||0,navigation_leads:report.navigation_leads?.length||0,references:refs.length,unresolved_evidence:grouped.length,saved:saved.length};
+    for(const [key,label] of [['games','Game leads'],['navigation_leads','Sections'],['references','Reference groups'],['unresolved_evidence','Unresolved groups'],['saved','Saved decisions']]){const m=node('div',null,'gv-scan-metric');m.append(node('strong',counts[key]),node('small',label));metrics.append(m);}
+    const names={games:'Game matches',navigation_leads:'Sections',references:'References',unresolved_evidence:'Unresolved',saved:'Saved decisions'};for(const tab of tabs){const key=tab.dataset.ciView;tab.textContent=`${names[key]} (${counts[key]})`;tab.setAttribute('aria-pressed',String(key===view));}
     const filter=search.value.trim().toLowerCase();const matches=r=>!filter||JSON.stringify(r).toLowerCase().includes(filter);
-    const records=(view==='unresolved_evidence'?grouped:report[view]||[]).filter(matches);
+    const records=(view==='unresolved_evidence'?grouped:view==='references'?refs:view==='saved'?saved:report[view]||[]).filter(matches);
     const suppressed=report.summary?.suppressed_evidence||0;
-    out.append(node('p',`${records.length} result(s) · All coverage and page ranges are unverified.${view==='unresolved_evidence'?` ${report.unresolved_evidence?.length||0} evidence records before grouping.`:''}${suppressed?` ${suppressed} low-confidence / branding records held in diagnostics.`:''}`,'sub'));
-    if(!records.length){out.append(node('p',filter?'No results match this filter.':view==='games'?'No game leads met the review criteria. Check Unresolved for other candidates.':view==='navigation_leads'?'No navigation sections were identified.':'No unresolved evidence.','gv-ci-empty'));return;}
-    const header=node('div',null,'gv-ci-row-head gv-ci-table-head');for(const h of [view==='navigation_leads'?'Section':'Game / title','Platform','Digital pages','Status'])header.append(node('span',h));out.append(header);
-    for(const r of records){if(view==='games'||view==='unresolved_evidence'){
-        const pages=view==='games'?r.digital_pages||[]:[...r.pages];const platforms=view==='games'?r.platform:[...r.platforms].join(', ');out.append(resultRow(r.title,platforms,[...pages].sort((a,b)=>a-b).join(', '),view==='games'?confidence(r.confidence):'Unresolved',body=>{if(view==='games'&&Number.isInteger(r.primary_digital_page)){const primary=node('div',null,'gv-ci-pages');primary.append(node('strong','Preferred reader page: '),pageLink(r.primary_digital_page));body.append(primary);}links(body,pages);for(const e of r.evidence||[])body.append(details(e));}));
-      }else{const start=r.digital_start?.digital??r.digital_page,end=r.digital_end_upper_bound?.digital;out.append(resultRow(r.heading||'Section navigation lead','—',start?`${start}${end?'–'+end:''}`:'—','Unverified',body=>{links(body,[start]);field(body,'Printed page',r.printed_start);field(body,'Proposed digital range',start?`${start}${end?'–'+end:''} (unverified)`:'Not mapped');field(body,'Mapping method',human(r.digital_start?.method));field(body,'Contents evidence',(r.contents_observations||[]).map(x=>x.locator_evidence||x.heading).filter(Boolean));for(const opt of r.title_options||[])field(body,'Possible game',(opt.catalog_candidates||[]).map(c=>`${c.title} — ${c.platform}`));}));}
+    out.append(node('p',`${records.length} result(s) · Scanner evidence and ranges are unverified. Saved decisions reflect human review.${view==='references'?' Reference-only entries do not create game links.':''}${suppressed?` ${suppressed} low-confidence / branding records held in diagnostics.`:''}`,'sub'));
+    if(!records.length){out.append(node('p',filter?'No results match this filter.':`No ${names[view].toLowerCase()} for this review.`,'gv-ci-empty'));return;}
+    const header=node('div',null,'gv-ci-row-head gv-ci-table-head');for(const h of [view==='navigation_leads'?'Section':'Game / title','Platform','Coverage','Digital page(s)','Status'])header.append(node('span',h));out.append(header);
+    for(const r of records){if(view==='games'){
+      const d=decisionFor(r.game_id);const pages=r.digital_pages||[];const current=d?.fingerprint===report.source_fingerprint;
+      const preferred=current&&d?.status==='Confirmed'&&Number.isInteger(d.preferredPage)?d.preferredPage:r.primary_digital_page;
+      out.append(resultRow(r.title,r.platform,Number.isInteger(preferred)?String(preferred):pages.join(', '),d?.status&&['Confirmed','Rejected'].includes(d.status)?(d.fingerprint&&!current?d.status+' · re-review':d.status):confidence(r.confidence),body=>{
+        decisionControls(body,r);if(Number.isInteger(preferred)){const primary=node('div',null,'gv-ci-pages');primary.append(node('strong',current&&d?.status==='Confirmed'?'Approved reader page: ':'Proposed reader page: '),pageLink(preferred));body.append(primary);}
+        links(body,pages.filter(n=>n!==preferred));for(const e of r.evidence||[])body.append(details(e,false));
+      },current&&d?.status==='Confirmed'&&d.coverage?d.coverage:primaryKinds(r)||'Coverage needs review'));
+    }else if(view==='unresolved_evidence'||view==='references'){
+      const pages=[...r.pages].sort((a,b)=>a-b);out.append(resultRow(r.title,[...r.platforms].join(', '),pages.join(', '),view==='references'?'Reference only':'Unresolved',body=>{links(body,pages);for(const e of r.evidence||[])body.append(details(e,false));},[...new Set(r.evidence.map(e=>e.content_kind))].join(' / ')));
+    }else if(view==='saved'){
+      const current=r.fingerprint===report.source_fingerprint;out.append(resultRow(r.title,r.platform,current&&r.preferredPage?String(r.preferredPage):'—',r.fingerprint&&!current?r.status+' · re-review':r.status,body=>{field(body,'Decision source',r.source);field(body,'Coverage',current?r.coverage:null);if(current&&r.preferredPage)links(body,[r.preferredPage]);if(r.fingerprint&&!current)field(body,'Source changed','Approved page is no longer current. Re-analyze and review.');field(body,'Manage','Use the current Game Matches row or LaunchBox Links to change this relationship.');},current?r.coverage:'—'));
+    }else{const start=r.digital_start?.digital??r.digital_page,end=r.digital_end_upper_bound?.digital;out.append(resultRow(r.heading||'Section navigation lead','—',start?`${start}${end?'–'+end:''}`:'—','Unverified',body=>{links(body,[start]);field(body,'Printed page',r.printed_start);field(body,'Proposed digital range',start?`${start}${end?'–'+end:''} (unverified)`:'Not mapped');field(body,'Mapping method',human(r.digital_start?.method));field(body,'Contents evidence',(r.contents_observations||[]).map(x=>x.locator_evidence||x.heading).filter(Boolean));for(const opt of r.title_options||[])field(body,'Possible game',(opt.catalog_candidates||[]).map(c=>`${c.title} — ${c.platform}`));},'Section'));}
     }
   }
-  function controls(){run.disabled=busy;stop.disabled=!busy;refresh.disabled=busy;visual.disabled=busy||!['PDF','CBZ','ZIP'].includes(format);}
+  function controls(){run.disabled=busy;stop.disabled=!controller;refresh.disabled=busy;visual.disabled=busy||!['PDF','CBZ','ZIP'].includes(format);}
   async function request(method){
     if(busy)return;busy=true;controller=new AbortController();session.contentIntelligenceController=controller;controls();
     status.textContent=method==='POST'?'Analyzing indexed magazine (up to 120 seconds)…':'Loading saved review…';
-    try{const response=await fetch(endpoint+(method==='POST'?`?visual=${visual.checked}`:''),{method,cache:'no-store',signal:controller.signal});const data=await response.json();if(!response.ok)throw new Error(data.error||data.detail||`HTTP ${response.status}`);if(!panel.isConnected)return;report=data.report||null;if(method==='POST')view=report?.games?.length?'games':report?.unresolved_evidence?.length?'unresolved_evidence':'navigation_leads';render();status.textContent=report?`Review ready · ${report.label||''}${data.seconds!=null?' · '+data.seconds+'s':''}. No metadata saved.${report.engine_revision==='content-intelligence-v5.1-region-context'?'':' Saved review uses earlier matching rules; analyze again to refresh.'}`:'No saved Content Intelligence review for the current source.';
+    try{const response=await fetch(endpoint+(method==='POST'?`?visual=${visual.checked}`:''),{method,cache:'no-store',signal:controller.signal});const data=await response.json();if(!response.ok)throw new Error(data.error||data.detail||`HTTP ${response.status}`);if(!panel.isConnected)return;report=data.report||null;reviewToken=data.reviewToken||'';decisions=data.decisions||[];if(method==='POST')view=report?.games?.length?'games':report?.unresolved_evidence?.length?'unresolved_evidence':'navigation_leads';render();status.textContent=report?`Review ready · ${report.label||''}${data.seconds!=null?' · '+data.seconds+'s':''}. Analysis did not save relationships.${report.engine_revision==='content-intelligence-v5.1-region-context'?'':' Saved review uses earlier matching rules; analyze again to refresh.'}`:'No saved Content Intelligence review for the current source.';
     }catch(e){if(panel.isConnected)status.textContent=e.name==='AbortError'?'Request stopped. Load Last Review to check the saved result.':e.message;}
     finally{busy=false;controller=null;session.contentIntelligenceController=null;controls();}
   }

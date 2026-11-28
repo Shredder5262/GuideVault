@@ -1288,6 +1288,9 @@ app.MapGet("/api/client/launchbox/game/{launchBoxGameId}/literature", (HttpReque
         if (rejectedIds.Contains(match.GuideVaultItemId) ||
             !byId.TryGetValue(match.GuideVaultItemId, out var item)) continue;
 
+        // A changed magazine requires a new human review before CI links are exposed.
+        if (match.Source == "ContentIntelligenceReviewed" && !GuidevaultContentIntelligence.IsCurrentSource(item, match.ContentSourceFingerprint)) continue;
+
         // A magazine belongs in the game-specific Guides area through explicit
         // cover/featured coverage or through a manually confirmed relationship.
         if (string.Equals(item.Kind, "Magazine", StringComparison.OrdinalIgnoreCase) &&
@@ -1349,6 +1352,7 @@ app.MapGet("/api/client/launchbox/game/{launchBoxGameId}/literature", (HttpReque
             if (rejectedIds.Contains(match.GuideVaultItemId) ||
                 !byId.TryGetValue(match.GuideVaultItemId, out var item) ||
                 !gamesById.TryGetValue(match.LaunchBoxGameId, out var originGame)) continue;
+            if (match.Source == "ContentIntelligenceReviewed" && !GuidevaultContentIntelligence.IsCurrentSource(item, match.ContentSourceFingerprint)) continue;
             var kind = GuidevaultLaunchBoxMatcher.MatchTypeFromItem(item);
             if (!shareKinds.Contains(kind)) continue;
             // Manuals vary widely by release: even an opted-in manual group must
@@ -1371,9 +1375,15 @@ app.MapGet("/api/client/launchbox/game/{launchBoxGameId}/literature", (HttpReque
             var isManual = string.Equals(item.Kind, "Manual", StringComparison.OrdinalIgnoreCase);
             var isMagazine = string.Equals(item.Kind, "Magazine", StringComparison.OrdinalIgnoreCase);
             var id = Uri.EscapeDataString(item.Id);
+            var coverageMatch = isMagazine ? gameMatches.FirstOrDefault(m => m.GuideVaultItemId == item.Id &&
+                m.MatchType == "Magazine" && m.MatchStatus == "Confirmed" && m.Source == "ContentIntelligenceReviewed" &&
+                m.ContentPreferredPage.HasValue && !string.IsNullOrEmpty(m.ContentSourceFingerprint)) : null;
+            var coverageCurrent = coverageMatch is not null && GuidevaultContentIntelligence.IsCurrentSource(item, coverageMatch.ContentSourceFingerprint);
             return new
             {
                 itemId = item.Id,
+                preferredDigitalPage = coverageCurrent ? coverageMatch!.ContentPreferredPage : null,
+                coverageType = coverageCurrent ? coverageMatch!.ContentCoverage : null,
                 title = item.Title,
                 kind = item.Kind, // remains "Magazine", NOT reclassified as "Strategy Guide"
                 section = isManual ? "Manual" : "Guides",
@@ -3069,7 +3079,11 @@ app.MapGet("/api/items/{id}/content-intelligence", async (HttpRequest request, s
     if (CurrentGuidevaultUser(request)?.IsAdmin != true) return (IResult)Results.StatusCode(403);
     var item = VisibleLibraryItems(request, cache.GetItemsSnapshot()).FirstOrDefault(i => i.Id == id && i.Kind == "Magazine");
     if (item is null) return Results.NotFound();
-    try { return Results.Ok(new { report = await GuidevaultContentIntelligence.LatestAsync(dataRoot, item, request.HttpContext.RequestAborted) }); }
+    try {
+        var report = await GuidevaultContentIntelligence.LatestAsync(dataRoot, item, request.HttpContext.RequestAborted);
+        return Results.Ok(new { report, reviewToken = report.HasValue ? GuidevaultContentIntelligence.ReviewToken(report.Value) : null,
+            decisions = launchBoxIntegrationStore.ContentIntelligenceDecisions(item.Id) });
+    }
     catch (OperationCanceledException) { return Results.StatusCode(499); }
     catch (InvalidOperationException ex) { return Results.Conflict(new { error = ex.Message }); }
     catch (Exception ex) { app.Logger.LogError(ex, "Content Intelligence review load failed"); return Results.Problem("Could not load the review report."); }
@@ -3083,10 +3097,56 @@ app.MapPost("/api/items/{id}/content-intelligence", async (HttpRequest request, 
         return Results.Conflict(new { error = message });
     using (lease)
     {
-        try { return Results.Ok(await GuidevaultContentIntelligence.ScanAsync(dataRoot, item, launchBoxIntegrationPath, visual == true, request.HttpContext.RequestAborted)); }
+        try {
+            var scan = await GuidevaultContentIntelligence.ScanAsync(dataRoot, item, launchBoxIntegrationPath, visual == true, request.HttpContext.RequestAborted);
+            return Results.Ok(new { report = scan.Report, seconds = scan.Seconds, reviewToken = GuidevaultContentIntelligence.ReviewToken(scan.Report),
+                decisions = launchBoxIntegrationStore.ContentIntelligenceDecisions(item.Id) });
+        }
         catch (OperationCanceledException) { return Results.StatusCode(499); }
         catch (InvalidOperationException ex) { return Results.Conflict(new { error = ex.Message }); }
         catch (Exception ex) { app.Logger.LogError(ex, "Content Intelligence scan failed"); return Results.Problem("Content Intelligence scan failed."); }
+    }
+});
+
+// Explicit human decisions only; the scan endpoint never changes relationships.
+app.MapGet("/api/items/{id}/content-intelligence/catalog", (HttpRequest request, string id, string? q) =>
+{
+    if (CurrentGuidevaultUser(request)?.IsAdmin != true) return (IResult)Results.StatusCode(403);
+    if (!VisibleLibraryItems(request, cache.GetItemsSnapshot()).Any(i => i.Id == id && i.Kind == "Magazine")) return Results.NotFound();
+    var query = (q ?? "").Trim();
+    if (query.Length < 2 || query.Length > 160) return Results.BadRequest(new { error = "Enter 2–160 characters." });
+    return Results.Ok(launchBoxIntegrationStore.GetSnapshot().Games
+        .Where(g => (g.Title ?? "").Contains(query, StringComparison.OrdinalIgnoreCase) ||
+            (g.AlternateNames ?? new List<string>()).Any(a => (a ?? "").Contains(query, StringComparison.OrdinalIgnoreCase)))
+        .OrderByDescending(g => string.Equals(g.Title, query, StringComparison.OrdinalIgnoreCase))
+        .ThenBy(g => g.Title).ThenBy(g => g.Platform).Take(60)
+        .Select(g => new { id = g.Id, title = g.Title, platform = g.Platform, region = g.Region, releaseYear = g.ReleaseYear }));
+});
+app.MapPost("/api/items/{id}/content-intelligence/decision", async (HttpRequest request, string id, GuidevaultContentDecision payload) =>
+{
+    if (CurrentGuidevaultUser(request)?.IsAdmin != true) return (IResult)Results.StatusCode(403);
+    var item = VisibleLibraryItems(request, cache.GetItemsSnapshot()).FirstOrDefault(i => i.Id == id && i.Kind == "Magazine");
+    if (item is null) return Results.NotFound();
+    if (!GuidevaultLibraryIoGate.TryBeginArchiveWrite(out var lease, out var message, allowConcurrentArchiveReads: true) || lease is null)
+        return Results.Conflict(new { error = message });
+    using (lease)
+    {
+        try
+        {
+            var report = await GuidevaultContentIntelligence.LatestAsync(dataRoot, item, request.HttpContext.RequestAborted);
+            if (!report.HasValue || GuidevaultContentIntelligence.ReviewToken(report.Value) != payload.ReviewToken)
+                return Results.Conflict(new { error = "Review changed. Load Last Review before deciding." });
+            var selection = GuidevaultContentIntelligence.ValidateDecision(report.Value, payload);
+            if (GuidevaultDocumentIndex.CatalogFingerprint(item) != selection.Fingerprint)
+                return Results.Conflict(new { error = "Magazine changed. Re-index and analyze again." });
+            var result = launchBoxIntegrationStore.ApplyContentIntelligenceDecision(item, payload, selection.Fingerprint, selection.Coverage);
+            if (!result.Success) return Results.Conflict(new { error = result.Message });
+            RecordSystemEvent("Integration", "Content Intelligence decision", result.Message, "launchbox", item.Id, item.Title);
+            return Results.Ok(new { message = result.Message, decisions = launchBoxIntegrationStore.ContentIntelligenceDecisions(item.Id) });
+        }
+        catch (OperationCanceledException) { return Results.StatusCode(499); }
+        catch (InvalidOperationException ex) { return Results.Conflict(new { error = ex.Message }); }
+        catch (Exception ex) { app.Logger.LogError(ex, "Content Intelligence decision failed"); return Results.Problem("Could not save the decision. Reload the review before retrying."); }
     }
 });
 
@@ -9577,6 +9637,68 @@ public sealed class GuidevaultLaunchBoxIntegrationStore
         match.PreviousMatchStatus = IsReviewableDecisionStatus(current) ? current : (string.IsNullOrWhiteSpace(match.PreviousMatchStatus) ? "Missing" : match.PreviousMatchStatus);
     }
 
+    public object ContentIntelligenceDecisions(string itemId)
+    {
+        lock (_gate)
+            return _data.Matches.Where(m => string.Equals(m.GuideVaultItemId, itemId, StringComparison.OrdinalIgnoreCase) &&
+                m.MatchType == "Magazine").Select(m => new {
+                    gameId = m.LaunchBoxGameId, title = m.LaunchBoxGameTitle, platform = m.LaunchBoxPlatform,
+                    status = m.MatchStatus, source = m.Source, version = m.UpdatedAt.UtcDateTime.Ticks.ToString(),
+                    preferredPage = m.ContentPreferredPage, coverage = m.ContentCoverage, fingerprint = m.ContentSourceFingerprint
+                }).ToArray();
+    }
+
+    internal (bool Success, string Message) ApplyContentIntelligenceDecision(LibraryItem item, GuidevaultContentDecision payload,
+        string fingerprint, string coverage)
+    {
+        lock (_gate)
+        {
+            if (IsJobActive(_job.Status)) return (false, "Wait for the LaunchBox rematch job to finish.");
+            var original = _data.Games.FirstOrDefault(g => string.Equals(g.Id, payload.GameId, StringComparison.OrdinalIgnoreCase));
+            var target = payload.Action == "correct" ? _data.Games.FirstOrDefault(g => string.Equals(g.Id, payload.TargetGameId, StringComparison.OrdinalIgnoreCase)) : original;
+            if (original is null || target is null || item.Kind != "Magazine") return (false, "Game or publication no longer exists. Sync and reload.");
+            List<GuidevaultLaunchBoxMatch> Pair(string gameId) => _data.Matches.Where(m => m.MatchType == "Magazine" &&
+                string.Equals(m.GuideVaultItemId, item.Id, StringComparison.OrdinalIgnoreCase) &&
+                string.Equals(m.LaunchBoxGameId, gameId, StringComparison.OrdinalIgnoreCase)).ToList();
+            var existing = Pair(original.Id);
+            if (existing.Count > 1) return (false, "Duplicate saved relationship; resolve it in LaunchBox Links first.");
+            var prior = existing.FirstOrDefault();
+            if ((prior?.UpdatedAt.UtcDateTime.Ticks.ToString() ?? "") != (payload.ExpectedVersion ?? ""))
+                return (false, "Relationship changed. Reload the review before deciding.");
+            if (payload.Action == "correct" && (target.Id == original.Id || Pair(target.Id).Count != 0))
+                return (false, "Correction target is the same game or already has a saved relationship. Review it in LaunchBox Links first.");
+            var before = _data.Matches.Select(GuidevaultLaunchBoxMatcher.CloneMatch).ToList();
+            try
+            {
+                void Set(GuidevaultLaunchBoxGame game, GuidevaultLaunchBoxMatch? match, bool approve)
+                {
+                    var reason = approve ? "Human-confirmed magazine coverage from Content Intelligence." : "Human-rejected magazine association from Content Intelligence.";
+                    if (match is null)
+                    {
+                        match = GuidevaultLaunchBoxMatcher.CreateMatch(game, item, "Magazine", approve ? "Confirmed" : "Rejected", 0, reason);
+                        match.PreviousMatchStatus = "Missing";
+                        _data.Matches.Add(match);
+                    }
+                    else RememberPreviousMatchStatus(match);
+                    match.MatchStatus = approve ? "Confirmed" : "Rejected";
+                    match.ConfidenceScore = 0;
+                    match.MatchReason = reason;
+                    match.Source = "ContentIntelligenceReviewed";
+                    match.ContentSourceFingerprint = fingerprint;
+                    match.ContentPreferredPage = approve ? payload.Page : null;
+                    match.ContentCoverage = approve ? coverage : "";
+                    match.UpdatedAt = DateTimeOffset.UtcNow;
+                }
+                if (payload.Action == "correct") { Set(original, prior, false); Set(target, null, true); }
+                else Set(original, prior, payload.Action == "confirm");
+                Save();
+            }
+            catch { _data.Matches = before; throw; }
+            return (true, payload.Action == "correct" ? $"Rejected {original.Title}; confirmed {target.Title}." :
+                $"{(payload.Action == "confirm" ? "Confirmed" : "Rejected")} {original.Title} for {item.Title}.");
+        }
+    }
+
     public GuidevaultLaunchBoxDecisionResult ConfirmMatch(GuidevaultLaunchBoxMatchDecisionRequest? request, IReadOnlyList<LibraryItem> guidevaultItems)
     {
         var payload = request ?? new GuidevaultLaunchBoxMatchDecisionRequest();
@@ -11389,6 +11511,9 @@ public static class GuidevaultLaunchBoxMatcher
         MatchType = match.MatchType,
         MatchStatus = match.MatchStatus,
         PreviousMatchStatus = match.PreviousMatchStatus,
+        ContentSourceFingerprint = match.ContentSourceFingerprint,
+        ContentPreferredPage = match.ContentPreferredPage,
+        ContentCoverage = match.ContentCoverage,
         ConfidenceScore = match.ConfidenceScore,
         MatchReason = match.MatchReason,
         Source = match.Source,
@@ -11855,6 +11980,9 @@ public sealed class GuidevaultLaunchBoxMatch
     public string MatchType { get; set; } = string.Empty;
     public string MatchStatus { get; set; } = "AutoMatched";
     public string PreviousMatchStatus { get; set; } = string.Empty;
+    public string ContentSourceFingerprint { get; set; } = string.Empty;
+    public int? ContentPreferredPage { get; set; }
+    public string ContentCoverage { get; set; } = string.Empty;
     public double ConfidenceScore { get; set; }
     public string MatchReason { get; set; } = string.Empty;
     public string Source { get; set; } = "Auto";

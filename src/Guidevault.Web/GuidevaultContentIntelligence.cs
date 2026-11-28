@@ -1,7 +1,7 @@
 using System.Diagnostics;
 using System.Text.Json;
 
-// Review-only bridge to the image-owned v5.1 engine. Never writes library metadata.
+// Read-only scan bridge to the image-owned v5.1 engine. Decisions use the existing relationship store.
 internal static class GuidevaultContentIntelligence
 {
     private const string Python = "/opt/guidevault-vision/bin/python";
@@ -23,6 +23,47 @@ internal static class GuidevaultContentIntelligence
         return report.Clone();
     }
 
+    public static string ReviewToken(JsonElement report) => Convert.ToHexString(
+        System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(report.GetRawText())));
+
+    public static (string Fingerprint, string Coverage) ValidateDecision(JsonElement report, GuidevaultContentDecision payload)
+    {
+        if (payload.Action is not ("confirm" or "reject" or "correct") || string.IsNullOrWhiteSpace(payload.GameId))
+            throw new InvalidOperationException("Invalid review decision.");
+        var matches = report.GetProperty("games").EnumerateArray().Where(g =>
+            string.Equals(g.GetProperty("game_id").GetString(), payload.GameId, StringComparison.OrdinalIgnoreCase)).ToArray();
+        if (matches.Length != 1) throw new InvalidOperationException("Select a current game review lead.");
+        var fingerprint = report.GetProperty("source_fingerprint").GetString()!;
+        if (payload.Action == "reject") return (fingerprint, "");
+        if (payload.Page is null || payload.Page < 1 || payload.Page > report.GetProperty("total_pages").GetInt32())
+            throw new InvalidOperationException("Choose a valid reviewed digital page.");
+        var types = matches[0].GetProperty("evidence").EnumerateArray()
+            .Where(e => e.GetProperty("digital_page").ValueKind == JsonValueKind.Number && e.GetProperty("digital_page").TryGetInt32(out var page) && page == payload.Page)
+            .Select(e => e.GetProperty("content_kind").GetString() ?? "")
+            .Where(IsSubstantive).Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
+        if (types.Length == 0) throw new InvalidOperationException("Choose a substantive coverage page, not a checklist or cover reference.");
+        return (fingerprint, string.Join(" / ", types));
+    }
+
+    internal static bool IsCurrentSource(LibraryItem item, string fingerprint)
+    {
+        try { return GuidevaultDocumentIndex.CatalogFingerprint(item) == fingerprint; }
+        catch (Exception) { return false; }
+    }
+
+    internal static bool IsSubstantive(string kind) =>
+        kind.StartsWith("Game review", StringComparison.OrdinalIgnoreCase) ||
+        kind.StartsWith("Game feature", StringComparison.OrdinalIgnoreCase) ||
+        kind.StartsWith("Game profile", StringComparison.OrdinalIgnoreCase) ||
+        kind.StartsWith("Preview", StringComparison.OrdinalIgnoreCase) ||
+        kind.StartsWith("Game preview", StringComparison.OrdinalIgnoreCase) ||
+        kind.StartsWith("Tips", StringComparison.OrdinalIgnoreCase) ||
+        kind.StartsWith("Gameplay", StringComparison.OrdinalIgnoreCase) ||
+        kind.StartsWith("Cheats", StringComparison.OrdinalIgnoreCase) ||
+        kind.StartsWith("Walkthrough", StringComparison.OrdinalIgnoreCase) ||
+        kind.StartsWith("Strategy", StringComparison.OrdinalIgnoreCase) ||
+        kind.StartsWith("Game title heading", StringComparison.OrdinalIgnoreCase);
+
     public static async Task<JsonElement?> LatestAsync(string root, LibraryItem item, CancellationToken token)
     {
         var key = GuidevaultDocumentIndex.ContentIntelligenceKey(item);
@@ -31,7 +72,7 @@ internal static class GuidevaultContentIntelligence
         return await ReadReportAsync(path, key, token);
     }
 
-    public static async Task<object> ScanAsync(string root, LibraryItem item, string catalogPath, bool visual, CancellationToken token)
+    public static async Task<(JsonElement Report, double Seconds)> ScanAsync(string root, LibraryItem item, string catalogPath, bool visual, CancellationToken token)
     {
         if (!File.Exists(Python) || !File.Exists(Script))
             throw new InvalidOperationException("Packaged Content Intelligence runtime is missing. Rebuild the GuideVault image.");
@@ -89,7 +130,7 @@ internal static class GuidevaultContentIntelligence
                 File.Move(temp, published, true);
             }
             finally { if (File.Exists(temp)) File.Delete(temp); }
-            return new { report, seconds = Math.Round(watch.Elapsed.TotalSeconds, 2) };
+            return (report, Math.Round(watch.Elapsed.TotalSeconds, 2));
         }
         catch (OperationCanceledException) when (!token.IsCancellationRequested)
         { throw new InvalidOperationException("Content Intelligence reached the 120-second request budget. Previous review retained."); }
@@ -100,4 +141,14 @@ internal static class GuidevaultContentIntelligence
             try { await Task.WhenAll(stdout, stderr).WaitAsync(TimeSpan.FromSeconds(1)); } catch { }
         }
     }
+}
+
+public sealed class GuidevaultContentDecision
+{
+    public string Action { get; set; } = "";
+    public string GameId { get; set; } = "";
+    public string TargetGameId { get; set; } = "";
+    public string ReviewToken { get; set; } = "";
+    public string ExpectedVersion { get; set; } = "";
+    public int? Page { get; set; }
 }
