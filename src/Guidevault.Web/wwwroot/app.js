@@ -18736,9 +18736,9 @@ function gvAttachDocumentIndex(dialog,session,item) {
   };
   const selected=()=>[...panel.querySelectorAll('input[data-suggestion]:checked')].map(n=>n.dataset.suggestion);
   const empty=v=>v==null||v===''||v===0||Array.isArray(v)&&!v.length||typeof v==='string'&&/^(unknown|unspecified|not specified|n\/?a)$/i.test(v.trim());
-  function controls(){mode.disabled=busy||applying||starting||initial;modeNote.textContent=mode.value==='replace'?'Replace selected fields with supported scan results. Entries absent from a replacement list are removed. Missing or uncertain fields are retained; review the preview.':'Keep existing values, fill missing fields and append supported list entries.';start.disabled=busy||applying||starting||initial;stop.disabled=!busy||applying||starting;copy.disabled=!diagnostics;apply.disabled=busy||applying||!report?.preview||report.mode!==mode.value||!selected().length;panel.querySelectorAll('input[data-suggestion]').forEach(n=>n.disabled=busy||applying||!report?.preview);}
+  function controls(){mode.disabled=busy||applying||starting||initial;modeNote.textContent=mode.value==='replace'?'Replace selected fields with supported scan results. Entries absent from a replacement list are removed. Missing or uncertain fields are retained; review the preview.':'Keep existing values, fill missing fields and append supported list entries.';start.disabled=busy||applying||starting||initial;stop.disabled=!busy||applying||starting;copy.disabled=!diagnostics;apply.disabled=busy||applying||!report?.preview||report.mode!==mode.value||!selected().length;apply.textContent=applying?"Applying…":selected().length?`Apply Suggestions (${selected().length})`:"Apply Suggestions";apply.title=selected().length?"Apply selected fields":"Select at least one suggested field first";panel.querySelectorAll('input[data-suggestion]').forEach(n=>n.disabled=busy||applying||!report?.preview);}
   async function request(path='',params={},method='GET'){
-    const timeout=new AbortController();const handle=setTimeout(()=>timeout.abort(),20000);try{const res=await fetch(endpoint+path+'?'+new URLSearchParams(params),{method,cache:'no-store',signal:timeout.signal});if(!res.ok){let msg=`HTTP ${res.status}`;try{const body=await res.json();msg=body.error||body.detail||msg;}catch{}throw new Error(msg);}return await res.json();}finally{clearTimeout(handle);}
+    const timeout=new AbortController();const handle=setTimeout(()=>timeout.abort(),params.action==='apply'?90000:20000);try{const res=await fetch(endpoint+path+'?'+new URLSearchParams(params),{method,cache:'no-store',signal:timeout.signal});if(!res.ok){let msg=`HTTP ${res.status}`;try{const body=await res.json();msg=body.error||body.detail||msg;}catch{}throw new Error(msg);}return await res.json();}finally{clearTimeout(handle);}
   }
   function renderVerification(r,root){
     const rows=gvPublicationVerificationRows(r);
@@ -18798,7 +18798,34 @@ function gvAttachDocumentIndex(dialog,session,item) {
   start.onclick=async()=>{if(busy||applying||starting||initial)return;starting=true;clearTimeout(timer);report=null;diagnostics='';seen='';q('[data-output]').hidden=true;busy=true;session.running=true;controls();status.textContent='Starting scan…';try{showJob(await request('/job',{catalog:'true',preview:'true',replace:String(mode.value==='replace'),mode:mode.value,workers:'2'},'POST'));}catch(e){status.textContent='Start response: '+e.message+' — checking server status.';}finally{starting=false;controls();await poll();}};
   stop.onclick=async()=>{if(!busy)return;status.textContent='Stopping scan…';try{showJob(await request('/job',{action:'stop'},'POST'));}catch(e){status.textContent=e.message;}await poll();};
   copy.onclick=async()=>{if(!diagnostics)return;const fallback=q('[data-copy-fallback]'),note=q('[data-copy-status]');try{if(!navigator.clipboard?.writeText)throw new Error('Clipboard unavailable');await navigator.clipboard.writeText(diagnostics);note.textContent='Diagnostic output copied.';return;}catch{}fallback.hidden=false;fallback.value=diagnostics;fallback.focus();fallback.select();try{if(document.execCommand('copy')){fallback.hidden=true;note.textContent='Diagnostic output copied.';return;}}catch{}note.textContent='Clipboard unavailable. Press Ctrl+C to copy the selected output.';};
-  apply.onclick=async()=>{const fields=selected();if(!report?.preview||report.mode!==mode.value||!fields.length||busy||applying)return;applying=true;session.running=true;controls();status.textContent='Applying selected suggestions…';clearTimeout(timer);try{const r=await request('/job',{action:'apply',jobId,fields:fields.join(',')},'POST');if(metadataManagerItemId(r.item)!==metadataManagerItemId(item)||r.preview!==false)throw new Error('Unexpected apply response.');const key=metadataOverrideKey(item),map=readClientMetadataOverrides();if(map[key]){for(const c of r.changes||[])delete map[key][c.field];delete map[key].metadataSource;writeClientMetadataOverrides(map);}replaceItemInState(r.item);seen=jobId+':false';render(r);status.textContent=`Applied ${r.changes.length} selected field(s).`;if(gvMagazineScanSession===session&&panel.isConnected&&metadataManagerItemId(state.selected)===metadataManagerItemId(item)&&!$('detailView')?.classList.contains('hidden')){if(state.activeTab==='magazine-scan'){activateTab('overview');renderDetails(state.selected);const main=document.querySelector('.main');if(main)main.scrollTop=0;showGuidevaultMessageToast(status.textContent,'success',{title:'Magazine metadata saved'});}else if(state.activeTab==='overview'){renderDetails(state.selected);}}}catch(e){report=null;status.textContent='Apply could not be confirmed: '+e.message+' Refresh metadata or scan again.';}finally{applying=false;session.running=false;controls();}};
+  apply.onclick=async()=>{
+    const fields=selected();if(!report?.preview||report.mode!==mode.value||!fields.length||busy||applying)return;
+    applying=true;session.running=true;controls();status.textContent='Applying selected suggestions…';clearTimeout(timer);
+    const submittedJob=jobId;
+    const valid=r=>r?.preview===false&&metadataManagerItemId(r.item)===metadataManagerItemId(item)&&Array.isArray(r.changes)&&r.changes.length===fields.length&&fields.every(f=>r.changes.some(c=>c.field===f));
+    let saved=null;
+    try{
+      try{const r=await request('/job',{action:'apply',jobId:submittedJob,fields:fields.join(',')},'POST');if(!valid(r))throw new Error('Unexpected apply response.');saved=r;}
+      catch(e){
+        // Never blindly submit again after a timeout: check the existing server result.
+        let j=null;try{j=await request('/job');}catch{}
+        if(j?.jobId===submittedJob&&valid(j.report))saved=j.report;
+        else {const message='Apply not confirmed: '+e.message+(j?.jobId===submittedJob&&j?.report?.preview===true?' — preview retained; retry after resolving the error.':' — refresh or rescan before retrying.');status.textContent=message;diagnostics+='\n\nApply error: '+message;if(j?.jobId!==submittedJob||j?.report?.preview!==true){report=null;}return;}
+      }
+      // A confirmed server commit must not be reported as a failed write when a UI
+      // refresh or navigation fails. Keep the selected item consistent with the server.
+      report=saved;seen=submittedJob+':false';
+      const success=`Applied ${saved.changes.length} selected field(s).`;
+      try{
+        const key=metadataOverrideKey(item),map=readClientMetadataOverrides();
+        if(map[key]){for(const c of saved.changes)delete map[key][c.field];delete map[key].metadataSource;writeClientMetadataOverrides(map);}
+        replaceItemInState(saved.item);render(saved);status.textContent=success;
+        if(gvMagazineScanSession===session&&panel.isConnected&&metadataManagerItemId(state.selected)===metadataManagerItemId(item)&&!$('detailView')?.classList.contains('hidden')){
+          if(state.activeTab==='magazine-scan')activateTab('overview');if(state.activeTab==='overview')renderDetails(state.selected);const main=document.querySelector('.main');if(main)main.scrollTop=0;showGuidevaultMessageToast(success,'success',{title:'Magazine metadata saved'});
+        }
+      }catch(e){status.textContent=success+' Refresh the page to update the display: '+e.message;diagnostics+='\n\nSaved; UI refresh error: '+e.message;}
+    }finally{applying=false;session.running=false;controls();}
+  };
   controls();poll();
 }
 

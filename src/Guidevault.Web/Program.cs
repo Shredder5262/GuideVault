@@ -3110,9 +3110,11 @@ app.MapPost("/api/items/{id}/document-index/job", (HttpRequest request,string id
                 // Commit checks the exact captured override under the metadata lock, including later edits and locks.
                 var selection=GuidevaultDocumentIndex.SelectCatalogChanges(plan,selected,latest);
                 var applied=metadataStore.CommitDocumentCatalog(dataRoot,latest,expected,selection);
-                cache.ReplaceCachedItem(applied,persist:false);
-                RecordSystemEvent("Metadata","Magazine cataloged",$"Applied {selection.Changes.Count} selected field(s) for {latest.Title}.","api",id,latest.Title);
-                return new{item=applied,selection.Revision,selection.Mode,selection.Changes,selection.Held,selection.Publication,selection.Editorial,selection.Seconds,preview=false,history=metadataStore.DocumentCatalogHistory(dataRoot,id)};
+                // Metadata has committed. Auxiliary cache/event/history failures must not invite a second write.
+                try{cache.ReplaceCachedItem(applied,persist:false);}catch(Exception ex){app.Logger.LogError(ex,"Magazine metadata saved; cache refresh failed for {Item}",id);}
+                try{RecordSystemEvent("Metadata","Magazine cataloged",$"Applied {selection.Changes.Count} selected field(s) for {latest.Title}.","api",id,latest.Title);}catch(Exception ex){app.Logger.LogWarning(ex,"Magazine metadata saved; event logging failed for {Item}",id);}
+                object? history=null;try{history=metadataStore.DocumentCatalogHistory(dataRoot,id);}catch(Exception ex){app.Logger.LogWarning(ex,"Magazine metadata saved; history retrieval failed for {Item}",id);}
+                return new{item=applied,selection.Revision,selection.Mode,selection.Changes,selection.Held,selection.Publication,selection.Editorial,selection.Seconds,preview=false,history};
             });
             return new{item=fresh,plan.Revision,plan.Mode,plan.Changes,plan.Held,plan.Publication,plan.Editorial,plan.Seconds,preview=true,history=metadataStore.DocumentCatalogHistory(dataRoot,id)};
         }
