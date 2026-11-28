@@ -3,7 +3,7 @@
 import argparse, json, os, re, sys, time, tempfile, unicodedata, statistics
 from collections import Counter, defaultdict
 from pathlib import Path
-REV = 'content-intelligence-v4.9-context-review'
+REV = 'content-intelligence-v5.0-page-context'
 DATA = Path(os.environ.get("GUIDEVAULT_DATA", "/data"))
 def read(p):
     return json.loads(p.read_text(encoding='utf-8-sig'))
@@ -1163,6 +1163,53 @@ def visual_pipeline(a, out):
     print(f"Visual stage: {report.get('completed',0)}/{report.get('selected',0)} regions; {report.get('status')}; {report['elapsed_seconds']}s. No metadata changed.",flush=True)
     return 0 if report.get('status')=='completed' and (not report.get('completed') or report.get('resolution_status')=='completed') else 2
 
+def page_context(p, title_count=0):
+    """Classify only explicit page-wide signals, not arbitrary gameplay words."""
+    if not p: return {'kind':'unclassified','signals':[]}
+    if p['page']==1: return {'kind':'cover','signals':['first digital page (possible cover)']}
+    lines=[r[0] for f in ('layout_lines','cached_vision_lines') for r in p.get(f,[]) if coords(r)]
+    text=' '.join(tokens(p.get('text','')+' '+ ' '.join(lines)))
+    if strong_promotion(p): return {'kind':'advertisement','signals':['multiple commercial signals']}
+    checklist=[q for q in ('software checklist','game checklist','games checklist','games for your reference','check off the ones','check off the games') if q in text]
+    if title_count>=5 and checklist: return {'kind':'checklist','signals':checklist}
+    size=p.get('layout_size',[])
+    h=size[1] if len(size)>=2 and isinstance(size[1],(int,float)) else 0
+    review=[]
+    for f in ('layout_lines','cached_vision_lines'):
+        for r in p.get(f,[]):
+            if not coords(r) or not h or r[2]>h*.30: continue
+            t=' '.join(tokens(r[0]))
+            if len(t.split())<=8 and re.search(r'\b(?:special(?: \w+){0,3} review|game review|in depth review|review)\b',t) and (t.endswith('review') or t.endswith('reviews')):
+                review.append(r[0])
+    if review: return {'kind':'review','signals':sorted(set(review))}
+    preview=[r[0] for f in ('layout_lines','cached_vision_lines') for r in p.get(f,[]) if coords(r) and h and r[2]<h*.25 and ' '.join(tokens(r[0])) in ('game preview','special preview','preview','sneak preview','first look')]
+    if preview: return {'kind':'preview','signals':sorted(set(preview))}
+    return {'kind':'unclassified','signals':[]}
+
+
+def context_title_heading(r,p):
+    # Exact observed alias is accepted only for a full, prominent heading.
+    # Do not drop sequel numerals, nor use arbitrary short subtitle aliases.
+    keys={r['title_key'],*r.get('matched_alias_keys',[])}
+    for e in r.get('evidence',[]):
+        if e.get('match_method')=='catalog_alias' and len(tokens(e.get('printed_title','')))>=2:
+            keys.add(' '.join(tokens(e['printed_title'])))
+    size=p.get('layout_size',[]) if p else []
+    if len(size)<2 or not all(isinstance(v,(int,float)) and v>0 for v in size[:2]): return False
+    w,h=size[:2]
+    for f in ('layout_lines','cached_vision_lines'):
+        for line in p.get(f,[]):
+            if not coords(line): continue
+            if line[2]>h*.32 or line[3]<w*.10 or line[4]<h*.018: continue
+            for k in keys:
+                if title_line_match(k,line[0]) and not fragmented_heading(k,p):
+                    # Require the printed heading to recur in body OCR, not just a masthead.
+                    phrase=' '.join(tokens(line[0])); body=' '.join(tokens(p.get('text','')))
+                    if len(phrase)>=4 and len(re.findall(r'(?<!\w)'+re.escape(phrase)+r'(?!\w)',body))>=2:
+                        return True
+    return False
+
+
 def unified_review(out, document_key=None):
     """Create a read-only review contract; never promote a candidate into a relationship."""
     out=Path(out)
@@ -1208,6 +1255,9 @@ def unified_review(out, document_key=None):
     games={}; unresolved=[]; consumed=set(); navigation=[]
     page_map={p['page']:p for p in page_evidence.get('source_pages',[])}
     suppressed=list(base.get('suppressed_evidence',[]))
+    title_counts=Counter(r['page'] for r in base.get('candidates',[]))
+    contexts={n:page_context(p,title_counts[n]) for n,p in page_map.items()}
+    deferred=[]
     def page(n):
         if type(n)!=int or not 1<=n<=total: raise ValueError('Invalid digital page: '+str(n))
         return n
@@ -1216,7 +1266,7 @@ def unified_review(out, document_key=None):
         ref={'file':source,'record_index':index}
         item={'digital_page':n,'printed_title':title,'content_kind':kind,'confidence':confidence,
               'source_status':status,'evidence':evidence,'source_ref':ref,'catalog_candidates':candidates,
-              'coverage_status':'unverified'}
+              'coverage_status':'unverified', 'viable_catalog_candidates':[c for c in candidates if eligible(c) and (evidence.get('context_compatible_catalog_ids') is None or c.get('id') in evidence['context_compatible_catalog_ids'])]}
         if selected is None:
             unresolved.append(item); return
         gid=selected.get('id')
@@ -1282,18 +1332,41 @@ def unified_review(out, document_key=None):
         supported=[c for c in candidates if eligible(c) and context and platform_key(c['platform'])==platform_key(context)]
         if not context: supported=toc_supported
         selected=None
+        pc=contexts.get(r['page'],{'kind':'unclassified','signals':[]})
         gameplay=bool(r.get('nearby_gameplay_text') or r.get('kind_evidence'))
         if (r['page']>1 and exact and len(tokens(r['title_key']))>=2 and not local_conflict and not toc_conflict
             and r.get('review_tier') in ('priority_review','review') and not r.get('promotion_signals') and not r.get('platform_conflict')
-            and gameplay and not fragmented_heading(r['title_key'],p) and len({c['id'] for c in supported})==1):
+            and pc['kind'] not in ('cover','checklist','advertisement') and gameplay and not fragmented_heading(r['title_key'],p) and len({c['id'] for c in supported})==1):
             selected=supported[0]
+        viable=[c for c in candidates if eligible(c)]
+        # Without platform evidence, a unique date-compatible catalog candidate is
+        # a tentative identity only, and only on an explicitly labelled review
+        # with a prominent full title and repeated body mentions.
+        full_review=(pc['kind'] in ('review','preview') and context_title_heading(r,p) and not local_conflict and not toc_conflict
+                     and not r.get('platform_conflict') and not r.get('promotion_signals'))
+        if full_review:
+            options=supported if context or toc_supported else viable
+            if len({c['id'] for c in options})==1: selected=options[0]
         kinds=sorted({e['kind_hint'] for e in r.get('kind_evidence',[]) if e.get('kind_hint')})
         kind=r.get('kind') or (kinds[0]+' (review lead)' if selected and len(kinds)==1 else 'Game title heading (coverage unverified)' if selected else 'Unclassified title mention')
-        add('review-queue.json',i,r['page'],r['title_key'],kind,candidates,selected,'section_inferred_review' if selected else 'unresolved',
-            {'review_tier':r.get('review_tier'),'flags':r.get('flags',[]),'quotes':r.get('evidence',[]),'heading_evidence':headings,
+        if full_review: kind='Game review (explicit heading)' if pc['kind']=='review' else 'Game preview (explicit heading)'
+        elif pc['kind']=='cover': kind='Cover mention'
+        elif pc['kind']=='checklist': kind='Catalog / checklist reference'
+        elif pc['kind']=='advertisement': kind='Possible advertisement'
+        evidence={'review_tier':r.get('review_tier'),'flags':r.get('flags',[]),'quotes':r.get('evidence',[]),'heading_evidence':headings,
              'nearby_gameplay_text':r.get('nearby_gameplay_text',[]),'kind_evidence':r.get('kind_evidence',[]),
              'issue_platform_scope':issue_scope,'issue_platform_evidence':scope_evidence,'page_platform_evidence':local_platform_evidence,
-             'contents_platform_hints':r.get('contents_platform_hints',[]),'fragmented_heading':fragmented_heading(r['title_key'],p),'platform_conflict':local_conflict or toc_conflict or r.get('platform_conflict',False)},r['status'])
+             'contents_platform_hints':r.get('contents_platform_hints',[]),'fragmented_heading':fragmented_heading(r['title_key'],p),'platform_conflict':local_conflict or toc_conflict or r.get('platform_conflict',False),
+             'page_context':pc,'context_compatible_catalog_ids':[c['id'] for c in supported] if (context or toc_supported) and not (local_conflict or toc_conflict or r.get('platform_conflict')) else None,'identity_method':'chronology_only_tentative' if selected and full_review and not context and not toc_supported else 'context_supported' if selected else None}
+        title=next((e['printed_title'] for e in r.get('evidence',[]) if e.get('printed_title') and e.get('source') in ('layout_lines','cached_vision_lines')),r['title_key'])
+        if pc['kind'] in ('cover','checklist'):
+            # These references never create a game lead. Link to an existing lead
+            # only when the same full title resolves to one compatible ID.
+            keys={r['title_key'],*r.get('matched_alias_keys',[])}
+            exact_ref=any(title_line_match(k,h[0]) for k in keys for h in headings) and not any(fragmented_heading(k,p) for k in keys)
+            deferred.append((i,r,title,kind,candidates,(supported if context or toc_supported else viable) if exact_ref and not evidence['platform_conflict'] else [],evidence))
+        else:
+            add('review-queue.json',i,r['page'],title,kind,candidates,selected,'section_inferred_review' if selected else 'unresolved',evidence,r['status'])
     for i,r in enumerate(sections.get('sections',[])):
         nav={'source_ref':{'file':'section-leads.json','record_index':i},**r}
         navigation.append(nav)
@@ -1325,12 +1398,23 @@ def unified_review(out, document_key=None):
              'range_status':'unverified_navigation_upper_bound'},'unverified_section_lead')
         nav['related_review_game_ids']=[selected['id']]
 
+    for i,r,title,kind,candidates,viable,evidence in deferred:
+        selected=viable[0] if len(viable)==1 and viable[0]['id'] in games else None
+        add('review-queue.json',i,r['page'],title,kind,candidates,selected,'section_inferred_review' if selected else 'unresolved',evidence,r['status'])
     # Only exact matching ID and page can cross-reference existing weaker mentions; never merge on title alone.
     by_game_page={(gid,e['digital_page']) for gid,g in games.items() for e in g['evidence']}
     for r in unresolved:
         r['related_review_game_ids']=sorted({c['id'] for c in r['catalog_candidates'] if (c.get('id'),r['digital_page']) in by_game_page})
     for g in games.values():
         g['digital_pages']=sorted({e['digital_page'] for e in g['evidence']})
+        def priority(e):
+            k=e['content_kind'].casefold()
+            if 'review (explicit' in k: return 0
+            if 'feature / article' in k or 'cheat' in k or 'guide' in k or 'tips' in k: return 1
+            if 'profile' in k or 'preview' in k: return 2
+            if 'cover' in k or 'checklist' in k: return 4
+            return 3
+        g['primary_digital_page']=min(g['evidence'],key=lambda e:(priority(e),e['digital_page']))['digital_page']
         g['content_kinds']=sorted({e['content_kind'] for e in g['evidence']})
         g['confidence']='platform_supported_review' if any(e['confidence']=='platform_supported_review' for e in g['evidence']) else 'section_inferred_review'
     ordered=sorted(games.values(),key=lambda g:(g['confidence']!='platform_supported_review',g['title'].casefold(),g['platform'],g['game_id']))
@@ -1340,7 +1424,7 @@ def unified_review(out, document_key=None):
             'complete_index_discovery':base.get('complete_discovery',False),'visual_status':raw.get('status','not_requested'),
             'visual_resolution_status':raw.get('resolution_status','not_requested'),'games':ordered,'unresolved_evidence':unresolved,'navigation_leads':navigation,
             'suppressed_evidence':suppressed,
-            'engine_revision':REV,
+            'engine_revision':REV,'page_contexts':[{ 'digital_page':n,**c} for n,c in sorted(contexts.items()) if c['kind']!='unclassified'],
             'summary':{'suppressed_evidence':len(suppressed),'distinct_game_review_rows':len(ordered),'platform_supported_review':sum(g['confidence']=='platform_supported_review' for g in ordered),
                        'section_inferred_review':sum(g['confidence']=='section_inferred_review' for g in ordered),'unresolved_evidence':len(unresolved),
                        'indexed_review_observations':len(indexed.get('records',[])),'visual_records':len(visual.get('records',[])),

@@ -18714,7 +18714,7 @@ function gvPublicationVerificationRows(report) {
 function gvAttachContentIntelligence(dialog, session, item) {
   const panel = document.createElement('section');
   panel.className = 'gv-magscan-content gv-scan-workspace gv-ci-workspace';
-  panel.innerHTML = `<section class="gv-scan-card gv-ci-card"><div class="gv-scan-heading"><h2>Content Intelligence</h2><small>v4.9 · Review only</small></div>
+  panel.innerHTML = `<section class="gv-scan-card gv-ci-card"><div class="gv-scan-heading"><h2>Content Intelligence</h2><small>v5.0 · Review only</small></div>
     <p class="sub">Find game profiles, article navigation and contextual title leads. No game links or metadata are saved.</p>
     <div class="gv-scan-actions"><button type="button" class="primary" data-ci-run>Analyze Content</button><button type="button" class="ghost" data-ci-stop disabled>Stop</button><button type="button" class="ghost" data-ci-refresh>Load Last Review</button></div>
     <label class="gv-ci-toggle"><input type="checkbox" data-ci-visual><span>Recover missing headings with targeted OCR (PDF / CBZ)</span></label>
@@ -18746,9 +18746,9 @@ function gvAttachContentIntelligence(dialog, session, item) {
   function details(e) {
     const d=node('div',null,'gv-ci-evidence');const x=e.evidence||{};
     links(d,[e.digital_page]);field(d,'Content type',e.content_kind);field(d,'Printed heading',e.printed_title);
-    const candidates=e.catalog_candidates||[];
-    if(candidates.length){d.append(node('small','Catalog candidates'));const list=node('div',null,'gv-ci-candidates');for(const c of candidates){const line=node('div',null,'gv-ci-candidate');line.append(node('strong',c.title),node('span',`${c.platform||'Unknown platform'}${c.release_year?' · '+c.release_year:''}`));if(c.platform_conflict||['release_later_than_issue','platform_later_era'].includes(c.chronology))line.append(node('small',c.platform_conflict?'Platform conflict':human(c.chronology),'gv-ci-warning'));list.append(line);}d.append(list);}
-    field(d,'Review reason',human(e.source_status));field(d,'Matching signals',(x.flags||[]).map(human));field(d,'Platform context',x.issue_platform_scope||x.section_platform_hint||(x.platform_hints||[]).join(', '));
+    const candidates=e.catalog_candidates||[];const viable=e.viable_catalog_candidates??candidates.filter(c=>!c.platform_conflict&&!['release_later_than_issue','platform_later_era'].includes(c.chronology));const viableIds=new Set(viable.map(c=>c.id));
+    if(candidates.length){d.append(node('small','Catalog candidates (excluded candidates marked)'));const list=node('div',null,'gv-ci-candidates');for(const c of candidates){const line=node('div',null,'gv-ci-candidate');line.append(node('strong',c.title),node('span',`${c.platform||'Unknown platform'}${c.release_year?' · '+c.release_year:''}`));if(!viableIds.has(c.id))line.append(node('small',c.platform_conflict?'Excluded: platform conflict':['release_later_than_issue','platform_later_era'].includes(c.chronology)?'Excluded: '+human(c.chronology):'Excluded by contextual platform evidence','gv-ci-warning'));else if(c.chronology==='possible_preview')line.append(node('small','Possible preview — date needs review','gv-ci-warning'));list.append(line);}d.append(list);}
+    field(d,'Page classification',human(x.page_context?.kind));field(d,'Page classification evidence',x.page_context?.signals);field(d,'Identity method',human(x.identity_method));field(d,'Review reason',human(e.source_status));field(d,'Matching signals',(x.flags||[]).map(human));field(d,'Platform context',x.issue_platform_scope||x.section_platform_hint||(x.platform_hints||[]).join(', '));
     if(x.platform_conflict)field(d,'Platform evidence','Conflicting platform signals — review required');
     if(x.fragmented_heading)field(d,'Title evidence','Possible incomplete title or sequel number — review required');
     field(d,'Publisher',x.publisher);field(d,'Description',x.description_ocr);field(d,'Nearby gameplay evidence',x.nearby_gameplay_text);field(d,'Proposed range',x.digital_end_upper_bound?.digital?`${e.digital_page}–${x.digital_end_upper_bound.digital} (unverified)`:null);
@@ -18758,8 +18758,9 @@ function gvAttachContentIntelligence(dialog, session, item) {
   }
   function groupedUnresolved(records){
     const groups=new Map();for(const e of records){const ids=(e.catalog_candidates||[]).map(c=>c.id||`${c.title}|${c.platform}`).sort();const key=e.printed_title?JSON.stringify([ids.length?'':String(e.printed_title).toLowerCase(),ids]):JSON.stringify(['untitled',e.source_ref,e.digital_page]);
-      if(!groups.has(key))groups.set(key,{title:(e.catalog_candidates?.length===1?e.catalog_candidates[0].title:e.printed_title)||'Unidentified profile',platforms:new Set(),pages:new Set(),evidence:[]});
-      const g=groups.get(key);for(const c of e.catalog_candidates||[])if(c.platform)g.platforms.add(c.platform);g.pages.add(e.digital_page);g.evidence.push(e);
+      const viable=e.viable_catalog_candidates??(e.catalog_candidates||[]).filter(c=>!c.platform_conflict&&!['release_later_than_issue','platform_later_era'].includes(c.chronology));const names=[...new Set(viable.map(c=>c.title))];const allNames=[...new Set((e.catalog_candidates||[]).map(c=>c.title))];
+      if(!groups.has(key))groups.set(key,{title:(names.length===1?names[0]:allNames.length===1?allNames[0]:e.printed_title)||'Unidentified profile',platforms:new Set(),pages:new Set(),evidence:[]});
+      const g=groups.get(key);for(const c of viable)if(c.platform)g.platforms.add(c.platform);g.pages.add(e.digital_page);g.evidence.push(e);
     }return [...groups.values()];
   }
   function resultRow(title,platform,pages,state,fillBody){
@@ -18779,7 +18780,7 @@ function gvAttachContentIntelligence(dialog, session, item) {
     if(!records.length){out.append(node('p',filter?'No results match this filter.':view==='games'?'No game leads met the review criteria. Check Unresolved for other candidates.':view==='navigation_leads'?'No navigation sections were identified.':'No unresolved evidence.','gv-ci-empty'));return;}
     const header=node('div',null,'gv-ci-row-head gv-ci-table-head');for(const h of [view==='navigation_leads'?'Section':'Game / title','Platform','Digital pages','Status'])header.append(node('span',h));out.append(header);
     for(const r of records){if(view==='games'||view==='unresolved_evidence'){
-        const pages=view==='games'?r.digital_pages||[]:[...r.pages];const platforms=view==='games'?r.platform:[...r.platforms].join(', ');out.append(resultRow(r.title,platforms,[...pages].sort((a,b)=>a-b).join(', '),view==='games'?confidence(r.confidence):'Unresolved',body=>{links(body,pages);for(const e of r.evidence||[])body.append(details(e));}));
+        const pages=view==='games'?r.digital_pages||[]:[...r.pages];const platforms=view==='games'?r.platform:[...r.platforms].join(', ');out.append(resultRow(r.title,platforms,[...pages].sort((a,b)=>a-b).join(', '),view==='games'?confidence(r.confidence):'Unresolved',body=>{if(view==='games'&&Number.isInteger(r.primary_digital_page)){const primary=node('div',null,'gv-ci-pages');primary.append(node('strong','Preferred reader page: '),pageLink(r.primary_digital_page));body.append(primary);}links(body,pages);for(const e of r.evidence||[])body.append(details(e));}));
       }else{const start=r.digital_start?.digital??r.digital_page,end=r.digital_end_upper_bound?.digital;out.append(resultRow(r.heading||'Section navigation lead','—',start?`${start}${end?'–'+end:''}`:'—','Unverified',body=>{links(body,[start]);field(body,'Printed page',r.printed_start);field(body,'Proposed digital range',start?`${start}${end?'–'+end:''} (unverified)`:'Not mapped');field(body,'Mapping method',human(r.digital_start?.method));field(body,'Contents evidence',(r.contents_observations||[]).map(x=>x.locator_evidence||x.heading).filter(Boolean));for(const opt of r.title_options||[])field(body,'Possible game',(opt.catalog_candidates||[]).map(c=>`${c.title} — ${c.platform}`));}));}
     }
   }
@@ -18787,7 +18788,7 @@ function gvAttachContentIntelligence(dialog, session, item) {
   async function request(method){
     if(busy)return;busy=true;controller=new AbortController();session.contentIntelligenceController=controller;controls();
     status.textContent=method==='POST'?'Analyzing indexed magazine (up to 120 seconds)…':'Loading saved review…';
-    try{const response=await fetch(endpoint+(method==='POST'?`?visual=${visual.checked}`:''),{method,cache:'no-store',signal:controller.signal});const data=await response.json();if(!response.ok)throw new Error(data.error||data.detail||`HTTP ${response.status}`);if(!panel.isConnected)return;report=data.report||null;if(method==='POST')view=report?.games?.length?'games':report?.unresolved_evidence?.length?'unresolved_evidence':'navigation_leads';render();status.textContent=report?`Review ready · ${report.label||''}${data.seconds!=null?' · '+data.seconds+'s':''}. No metadata saved.${report.engine_revision?'':' Saved review uses earlier matching rules; analyze again to refresh.'}`:'No saved Content Intelligence review for the current source.';
+    try{const response=await fetch(endpoint+(method==='POST'?`?visual=${visual.checked}`:''),{method,cache:'no-store',signal:controller.signal});const data=await response.json();if(!response.ok)throw new Error(data.error||data.detail||`HTTP ${response.status}`);if(!panel.isConnected)return;report=data.report||null;if(method==='POST')view=report?.games?.length?'games':report?.unresolved_evidence?.length?'unresolved_evidence':'navigation_leads';render();status.textContent=report?`Review ready · ${report.label||''}${data.seconds!=null?' · '+data.seconds+'s':''}. No metadata saved.${report.engine_revision==='content-intelligence-v5.0-page-context'?'':' Saved review uses earlier matching rules; analyze again to refresh.'}`:'No saved Content Intelligence review for the current source.';
     }catch(e){if(panel.isConnected)status.textContent=e.name==='AbortError'?'Request stopped. Load Last Review to check the saved result.':e.message;}
     finally{busy=false;controller=null;session.contentIntelligenceController=null;controls();}
   }
