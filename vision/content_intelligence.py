@@ -3,7 +3,7 @@
 import argparse, json, os, re, sys, time, tempfile, unicodedata, statistics
 from collections import Counter, defaultdict
 from pathlib import Path
-REV = 'content-intelligence-v4.8-section-review'
+REV = 'content-intelligence-v4.9-context-review'
 DATA = Path(os.environ.get("GUIDEVAULT_DATA", "/data"))
 def read(p):
     return json.loads(p.read_text(encoding='utf-8-sig'))
@@ -667,6 +667,63 @@ def profile_report(ranked,pages,sections,deadline):
     return {'directory_pages':detected,'excluded_promotion_pages':excluded,'profiles':records,'unresolved_profiles':unresolved,'note':'Independent layout evidence only. Publisher bylines and bounded text blocks support catalog profiles, not verified game links or reviews. Existing candidate and section reports are preserved.'}
 
 
+def masthead_collision(hit, page, label):
+    """Suppress cover branding only when all observed matching headings are masthead-sized."""
+    if hit.get('page') != 1 or not page or ' | ' not in label: return False
+    title=tokens(label.split(' | ',1)[0])
+    if not title or title==['?']: return False
+    def branding(text):
+        ts=tokens(text)
+        return bool(ts and (ts==title or (len(ts)==1 and len(ts[0])>=4 and ts[0] in title)))
+    ev=hit.get('evidence',[])
+    if not ev or not all(branding(e.get('printed_title','')) for e in ev): return False
+    size=page.get('layout_size',[])
+    if len(size)<2 or not all(isinstance(v,(int,float)) and v>0 for v in size[:2]): return False
+    w,h=size[:2]
+    lines=[r for field in ('layout_lines','cached_vision_lines') for r in page.get(field,[]) if coords(r) and branding(r[0]) and any(tokens(r[0])==tokens(e.get('printed_title','')) for e in ev)]
+    return bool(lines and all(r[2]<h*.30 and r[3]>=w*.20 and r[4]>=h*.035 for r in lines))
+
+
+def weak_alias(hit):
+    ev=hit.get('evidence',[])
+    return bool(ev and all(e.get('match_method') in ('catalog_alias','subtitle_abbreviation') and len(tokens(e.get('printed_title','')))==1 and tokens(e['printed_title'])[0].isalpha() for e in ev)
+                and not hit.get('nearby_gameplay_text') and not hit.get('kind_evidence'))
+
+
+def fragmented_heading(key,p):
+    # A split title such as SUPER / MARIO BROS. or FINAL FANTASY / VII
+    # is not reliable evidence for the shorter catalog identity.
+    if not p: return False
+    for field in ('layout_lines','cached_vision_lines'):
+        rows=[r for r in p.get(field,[]) if coords(r)]
+        for r in rows:
+            if not title_line_match(key,r[0]): continue
+            x,y,w,h=r[1:5]
+            for n in rows:
+                if n is r: continue
+                xx,yy,ww,hh=n[1:5]; nt=tokens(n[0])
+                if not nt or not .55<=hh/h<=1.65 or abs(xx-x)>max(25,w*.22): continue
+                if 0<=y-(yy+hh)<=h*.9 and nt in (['super'],['the'],['new'],['ultimate']): return True
+                if 0<=yy-(y+h)<=h*.9 and len(nt)==1 and NUMERAL.fullmatch(nt[0]): return True
+    return False
+
+
+def page_platform_hint(p):
+    # A standalone platform heading is useful, but never assume a platform from the magazine brand.
+    if not p: return None, []
+    size=p.get('layout_size',[])
+    if len(size)<2 or not isinstance(size[1],(int,float)) or size[1]<=0: return None, []
+    found=[]
+    for field in ('layout_lines','cached_vision_lines'):
+        for r in p.get(field,[]):
+            if not coords(r) or r[2]>size[1]*.25: continue
+            k=' '.join(tokens(r[0])); platform=PLATFORM_HEADINGS.get(k)
+            if platform and k not in ('nintendo','sega','arcade'):
+                found.append({'platform':platform,'digital_page':p['page'],'source':field,'quote':r[0]})
+    keys={platform_key(x['platform']) for x in found}
+    return (found[0]['platform'] if len(keys)==1 else None),found
+
+
 def discovery_main():
     ap=argparse.ArgumentParser(description=__doc__)
     ap.add_argument('--root',type=Path,default=DATA/'document-index/v8.0-phase1')
@@ -697,7 +754,7 @@ def discovery_main():
     out=Path(tempfile.mkdtemp(prefix='gv-ci-catalog-',dir=a.output)); print(f'Output: {out}',flush=True)
     save(out/'magazine-evidence.json',{'revision':REV,'source_fingerprint':manifest['fingerprint'],'total_pages':len(pages),'source_pages':pages})
     print(f'Selected {label}; {len(pages)} indexed pages; {len(rows)} catalog entries; {unique} normalized titles.',flush=True)
-    hits=[]; done=[]; stop=None
+    hits=[]; done=[]; stop=None; suppressed=[]
     try:
         for p in pages:
             if time.monotonic()>=deadline: raise TimeoutError('Magazine time budget')
@@ -710,11 +767,14 @@ def discovery_main():
                     old=existing[h['title_key']]; old['evidence'].extend(h['evidence']); old['matched_alias_keys']=sorted(set(old.get('matched_alias_keys',[])+h.get('matched_alias_keys',[])))
                     old['catalog_candidates']=list({str(g['id']):g for g in old['catalog_candidates']+h['catalog_candidates']}.values())
                     old['flags']=sorted(set(old['flags']+h['flags']))
-            hits.extend(result); done.append(p['page'])
+            for hit in result:
+                if masthead_collision(hit,p,label): suppressed.append({'reason':'publication_masthead','record':hit})
+                else: hits.append(hit)
+            done.append(p['page'])
             if len(done)%10==0 or len(done)==len(pages): print(f'{len(done)}/{len(pages)} pages scanned; {len(hits)} unverified title/page candidates',flush=True)
     except TimeoutError as e: stop=str(e)
     except KeyboardInterrupt: stop='user_cancelled'
-    report={'revision':REV,'label':label,'source_fingerprint':manifest['fingerprint'],'catalog_entries':len(rows),'unique_catalog_titles':unique,'total_pages':len(pages),'scanned_pages':done,'unscanned_pages':[p['page'] for p in pages if p['page'] not in done],'complete_discovery':len(done)==len(pages),'stop_reason':stop,'seconds':round(time.monotonic()-start,2),'candidate_count':len(hits),'candidates':hits,'records':[],'note':'Exact normalized token matches and conservative heading aliases are unverified mentions, not articles or confirmed game links. Platform lists are catalog possibilities, not printed evidence. No metadata changed. No AI invoked.'}
+    report={'revision':REV,'label':label,'source_fingerprint':manifest['fingerprint'],'catalog_entries':len(rows),'unique_catalog_titles':unique,'total_pages':len(pages),'scanned_pages':done,'unscanned_pages':[p['page'] for p in pages if p['page'] not in done],'complete_discovery':len(done)==len(pages),'stop_reason':stop,'seconds':round(time.monotonic()-start,2),'candidate_count':len(hits),'candidates':hits,'suppressed_evidence':suppressed,'records':[],'note':'Exact normalized token matches and conservative heading aliases are unverified mentions, not articles or confirmed game links. Platform lists are catalog possibilities, not printed evidence. No metadata changed. No AI invoked.'}
     try:
         ranked,tiers,toc=refine(hits,pages,deadline)
         year=a.issue_year if a.issue_year is not None else issue_year(label)
@@ -1139,13 +1199,15 @@ def unified_review(out, document_key=None):
             text=re.sub(r'(?<=\w)-\s*\n\s*(?=\w)','',raw_text)
             text=' '.join(text.split())
             for platform,pattern in scope_patterns:
-                for m in re.finditer(r'(?i)\b(?:games you play on your|source for)\s+'+pattern+r'\b(?:\s+players\b)?',text):
+                for m in re.finditer(r'(?i)\b(?:games you play on your|source for|official magazine (?:for|of)|magazine (?:for|dedicated to)|guide (?:for|to))\s+(?:the\s+)?'+pattern+r'\b(?:\s+(?:players|owners|games|system)\b)?',text):
                     # Avoid treating one member of a listed set as exclusive.
                     if re.match(r'\s*(?:,|/|&|and\b|or\b)',text[m.end():],re.I): continue
                     scope_evidence.append({'platform':platform,'digital_page':p['page'],'source':source,'quote':m.group()})
     scope_platforms={r['platform'] for r in scope_evidence}
     issue_scope=next(iter(scope_platforms)) if len(scope_platforms)==1 else None
     games={}; unresolved=[]; consumed=set(); navigation=[]
+    page_map={p['page']:p for p in page_evidence.get('source_pages',[])}
+    suppressed=list(base.get('suppressed_evidence',[]))
     def page(n):
         if type(n)!=int or not 1<=n<=total: raise ValueError('Invalid digital page: '+str(n))
         return n
@@ -1202,9 +1264,36 @@ def unified_review(out, document_key=None):
         add('profile-leads.json',i,r['digital_page'],None,kind,[],None,'unresolved',{'collection':'unresolved_profiles',
             'description_ocr':r.get('description_ocr'),'publisher':r.get('publisher_text'),'heading_ocr':r.get('heading_ocr',[])},r['reason'])
     for i,r in enumerate(indexed.get('records',[])):
-        # Indexed title mentions are not automatically assigned to a game even if the catalog ID is unique.
-        add('review-queue.json',i,r['page'],r['title_key'],r.get('kind') or 'Unclassified title mention',r.get('catalog_candidates',[]),None,'unresolved',
-            {'review_tier':r.get('review_tier'),'flags':r.get('flags',[]),'quotes':r.get('evidence',[]),'heading_evidence':r.get('heading_evidence',[])},r['status'])
+        p=page_map.get(r['page'])
+        reason='publication_masthead' if masthead_collision(r,p,base['label']) else ('unsupported_single_word_alias' if weak_alias(r) else None)
+        if reason:
+            suppressed.append({'reason':reason,'source_ref':{'file':'review-queue.json','record_index':i},'record':r}); continue
+        # Only a canonical full heading + local gameplay evidence
+        # and a unique context-compatible catalog ID can become a tentative review entry.
+        candidates=r.get('catalog_candidates',[])
+        headings=r.get('heading_evidence',[])
+        exact=any(title_line_match(r['title_key'],h[0]) for h in headings)
+        local_platform,local_platform_evidence=page_platform_hint(p)
+        context=local_platform or issue_scope
+        toc_supported=[c for c in r.get('platform_supported_catalog_candidates',[]) if eligible(c)]
+        # If independent platform signals disagree, leave the record unresolved.
+        local_conflict=bool(len({platform_key(x['platform']) for x in local_platform_evidence})>1 or (local_platform and issue_scope and platform_key(local_platform)!=platform_key(issue_scope)))
+        toc_conflict=bool(context and toc_supported and any(platform_key(c['platform'])!=platform_key(context) for c in toc_supported))
+        supported=[c for c in candidates if eligible(c) and context and platform_key(c['platform'])==platform_key(context)]
+        if not context: supported=toc_supported
+        selected=None
+        gameplay=bool(r.get('nearby_gameplay_text') or r.get('kind_evidence'))
+        if (r['page']>1 and exact and len(tokens(r['title_key']))>=2 and not local_conflict and not toc_conflict
+            and r.get('review_tier') in ('priority_review','review') and not r.get('promotion_signals') and not r.get('platform_conflict')
+            and gameplay and not fragmented_heading(r['title_key'],p) and len({c['id'] for c in supported})==1):
+            selected=supported[0]
+        kinds=sorted({e['kind_hint'] for e in r.get('kind_evidence',[]) if e.get('kind_hint')})
+        kind=r.get('kind') or (kinds[0]+' (review lead)' if selected and len(kinds)==1 else 'Game title heading (coverage unverified)' if selected else 'Unclassified title mention')
+        add('review-queue.json',i,r['page'],r['title_key'],kind,candidates,selected,'section_inferred_review' if selected else 'unresolved',
+            {'review_tier':r.get('review_tier'),'flags':r.get('flags',[]),'quotes':r.get('evidence',[]),'heading_evidence':headings,
+             'nearby_gameplay_text':r.get('nearby_gameplay_text',[]),'kind_evidence':r.get('kind_evidence',[]),
+             'issue_platform_scope':issue_scope,'issue_platform_evidence':scope_evidence,'page_platform_evidence':local_platform_evidence,
+             'contents_platform_hints':r.get('contents_platform_hints',[]),'fragmented_heading':fragmented_heading(r['title_key'],p),'platform_conflict':local_conflict or toc_conflict or r.get('platform_conflict',False)},r['status'])
     for i,r in enumerate(sections.get('sections',[])):
         nav={'source_ref':{'file':'section-leads.json','record_index':i},**r}
         navigation.append(nav)
@@ -1250,7 +1339,9 @@ def unified_review(out, document_key=None):
             'issue_platform_scope':issue_scope,'issue_platform_evidence':scope_evidence,
             'complete_index_discovery':base.get('complete_discovery',False),'visual_status':raw.get('status','not_requested'),
             'visual_resolution_status':raw.get('resolution_status','not_requested'),'games':ordered,'unresolved_evidence':unresolved,'navigation_leads':navigation,
-            'summary':{'distinct_game_review_rows':len(ordered),'platform_supported_review':sum(g['confidence']=='platform_supported_review' for g in ordered),
+            'suppressed_evidence':suppressed,
+            'engine_revision':REV,
+            'summary':{'suppressed_evidence':len(suppressed),'distinct_game_review_rows':len(ordered),'platform_supported_review':sum(g['confidence']=='platform_supported_review' for g in ordered),
                        'section_inferred_review':sum(g['confidence']=='section_inferred_review' for g in ordered),'unresolved_evidence':len(unresolved),
                        'indexed_review_observations':len(indexed.get('records',[])),'visual_records':len(visual.get('records',[])),
                        'original_profile_blocks_reused':len(consumed),'navigation_leads':len(navigation),

@@ -1,4 +1,4 @@
-# Content Intelligence (v4.8) — review-only preview
+# Content Intelligence (v4.9) — review-only preview
 
 The existing Scan Magazine workspace now exposes a separate Content Intelligence panel for administrators. It consumes a complete current v8.0-phase1 document index and the synced LaunchBox catalog; it does not create an index, change metadata, or save game relationships. Run Scan Magazine to build the index first. Applying metadata suggestions is not required to run Content Intelligence.
 
@@ -6,7 +6,7 @@ The existing Scan Magazine workspace now exposes a separate Content Intelligence
 - Recover missing headings: optional targeted Tesseract pass on PDF or ZIP-based CBZ, with the same overall budget. It is off by default; other archive formats use indexed OCR only.
 - Load Last Review: loads the last successfully published report for the exact item ID and current source fingerprint. A changed source needs a fresh review.
 - Stop: cancels the browser request and requests server-side termination. A previous successful review is retained on failure/cancellation. Individual run artifacts remain for diagnostics.
-- Game matches, Sections and Unresolved evidence are separate views. Page links use the reader's zero-based archive page API or the PDF viewer's one-based page fragment. Article ranges and platform inference are suggestions, not confirmed coverage.
+- Game matches, Sections and Unresolved evidence are separate tabs. Unresolved rows group identical candidate ID sets and keep every page and evidence record. Suppressed cover branding and unsupported single-word alphabetic aliases are retained in `suppressed_evidence`, outside the normal review list. Earlier saved reports can still be viewed; analyze again to apply v4.9. Page links use the reader's zero-based archive page API or the PDF viewer's one-based page fragment. Article ranges and platform inference are suggestions, not confirmed coverage.
 
 ## Image and persistence
 
@@ -32,6 +32,6 @@ Smoke check after deployment:
 docker exec guidevault /opt/guidevault-vision/bin/python /opt/guidevault-vision/content_intelligence.py --help
 ```
 
-Then select an already-indexed Nintendo Power issue, open Scan Magazine, and use Analyze Content. The known issue #1 produced five tentative article game leads and 18 navigation leads in the full-catalog benchmark. For the known Sega Force #2 benchmark, enable targeted OCR; the previous full-catalog result was 17 platform-supported and 41 inferred game leads. Counts may vary if the source/index/catalog changes. Verify page links, admin restrictions, cancellation, saved-review reload, and stale-source isolation before enabling any write-back.
+Then select an already-indexed Nintendo Power issue, open Scan Magazine, and use Analyze Content. The known issue #1 produced five tentative article game leads and 18 navigation leads in the full-catalog v4.8 benchmark. Replaying those reports with v4.9 retains the five and adds a tentative Kid Icarus gameplay-heading lead. For the known Sega Force #2 benchmark, enable targeted OCR; the previous full-catalog result was 17 platform-supported and 41 inferred game leads. Counts may vary if the source/index/catalog changes. Verify page links, admin restrictions, cancellation, saved-review reload, and stale-source isolation before enabling any write-back.
 
-Local patch validation: Python syntax/CLI and JavaScript syntax checked; both uploaded cached benchmark reports reproduced exactly for games, unresolved evidence and navigation. Fresh explicit-directory invocation tested with a reconstructed 114-page index and a 350-entry partial catalog. The actual .NET/Docker build, original magazine page rendering, web UI, and full-catalog fresh run still require validation in the deployment environment.
+Local v4.9 patch validation: cached report replay preserved all 58 Sega Force game IDs (17 platform-supported and 41 inferred) and all five Nintendo Power article game IDs; one extra Nintendo Power gameplay-heading lead, Kid Icarus, was recovered. Four weak alias observations in Sega Force are retained as diagnostics. A regression fixture using the reported Sega Challenge cover heading verifies the masthead guard. No original Sega Challenge index was available for a complete scan. A split-title guard prevents promotion of the incomplete SUPER / MARIO BROS. heading from the Nintendo Power report. The underlying game catalog is never altered. Browser visual validation and deployed full-catalog scan remain required.
