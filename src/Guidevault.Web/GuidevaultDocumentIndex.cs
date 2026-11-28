@@ -867,6 +867,37 @@ public static class GuidevaultDocumentIndex
                 hits[ix]=h with{Kind=kind,ExplicitPlatforms=platform};
             }
         }
+        // Reconcile an incomplete franchise heading only when the same page explicitly
+        // distinguishes the original from a single numbered sequel and gives that sequel instructions.
+        // Do not transfer other pages or independent coverage of the original.
+        var articleIdentityCorrections=new List<object>();
+        foreach(var pageGroup in hits.Where(h=>h.Page>1&&!h.Cover&&!h.Contents).GroupBy(h=>h.Page).ToArray())
+        {
+            if(!pageKinds.TryGetValue(pageGroup.Key,out var articlePageKind)||articlePageKind!="Gameplay assistance")continue;
+            var rows=pageGroup.ToArray();
+            foreach(var shortHit in rows.Where(h=>h.Kind is "Gameplay assistance" or "Heading reference"))
+            {
+                var stem=EditorialTokens(shortHit.Title);
+                if(stem.Length<2)continue;
+                string shortPattern=Regex.Escape(shortHit.Title);
+                // Only a title-like heading, not a sentence describing actual gameplay.
+                if(!Regex.IsMatch(shortHit.Evidence,@"^\s*"+shortPattern+@"\s*[™®©]?\s*(?:[\p{L}]{1,3})?\s*[\W_]*$",RegexOptions.IgnoreCase))continue;
+                if(!rows.Any(h=>h.Title.Equals(shortHit.Title,StringComparison.OrdinalIgnoreCase)&&h.Kind=="Reference"&&Regex.IsMatch(h.Evidence,@"\boriginal\s+"+shortPattern+@"(?![\p{L}\p{N}])(?!\s+(?:[0-9]+|[IVXLCDM]+)\b)",RegexOptions.IgnoreCase)))continue;
+                var sequelHits=rows.Where(h=>h.Kind=="Reference"&&!AcquisitionContext(h.Evidence)&&InstructionBody.IsMatch(h.Evidence)).Where(h=>
+                {
+                    var longer=EditorialTokens(h.Title);
+                    return longer.Length>stem.Length&&longer.Take(stem.Length).SequenceEqual(stem)&&SequelToken(longer[stem.Length])&&
+                        Regex.IsMatch(h.Evidence,@"(?<![\p{L}\p{N}])"+Regex.Escape(h.Title)+@"(?:\s+(?:fanatic|players?|fans?))?\s*[,;:—–-]\s*(?:press|hold|enter)\b",RegexOptions.IgnoreCase);
+                }).ToArray();
+                if(sequelHits.Select(h=>h.Title).Distinct(StringComparer.OrdinalIgnoreCase).Count()!=1)continue;
+                var sequel=sequelHits[0];
+                int shortIndex=hits.IndexOf(shortHit),longIndex=hits.IndexOf(sequel);
+                if(shortIndex<0||longIndex<0)continue;
+                hits[shortIndex]=shortHit with{Kind="Reference",ExplicitPlatforms=null};
+                hits[longIndex]=sequel with{Kind="Gameplay assistance"};
+                articleIdentityCorrections.Add(new{page=pageGroup.Key,original=shortHit.Title,article=sequel.Title,heading=shortHit.Evidence,instruction=sequel.Evidence,reason="Explicit sequel instruction and original-game comparison on the same page"});
+            }
+        }
         // Report evidence-supported article ranges; merge only consecutive pages with qualifying evidence.
         foreach(var g in hits.Where(h=>h.Page>1&&!h.Contents&&!h.Cover&&(h.Kind is "Review" or "Preview" or "Feature" or "Gameplay assistance" or "Game profile")).GroupBy(h=>h.Title,StringComparer.OrdinalIgnoreCase))
         {
@@ -981,7 +1012,7 @@ public static class GuidevaultDocumentIndex
         var platformSignals=groups.SelectMany(g=>g.supportedPlatforms.Select(platform=>new{platform,g.title})).GroupBy(g=>g.platform,StringComparer.OrdinalIgnoreCase).Select(g=>new{platform=g.Key,featuredTitles=g.Count(),titles=g.Select(x=>x.title).ToArray()}).OrderByDescending(g=>g.featuredTitles).ToArray();
         string? primary=guidePlatform??reviewPlatform??(!Regex.IsMatch(item.PlatformFocus??"",@"multi[ -]?platform",RegexOptions.IgnoreCase)&&platformSignals.Length>0&&platformSignals[0].featuredTitles>=2&&(platformSignals.Length==1||platformSignals[0].featuredTitles>=platformSignals[1].featuredTitles*2+1)?platformSignals[0].platform:null);
         if(Fingerprint(item)!=fp)throw new InvalidOperationException("Source changed during analysis. Re-index the document.");
-        return new{revision="v8.0-phase3.6",excluded,indexedPages=pages.Count,totalPages=manifest.TotalPages,catalogGames=gameCount,guidePlatform,issueScope,profilePages,structures,articleRegions,contentsMapping,printedOffset,visionStatus,visionDiagnostics,contentsPages,advertisingPages,coverCandidates,primarySystemCandidate=primary,platformSignals,featuredCount=groups.Count(g=>g.featured),mentionedCount=groups.Count(g=>!g.featured&&g.kinds.Any(k=>k!="Possible advertising")),advertisingOnlyCount=groups.Count(g=>g.kinds.All(k=>k=="Possible advertising")),games=groups,headings,seconds=Math.Round(timer.Elapsed.TotalSeconds,2)};
+        return new{revision="v8.0-phase3.6.1",articleIdentityCorrections,excluded,indexedPages=pages.Count,totalPages=manifest.TotalPages,catalogGames=gameCount,guidePlatform,issueScope,profilePages,structures,articleRegions,contentsMapping,printedOffset,visionStatus,visionDiagnostics,contentsPages,advertisingPages,coverCandidates,primarySystemCandidate=primary,platformSignals,featuredCount=groups.Count(g=>g.featured),mentionedCount=groups.Count(g=>!g.featured&&g.kinds.Any(k=>k!="Possible advertising")),advertisingOnlyCount=groups.Count(g=>g.kinds.All(k=>k=="Possible advertising")),games=groups,headings,seconds=Math.Round(timer.Elapsed.TotalSeconds,2)};
     }
     private sealed record CoverVisionResult(string Status,double Height,Line[] Lines);
     private static async Task<CoverVisionResult> CoverVisionAsync(string dir,LibraryItem item,CancellationToken token)
@@ -1142,8 +1173,8 @@ public static class GuidevaultDocumentIndex
         update=MetadataLockHelper.FilterLockedFields(update,item.MetadataLocks);
         var filtered=JsonSerializer.SerializeToElement(update,Json);
         foreach(var c in changes.Where(c=>!filtered.TryGetProperty(c.Field,out var v)||v.ValueKind==JsonValueKind.Null).ToArray()){changes.Remove(c);held.Add(c.Field+": protected by field alias lock");}
-        if(changes.Count>0&&!manual)update=update with{MetadataSource="Magazine document index v8.0 Phase 4.6.2"};
-        return new CatalogPlan("v8.0-phase4.6.2",fp,update,changes,held,publication,editorial,Math.Round(clock.Elapsed.TotalSeconds,2));
+        if(changes.Count>0&&!manual)update=update with{MetadataSource="Magazine document index v8.0 Phase 4.6.3"};
+        return new CatalogPlan("v8.0-phase4.6.3",fp,update,changes,held,publication,editorial,Math.Round(clock.Elapsed.TotalSeconds,2));
     }
     public static async Task SaveCatalogReportAsync(string root,LibraryItem item,CatalogPlan plan,CancellationToken token)
     {
