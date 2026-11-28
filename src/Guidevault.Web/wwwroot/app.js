@@ -18681,13 +18681,41 @@ function gvOpenInlineMagazineScan() {
   gvMagazineScanDialog([item], true, host);
 }
 // v8 Phase 1: independent persistent extraction and search; legacy metadata scan remains unchanged.
+// Classify evidence independently of the backend's combined "Direct or reviewed" label.
+function gvPublicationVerificationRows(report) {
+  const pub=report?.publication||{}, changes=Array.isArray(report?.changes)?report.changes:[], held=Array.isArray(report?.held)?report.held:[];
+  const fields=Array.isArray(pub.fields)?pub.fields:[];
+  const key=v=>String(v??'').toLowerCase().replace(/[^\p{L}\p{N}]/gu,'');
+  const directSource=e=>e&&typeof e.page==='number'&&e.page>0&&/^(?:Printed\b|Checksum-valid printed\b|Explicit\b|Repeated running issue date$|Issue marker near cover date$|Publication-linked publisher credit$|Wrapped masthead\b|Adjacent masthead credit$|Masthead credit$|Signed editorial credit$)/i.test(String(e.source||''))&&!/candidate|inference/i.test(String(e.source||''));
+  return fields.map(f=>{
+    const candidates=Array.isArray(f.candidates)?f.candidates:[], evidence=candidates.flatMap(c=>Array.isArray(c.evidence)?c.evidence:[]);
+    const direct=evidence.filter(directSource), peer=evidence.some(e=>e.source==='Reviewed publication peer'), filename=evidence.some(e=>/filename/i.test(e.source||'')), inferred=evidence.some(e=>/inference/i.test(e.source||''));
+    const manifest=evidence.some(e=>e.source==='Document manifest'), change=changes.find(c=>c.field===f.field), reasons=held.filter(h=>String(h).startsWith(f.field+':')).map(h=>String(h).slice(f.field.length+1).trim());
+    const indexOnly=['copyrightHolder','coverPrice','frequency'].includes(f.field), matching=f.status==='Matches current';
+    const reconciled=direct.length>0&&peer&&candidates.length===1&&!direct.some(e=>key(e.value)===key(candidates[0].value));
+    let source=direct.length?(reconciled?'Printed + library reconciliation':'Printed magazine'):manifest?'Document manifest':peer?'Reviewed library issues':filename?'Filename only':inferred?'Language / text inference':evidence.length?'Indirect evidence':'No evidence';
+    if(!direct.length&&peer&&inferred)source='Reviewed library + inference';
+    let state='uncertain', status='Uncertain';
+    if(!candidates.length){state='missing';status='Not detected';}
+    else if(candidates.length>1||/conflicting|multiple/i.test(f.status||'')){status=f.field==='coverPrice'?'Multiple printed prices':'Conflicting candidates';}
+    else if(matching&&(direct.length||manifest)&&!reconciled){state='verified';status=manifest?'Verified digital count':'Verified against magazine';}
+    else if(matching&&reconciled){status='Corroborated by print + library';}
+    else if(change&&report.preview){state='change';status='Correction available';}
+    else if(change&&report.preview===false){state='change';status='Applied';}
+    else if(indexOnly&&(direct.length||manifest)){status='Detected (diagnostic only)';}
+    else if(matching){status=peer?'Library match — not verified':filename?'Filename match — not verified':inferred?'Inferred match — not verified':'Indirect match — not verified';}
+    else if(direct.length||manifest){status='Detected — not proposed';}
+    return {field:f.field,label:({region:'Country / Region',magazineTitle:'Magazine Title',writer:'Editor'}[f.field]||f.label||f.field),current:f.current,candidates,evidence,source,state,status,reasons,locked:!!f.locked,indexOnly,change};
+  });
+}
+
 function gvAttachDocumentIndex(dialog,session,item) {
   const panel=document.createElement('section');panel.className='gv-magscan-content gv-scan-workspace';
-  panel.innerHTML=`<section class="gv-scan-card"><div class="gv-scan-heading"><h2>Scan magazine metadata</h2><small data-scan-revision>Phase 4.9.1</small></div>
+  panel.innerHTML=`<section class="gv-scan-card"><div class="gv-scan-heading"><h2>Scan magazine metadata</h2><small data-scan-revision>Ready</small></div>
     <div class="gv-scan-mode"><label for="gv-scan-mode">Update mode</label><select id="gv-scan-mode" data-mode><option value="add">Add to Existing</option><option value="replace">Replace Existing</option></select><p class="sub" data-mode-note></p></div>
     <div class="gv-scan-actions"><button type="button" class="primary" data-start>Scan Magazine</button><button type="button" class="ghost" data-stop disabled>Stop Scan</button><button type="button" class="ghost" data-copy disabled>Copy Output</button><button type="button" class="primary" data-apply disabled>Apply Suggestions</button></div>
     <p class="gv-scan-status" data-status role="status">Ready to scan. No metadata is saved until you apply suggestions.</p><progress data-progress value="0" max="1" aria-label="Scan progress"></progress><p class="sub" data-progress-info aria-live="polite">Checking document index…</p><p class="sub" data-active></p></section>
-    <section class="gv-scan-card" data-output hidden><h3>Output summary</h3><div class="gv-scan-metrics" data-metrics></div><div data-summary></div><p class="sub" data-copy-status role="status"></p><textarea data-copy-fallback hidden readonly rows="10" aria-label="Diagnostic output"></textarea></section>`;
+    <section class="gv-scan-card" data-output hidden><h3>Output summary</h3><div class="gv-scan-metrics" data-metrics></div><div data-summary></div><div data-verification></div><p class="sub" data-copy-status role="status"></p><textarea data-copy-fallback hidden readonly rows="10" aria-label="Diagnostic output"></textarea></section>`;
   dialog.append(panel);
   const q=s=>panel.querySelector(s), status=q('[data-status]'), progress=q('[data-progress]'), info=q('[data-progress-info]'), active=q('[data-active]'), start=q('[data-start]'), stop=q('[data-stop]'), copy=q('[data-copy]'), apply=q('[data-apply]'), mode=q('[data-mode]'), modeNote=q('[data-mode-note]');
   const endpoint=`/api/items/${encodeURIComponent(metadataManagerItemId(item))}/document-index`;
@@ -18712,10 +18740,33 @@ function gvAttachDocumentIndex(dialog,session,item) {
   async function request(path='',params={},method='GET'){
     const timeout=new AbortController();const handle=setTimeout(()=>timeout.abort(),20000);try{const res=await fetch(endpoint+path+'?'+new URLSearchParams(params),{method,cache:'no-store',signal:timeout.signal});if(!res.ok){let msg=`HTTP ${res.status}`;try{const body=await res.json();msg=body.error||body.detail||msg;}catch{}throw new Error(msg);}return await res.json();}finally{clearTimeout(handle);}
   }
+  function renderVerification(r,root){
+    const rows=gvPublicationVerificationRows(r);
+    root.replaceChildren();if(!rows.length){root.append(el('p','Publication verification is unavailable in this report. Scan Magazine to refresh it.','sub'));return;}
+    const section=el('details',null,'gv-scan-verification');section.open=true;
+    const counts={verified:0,change:0,uncertain:0,missing:0};for(const row of rows)counts[row.state]++;
+    section.append(el('summary',`Metadata verification (${rows.length} fields)`),el('p',`${counts.verified} verified · ${counts.change} ${r.preview?'corrections':'applied'} · ${counts.uncertain} other evidence / uncertain · ${counts.missing} not detected`,'sub'),el('p','Values at scan time. Printed evidence is OCR-derived, not a manual review. Library and filename matches are not proof of printed metadata. Expand a field to inspect its evidence. Diagnostic-only values cannot be applied.','sub'));
+    const table=el('div',null,'gv-verify-table');
+    for(const row of rows){
+      const d=el('details',null,'gv-verify-row'),head=el('summary',null,'gv-verify-head');
+      const field=el('span',null,'gv-verify-field');field.append(el('strong',row.label));if(row.locked)field.append(el('small','Locked','sub'));if(row.indexOnly)field.append(el('small','Diagnostic only','sub'));
+      const current=el('span',null,'gv-verify-cell');current.append(el('small','Existing'),el('span',value(row.current)));
+      const detected=el('span',null,'gv-verify-cell');detected.append(el('small','Detected'),el('span',row.candidates.map(c=>value(c.value)).join(' / ')||'—'));
+      const statusCell=el('span',null,'gv-verify-cell');statusCell.append(el('span',row.status,'gv-verify-status gv-verify-'+row.state),el('small',row.source));
+      head.append(field,current,detected,statusCell);d.append(head);
+      const body=el('div',null,'gv-verify-evidence');
+      if(row.change)body.append(el('p',`${r.preview?'Proposed':'Applied'}: ${value(row.change.after)} — ${row.change.reason||''}`,'sub'));
+      for(const reason of row.reasons)body.append(el('p','Retained: '+reason,'sub'));
+      if(!row.evidence.length)body.append(el('p','No indexed evidence was returned for this field.','sub'));
+      for(const c of row.candidates){body.append(el('strong',value(c.value)));for(const e of c.evidence||[]){const line=el('div',null,'gv-verify-proof');line.append(el('small',`${e.page!=null?'Digital page '+e.page+' · ':''}${e.source||'Evidence'} · ${value(e.value)}`),el('p',e.evidence||'—'));body.append(line);}}
+      d.append(body);table.append(d);
+    }
+    section.append(table);root.append(section);
+  }
   function render(r){
     if(metadataManagerItemId(r.item)!==metadataManagerItemId(item))throw new Error('Unexpected magazine response. Refresh the page.');
     report=r;if(r.mode==='add'||r.mode==='replace')mode.value=r.mode;const changes=r.changes||[],held=r.held||[],ed=r.editorial||{},pub=r.publication||{};
-    q('[data-scan-revision]').textContent=r.revision||'Phase 4.9.1';q('[data-output]').hidden=false;
+    q('[data-scan-revision]').textContent=r.revision||'Scanner revision not reported';q('[data-output]').hidden=false;
     const metrics=q('[data-metrics]'), summary=q('[data-summary]');metrics.replaceChildren();summary.replaceChildren();
     const metric=(name,n)=>{const box=el('div',null,'gv-scan-metric');box.append(el('small',name),el('strong',n));metrics.append(box);};
     metric('Pages indexed',`${ed.indexedPages??pub.indexedPages??0}/${ed.totalPages??pub.totalPages??0}`);metric(r.preview?'Suggestions':'Fields saved',changes.length);metric('Retained / uncertain',held.length);metric('Interpretation',`${r.seconds??'—'}s`);metric('Featured candidates',ed.featuredCount??'—');metric('Mentioned candidates',ed.mentionedCount??'—');
@@ -18725,6 +18776,7 @@ function gvAttachDocumentIndex(dialog,session,item) {
     for(const c of changes){const row=el('div',null,'gv-scan-suggestion'),head=el('label',null,'gv-scan-selection');if(r.preview){const check=el('input');check.type='checkbox';check.dataset.suggestion=c.field;check.checked=empty(c.before);check.addEventListener('change',controls);head.append(check);}head.append(el('strong',label(c.field)));row.append(head);const pair=el('div',null,'gv-scan-values');for(const [name,v] of scanValues(c,r.preview,r.mode)){const cell=el('div');cell.append(el('small',name),el('div',value(v),'gv-scan-value'));pair.append(cell);}row.append(pair,el('p',c.reason,'sub'));summary.append(row);}
     if(held.length){const d=el('details',null,'gv-scan-held');d.append(el('summary',`Retained or uncertain fields (${held.length})`));for(const h of held){const txt=String(h),i=txt.indexOf(':');d.append(el('p',i>0?label(txt.slice(0,i))+': '+txt.slice(i+1).trim():txt,'sub'));}summary.append(d);}
     if(ed.coverCandidates?.length)summary.append(el('p','Cover candidates (not artwork verification): '+ed.coverCandidates.map(c=>c.title).join(', '),'sub'));
+    renderVerification(r,q('[data-verification]'));
     diagnostics=[`Automatic Cataloging ${r.revision}`,`Mode: ${r.mode||"legacy"}`,`${changes.length} field(s) ${r.preview?'suggested (not saved)':'saved'} · ${r.seconds}s interpretation · ${held.length} held`,...changes.map(c=>`${c.field}: ${JSON.stringify(c.before)} → ${JSON.stringify(c.after)} (${c.reason})`),'','Retained or uncertain fields:',...held,'','Publication evidence:',JSON.stringify(pub,null,2),'','Editorial evidence:',JSON.stringify(ed,null,2)].join('\n');
     q('[data-copy-fallback]').hidden=true;q('[data-copy-status]').textContent='';controls();
   }
@@ -18738,7 +18790,7 @@ function gvAttachDocumentIndex(dialog,session,item) {
     active.textContent=[...(j.active||[]).map(p=>`Page ${p.page}: ${p.stage}`),...(j.failed||[]).map(p=>`Page ${p.page}: ${p.error}`)].join(' · ');
     status.textContent=j.message||j.state;
     if(j.state==='complete'&&j.report){const key=jobId+':'+String(j.report.preview===true);if(key!==seen){seen=key;render(j.report);}status.textContent=j.report.preview?`${j.report.changes.length} suggestions ready. Select fields to apply.`:`${j.report.changes.length} fields saved.`;}
-    else if(j.state!=='running'&&j.state!=='complete'){report=null;diagnostics=JSON.stringify(j,null,2);q('[data-output]').hidden=false;q('[data-summary]').textContent=j.message||j.state;q('[data-metrics]').replaceChildren();}
+    else if(j.state!=='running'&&j.state!=='complete'){report=null;diagnostics=JSON.stringify(j,null,2);q('[data-output]').hidden=false;q('[data-summary]').textContent=j.message||j.state;q('[data-metrics]').replaceChildren();q('[data-verification]').replaceChildren();}
     controls();
   }
   async function poll(){if(polling||!panel.isConnected||applying||starting)return;polling=true;try{const j=await request('/job');if(!panel.isConnected)return;initial=false;showJob(j);if(busy)timer=setTimeout(poll,1800);}catch(e){status.textContent='Unable to retrieve scan status: '+e.message;timer=setTimeout(poll,4000);}finally{polling=false;}}
